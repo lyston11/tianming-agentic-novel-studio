@@ -80,6 +80,12 @@ public sealed class AgentWorkingMemory
 {
     public string? SelectedChapterCandidateId { get; set; }
     public string? LastBuiltContextRunId { get; set; }
+    public string? CurrentGoal { get; set; }
+}
+
+public sealed class ChatTurn
+{
+    public string TurnId { get; set; } = string.Empty;
 }
 
 public sealed class AgentSession
@@ -87,6 +93,7 @@ public sealed class AgentSession
     public string SessionId { get; set; } = string.Empty;
     public string? ActiveRunId { get; set; }
     public AgentWorkingMemory WorkingMemory { get; set; } = new();
+    public List<ChatTurn>? ChatHistory { get; set; }
 }
 
 public sealed class StoryBibleDocument
@@ -115,8 +122,7 @@ public sealed class AgentRecoveryEngine
         AgentSession session,
         StoryBibleDocument bible)
     {
-        var message = failedResult.Message;
-        var toolName = failedCall.Name;
+        var message = failedResult.Message.ToLowerInvariant();
 
         // Pattern matching for failure types
         var failureType = ClassifyFailure(message);
@@ -124,7 +130,7 @@ public sealed class AgentRecoveryEngine
         var analysis = new ToolFailureAnalysis
         {
             Type = failureType,
-            Reason = message,
+            Reason = failedResult.Message,
         };
 
         // Determine if recoverable and build chains
@@ -132,7 +138,7 @@ public sealed class AgentRecoveryEngine
         {
             case ToolFailureType.MissingPrerequisite:
                 analysis.IsRecoverable = true;
-                analysis.RecommendedChains = BuildPrerequisiteChains(toolName, session, bible);
+                analysis.RecommendedChains = BuildPrerequisiteChains(failedCall, message, session, bible);
                 break;
 
             case ToolFailureType.InvalidParameters:
@@ -150,7 +156,7 @@ public sealed class AgentRecoveryEngine
             case ToolFailureType.ResourceUnavailable:
                 // Could be recoverable if we can initialize the resource
                 analysis.IsRecoverable = true;
-                analysis.RecommendedChains = BuildResourceInitChains(toolName, session, bible);
+                analysis.RecommendedChains = BuildResourceInitChains(failedCall, message, session, bible);
                 break;
         }
 
@@ -192,45 +198,45 @@ public sealed class AgentRecoveryEngine
     }
 
     private List<PrerequisiteToolChain> BuildPrerequisiteChains(
-        string failedToolName,
+        AgentToolCall failedCall,
+        string message,
         AgentSession session,
         StoryBibleDocument bible)
     {
         var chains = new List<PrerequisiteToolChain>();
+        var runId = failedCall.Arguments.TryGetValue("runId", out var rid) ? rid : session.ActiveRunId ?? string.Empty;
 
-        switch (failedToolName)
+        // Tool-specific prerequisite chains
+        if (failedCall.Name == "BuildChapterContextPackage")
         {
-            case "BuildChapterContextPackage":
-                // Chain 1: PlanChapter (if no candidate selected)
-                if (string.IsNullOrEmpty(session.WorkingMemory.SelectedChapterCandidateId))
-                {
-                    chains.Add(new PrerequisiteToolChain
-                    {
-                        Priority = 1,
-                        Description = "规划新章节并选择候选",
-                        Steps = new()
-                        {
-                            new PrerequisiteToolStep
-                            {
-                                ToolCall = new AgentToolCall
-                                {
-                                    Name = "PlanChapter",
-                                    Arguments = new()
-                                    {
-                                        ["runId"] = session.ActiveRunId ?? "",
-                                    }
-                                },
-                                MissingPrerequisiteTag = "ChapterPlan",
-                            }
-                        }
-                    });
-                }
-
-                // Chain 2: SelectChapterCandidate (if already planned)
+            if (message.Contains("还没有候选") || message.Contains("章节候选"))
+            {
                 chains.Add(new PrerequisiteToolChain
                 {
-                    Priority = 2,
-                    Description = "选择已规划的章节候选",
+                    Steps = new()
+                    {
+                        new PrerequisiteToolStep
+                        {
+                            ToolCall = new AgentToolCall
+                            {
+                                Name = "PlanChapter",
+                                Arguments = new()
+                                {
+                                    ["creativeBrief"] = session.WorkingMemory?.CurrentGoal ?? "继续当前章节规划",
+                                    ["sourceTurnId"] = session.ChatHistory?.LastOrDefault()?.TurnId ?? string.Empty,
+                                },
+                            },
+                            MissingPrerequisiteTag = "chapter_candidates",
+                        },
+                    },
+                    Priority = 1,
+                    Description = "缺少章节候选，需要先规划章节",
+                });
+            }
+            else if (message.Contains("还没选定") || message.Contains("候选还没选定"))
+            {
+                chains.Add(new PrerequisiteToolChain
+                {
                     Steps = new()
                     {
                         new PrerequisiteToolStep
@@ -238,24 +244,22 @@ public sealed class AgentRecoveryEngine
                             ToolCall = new AgentToolCall
                             {
                                 Name = "SelectChapterCandidate",
-                                Arguments = new()
-                                {
-                                    ["runId"] = session.ActiveRunId ?? "",
-                                }
+                                Arguments = new() { ["runId"] = runId },
                             },
-                            MissingPrerequisiteTag = "ChapterCandidateSelection",
-                        }
-                    }
+                            MissingPrerequisiteTag = "chapter_candidate_selection",
+                        },
+                    },
+                    Priority = 1,
+                    Description = "章节候选未选定，需要先选择候选",
                 });
-                break;
-
-            case "GenerateChapterWithChanges":
-            case "ValidateChapterDraft":
-                // Need context package first
+            }
+        }
+        else if (failedCall.Name == "GenerateChapterWithChanges" || failedCall.Name == "ValidateChapterDraft")
+        {
+            if (message.Contains("上下文包") || message.Contains("context"))
+            {
                 chains.Add(new PrerequisiteToolChain
                 {
-                    Priority = 1,
-                    Description = "构建章节上下文包",
                     Steps = new()
                     {
                         new PrerequisiteToolStep
@@ -263,48 +267,42 @@ public sealed class AgentRecoveryEngine
                             ToolCall = new AgentToolCall
                             {
                                 Name = "BuildChapterContextPackage",
-                                Arguments = new()
-                                {
-                                    ["runId"] = session.ActiveRunId ?? "",
-                                }
+                                Arguments = new() { ["runId"] = runId },
                             },
-                            MissingPrerequisiteTag = "ChapterContextPackage",
-                        }
-                    }
+                            MissingPrerequisiteTag = "chapter_context_package",
+                        },
+                    },
+                    Priority = 1,
+                    Description = "缺少上下文包，需要先构建",
                 });
-
-                // Or regenerate if context already built
-                if (failedToolName == "ValidateChapterDraft")
-                {
-                    chains.Add(new PrerequisiteToolChain
-                    {
-                        Priority = 2,
-                        Description = "重新生成章节草稿",
-                        Steps = new()
-                        {
-                            new PrerequisiteToolStep
-                            {
-                                ToolCall = new AgentToolCall
-                                {
-                                    Name = "GenerateChapterWithChanges",
-                                    Arguments = new()
-                                    {
-                                        ["runId"] = session.ActiveRunId ?? "",
-                                    }
-                                },
-                                MissingPrerequisiteTag = "ChapterDraft",
-                            }
-                        }
-                    });
-                }
-                break;
-
-            case "CommitValidatedChapter":
-                // Need validated draft first
+            }
+            else if (message.Contains("草稿") || message.Contains("draft"))
+            {
                 chains.Add(new PrerequisiteToolChain
                 {
+                    Steps = new()
+                    {
+                        new PrerequisiteToolStep
+                        {
+                            ToolCall = new AgentToolCall
+                            {
+                                Name = "GenerateChapterWithChanges",
+                                Arguments = new() { ["runId"] = runId },
+                            },
+                            MissingPrerequisiteTag = "chapter_draft",
+                        },
+                    },
                     Priority = 1,
-                    Description = "验证章节草稿",
+                    Description = "缺少章节草稿，需要先生成",
+                });
+            }
+        }
+        else if (failedCall.Name == "CommitValidatedChapter")
+        {
+            if (message.Contains("门禁") || message.Contains("gate") || message.Contains("校验"))
+            {
+                chains.Add(new PrerequisiteToolChain
+                {
                     Steps = new()
                     {
                         new PrerequisiteToolStep
@@ -312,50 +310,50 @@ public sealed class AgentRecoveryEngine
                             ToolCall = new AgentToolCall
                             {
                                 Name = "ValidateChapterDraft",
-                                Arguments = new()
-                                {
-                                    ["runId"] = session.ActiveRunId ?? "",
-                                }
+                                Arguments = new() { ["runId"] = runId },
                             },
-                            MissingPrerequisiteTag = "ValidatedDraft",
-                        }
-                    }
+                            MissingPrerequisiteTag = "generation_gate",
+                        },
+                    },
+                    Priority = 1,
+                    Description = "门禁未通过，需要先校验",
                 });
-                break;
+            }
         }
 
         return chains;
     }
 
     private List<PrerequisiteToolChain> BuildResourceInitChains(
-        string failedToolName,
+        AgentToolCall failedCall,
+        string message,
         AgentSession session,
         StoryBibleDocument bible)
     {
         var chains = new List<PrerequisiteToolChain>();
 
-        // Check if Story Bible needs initialization
-        if (bible.AgentRuns.Count == 0)
+        if (message.Contains("story bible 尚未固化") || message.Contains("故事地基"))
         {
             chains.Add(new PrerequisiteToolChain
             {
-                Priority = 1,
-                Description = "初始化故事圣经",
                 Steps = new()
                 {
                     new PrerequisiteToolStep
                     {
                         ToolCall = new AgentToolCall
                         {
-                            Name = "InitializeStoryBible",
+                            Name = "PlanStoryFoundation",
                             Arguments = new()
                             {
-                                ["sessionId"] = session.SessionId,
-                            }
+                                ["userSeed"] = session.WorkingMemory?.CurrentGoal ?? "生成故事地基",
+                                ["genre"] = "通用",
+                            },
                         },
-                        MissingPrerequisiteTag = "StoryBibleInitialization",
-                    }
-                }
+                        MissingPrerequisiteTag = "story_foundation",
+                    },
+                },
+                Priority = 1,
+                Description = "Story Bible 未初始化，需要先规划故事地基",
             });
         }
 
