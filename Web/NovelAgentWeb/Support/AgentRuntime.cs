@@ -105,6 +105,10 @@ public sealed class AgentRuntime
             session.ActiveProjectId = resolution.Project!.Id;
         }
 
+        // ── Phase inference: determine conversation phase and filter tools ──
+        var phase = _phaseInference.InferPhase(userMessage, session);
+        session.Phase = phase.ToString().ToLowerInvariant();
+
         var project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
         var maxSteps = settings.AgentAutoContinue ? Math.Clamp(settings.AgentMaxAutoSteps, 5, 20) : 3;

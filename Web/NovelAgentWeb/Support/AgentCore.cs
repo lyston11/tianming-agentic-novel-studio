@@ -817,6 +817,13 @@ public sealed class AgentObservationBuilder
         await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
+
+        // Parse phase and get phase-appropriate tools
+        var phase = Enum.TryParse<ConversationPhase>(session.Phase, true, out var parsedPhase)
+            ? parsedPhase
+            : ConversationPhase.Conversation;
+        var phaseTools = _toolRegistry.ListToolSchemasForPhase(phase);
+
         return new AgentObservationContext
         {
             UserMessage = userMessage,
@@ -840,7 +847,14 @@ public sealed class AgentObservationBuilder
             AuthorMemory = session.WorkingMemory.AuthorMemory,
             ExecutionMemory = session.WorkingMemory.ExecutionMemory,
             PendingConfirmation = null,
-            AvailableTools = _toolRegistry.ListTools().ToList(),
+            AvailableTools = phaseTools.Select(t => new AgentToolDefinition
+            {
+                Name = t.Name,
+                Description = t.Description,
+                Risk = t.Risk,
+                RequiresConfirmation = t.RequiresConfirmation,
+                Arguments = t.Parameters.Keys.ToList(),
+            }).ToList(),
         };
     }
 
