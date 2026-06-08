@@ -20,6 +20,7 @@ public sealed class AgentRuntime
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
     private readonly AgentToolGuardrails _guardrails;
     private readonly ConversationKernel _conversationKernel;
+    private readonly AgentRecoveryEngine _recoveryEngine;
 
     public AgentRuntime(
         NovelAgentWorkspace workspace,
@@ -53,6 +54,7 @@ public sealed class AgentRuntime
         _blackboardRecovery = blackboardRecovery;
         _guardrails = guardrails;
         _conversationKernel = conversationKernel;
+        _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -281,6 +283,66 @@ public sealed class AgentRuntime
             {
                 session.WorkingMemory.PendingToolCall = null;
                 session.WorkingMemory.PendingConfirmation = null;
+            }
+
+            // Handle tool execution failure with automatic recovery
+            if (!result.Success)
+            {
+                // Attempt automatic recovery
+                var recoveryResult = await _recoveryEngine.RecoverFromFailureAsync(
+                    action.ToolCall,
+                    result,
+                    session,
+                    bible,
+                    ct).ConfigureAwait(false);
+
+                if (recoveryResult.Recovered && recoveryResult.RetryResult != null)
+                {
+                    // Recovery succeeded, use retry result
+                    result = recoveryResult.RetryResult;
+                    var recoveryObservation = new AgentRuntimeObservation
+                    {
+                        StepIndex = step,
+                        ObservationType = "tool_recovery",
+                        ToolName = action.ToolCall.Name,
+                        Success = result.Success,
+                        Message = $"工具 {action.ToolCall.Name} 初次失败后自动恢复成功",
+                        RunId = result.RunId ?? session.ActiveRunId ?? string.Empty,
+                        Phase = result.Phase,
+                    };
+                    session.WorkingMemory.RecentObservations.Add(recoveryObservation);
+                    trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "recovery", Action = action, Observation = recoveryObservation });
+                }
+                else
+                {
+                    // Recovery failed or not recoverable
+                    var failureObservation = new AgentRuntimeObservation
+                    {
+                        StepIndex = step,
+                        ObservationType = "tool_failure",
+                        ToolName = action.ToolCall.Name,
+                        Success = false,
+                        Message = $"工具 {action.ToolCall.Name} 失败：{result.Message}。{recoveryResult.Message}",
+                        RunId = result.RunId ?? session.ActiveRunId ?? string.Empty,
+                        Phase = result.Phase,
+                    };
+                    session.WorkingMemory.RecentObservations.Add(failureObservation);
+                    trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "act", Action = action, Observation = failureObservation });
+
+                    // Break the loop as before
+                    await EmitAsync(session, AgentSseEventType.AgentReflecting, "正在根据失败观察重新判断...", ct).ConfigureAwait(false);
+                    var failReflectContext = await WithSessionProjectAsync(session,
+                        async () =>
+                        {
+                            var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
+                            return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, userTurn.Intent, ct).ConfigureAwait(false);
+                        }, ct).ConfigureAwait(false);
+                    var failReflection = await _reflectionEngine.ReflectAsync(failReflectContext, failureObservation, ct).ConfigureAwait(false);
+                    ApplyReflection(session, failReflection);
+                    await SyncMissionPlanAsync(session, project, result, action, failReflection, ct).ConfigureAwait(false);
+                    trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "reflect", Action = action, Observation = failureObservation, Reflection = failReflection });
+                    return FinishReflectionResponse(session, userMessage, action, failReflectContext, trace, failReflection, result);
+                }
             }
 
             lastResult = result;

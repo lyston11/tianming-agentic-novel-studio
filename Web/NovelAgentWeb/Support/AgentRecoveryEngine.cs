@@ -70,28 +70,12 @@ public sealed class RecoveryResult
 
 // Note: AgentWorkingMemory, AgentSession, and StoryBibleDocument are defined elsewhere
 
-// Stub interfaces for dependencies
-public interface IAgentToolRegistry
-{
-    Task<AgentToolExecutionResult> ExecuteAsync(
-        AgentToolCall toolCall,
-        AgentSession session,
-        StoryBibleDocument bible,
-        bool validate,
-        CancellationToken ct);
-}
-
-public interface IAgentToolGuardrails
-{
-    bool CanAttempt(string toolName, Dictionary<string, string> arguments);
-}
-
 public sealed class AgentRecoveryEngine
 {
-    private readonly IAgentToolRegistry _toolRegistry;
-    private readonly IAgentToolGuardrails _guardrails;
+    private readonly AgentToolRegistry _toolRegistry;
+    private readonly AgentToolGuardrails _guardrails;
 
-    public AgentRecoveryEngine(IAgentToolRegistry toolRegistry, IAgentToolGuardrails guardrails)
+    public AgentRecoveryEngine(AgentToolRegistry toolRegistry, AgentToolGuardrails guardrails)
     {
         _toolRegistry = toolRegistry;
         _guardrails = guardrails;
@@ -152,7 +136,8 @@ public sealed class AgentRecoveryEngine
         CancellationToken ct)
     {
         // 1. Check guardrails - avoid infinite retry loops
-        if (!_guardrails.CanAttempt(failedCall.Name, failedCall.Arguments))
+        var guardrailCheck = _guardrails.Check(failedCall.Name, failedCall.Arguments, false);
+        if (guardrailCheck.IsBlocked)
         {
             return RecoveryResult.Unrecoverable("工具执行失败次数过多，已被熔断器阻止");
         }
