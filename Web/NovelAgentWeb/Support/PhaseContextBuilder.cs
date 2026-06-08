@@ -31,7 +31,6 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PrepareConversationContextAsync(
         SessionContext session,
         AgentMissionState mission,
-        AgentMissionPlan missionPlan,
         CancellationToken ct)
     {
         var context = new Dictionary<string, object>();
@@ -43,6 +42,7 @@ public sealed class PhaseContextBuilder
         }
 
         // Mission summary (very brief)
+        var missionPlan = mission?.MissionPlan;
         if (missionPlan != null)
         {
             context["mission_summary"] = new
@@ -58,7 +58,6 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PreparePlanningContextAsync(
         SessionContext session,
         AgentMissionState mission,
-        AgentMissionPlan missionPlan,
         StoryBibleDocument bible,
         CancellationToken ct)
     {
@@ -71,6 +70,7 @@ public sealed class PhaseContextBuilder
         }
 
         // Mission plan summary
+        var missionPlan = mission?.MissionPlan;
         if (missionPlan != null)
         {
             context["mission_plan"] = missionPlan;
@@ -93,7 +93,6 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PrepareCreationContextAsync(
         SessionContext session,
         AgentMissionState mission,
-        AgentMissionPlan missionPlan,
         StoryBibleDocument bible,
         string? runId,
         CancellationToken ct)
@@ -118,6 +117,7 @@ public sealed class PhaseContextBuilder
         context["story_bible"] = bible;
 
         // Mission plan
+        var missionPlan = mission?.MissionPlan;
         if (missionPlan != null)
         {
             context["mission_plan"] = missionPlan;
@@ -135,7 +135,6 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PrepareReviewContextAsync(
         SessionContext session,
         AgentMissionState mission,
-        AgentMissionPlan missionPlan,
         StoryBibleDocument bible,
         string? runId,
         CancellationToken ct)
@@ -163,6 +162,7 @@ public sealed class PhaseContextBuilder
         }
 
         // Mission plan
+        var missionPlan = mission?.MissionPlan;
         if (missionPlan != null)
         {
             context["mission_plan"] = missionPlan;

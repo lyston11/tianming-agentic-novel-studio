@@ -76,6 +76,7 @@ public sealed class AgentMissionState
     public string CreativePhase { get; set; } = "idle";
     public string Readiness { get; set; } = "unknown";
     public string NextIntent { get; set; } = string.Empty;
+    public AgentMissionPlan? MissionPlan { get; set; }
 }
 
 public sealed class AgentMissionPlan

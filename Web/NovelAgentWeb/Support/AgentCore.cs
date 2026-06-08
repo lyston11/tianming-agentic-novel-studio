@@ -567,6 +567,7 @@ public sealed class AgentMissionState
     public Dictionary<string, string> FoundationBrief { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> MissingFoundationFields { get; set; } = new();
     public string PendingQuestion { get; set; } = string.Empty;
+    public AgentMissionPlan? MissionPlan { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

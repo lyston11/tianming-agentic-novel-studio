@@ -23,11 +23,14 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Generate chapter" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Generate chapter",
+            MissionPlan = new AgentMissionPlan()
+        };
         var bible = new StoryBibleDocument();
 
-        var context = await builder.PrepareCreationContextAsync(session, mission, missionPlan, bible, null, CancellationToken.None);
+        var context = await builder.PrepareCreationContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.NotNull(context);
         Assert.True(context.ContainsKey("story_bible"));
@@ -40,8 +43,11 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Generate chapter" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Generate chapter",
+            MissionPlan = new AgentMissionPlan()
+        };
 
         var contextPackage = new ChapterContextPackageSummary
         {
@@ -61,7 +67,7 @@ public sealed class PhaseContextBuilderTests
             }
         };
 
-        var context = await builder.PrepareCreationContextAsync(session, mission, missionPlan, bible, "run123", CancellationToken.None);
+        var context = await builder.PrepareCreationContextAsync(session, mission, bible, "run123", CancellationToken.None);
 
         Assert.NotNull(context);
         Assert.True(context.ContainsKey("context_package"));
@@ -80,11 +86,14 @@ public sealed class PhaseContextBuilderTests
             ActiveProjectId = "p1",
             RecentObservations = new List<object> { "obs1", "obs2", "obs3", "obs4", "obs5", "obs6", "obs7" }
         };
-        var mission = new AgentMissionState { CurrentGoal = "Generate" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Generate",
+            MissionPlan = new AgentMissionPlan()
+        };
         var bible = new StoryBibleDocument();
 
-        var context = await builder.PrepareCreationContextAsync(session, mission, missionPlan, bible, null, CancellationToken.None);
+        var context = await builder.PrepareCreationContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.True(context.ContainsKey("recent_observations"));
         var observations = context["recent_observations"] as List<object>;
@@ -99,11 +108,14 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Review chapter" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Review chapter",
+            MissionPlan = new AgentMissionPlan()
+        };
         var bible = new StoryBibleDocument();
 
-        var context = await builder.PrepareReviewContextAsync(session, mission, missionPlan, bible, null, CancellationToken.None);
+        var context = await builder.PrepareReviewContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.NotNull(context);
         Assert.True(context.ContainsKey("mission_plan"));
@@ -116,8 +128,11 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Review" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Review",
+            MissionPlan = new AgentMissionPlan()
+        };
 
         var draftArtifact = new ChapterDraftArtifact
         {
@@ -143,7 +158,7 @@ public sealed class PhaseContextBuilderTests
             }
         };
 
-        var context = await builder.PrepareReviewContextAsync(session, mission, missionPlan, bible, "run456", CancellationToken.None);
+        var context = await builder.PrepareReviewContextAsync(session, mission, bible, "run456", CancellationToken.None);
 
         Assert.NotNull(context);
         Assert.True(context.ContainsKey("draft_artifact"));
@@ -168,11 +183,14 @@ public sealed class PhaseContextBuilderTests
             ActiveProjectId = "p1",
             RecentObservations = new List<object> { "obs1", "obs2", "obs3", "obs4", "obs5" }
         };
-        var mission = new AgentMissionState { CurrentGoal = "Review" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Review",
+            MissionPlan = new AgentMissionPlan()
+        };
         var bible = new StoryBibleDocument();
 
-        var context = await builder.PrepareReviewContextAsync(session, mission, missionPlan, bible, null, CancellationToken.None);
+        var context = await builder.PrepareReviewContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.True(context.ContainsKey("recent_observations"));
         var observations = context["recent_observations"] as List<object>;
@@ -187,8 +205,11 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Generate" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Generate",
+            MissionPlan = new AgentMissionPlan()
+        };
 
         var bible = new StoryBibleDocument
         {
@@ -202,7 +223,7 @@ public sealed class PhaseContextBuilderTests
             }
         };
 
-        var context = await builder.PrepareCreationContextAsync(session, mission, missionPlan, bible, "abc123XYZ", CancellationToken.None);
+        var context = await builder.PrepareCreationContextAsync(session, mission, bible, "abc123XYZ", CancellationToken.None);
 
         Assert.True(context.ContainsKey("context_package"));
     }
@@ -212,8 +233,11 @@ public sealed class PhaseContextBuilderTests
     {
         var builder = CreateBuilder();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "p1" };
-        var mission = new AgentMissionState { CurrentGoal = "Review" };
-        var missionPlan = new AgentMissionPlan();
+        var mission = new AgentMissionState
+        {
+            CurrentGoal = "Review",
+            MissionPlan = new AgentMissionPlan()
+        };
 
         var bible = new StoryBibleDocument
         {
@@ -227,7 +251,7 @@ public sealed class PhaseContextBuilderTests
             }
         };
 
-        var context = await builder.PrepareReviewContextAsync(session, mission, missionPlan, bible, "def456UVW", CancellationToken.None);
+        var context = await builder.PrepareReviewContextAsync(session, mission, bible, "def456UVW", CancellationToken.None);
 
         Assert.True(context.ContainsKey("draft_artifact"));
     }
