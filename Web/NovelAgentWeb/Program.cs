@@ -62,6 +62,8 @@ builder.Services.AddSingleton<AgentPlanner>();
 builder.Services.AddSingleton<ToolPolicyEngine>();
 builder.Services.AddSingleton<AgentQualityReviewSuite>();
 builder.Services.AddSingleton<ReflectionEngine>();
+builder.Services.AddSingleton<PhaseInference>();
+builder.Services.AddSingleton<PhaseContextBuilder>();
 builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddHostedService<AgentSchedulerHostedService>();
