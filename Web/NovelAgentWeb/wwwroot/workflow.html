@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>创作工作流 - 天命小说 Agent</title>
+  <link rel="stylesheet" href="/styles.css?v=agent-flow-3">
+</head>
+<body data-page="workflow">
+  <div class="studio-shell">
+    <aside class="rail" aria-label="主导航">
+      <a class="brand-mark" href="/"><span class="seal">命</span><span><strong>天命</strong><small>Novel Agent</small></span></a>
+      <nav class="stage-list">
+        <a class="stage-item" href="/" data-nav="agent"><span>01</span><strong>Agent 对话</strong></a>
+        <a class="stage-item" href="http://127.0.0.1:5173/materials" data-nav="materials"><span>02</span><strong>创意知识库</strong></a>
+        <a class="stage-item" href="/workflow.html" data-nav="workflow"><span>03</span><strong>创作工作流</strong></a>
+      </nav>
+      <div class="rail-footer"><small>当前项目</small><strong id="projectName">AgenticNovelStudio</strong></div>
+    </aside>
+
+    <main class="desk">
+      <header class="topbar">
+        <div><p class="eyebrow">End-to-End Flow</p><h1>创作工作流</h1></div>
+        <div class="topbar-actions"><button class="ghost-button" id="refreshBtn">刷新</button><button class="ink-button" id="continueBtn">推进当前 Run</button></div>
+      </header>
+
+      <section class="command-band" aria-label="核心指标">
+        <div><span class="metric-label">Story Bible</span><strong id="constitutionState">未固化</strong></div>
+        <div><span class="metric-label">素材</span><strong id="materialCount">0</strong></div>
+        <div><span class="metric-label">Agent Runs</span><strong id="runCount">0</strong></div>
+        <div><span class="metric-label">账本条目</span><strong id="ledgerCount">0</strong></div>
+      </section>
+
+      <nav class="workflow-stepper" aria-label="创作工作流环节">
+        <button class="workflow-step active" type="button" data-flow-target="foundation">
+          <span>01</span>
+          <strong>故事地基</strong>
+          <small>题材、风向、深度、禁区</small>
+        </button>
+        <button class="workflow-step" type="button" data-flow-target="volume">
+          <span>02</span>
+          <strong>卷规划</strong>
+          <small>承诺、节拍、反转、高潮</small>
+        </button>
+        <button class="workflow-step" type="button" data-flow-target="chapter">
+          <span>03</span>
+          <strong>章节工坊</strong>
+          <small>候选、确认、生成、账本</small>
+        </button>
+      </nav>
+
+      <section class="workflow-layout">
+        <div class="workflow-main">
+          <section class="work-surface page-surface flow-block active" id="foundation-block" data-flow-stage="foundation">
+            <div class="panel-head">
+              <div><p class="eyebrow">Step 1</p><h2>故事地基：题材、风向、深度、禁区</h2></div>
+              <div class="button-row"><button class="ink-button" id="planFoundationBtn">生成大框架</button><button class="ghost-button" id="commitFoundationBtn">提交 Story Bible</button></div>
+            </div>
+            <div class="form-grid">
+              <label><span>故事种子</span><textarea id="seedInput" rows="5">一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。</textarea></label>
+              <label><span>类型</span><input id="genreInput" value="玄幻"></label>
+              <label><span>子类型</span><input id="subGenreInput" value="学院流"></label>
+              <label><span>目标读者</span><input id="readerInput" value="喜欢升级、规则悬疑、强代价和师徒拉扯的长篇读者"></label>
+              <label><span>风向</span><input id="directionInput" value="爽文推进 + 规则悬疑 + 情绪代价 + 关系拉扯"></label>
+            </div>
+            <div class="result-strip" id="macroCandidates"></div>
+          </section>
+
+          <section class="work-surface page-surface flow-block" id="volume-block" data-flow-stage="volume">
+            <div class="panel-head">
+              <div><p class="eyebrow">Step 2</p><h2>卷规划：承诺、节拍、反转、高潮</h2></div>
+              <div class="button-row"><button class="ink-button" id="planVolumeBtn">生成卷规划</button><button class="ghost-button" id="commitVolumeBtn">提交卷规划</button></div>
+            </div>
+            <div class="form-grid compact">
+              <label><span>卷 ID</span><input id="volumeIdInput" value="volume-001"></label>
+              <label><span>卷名</span><input id="volumeTitleInput" value="规则债务学院"></label>
+              <label><span>起始章节</span><input id="startChapterInput" value="chapter-001"></label>
+              <label><span>结束章节</span><input id="endChapterInput" value="chapter-012"></label>
+              <label><span>章节数</span><input id="chapterCountInput" type="number" min="3" max="80" value="12"></label>
+              <label class="wide"><span>卷目标</span><input id="volumeGoalInput" value="建立规则债务体系，让主角第一次以胜利换来不可逃避的代价。"></label>
+            </div>
+            <div class="timeline" id="volumeTimeline"></div>
+          </section>
+
+          <section class="work-surface page-surface flow-block" id="chapter-block" data-flow-stage="chapter">
+            <div class="panel-head">
+              <div><p class="eyebrow">Step 3</p><h2>章节工坊：候选、确认、生成、账本导入</h2></div>
+              <div class="button-row"><button class="ink-button" id="planChapterBtn">生成候选</button><button class="ghost-button" id="selectCandidateBtn">确认候选</button><button class="danger-button" id="executeChapterBtn">生成章节</button></div>
+            </div>
+            <div class="form-grid compact">
+              <label><span>章节 ID</span><input id="chapterIdInput" value="chapter-002"></label>
+              <label class="wide"><span>本章目标</span><input id="chapterGoalInput" value="林昼主动利用规则裂纹推进调查，但必须暴露一个秘密并承担关系代价。"></label>
+            </div>
+            <div class="candidate-board" id="chapterCandidates"></div>
+          </section>
+        </div>
+
+        <aside class="inspector workflow-inspector">
+          <div class="inspector-head"><p class="eyebrow">Workflow Memory</p><h2>素材与运行状态</h2></div>
+          <div id="workflowMaterialRefs" class="material-list compact-materials"></div>
+          <div class="run-actions">
+            <button class="ghost-button" id="importCanonBtn">导入设定</button>
+            <button class="ghost-button" id="importForeshadowBtn">导入伏笔</button>
+            <button class="ghost-button" id="importCharacterBtn">导入角色</button>
+          </div>
+          <div class="step-track" id="stepTrack"></div>
+          <div class="bible-pane"><h3>Story Bible</h3><dl id="storyBibleSummary"></dl></div>
+          <div class="log-pane"><h3>事件</h3><div id="eventLog"></div></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js?v=agent-flow-3" type="module"></script>
+</body>
+</html>

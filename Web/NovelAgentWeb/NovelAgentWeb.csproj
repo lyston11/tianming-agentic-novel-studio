@@ -1,0 +1,108 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TM.Web.NovelAgentWeb</RootNamespace>
+    <AssemblyName>NovelAgentWeb</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\ChapterParserHelper.cs"
+             Link="Legacy\Common\Helpers\ChapterParserHelper.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\EntityNameNormalizeHelper.cs"
+             Link="Legacy\Common\Helpers\EntityNameNormalizeHelper.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\EntityNameResolver.cs"
+             Link="Legacy\Common\Helpers\EntityNameResolver.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\HairColorConstants.cs"
+             Link="Legacy\Common\Helpers\HairColorConstants.cs" />
+    <Compile Include="..\..\Services\Framework\AI\Embedding\IMicroEmbeddingService.cs"
+             Link="Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs"
+             Link="Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Models\*.cs"
+             Link="NovelAgent\Models\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\StoryBibleService.cs"
+             Link="NovelAgent\Services\StoryBibleService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\GenreDirectionPlanner.cs"
+             Link="NovelAgent\Services\GenreDirectionPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\BookConceptDesigner.cs"
+             Link="NovelAgent\Services\BookConceptDesigner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CreativeKnowledgeBaseService.cs"
+             Link="NovelAgent\Services\CreativeKnowledgeBaseService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\VolumeArcPlanner.cs"
+             Link="NovelAgent\Services\VolumeArcPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\ForeshadowLedgerService.cs"
+             Link="NovelAgent\Services\ForeshadowLedgerService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CanonMaintenanceService.cs"
+             Link="NovelAgent\Services\CanonMaintenanceService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CharacterLedgerService.cs"
+             Link="NovelAgent\Services\CharacterLedgerService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\ChapterNoveltyPlanner.cs"
+             Link="NovelAgent\Services\ChapterNoveltyPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\StoryStateSnapshotService.cs"
+             Link="NovelAgent\Services\StoryStateSnapshotService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CommercialRhythmChecker.cs"
+             Link="NovelAgent\Services\CommercialRhythmChecker.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\HardcoreWritingEngine.cs"
+             Link="NovelAgent\Services\HardcoreWritingEngine.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\NovelAgentOrchestrator.cs"
+             Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Services\Modules\ProjectData\Interfaces\*.cs"
+             Link="Services\Modules\ProjectData\Interfaces\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Metadata\*.cs"
+             Link="Services\Modules\ProjectData\Metadata\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Models\**\*.cs"
+             Link="Services\Modules\ProjectData\Models\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Generation\ChapterChangesCanonicalizer.cs"
+             Link="Services\Modules\ProjectData\Implementations\Generation\ChapterChangesCanonicalizer.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Generation\GenerationGate.cs"
+             Link="Services\Modules\ProjectData\Implementations\Generation\GenerationGate.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Generation\GenerationGate\*.cs"
+             Link="Services\Modules\ProjectData\Implementations\Generation\GenerationGate\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs"
+             Link="Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Guides\**\*.cs"
+             Link="Services\Modules\ProjectData\Implementations\Guides\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Remove="..\..\Services\Modules\ProjectData\Implementations\Guides\MilestoneCondenser.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ContentChunkSearchService.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\ContentChunkSearchService.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\FileBasedVectorIndex.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\FileBasedVectorIndex.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ChapterEmbeddingIndex.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\ChapterEmbeddingIndex.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ChunkEmbeddingIndex.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\ChunkEmbeddingIndex.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\EntityFirstChapterIndex.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\EntityFirstChapterIndex.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\KeywordChapterIndexService.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\KeywordChapterIndexService.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\PlotPointsIndexService.cs"
+             Link="Services\Modules\ProjectData\Implementations\Indexing\PlotPointsIndexService.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Tracking\**\*.cs"
+             Link="Services\Modules\ProjectData\Implementations\Tracking\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Validation\ContentDescriptionValidator.cs"
+             Link="Services\Modules\ProjectData\Implementations\Validation\ContentDescriptionValidator.cs" />
+    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Validation\ContentEntityExtractor.cs"
+             Link="Services\Modules\ProjectData\Implementations\Validation\ContentEntityExtractor.cs" />
+    <Compile Include="..\..\Services\Modules\VersionTracking\Models\*.cs"
+             Link="Services\Modules\VersionTracking\Models\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Modules\VersionTracking\DependencyConfig.cs"
+             Link="Services\Modules\VersionTracking\DependencyConfig.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TM.Framework.Common.Helpers" />
+    <Using Include="TM.Framework.Common.Helpers.Storage" />
+    <Using Include="TM.Framework.Common.Services" />
+  </ItemGroup>
+
+</Project>

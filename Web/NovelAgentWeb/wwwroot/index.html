@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 对话 - 天命小说 Agent</title>
+  <link rel="stylesheet" href="/styles.css?v=agent-flow-2">
+</head>
+<body data-page="agent">
+  <div class="studio-shell">
+    <aside class="rail" aria-label="主导航">
+      <a class="brand-mark" href="/">
+        <span class="seal">命</span>
+        <span><strong>天命</strong><small>Novel Agent</small></span>
+      </a>
+      <nav class="stage-list">
+        <a class="stage-item" href="/" data-nav="agent"><span>01</span><strong>Agent 对话</strong></a>
+        <a class="stage-item" href="http://127.0.0.1:5173/materials" data-nav="materials"><span>02</span><strong>创意知识库</strong></a>
+        <a class="stage-item" href="/workflow.html" data-nav="workflow"><span>03</span><strong>创作工作流</strong></a>
+      </nav>
+      <div class="rail-footer"><small>当前项目</small><strong id="projectName">AgenticNovelStudio</strong></div>
+    </aside>
+
+    <main class="desk">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Agent First</p>
+          <h1>小说 Agent 对话</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" id="refreshBtn">刷新状态</button>
+          <a class="ink-button" href="/workflow.html">进入工作流</a>
+        </div>
+      </header>
+
+      <section class="agent-layout">
+        <article class="agent-console">
+          <div class="agent-thread" id="chatThread">
+            <div class="agent-message agent">
+              <strong>天命 Agent</strong>
+              <p>你可以直接告诉我想写什么、卡在哪里、要不要参考某类素材。我会先判断应该补故事地基、素材库，还是推进卷规划和章节候选。</p>
+            </div>
+          </div>
+          <form class="agent-input" id="chatForm">
+            <textarea id="chatInput" rows="3" placeholder="例如：我想写一部玄幻学院流，核心是规则债务，但不要套路化。"></textarea>
+            <button class="ink-button" type="submit">发送给 Agent</button>
+          </form>
+        </article>
+
+        <aside class="agent-side">
+          <section class="page-card">
+            <p class="eyebrow">Live Signals</p>
+            <div class="metric-stack">
+              <div><span class="metric-label">Story Bible</span><strong id="constitutionState">未固化</strong></div>
+              <div><span class="metric-label">素材</span><strong id="materialCount">0</strong></div>
+              <div><span class="metric-label">Agent Runs</span><strong id="runCount">0</strong></div>
+              <div><span class="metric-label">账本条目</span><strong id="ledgerCount">0</strong></div>
+            </div>
+          </section>
+          <section class="page-card">
+            <p class="eyebrow">Agent Context</p>
+            <h2>当前创作状态</h2>
+            <dl id="storyBibleSummary"></dl>
+          </section>
+          <section class="page-card">
+            <p class="eyebrow">Suggested Moves</p>
+            <div class="quick-links vertical">
+              <a class="ghost-button" href="http://127.0.0.1:5173/materials">进入创意知识库</a>
+              <a class="ghost-button" href="/workflow.html#foundation-block">生成故事地基</a>
+              <a class="ghost-button" href="/workflow.html#volume-block">规划第一卷</a>
+              <a class="ghost-button" href="/workflow.html#chapter-block">生成章节候选</a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js?v=agent-flow-2" type="module"></script>
+</body>
+</html>

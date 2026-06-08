@@ -1,0 +1,35 @@
+{
+  "sampleName": "AgentQualityEvalFixtures",
+  "fixtures": [
+    {
+      "id": "pacing-dragging",
+      "dimension": "pacing",
+      "expectedStatus": "needs_rewrite",
+      "text": "这一章连续三场都在重复解释同一条规则，主角没有做出新的选择，场景铺垫过长，节奏拖沓。"
+    },
+    {
+      "id": "motivation-break",
+      "dimension": "motivation",
+      "expectedStatus": "needs_rewrite",
+      "text": "主角突然放弃一直追查的债务线索，只因为剧情需要去救一个陌生人，动机不足，行为不可信。"
+    },
+    {
+      "id": "conflict-stalled",
+      "dimension": "conflict",
+      "expectedStatus": "needs_rewrite",
+      "text": "整章没有冲突升级，反派没有阻力，调查也无推进，读者承诺里的规则压力没有兑现。"
+    },
+    {
+      "id": "continuity-break",
+      "dimension": "continuity",
+      "expectedStatus": "needs_rewrite",
+      "text": "上一章钥匙已经被导师收走，本章却又在林昼掌心发烫，事实冲突，伏笔状态不一致。"
+    },
+    {
+      "id": "style-drift",
+      "dimension": "style",
+      "expectedStatus": "needs_rewrite",
+      "text": "正文像大纲摘要，只罗列事件和设定，文风偏离规则悬疑的压迫感，读者承诺偏离。"
+    }
+  ]
+}

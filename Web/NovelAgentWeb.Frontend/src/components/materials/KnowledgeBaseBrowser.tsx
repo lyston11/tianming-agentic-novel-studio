@@ -1,0 +1,381 @@
+import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getKnowledgeEntries, deleteKnowledgeEntry, updateKnowledgeEntry } from '../../api';
+import type { CreativeKnowledgeCategory, CreativeKnowledgeEntry } from '../../api/types';
+
+const CATEGORIES: { key: CreativeKnowledgeCategory | 'All'; label: string }[] = [
+  { key: 'All', label: '全部' },
+  { key: 'GenrePrinciple', label: '题材原则' },
+  { key: 'TropePattern', label: '套路模式' },
+  { key: 'AntiTropeStrategy', label: '反套路' },
+  { key: 'ReaderPromise', label: '读者承诺' },
+  { key: 'ThemeDepth', label: '主题深度' },
+  { key: 'EmotionArc', label: '情绪线' },
+  { key: 'RelationshipDynamic', label: '关系动态' },
+  { key: 'ProjectUsedPattern', label: '项目记忆' },
+];
+
+const EDITABLE_CATEGORIES = CATEGORIES.filter(
+  (cat): cat is { key: CreativeKnowledgeCategory; label: string } => cat.key !== 'All',
+);
+
+const CATEGORY_COLORS: Record<string, string> = {
+  GenrePrinciple: 'var(--gold)',
+  TropePattern: 'var(--red)',
+  AntiTropeStrategy: 'var(--jade)',
+  ReaderPromise: 'var(--blue)',
+  ThemeDepth: 'var(--gold)',
+  EmotionArc: 'var(--red)',
+  RelationshipDynamic: 'var(--jade)',
+  ProjectUsedPattern: 'var(--muted)',
+};
+
+const CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  All: '全库视图',
+  GenrePrinciple: '类型承诺和读者预期',
+  TropePattern: '高频套路和风险桥段',
+  AntiTropeStrategy: '变体、反转和规避策略',
+  ReaderPromise: '爽点、情绪和持续期待',
+  ThemeDepth: '主题母题和深层表达',
+  EmotionArc: '情绪推进和转折节奏',
+  RelationshipDynamic: '人物关系张力',
+  ProjectUsedPattern: '项目已用桥段记忆',
+};
+
+function getCategoryLabel(category: CreativeKnowledgeCategory | 'All') {
+  return CATEGORIES.find((c) => c.key === category)?.label ?? category;
+}
+
+function getShortContent(entry: CreativeKnowledgeEntry) {
+  if (entry.content.length <= 160) return entry.content;
+  return `${entry.content.slice(0, 160)}...`;
+}
+
+interface KnowledgeBaseBrowserProps {
+  actions?: ReactNode;
+}
+
+export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserProps) {
+  const queryClient = useQueryClient();
+  const [selectedCategory, setSelectedCategory] = useState<CreativeKnowledgeCategory | 'All'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState<CreativeKnowledgeCategory>('GenrePrinciple');
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editGenre, setEditGenre] = useState('');
+  const [editSubGenre, setEditSubGenre] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [editWeight, setEditWeight] = useState(5);
+
+  const { data: entries = [] } = useQuery({
+    queryKey: ['knowledgeEntries'],
+    queryFn: getKnowledgeEntries,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteKnowledgeEntry,
+    onSuccess: () => {
+      setEditingId(null);
+      setSelectedId(null);
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: () => {
+      const base = entries.find((entry) => entry.id === editingId);
+      if (!base) throw new Error('未选择知识条目');
+      return updateKnowledgeEntry(base.id, {
+        ...base,
+        category: editCategory,
+        title: editTitle,
+        content: editContent,
+        genre: editGenre,
+        subGenre: editSubGenre,
+        tags: editTags
+          .split(/[,，]/)
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+        weight: Math.max(1, Math.min(10, Number(editWeight) || 5)),
+      });
+    },
+    onSuccess: (result) => {
+      if (result.entry?.id) setSelectedId(result.entry.id);
+      setEditingId(null);
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+    },
+  });
+
+  const startEditing = (entry: CreativeKnowledgeEntry) => {
+    setSelectedId(entry.id);
+    setEditingId(entry.id);
+    setEditCategory(entry.category);
+    setEditTitle(entry.title);
+    setEditContent(entry.content);
+    setEditGenre(entry.genre);
+    setEditSubGenre(entry.subGenre);
+    setEditTags(entry.tags.join('，'));
+    setEditWeight(entry.weight);
+  };
+
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of entries) {
+      counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1);
+    }
+    return counts;
+  }, [entries]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return entries
+      .filter((entry) => {
+        if (selectedCategory !== 'All' && entry.category !== selectedCategory) return false;
+        if (!q) return true;
+        return (
+          entry.title.toLowerCase().includes(q) ||
+          entry.content.toLowerCase().includes(q) ||
+          entry.source.toLowerCase().includes(q) ||
+          entry.genre.toLowerCase().includes(q) ||
+          entry.subGenre.toLowerCase().includes(q) ||
+          entry.tags.some((tag) => tag.toLowerCase().includes(q))
+        );
+      })
+      .sort((a, b) => b.weight - a.weight || a.title.localeCompare(b.title, 'zh-Hans-CN'));
+  }, [entries, searchQuery, selectedCategory]);
+
+  const selectedEntry = useMemo(() => {
+    if (filtered.length === 0) return null;
+    return filtered.find((entry) => entry.id === selectedId) ?? filtered[0];
+  }, [filtered, selectedId]);
+
+  const topTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of filtered) {
+      for (const tag of entry.tags) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN'))
+      .slice(0, 12);
+  }, [filtered]);
+
+  return (
+    <section className="knowledge-browser">
+      <div className="knowledge-command">
+        <div>
+          <div className="section-kicker">Creative Knowledge Base</div>
+          <h2>创意知识库</h2>
+        </div>
+        <div className="knowledge-command-side">
+          <div className="knowledge-command-stats" aria-label="知识库统计">
+            <span><strong>{entries.length}</strong> 条目</span>
+            <span><strong>{filtered.length}</strong> 当前</span>
+            <span><strong>{topTags.length}</strong> 标签</span>
+          </div>
+          {actions && <div className="knowledge-command-actions">{actions}</div>}
+        </div>
+      </div>
+
+      <div className="knowledge-search-row">
+        <input
+          className="knowledge-search"
+          placeholder="搜索题材、桥段、关系、标签或来源"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <div className="knowledge-scope">
+          {getCategoryLabel(selectedCategory)}
+        </div>
+      </div>
+
+      <div className="knowledge-workspace">
+        <aside className="knowledge-category-rail" aria-label="知识分类">
+          {CATEGORIES.map((cat) => {
+            const count = cat.key === 'All' ? entries.length : categoryCounts.get(cat.key) ?? 0;
+            return (
+              <button
+                key={cat.key}
+                className={`knowledge-category${selectedCategory === cat.key ? ' active' : ''}`}
+                onClick={() => {
+                  setSelectedCategory(cat.key);
+                  setSelectedId(null);
+                }}
+              >
+                <span>
+                  <strong>{cat.label}</strong>
+                  <small>{CATEGORY_DESCRIPTIONS[cat.key]}</small>
+                </span>
+                <em>{count}</em>
+              </button>
+            );
+          })}
+        </aside>
+
+        <div className="knowledge-results">
+          {topTags.length > 0 && (
+            <div className="knowledge-tag-cloud">
+              {topTags.map(([tag, count]) => (
+                <button key={tag} className="knowledge-tag" onClick={() => setSearchQuery(tag)}>
+                  {tag}<span>{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {filtered.length === 0 ? (
+            <div className="empty knowledge-empty">暂无知识条目</div>
+          ) : (
+            <div className="knowledge-list">
+              {filtered.map((entry) => (
+                <article
+                  key={entry.id}
+                  className={`knowledge-card${selectedEntry?.id === entry.id ? ' active' : ''}`}
+                  onClick={() => setSelectedId(entry.id)}
+                >
+                  <div className="knowledge-card-header">
+                    <span
+                      className="category-badge"
+                      style={{ color: CATEGORY_COLORS[entry.category] ?? 'var(--muted)' }}
+                    >
+                      {getCategoryLabel(entry.category)}
+                    </span>
+                    <span className="knowledge-weight">W{entry.weight}</span>
+                  </div>
+                  <div className="knowledge-title">{entry.title}</div>
+                  <div className="knowledge-content">{getShortContent(entry)}</div>
+                  <div className="knowledge-tags">
+                    {entry.tags.slice(0, 5).map((tag, i) => (
+                      <span key={i} className="tag">{tag}</span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <aside className="knowledge-detail">
+          {selectedEntry ? (
+            <>
+              <div className="knowledge-detail-head">
+                <span
+                  className="category-badge"
+                  style={{ color: CATEGORY_COLORS[selectedEntry.category] ?? 'var(--muted)' }}
+                >
+                  {getCategoryLabel(selectedEntry.category)}
+                </span>
+                <span className="knowledge-weight">W{selectedEntry.weight}</span>
+              </div>
+              {editingId === selectedEntry.id ? (
+                <div className="knowledge-edit-form">
+                  <label>
+                    <span>标题</span>
+                    <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+                  </label>
+                  <label>
+                    <span>内容</span>
+                    <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={7} />
+                  </label>
+                  <div className="knowledge-edit-grid">
+                    <label>
+                      <span>分类</span>
+                      <select
+                        value={editCategory}
+                        onChange={(e) => setEditCategory(e.target.value as CreativeKnowledgeCategory)}
+                      >
+                        {EDITABLE_CATEGORIES.map((cat) => (
+                          <option key={cat.key} value={cat.key}>{cat.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>权重</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={editWeight}
+                        onChange={(e) => setEditWeight(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="knowledge-edit-grid">
+                    <label>
+                      <span>题材</span>
+                      <input value={editGenre} onChange={(e) => setEditGenre(e.target.value)} />
+                    </label>
+                    <label>
+                      <span>子题材</span>
+                      <input value={editSubGenre} onChange={(e) => setEditSubGenre(e.target.value)} />
+                    </label>
+                  </div>
+                  <label>
+                    <span>标签</span>
+                    <input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="用逗号分隔" />
+                  </label>
+                  <div className="knowledge-detail-actions">
+                    <button
+                      className="ink-button"
+                      onClick={() => updateMutation.mutate()}
+                      disabled={updateMutation.isPending || !editTitle.trim() || !editContent.trim()}
+                    >
+                      {updateMutation.isPending ? '保存中...' : '保存条目'}
+                    </button>
+                    <button className="ghost-button" onClick={() => setEditingId(null)}>取消</button>
+                    {updateMutation.error && (
+                      <span className="knowledge-edit-error">{updateMutation.error.message}</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h3>{selectedEntry.title}</h3>
+                  <p>{selectedEntry.content}</p>
+
+                  <div className="knowledge-detail-tags">
+                    {selectedEntry.tags.map((tag, i) => (
+                      <button key={i} className="tag" onClick={() => setSearchQuery(tag)}>
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+
+                  <dl className="knowledge-detail-meta">
+                    <div>
+                      <dt>来源</dt>
+                      <dd>{selectedEntry.source || '内置知识'}</dd>
+                    </div>
+                    <div>
+                      <dt>题材</dt>
+                      <dd>{selectedEntry.genre || '通用'} / {selectedEntry.subGenre || '通用'}</dd>
+                    </div>
+                  </dl>
+
+                  <div className="knowledge-detail-actions">
+                    <button className="ink-button" onClick={() => startEditing(selectedEntry)}>
+                      编辑条目
+                    </button>
+                    <button
+                      className="danger-button knowledge-delete"
+                      onClick={() => deleteMutation.mutate(selectedEntry.id)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      {deleteMutation.isPending ? '删除中...' : '删除条目'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="empty knowledge-empty">选择条目查看详情</div>
+          )}
+        </aside>
+      </div>
+    </section>
+  );
+}

@@ -1,0 +1,326 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { deleteNovelProject, getNovelLibrary, updateNovelProject } from '../api';
+import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
+import Topbar from '../components/layout/Topbar';
+import '../styles/library.css';
+
+type LibraryMode = 'store' | 'detail' | 'reader';
+
+function flattenChapters(volumes: NovelVolumeView[]) {
+  return volumes.flatMap((volume) => volume.chapters);
+}
+
+function keepGeneratedVolumes(volumes: NovelVolumeView[]) {
+  return volumes
+    .map((volume) => ({
+      ...volume,
+      chapters: volume.chapters.filter((chapter) => chapter.hasGeneratedContent && chapter.visibleInLibrary !== false),
+    }))
+    .filter((volume) => volume.chapters.length > 0);
+}
+
+function formatDate(value: string) {
+  if (!value) return '尚未更新';
+  return value;
+}
+
+function chapterStatus(chapter: NovelChapterView) {
+  if (chapter.needsRewrite) return '需修订';
+  if (chapter.visibleInLibrary) return '已入库';
+  return chapter.status || '成稿';
+}
+
+function chapterStatusClass(chapter: NovelChapterView) {
+  if (chapter.needsRewrite) return 'danger';
+  if (chapter.visibleInLibrary) return 'ready';
+  return '';
+}
+
+function coverMark(title: string) {
+  return (title || '命').trim().slice(0, 1);
+}
+
+export default function LibraryPage() {
+  const queryClient = useQueryClient();
+  const { data: overviewLibrary, isLoading } = useQuery({
+    queryKey: ['novelLibrary'],
+    queryFn: () => getNovelLibrary(),
+    refetchInterval: 10000,
+  });
+  const [mode, setMode] = useState<LibraryMode>('store');
+  const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  const books = overviewLibrary?.books ?? [];
+  const libraryBooks = useMemo(
+    () => books.filter((book) => book.generatedChapterCount > 0),
+    [books],
+  );
+  const effectiveProjectId = selectedProjectId ?? libraryBooks[0]?.projectId ?? null;
+  const { data: selectedLibrary, isLoading: selectedLibraryLoading } = useQuery({
+    queryKey: ['novelLibrary', effectiveProjectId],
+    queryFn: () => getNovelLibrary(effectiveProjectId!),
+    enabled: !!effectiveProjectId,
+    refetchInterval: 10000,
+  });
+
+  const selectedBook =
+    selectedLibrary?.activeBook ??
+    libraryBooks.find((book) => book.projectId === effectiveProjectId) ??
+    null;
+  const volumes = useMemo(() => keepGeneratedVolumes(selectedLibrary?.volumes ?? []), [selectedLibrary?.volumes]);
+  const chapters = useMemo(() => flattenChapters(volumes), [volumes]);
+  const selectedChapter = useMemo(() => {
+    if (chapters.length === 0) return null;
+    return (
+      chapters.find((chapter) => chapter.chapterId === selectedChapterId) ??
+      (selectedLibrary?.selectedChapter?.hasGeneratedContent && selectedLibrary.selectedChapter.visibleInLibrary !== false ? selectedLibrary.selectedChapter : null) ??
+      chapters[0]
+    );
+  }, [chapters, selectedChapterId, selectedLibrary?.selectedChapter]);
+  const selectedVolume = volumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? volumes[0];
+  const readyChapters = selectedLibrary?.generatedChapterCount ?? selectedBook?.generatedChapterCount ?? 0;
+  const plannedChapters = selectedLibrary?.plannedChapterCount ?? selectedBook?.plannedChapterCount ?? 0;
+
+  useEffect(() => {
+    if (selectedProjectId && libraryBooks.some((book) => book.projectId === selectedProjectId)) return;
+    setSelectedProjectId(libraryBooks[0]?.projectId ?? null);
+    setSelectedChapterId(null);
+    if (libraryBooks.length === 0 && mode !== 'store') setMode('store');
+  }, [libraryBooks, mode, selectedProjectId]);
+
+  const deleteMutation = useMutation({
+    mutationFn: (projectId: string) => deleteNovelProject(projectId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['novelLibrary'] }),
+        queryClient.invalidateQueries({ queryKey: ['storyBible'] }),
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+      ]);
+      setSelectedProjectId(null);
+      setSelectedChapterId(null);
+      setMode('store');
+    },
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: ({ projectId, title }: { projectId: string; title: string }) =>
+      updateNovelProject(projectId, { title }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['novelLibrary'] });
+    },
+  });
+
+  const openBookDetail = (book: NovelBookView) => {
+    setSelectedProjectId(book.projectId);
+    setSelectedChapterId(null);
+    setMode('detail');
+  };
+
+  const openBookReader = (book: NovelBookView) => {
+    setSelectedProjectId(book.projectId);
+    setSelectedChapterId(book.selectedChapter?.chapterId ?? null);
+    setMode('reader');
+  };
+
+  const openReader = (chapter?: NovelChapterView | null) => {
+    if (chapter) setSelectedChapterId(chapter.chapterId);
+    setMode('reader');
+  };
+
+  const deleteBook = async (book: NovelBookView) => {
+    const ok = window.confirm(`确认从书架移除「${book.title}」吗？本地工程文件会保留。`);
+    if (!ok) return;
+    await deleteMutation.mutateAsync(book.projectId);
+  };
+
+  const renameBook = async (book: NovelBookView) => {
+    const title = window.prompt('重命名小说', book.title)?.trim();
+    if (!title || title === book.title) return;
+    await renameMutation.mutateAsync({ projectId: book.projectId, title });
+  };
+
+  return (
+    <>
+      <Topbar
+        title="小说书城"
+        actions={
+          mode !== 'store' ? (
+            <button className="ghost-button" onClick={() => setMode('store')}>
+              返回书城
+            </button>
+          ) : null
+        }
+      />
+
+      <div className="library-page magazine-library">
+        {mode === 'store' ? (
+          <section className="magazine-shelf">
+            <header className="magazine-shelf-head">
+              <div>
+                <span>Committed Library</span>
+                <h2>小说书城</h2>
+                <p>只展示确认入库的成稿；草稿和返工任务留在 Agent 工作台。</p>
+              </div>
+              <strong>{libraryBooks.length}<small>本成稿</small></strong>
+            </header>
+
+            {isLoading ? (
+              <div className="empty shelf-empty">正在加载小说库...</div>
+            ) : books.length === 0 ? (
+              <div className="empty shelf-empty">还没有小说项目。让 Agent 先开一本新小说。</div>
+            ) : libraryBooks.length === 0 ? (
+              <div className="empty shelf-empty">还没有已入库成稿。生成并确认提交章节后会出现在这里。</div>
+            ) : (
+              <div className="magazine-grid">
+                {libraryBooks.map((book) => (
+                  <article key={book.projectId} className="magazine-book">
+                    <button className="magazine-cover" type="button" onClick={() => openBookReader(book)}>
+                      <span>{book.genre || book.status}</span>
+                      <strong>{book.title}</strong>
+                      <em>{coverMark(book.title)}</em>
+                    </button>
+                    <div className="magazine-book-copy">
+                      <span>{book.generatedChapterCount} / {book.plannedChapterCount || book.generatedChapterCount} 章入库</span>
+                      <h3>{book.title}</h3>
+                      <p>{book.readerPromise || book.coreHook || book.selectedChapter?.summary || '这本书已经有确认入库的章节。'}</p>
+                      <div className="magazine-actions">
+                        <button className="ink-button" type="button" onClick={() => openBookReader(book)}>阅读</button>
+                        <button className="ghost-button" type="button" onClick={() => openBookDetail(book)}>档案</button>
+                        <button className="ghost-button" type="button" onClick={() => void renameBook(book)} disabled={renameMutation.isPending}>改名</button>
+                        <button className="danger-button compact" type="button" onClick={() => void deleteBook(book)} disabled={deleteMutation.isPending || books.length <= 1}>删除</button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : mode === 'detail' ? (
+          <section className="magazine-profile">
+            <div className="profile-cover">
+              <span>{selectedBook?.genre || 'Novel'}</span>
+              <strong>{selectedBook?.title || '未命名小说'}</strong>
+              <em>{coverMark(selectedBook?.title || '')}</em>
+            </div>
+            <main className="profile-copy">
+              <span>Novel Profile</span>
+              <h2>{selectedBook?.title || '未命名小说'}</h2>
+              <p>{selectedBook?.readerPromise || selectedBook?.coreHook || '这本书的阅读承诺会在 Story Bible 固化后展示。'}</p>
+              <div className="profile-stats">
+                <strong>{volumes.length}<small>卷</small></strong>
+                <strong>{readyChapters}<small>入库章节</small></strong>
+                <strong>{plannedChapters}<small>规划章节</small></strong>
+              </div>
+              <button className="ink-button" onClick={() => openReader(selectedChapter)} disabled={selectedLibraryLoading || chapters.length === 0}>
+                进入阅读
+              </button>
+            </main>
+            <aside className="profile-toc">
+              <span>目录</span>
+              {volumes.length === 0 ? (
+                <p>暂无已入库章节。</p>
+              ) : volumes.map((volume) => (
+                <section key={volume.volumeId}>
+                  <strong>{volume.title}</strong>
+                  {volume.chapters.map((chapter) => (
+                    <button key={chapter.chapterId} type="button" onClick={() => openReader(chapter)}>
+                      <span>{chapter.beatIndex || '-'}</span>
+                      {chapter.title}
+                    </button>
+                  ))}
+                </section>
+              ))}
+            </aside>
+          </section>
+        ) : (
+          <section className="magazine-reader">
+            <aside className="reader-index">
+              <div className="reader-book-head">
+                <div className="mini-cover">{coverMark(selectedBook?.title || '')}</div>
+                <div>
+                  <strong>{selectedBook?.title || '未命名小说'}</strong>
+                  <small>{readyChapters}/{plannedChapters} 章已入库</small>
+                </div>
+              </div>
+
+              <div className="volume-list">
+                {volumes.map((volume) => (
+                  <div key={volume.volumeId} className="volume-group">
+                    <div className="volume-title">
+                      <strong>{volume.title}</strong>
+                      <span>{volume.chapters.length} 章</span>
+                    </div>
+                    <div className="chapter-list">
+                      {volume.chapters.map((chapter) => (
+                        <button
+                          key={chapter.chapterId}
+                          className={`chapter-row ${selectedChapter?.chapterId === chapter.chapterId ? 'active' : ''}`}
+                          onClick={() => setSelectedChapterId(chapter.chapterId)}
+                        >
+                          <span className="chapter-index">{chapter.beatIndex || '-'}</span>
+                          <span>
+                            <strong>{chapter.title}</strong>
+                            <small>{chapter.chapterId} · {chapterStatus(chapter)}</small>
+                          </span>
+                          <em className={chapterStatusClass(chapter)}>读</em>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+
+            <main className="magazine-paper">
+              {selectedChapter ? (
+                <>
+                  <header className="paper-title">
+                    <span>{selectedVolume?.title ?? selectedChapter.volumeTitle}</span>
+                    <h1>{selectedChapter.title}</h1>
+                    <div>
+                      <em>{selectedChapter.chapterId}</em>
+                      <em>{formatDate(selectedChapter.updatedAt)}</em>
+                      <em>{selectedChapter.wordCount} 字</em>
+                    </div>
+                  </header>
+
+                  <section className="paper-summary">
+                    <strong>本章摘要</strong>
+                    <p>{selectedChapter.summary}</p>
+                  </section>
+
+                  <article className="paper-content">
+                    {selectedChapter.content.split(/\n{2,}/).map((paragraph, index) => (
+                      <p key={index}>{paragraph}</p>
+                    ))}
+                  </article>
+
+                  {(selectedChapter.reviewChecks.length > 0 || selectedChapter.nextSuggestions.length > 0) && (
+                    <aside className="paper-notes">
+                      {selectedChapter.reviewChecks.length > 0 && (
+                        <div>
+                          <h3>审稿检查</h3>
+                          {selectedChapter.reviewChecks.map((check, index) => <p key={index}>{check}</p>)}
+                        </div>
+                      )}
+                      {selectedChapter.nextSuggestions.length > 0 && (
+                        <div>
+                          <h3>下一章提示</h3>
+                          {selectedChapter.nextSuggestions.map((suggestion, index) => <p key={index}>{suggestion}</p>)}
+                        </div>
+                      )}
+                    </aside>
+                  )}
+                </>
+              ) : (
+                <div className="empty shelf-empty">选择章节后阅读正文</div>
+              )}
+            </main>
+          </section>
+        )}
+      </div>
+    </>
+  );
+}

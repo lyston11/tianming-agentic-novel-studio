@@ -1,0 +1,258 @@
+{
+  "schemaVersion": 1,
+  "constitution": {
+    "genre": "玄幻",
+    "subGenre": "学院流",
+    "readerPromise": "每一卷都有明确成长、代价、反转和可追踪伏笔。",
+    "coreHook": "主角能听见世界规则产生裂纹时的低语。",
+    "coreTheme": "真正的成长不是变强，而是学会承担改变规则后的债务。",
+    "mainPleasure": "规则解谜、升级爽点、代价兑现。",
+    "secondaryPleasure": "师徒关系拉扯、学院派系博弈。",
+    "worldCoreRule": "所有改写规则的能力都会生成等价债务，债务迟早以身体、记忆或关系形式讨回。",
+    "mainConflictEngine": "学院派系争夺规则裂纹，主角在成长和偿债之间被迫选择。",
+    "protagonistEngine": "林昼用洞察换取短期破局，但每次破局都会失去一部分安全感或关系信任。",
+    "noveltyPoint": "把升级系统写成可审计的债务系统，爽点必须伴随未来反噬。",
+    "depthLayer": "秩序的修复是否必然要求个体牺牲。",
+    "forbiddenDirections": [
+      "反派降智",
+      "无代价开挂",
+      "关键人物刚好路过救场"
+    ],
+    "commercialRhythm": "小章保持目标推进和情绪钩子，中段反转必须提前埋证据。",
+    "genreProfile": {
+      "pleasureStrength": 8,
+      "mysteryStrength": 8,
+      "emotionStrength": 8,
+      "worldbuildingStrength": 9,
+      "ensembleStrength": 7,
+      "depthStrength": 7,
+      "paceStrength": 8,
+      "strategy": "爽点和设定解谜并行，每次胜利都写清债务。",
+      "riskWarnings": [
+        "能力边界漂移",
+        "关系变化只停留在情绪宣言",
+        "伏笔回收缺少行动后果"
+      ]
+    }
+  },
+  "macroCandidates": [
+    {
+      "title": "裂纹听者",
+      "coreHook": "主角能听见世界规则产生裂纹时的低语。",
+      "worldCoreRule": "所有改写规则的能力都会生成等价债务。",
+      "mainConflictEngine": "学院派系争夺规则裂纹。",
+      "protagonistEngine": "主角用洞察换取成长，但必须付出记忆和关系代价。",
+      "depthLayer": "秩序修复与个体牺牲的冲突。",
+      "noveltyScore": 8,
+      "sustainabilityScore": 9,
+      "typeMatchScore": 8,
+      "risks": [
+        "债务规则必须持续进入 Canon Ledger，避免后期随意改写。"
+      ]
+    }
+  ],
+  "volumeArcs": [
+    {
+      "id": "volume-001",
+      "volumeId": "V1",
+      "title": "禁书楼债务",
+      "startChapterId": "chapter-001",
+      "endChapterId": "chapter-024",
+      "expectedChapterCount": 24,
+      "status": 2,
+      "volumePromise": "林昼进入学院并第一次理解规则债务的真实重量。",
+      "entryState": "林昼只把裂纹低语当作求生天赋。",
+      "exitState": "林昼知道自己的能力来自上一代债务继承。",
+      "coreQuestion": "如果破局一定欠债，林昼还要不要改写规则。",
+      "mainConflictUpgrade": "从入学竞争升级到学院长老隐藏债务账本。",
+      "midpointReversal": "导师不是保护林昼，而是在延迟债务追索。",
+      "climax": "禁书楼开启，规则债务第一次公开讨还。",
+      "aftermathHook": "债务账本出现林昼母亲的名字。",
+      "chapterBeats": [
+        {
+          "index": 1,
+          "role": "入局",
+          "goal": "林昼通过学院初选。",
+          "turn": "裂纹低语指出考题本身被篡改。",
+          "cost": "林昼失去一次公开求助机会。"
+        },
+        {
+          "index": 12,
+          "role": "中段反转",
+          "goal": "确认导师是否可信。",
+          "turn": "导师承认自己隐藏债务账本。",
+          "cost": "师徒信任出现可追踪裂痕。"
+        },
+        {
+          "index": 24,
+          "role": "高潮",
+          "goal": "打开禁书楼并拿到旧规则。",
+          "turn": "钥匙要求林昼交出一段关于母亲的记忆。",
+          "cost": "林昼得到真相入口，但失去一个情感锚点。"
+        }
+      ],
+      "foreshadowingPlan": [
+        {
+          "name": "钥匙记住恐惧",
+          "setup": "第一次触碰禁书楼钥匙时，钥匙变冷并记录持有者恐惧。",
+          "payoff": "高潮时钥匙要求林昼交出最深的恐惧作为开门代价。",
+          "payoffBeatIndex": 24
+        }
+      ],
+      "characterArcPlan": [
+        {
+          "characterName": "林昼",
+          "startingBelief": "只要足够聪明，就能避开一切代价。",
+          "pressure": "每次聪明破局都会让债务追索更具体。",
+          "choice": "主动承担一次不可逆的记忆债务。",
+          "changedState": "承认成长必须有账本。"
+        }
+      ],
+      "worldbuildingIncrements": [
+        "规则债务不会消失，只会转移。",
+        "禁书楼保存历代债务继承者的旧誓词。"
+      ],
+      "mustAvoid": [
+        "把债务写成一次性惩罚",
+        "导师突然降智"
+      ]
+    }
+  ],
+  "foreshadowLedger": [
+    {
+      "id": "foreshadow-key-fear",
+      "name": "钥匙记住恐惧",
+      "type": 4,
+      "status": 2,
+      "setup": "第一次触碰禁书楼钥匙时，钥匙变冷并记录持有者恐惧。",
+      "payoff": "高潮时钥匙要求林昼交出最深的恐惧作为开门代价。",
+      "sourceVolumeId": "V1",
+      "plannedSetupChapterId": "chapter-003",
+      "plannedPayoffChapterId": "chapter-024",
+      "actualSetupChapterIds": [],
+      "actualReinforceChapterIds": [],
+      "actualPayoffChapterId": "",
+      "importance": 8,
+      "evidence": [],
+      "notes": [
+        "由卷级规划自动创建的核心物件伏笔。"
+      ],
+      "sourceRunId": "fixture",
+      "sourceChapterId": ""
+    }
+  ],
+  "characterLedger": [
+    {
+      "id": "character-linzhou-goal",
+      "characterName": "林昼",
+      "role": "主角",
+      "type": 0,
+      "status": 2,
+      "summary": "想查明规则裂纹的来源，并拿到禁书楼旧规则。",
+      "currentGoal": "进入禁书楼读取旧规则。",
+      "currentIntent": "先借导师权限靠近钥匙。",
+      "nextPressure": "导师隐瞒债务账本，林昼必须决定是否继续相信他。",
+      "secret": {
+        "content": "",
+        "status": 0,
+        "knownBy": []
+      },
+      "relationship": {
+        "targetCharacter": "晏青砚",
+        "status": 4,
+        "tension": "信任建立在信息不对称上。",
+        "change": "中段会从保护关系转向互相试探。"
+      },
+      "abilityCost": {
+        "ability": "听见规则裂纹",
+        "levelOrBoundary": "只能听见正在松动的规则，不能凭空创造规则。",
+        "cost": "每次改写都会生成债务。",
+        "debt": "记忆、身体感知或关系信任。",
+        "limitation": "越关键的规则，债务越具体。"
+      },
+      "psychology": {
+        "emotion": "克制的焦虑",
+        "wound": "害怕自己只是别人债务的延续。",
+        "copingStrategy": "用理性拆解情绪。",
+        "stressLevel": 7
+      },
+      "beliefShift": "从逃避代价到审计代价。",
+      "identityState": "未知债务继承者",
+      "importance": 10,
+      "evidence": [
+        "林昼第一次听见钥匙低语。"
+      ],
+      "notes": [
+        "主角核心状态，章节规划必须召回。"
+      ],
+      "sourceRunId": "fixture",
+      "sourceChapterId": "chapter-001"
+    },
+    {
+      "id": "character-yanyan-secret",
+      "characterName": "晏青砚",
+      "role": "导师",
+      "type": 1,
+      "status": 4,
+      "summary": "导师隐藏了上一代债务账本。",
+      "currentGoal": "保护林昼，同时阻止他过早接触禁书楼。",
+      "currentIntent": "把真相拆成可承受的碎片。",
+      "nextPressure": "林昼越接近钥匙，导师越难维持隐瞒。",
+      "secret": {
+        "content": "晏青砚曾经替林昼母亲转移过一次规则债务。",
+        "status": 1,
+        "knownBy": [
+          "晏青砚"
+        ]
+      },
+      "relationship": {
+        "targetCharacter": "林昼",
+        "status": 4,
+        "tension": "保护和操控的边界模糊。",
+        "change": "秘密揭露后关系可能反转。"
+      },
+      "abilityCost": {
+        "ability": "",
+        "levelOrBoundary": "",
+        "cost": "",
+        "debt": "",
+        "limitation": ""
+      },
+      "psychology": {
+        "emotion": "疲惫的守护欲",
+        "wound": "上一代失败造成的愧疚。",
+        "copingStrategy": "延迟真相。",
+        "stressLevel": 8
+      },
+      "beliefShift": "",
+      "identityState": "债务账本守门人",
+      "importance": 8,
+      "evidence": [
+        "导师看到钥匙变冷时打断林昼追问。"
+      ],
+      "notes": [
+        "高风险秘密，正式揭露必须确认。"
+      ],
+      "sourceRunId": "fixture",
+      "sourceChapterId": "chapter-006"
+    }
+  ],
+  "canonLedger": [
+    {
+      "id": "canon-rule-debt",
+      "type": 0,
+      "status": 2,
+      "title": "规则债务守恒",
+      "content": "所有改写规则的能力都会生成等价债务，债务迟早以身体、记忆或关系形式讨回。",
+      "rationale": "防止无代价开挂，保证爽点和后果绑定。",
+      "impactScope": "全书",
+      "conflictCheck": "与主角能力和禁书楼设定一致。",
+      "sourceRunId": "fixture",
+      "sourceChapterId": ""
+    }
+  ],
+  "agentRuns": [],
+  "revisions": [],
+  "createdAt": "2026-06-04T00:00:00",
+  "updatedAt": "2026-06-04T00:00:00"
+}

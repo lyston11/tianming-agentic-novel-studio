@@ -1,0 +1,8 @@
+{
+  "BackupChatConfigId": null,
+  "PolishConfigId": null,
+  "HumanizePickerEnabled": true,
+  "HumanizeGuardCosineThreshold": 0.85,
+  "HumanizeGuardWindowChars": 50,
+  "HumanizePickerChapterTimeoutMs": 15000
+}
