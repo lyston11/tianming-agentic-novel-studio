@@ -269,7 +269,28 @@ public sealed class AgentRecoveryEngine
         // Tool-specific prerequisite chains
         if (failedCall.Name == "BuildChapterContextPackage")
         {
-            if (message.Contains("还没有候选") || message.Contains("章节候选"))
+            // Check for "候选还没选定" or "选定章节候选" (more specific - means selection needed)
+            if (message.Contains("候选还没选定") || message.Contains("选定章节候选"))
+            {
+                chains.Add(new PrerequisiteToolChain
+                {
+                    Steps = new()
+                    {
+                        new PrerequisiteToolStep
+                        {
+                            ToolCall = new AgentToolCall
+                            {
+                                Name = "SelectChapterCandidate",
+                                Arguments = new() { ["runId"] = runId },
+                            },
+                            MissingPrerequisiteTag = "chapter_candidate_selection",
+                        },
+                    },
+                    Priority = 1,
+                    Description = "章节候选未选定，需要先选择候选",
+                });
+            }
+            else if (message.Contains("还没有候选") || message.Contains("没有章节候选"))
             {
                 chains.Add(new PrerequisiteToolChain
                 {
@@ -291,26 +312,6 @@ public sealed class AgentRecoveryEngine
                     },
                     Priority = 1,
                     Description = "缺少章节候选，需要先规划章节",
-                });
-            }
-            else if (message.Contains("还没选定") || message.Contains("候选还没选定"))
-            {
-                chains.Add(new PrerequisiteToolChain
-                {
-                    Steps = new()
-                    {
-                        new PrerequisiteToolStep
-                        {
-                            ToolCall = new AgentToolCall
-                            {
-                                Name = "SelectChapterCandidate",
-                                Arguments = new() { ["runId"] = runId },
-                            },
-                            MissingPrerequisiteTag = "chapter_candidate_selection",
-                        },
-                    },
-                    Priority = 1,
-                    Description = "章节候选未选定，需要先选择候选",
                 });
             }
         }

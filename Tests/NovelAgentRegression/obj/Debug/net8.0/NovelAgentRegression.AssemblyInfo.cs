@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("NovelAgentRegression")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3fa51130a1a07492125147600574fb6571fd8179")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4fbb2b3ebaa86eb80722b9e787e764db0d063ed0")]
 [assembly: System.Reflection.AssemblyProductAttribute("NovelAgentRegression")]
 [assembly: System.Reflection.AssemblyTitleAttribute("NovelAgentRegression")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

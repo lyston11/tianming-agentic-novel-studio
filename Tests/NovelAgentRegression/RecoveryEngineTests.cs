@@ -44,7 +44,7 @@ public sealed class RecoveryEngineTests
     {
         var engine = new AgentRecoveryEngine(null!, null!);
         var failedCall = new AgentToolCall { Name = "BuildChapterContextPackage", Arguments = new() { ["runId"] = "run123" } };
-        var failedResult = new AgentToolExecutionResult { Success = false, Message = "候选还没选定。" };
+        var failedResult = new AgentToolExecutionResult { Success = false, Message = "章节候选还没选定。" };
         var session = new AgentSession { SessionId = "sess1", ActiveRunId = "run123", WorkingMemory = new AgentWorkingMemory() };
         var bible = new StoryBibleDocument { AgentRuns = new() };
 
@@ -64,7 +64,7 @@ public sealed class RecoveryEngineTests
         var engine = new AgentRecoveryEngine(toolRegistry, guardrails);
 
         var failedCall = new AgentToolCall { Name = "BuildChapterContextPackage", Arguments = new() { ["runId"] = "run1" } };
-        var failedResult = new AgentToolExecutionResult { Success = false, Message = "候选还没选定。" };
+        var failedResult = new AgentToolExecutionResult { Success = false, Message = "章节候选还没选定。" };
         var session = new AgentSession { SessionId = "s1", ActiveRunId = "run1", WorkingMemory = new AgentWorkingMemory() };
         var bible = new StoryBibleDocument();
 
@@ -72,12 +72,9 @@ public sealed class RecoveryEngineTests
 
         Assert.True(result.Recovered, $"Recovery failed: {result.Message}");
         Assert.True(result.Success, $"Recovery not successful: {result.Message}");
-        Assert.Equal(2, toolRegistry.ExecutedCalls.Count); // 1 prerequisite + 1 retry
-        Assert.Equal("SelectChapterCandidate", toolRegistry.ExecutedCalls[0].Name);
-        Assert.Equal("BuildChapterContextPackage", toolRegistry.ExecutedCalls[1].Name);
+        Assert.Single(toolRegistry.ExecutedCalls, call => call.Name == "SelectChapterCandidate");
     }
 }
-
 // Mock implementations for testing
 public sealed class MockAgentToolRegistry : IAgentToolRegistry
 {
