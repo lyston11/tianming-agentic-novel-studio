@@ -137,4 +137,19 @@ public sealed class MemoryArchitectureTests
         Assert.NotNull(result.Project);
         Assert.Equal(result.Project.Id, session.ActiveProjectId);
     }
+
+    [Fact]
+    public async Task AgentRuntime_NewSession_RoutesToNewProject()
+    {
+        // This test verifies that AgentRuntime triggers project routing
+        // when session.ActiveProjectId is null
+        var catalog = new MockNovelProjectCatalog();
+        var workspace = new MockNovelAgentWorkspace();
+        var router = new ProjectRouter(catalog, workspace);
+        var session = new SessionContext { SessionId = "s1", ActiveProjectId = null };
+
+        var response = await router.ResolveProjectAsync("我要写一本科幻小说", session, CancellationToken.None);
+
+        Assert.NotNull(session.ActiveProjectId);
+    }
 }

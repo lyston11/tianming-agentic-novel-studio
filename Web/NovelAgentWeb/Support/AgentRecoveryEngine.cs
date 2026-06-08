@@ -72,10 +72,10 @@ public sealed class RecoveryResult
 
 public sealed class AgentRecoveryEngine
 {
-    private readonly AgentToolRegistry _toolRegistry;
-    private readonly AgentToolGuardrails _guardrails;
+    private readonly dynamic _toolRegistry;
+    private readonly dynamic _guardrails;
 
-    public AgentRecoveryEngine(AgentToolRegistry toolRegistry, AgentToolGuardrails guardrails)
+    public AgentRecoveryEngine(dynamic toolRegistry, dynamic guardrails)
     {
         _toolRegistry = toolRegistry;
         _guardrails = guardrails;

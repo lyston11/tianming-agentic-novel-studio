@@ -61,7 +61,7 @@ public sealed class RecoveryEngineTests
     public async Task RecoverFromFailureAsync_ExecutesPrerequisiteChainAndRetries()
     {
         var toolRegistry = new MockAgentToolRegistry();
-        var guardrails = new AgentToolGuardrails();
+        var guardrails = new MockAgentToolGuardrails();
         var engine = new AgentRecoveryEngine(toolRegistry, guardrails);
 
         var failedCall = new AgentToolCall { Name = "BuildChapterContextPackage", Arguments = new() { ["runId"] = "run1" } };
@@ -77,7 +77,7 @@ public sealed class RecoveryEngineTests
     }
 }
 // Mock implementations for testing
-public sealed class MockAgentToolRegistry : IAgentToolRegistry
+public sealed class MockAgentToolRegistry
 {
     public List<AgentToolCall> ExecutedCalls { get; } = new();
 
@@ -97,7 +97,7 @@ public sealed class MockAgentToolRegistry : IAgentToolRegistry
     }
 }
 
-public sealed class AgentToolGuardrails : IAgentToolGuardrails
+public sealed class MockAgentToolGuardrails
 {
     private readonly Dictionary<string, int> _attemptCounts = new();
     private const int MaxAttempts = 3;
@@ -118,5 +118,21 @@ public sealed class AgentToolGuardrails : IAgentToolGuardrails
 
         _attemptCounts[key] = count + 1;
         return true;
+    }
+
+    public dynamic Check(string toolName, Dictionary<string, string> arguments, bool lastSuccess)
+    {
+        // Return a mock guardrail result
+        return new
+        {
+            IsBlocked = false,
+            IsWarning = false,
+            Message = string.Empty,
+        };
+    }
+
+    public void RecordSuccess(string toolName)
+    {
+        // Mock implementation - does nothing
     }
 }

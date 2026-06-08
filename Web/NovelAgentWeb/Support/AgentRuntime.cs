@@ -21,6 +21,7 @@ public sealed class AgentRuntime
     private readonly AgentToolGuardrails _guardrails;
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
+    private readonly ProjectRouter _projectRouter;
 
     public AgentRuntime(
         NovelAgentWorkspace workspace,
@@ -55,6 +56,7 @@ public sealed class AgentRuntime
         _guardrails = guardrails;
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
+        _projectRouter = new ProjectRouter(catalog, workspace);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -69,6 +71,30 @@ public sealed class AgentRuntime
         session.UpdatedAt = DateTime.UtcNow;
         if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
             session.Title = BuildSessionTitle(userMessage);
+
+        // ── Project routing (first turn or explicit switch) ──
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) || IsProjectSwitchIntent(userMessage))
+        {
+            var sessionContext = ToSessionContext(session);
+            var resolution = await _projectRouter.ResolveProjectAsync(userMessage, sessionContext, ct).ConfigureAwait(false);
+            if (resolution.NeedsClarification)
+            {
+                return new AgentChatResponse(
+                    resolution.ClarificationMessage ?? "请明确您的项目选择。",
+                    new[] { "创建新项目", "继续现有项目" },
+                    session.SessionId,
+                    session.ActiveRunId,
+                    session.Phase,
+                    null,
+                    null,
+                    AgentWorkingMemorySnapshot.From(session.WorkingMemory),
+                    Array.Empty<AgentRuntimeStep>(),
+                    session.WorkingMemory.MissionPlan,
+                    null);
+            }
+
+            session.ActiveProjectId = resolution.Project!.Id;
+        }
 
         var project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
@@ -1030,6 +1056,24 @@ public sealed class AgentRuntime
         session.WorkingMemory.MissionPlan.InteractionState?.Intent ??
         session.WorkingMemory.MissionPlan.TurnIntent ??
         new TurnIntent { RawMessage = userMessage };
+
+    private static SessionContext ToSessionContext(AgentSession session) => new()
+    {
+        SessionId = session.SessionId,
+        ActiveProjectId = session.ActiveProjectId,
+        ChatHistory = session.ChatHistory,
+        CurrentGoal = session.WorkingMemory.CurrentGoal,
+        OpenQuestions = session.WorkingMemory.OpenQuestions,
+        RecentObservations = session.WorkingMemory.RecentObservations,
+        PendingToolCall = session.WorkingMemory.PendingToolCall,
+        PendingConfirmation = session.WorkingMemory.PendingConfirmation,
+    };
+
+    private static bool IsProjectSwitchIntent(string message)
+    {
+        var lower = message.ToLowerInvariant();
+        return lower.Contains("切换") || lower.Contains("换个") || lower.Contains("换一本");
+    }
 
     private AgentAction? lastAction;
 }
