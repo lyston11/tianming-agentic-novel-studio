@@ -179,13 +179,13 @@ public sealed class ProjectRouter
         }
 
         var projectId = Guid.NewGuid().ToString("N");
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var project = new NovelProjectInfo
         {
             Id = projectId,
             Title = $"新小说 {now:yyyy-MM-dd HH:mm}",
             Genre = "未分类",
-            StorageProjectName = $"{_workspace!.ProjectName}__novel__{projectId[..8]}",
+            StorageProjectName = projectId,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -258,7 +258,7 @@ public sealed class ProjectRouter
             {
                 Success = false,
                 NeedsClarification = true,
-                ClarificationMessage = "未找到匹配的小说项目。请问您要继续哪一本小说？",
+                ClarificationMessage = "未找到已有小说项目。是否要创建新项目？",
             };
         }
 
