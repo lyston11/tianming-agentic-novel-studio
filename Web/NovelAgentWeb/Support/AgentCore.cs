@@ -21,6 +21,25 @@ public sealed class AgentDecision
     public string Source { get; set; } = "planner";
 }
 
+public enum ConversationPhase
+{
+    Conversation = 0,  // 状态查询、确认、闲聊
+    Planning = 1,      // 规划章节、选择候选、构建上下文
+    Creation = 2,      // 生成正文、修复草稿
+    Review = 3,        // 质量评审、门禁检查
+}
+
+public enum TurnIntent
+{
+    StatusQuery = 0,        // 查询状态
+    Confirmation = 1,       // 确认操作
+    FreeChat = 2,          // 闲聊
+    CreativeBrief = 3,     // 创作简报
+    ContinueMission = 4,   // 继续任务
+    RevisionRequest = 5,   // 修复请求
+    NewProjectSeed = 6,    // 新项目种子
+}
+
 public sealed class AgentToolCall
 {
     public string Name { get; set; } = string.Empty;
