@@ -3,21 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Services.Framework.AI.NovelAgent.Models;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
-// Simplified types for recovery engine - these match the structure in AgentCore.cs
-public sealed class AgentToolCall
-{
-    public string Name { get; set; } = string.Empty;
-    public Dictionary<string, string> Arguments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-}
-
-public sealed class AgentToolExecutionResult
-{
-    public bool Success { get; set; }
-    public string Message { get; set; } = string.Empty;
-}
+// Note: AgentToolCall and AgentToolExecutionResult are defined in AgentCore.cs
 
 public enum ToolFailureType
 {
@@ -78,31 +68,7 @@ public sealed class RecoveryResult
     };
 }
 
-// Stub types for testing - these will be replaced with real types from AgentCore later
-public sealed class AgentWorkingMemory
-{
-    public string? SelectedChapterCandidateId { get; set; }
-    public string? LastBuiltContextRunId { get; set; }
-    public string? CurrentGoal { get; set; }
-}
-
-public sealed class ChatTurn
-{
-    public string TurnId { get; set; } = string.Empty;
-}
-
-public sealed class AgentSession
-{
-    public string SessionId { get; set; } = string.Empty;
-    public string? ActiveRunId { get; set; }
-    public AgentWorkingMemory WorkingMemory { get; set; } = new();
-    public List<ChatTurn>? ChatHistory { get; set; }
-}
-
-public sealed class StoryBibleDocument
-{
-    public List<object> AgentRuns { get; set; } = new();
-}
+// Note: AgentWorkingMemory, AgentSession, and StoryBibleDocument are defined elsewhere
 
 // Stub interfaces for dependencies
 public interface IAgentToolRegistry
@@ -304,7 +270,7 @@ public sealed class AgentRecoveryEngine
                                 Arguments = new()
                                 {
                                     ["creativeBrief"] = session.WorkingMemory?.CurrentGoal ?? "继续当前章节规划",
-                                    ["sourceTurnId"] = session.ChatHistory?.LastOrDefault()?.TurnId ?? string.Empty,
+                                    ["sourceTurnId"] = string.Empty, // AgentConversationTurn doesn't have TurnId
                                 },
                             },
                             MissingPrerequisiteTag = "chapter_candidates",

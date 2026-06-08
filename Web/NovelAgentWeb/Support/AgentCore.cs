@@ -436,6 +436,70 @@ public sealed class AgentDecisionTrace
     };
 }
 
+public sealed class UserProfile
+{
+    [System.Text.Json.Serialization.JsonPropertyName("userId")]
+    public string UserId { get; set; } = "default";
+
+    [System.Text.Json.Serialization.JsonPropertyName("stylePreferences")]
+    public Dictionary<string, string> StylePreferences { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("genreHabits")]
+    public Dictionary<string, int> GenreHabits { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("confirmationTolerance")]
+    public string ConfirmationTolerance { get; set; } = "medium";
+
+    [System.Text.Json.Serialization.JsonPropertyName("globalConstraints")]
+    public List<string> GlobalConstraints { get; set; } = new();
+}
+
+public sealed class SessionContext
+{
+    [System.Text.Json.Serialization.JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
+
+    [System.Text.Json.Serialization.JsonPropertyName("activeProjectId")]
+    public string? ActiveProjectId { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("chatHistory")]
+    public List<AgentConversationTurn> ChatHistory { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("currentGoal")]
+    public string CurrentGoal { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonPropertyName("openQuestions")]
+    public List<string> OpenQuestions { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("recentObservations")]
+    public List<AgentRuntimeObservation> RecentObservations { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("pendingToolCall")]
+    public AgentToolCall? PendingToolCall { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("pendingConfirmation")]
+    public AgentPendingConfirmation? PendingConfirmation { get; set; }
+}
+
+public sealed class AgentRuntimeContext
+{
+    [System.Text.Json.Serialization.JsonPropertyName("user")]
+    public UserProfile User { get; set; } = new();
+
+    // NovelProjectInfo will be added in Task 6
+    [System.Text.Json.Serialization.JsonPropertyName("activeProject")]
+    public object? ActiveProject { get; set; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("session")]
+    public SessionContext Session { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("mission")]
+    public AgentMissionState Mission { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonPropertyName("missionPlan")]
+    public AgentMissionPlan MissionPlan { get; set; } = new();
+}
+
 public sealed class AgentWorkingMemory
 {
     public string CurrentGoal { get; set; } = string.Empty;

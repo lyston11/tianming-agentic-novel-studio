@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
 
