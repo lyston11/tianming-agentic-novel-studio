@@ -3,6 +3,53 @@ using Xunit;
 
 namespace TM.Tests.NovelAgentRegression;
 
+/// <summary>
+/// Mock catalog for testing ProjectRouter without file I/O.
+/// Tracks projects in memory to support testing of project resolution logic.
+/// </summary>
+internal sealed class MockNovelProjectCatalog
+{
+    private readonly NovelProjectCatalogDocument _document = new();
+
+    public Task<NovelProjectCatalogDocument> GetAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult(_document);
+    }
+
+    public Task<NovelProjectInfo> GetActiveAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(_document.ActiveProjectId) || _document.Projects.Count == 0)
+            throw new InvalidOperationException("No active project");
+
+        return Task.FromResult(_document.Projects.First(p => string.Equals(p.Id, _document.ActiveProjectId, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    public Task AddAsync(NovelProjectInfo project, CancellationToken ct = default)
+    {
+        _document.Projects.Add(project);
+        return Task.CompletedTask;
+    }
+
+    public Task<NovelProjectInfo> ActivateAsync(string projectId, CancellationToken ct = default)
+    {
+        var project = _document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Project not found: {projectId}");
+
+        _document.ActiveProjectId = project.Id;
+        return Task.FromResult(project);
+    }
+}
+
+/// <summary>
+/// Mock workspace for testing ProjectRouter.
+/// Provides minimal workspace properties needed for project routing tests.
+/// </summary>
+internal sealed class MockNovelAgentWorkspace
+{
+    public string ProjectName { get; init; } = "TestProject";
+    public string StorageRoot { get; init; } = "./test-storage";
+}
+
 public sealed class MemoryArchitectureTests
 {
     [Fact]
@@ -74,5 +121,20 @@ public sealed class MemoryArchitectureTests
         var intent = await router.ClassifyIntentAsync("续写之前的小说", session, CancellationToken.None);
 
         Assert.Equal(UserProjectIntent.ContinueExisting, intent);
+    }
+
+    [Fact]
+    public async Task ResolveProjectAsync_CreateNewIntent_CreatesNewProject()
+    {
+        var catalog = new MockNovelProjectCatalog();
+        var workspace = new MockNovelAgentWorkspace();
+        var router = new ProjectRouter(catalog, workspace);
+        var session = new SessionContext { SessionId = "s1" };
+
+        var result = await router.ResolveProjectAsync("我要写一本新书", session, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Project);
+        Assert.Equal(result.Project.Id, session.ActiveProjectId);
     }
 }
