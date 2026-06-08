@@ -185,13 +185,13 @@ public sealed class ProjectRouter
             Id = projectId,
             Title = $"新小说 {now:yyyy-MM-dd HH:mm}",
             Genre = "未分类",
-            StorageProjectName = $"{_workspace.ProjectName}__novel__{projectId[..8]}",
+            StorageProjectName = $"{_workspace!.ProjectName}__novel__{projectId[..8]}",
             CreatedAt = now,
             UpdatedAt = now,
         };
 
-        await _catalog.AddAsync(project, cancellationToken).ConfigureAwait(false);
-        await _catalog.ActivateAsync(projectId, cancellationToken).ConfigureAwait(false);
+        await _catalog!.AddAsync(project, cancellationToken).ConfigureAwait(false);
+        await _catalog!.ActivateAsync(projectId, cancellationToken).ConfigureAwait(false);
         session.ActiveProjectId = projectId;
 
         return new ProjectResolutionResult
