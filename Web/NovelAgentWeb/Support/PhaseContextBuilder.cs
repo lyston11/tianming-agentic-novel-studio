@@ -31,6 +31,7 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PrepareConversationContextAsync(
         SessionContext session,
         AgentMissionState mission,
+        AgentMissionPlan missionPlan,
         CancellationToken ct)
     {
         var context = new Dictionary<string, object>();
@@ -42,13 +43,12 @@ public sealed class PhaseContextBuilder
         }
 
         // Mission summary (very brief)
-        if (mission?.MissionPlan != null)
+        if (missionPlan != null)
         {
             context["mission_summary"] = new
             {
-                stage = mission.MissionPlan.Stage,
-                status = mission.MissionPlan.Status,
-                project_title = mission.MissionPlan.ProjectTitle,
+                status = missionPlan.Status,
+                current_objective = missionPlan.CurrentObjective,
             };
         }
 
@@ -58,6 +58,7 @@ public sealed class PhaseContextBuilder
     public async Task<Dictionary<string, object>> PreparePlanningContextAsync(
         SessionContext session,
         AgentMissionState mission,
+        AgentMissionPlan missionPlan,
         StoryBibleDocument bible,
         CancellationToken ct)
     {
@@ -70,23 +71,9 @@ public sealed class PhaseContextBuilder
         }
 
         // Mission plan summary
-        if (mission?.MissionPlan != null)
+        if (missionPlan != null)
         {
-            context["mission_plan"] = mission.MissionPlan;
-        }
-
-        // Project memory summary
-        var projectMemory = await _memoryService.LoadProjectMemoryAsync(
-            new NovelProjectInfo { Id = session.ActiveProjectId ?? string.Empty },
-            ct).ConfigureAwait(false);
-
-        if (projectMemory != null)
-        {
-            context["project_memory_summary"] = new
-            {
-                total_chapters = projectMemory.TotalChapters,
-                key_patterns = projectMemory.SuccessPatterns.Take(3).ToList(),
-            };
+            context["mission_plan"] = missionPlan;
         }
 
         // Story Bible basics
@@ -98,6 +85,93 @@ public sealed class PhaseContextBuilder
                 core_hook = bible.Constitution.CoreHook,
                 volume_count = bible.VolumeArcs?.Count ?? 0,
             };
+        }
+
+        return context;
+    }
+
+    public async Task<Dictionary<string, object>> PrepareCreationContextAsync(
+        SessionContext session,
+        AgentMissionState mission,
+        AgentMissionPlan missionPlan,
+        StoryBibleDocument bible,
+        string? runId,
+        CancellationToken ct)
+    {
+        var context = new Dictionary<string, object>();
+
+        // Find current run and context package
+        NovelAgentRun? run = null;
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            run = bible.AgentRuns?.FirstOrDefault(r =>
+                string.Equals(r.RunId, runId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Full context package if available
+        if (run?.ContextPackage != null)
+        {
+            context["context_package"] = run.ContextPackage;
+        }
+
+        // Story Bible (full)
+        context["story_bible"] = bible;
+
+        // Mission plan
+        if (missionPlan != null)
+        {
+            context["mission_plan"] = missionPlan;
+        }
+
+        // Recent observations (5 items for creation phase)
+        if (session.RecentObservations != null && session.RecentObservations.Count > 0)
+        {
+            context["recent_observations"] = session.RecentObservations.TakeLast(5).ToList();
+        }
+
+        return context;
+    }
+
+    public async Task<Dictionary<string, object>> PrepareReviewContextAsync(
+        SessionContext session,
+        AgentMissionState mission,
+        AgentMissionPlan missionPlan,
+        StoryBibleDocument bible,
+        string? runId,
+        CancellationToken ct)
+    {
+        var context = new Dictionary<string, object>();
+
+        // Find current run
+        NovelAgentRun? run = null;
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            run = bible.AgentRuns?.FirstOrDefault(r =>
+                string.Equals(r.RunId, runId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Draft artifact
+        if (run?.DraftArtifact != null)
+        {
+            context["draft_artifact"] = run.DraftArtifact;
+        }
+
+        // Gate report
+        if (run?.GateReport != null)
+        {
+            context["gate_report"] = run.GateReport;
+        }
+
+        // Mission plan
+        if (missionPlan != null)
+        {
+            context["mission_plan"] = missionPlan;
+        }
+
+        // Recent observations (3 items)
+        if (session.RecentObservations != null && session.RecentObservations.Count > 0)
+        {
+            context["recent_observations"] = session.RecentObservations.TakeLast(3).ToList();
         }
 
         return context;

@@ -82,7 +82,10 @@ public sealed class AgentMissionPlan
 {
     public string MissionId { get; set; } = Guid.NewGuid().ToString("N");
     public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
     public string Status { get; set; } = "idle";
+    public string CurrentObjective { get; set; } = string.Empty;
+    public string Stage { get; set; } = "idle";
 }
 
 public sealed class AgentToolCall

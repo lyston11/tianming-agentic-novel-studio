@@ -55,6 +55,8 @@
              Link="NovelAgentWeb\Support\ProjectRouter.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\NovelProjectCatalog.cs"
              Link="NovelAgentWeb\Support\NovelProjectCatalog.cs" />
+    <Compile Include="..\..\Web\NovelAgentWeb\Support\PhaseContextBuilder.cs"
+             Link="NovelAgentWeb\Support\PhaseContextBuilder.cs" />
   </ItemGroup>
 
   <ItemGroup>
