@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TM.Tests.NovelAgentRegression</RootNamespace>
+    <AssemblyName>NovelAgentRegression</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.4.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Models\*.cs"
+             Link="NovelAgent\Models\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\StoryBibleService.cs"
+             Link="NovelAgent\Services\StoryBibleService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\GenreDirectionPlanner.cs"
+             Link="NovelAgent\Services\GenreDirectionPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\BookConceptDesigner.cs"
+             Link="NovelAgent\Services\BookConceptDesigner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CreativeKnowledgeBaseService.cs"
+             Link="NovelAgent\Services\CreativeKnowledgeBaseService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\VolumeArcPlanner.cs"
+             Link="NovelAgent\Services\VolumeArcPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\ForeshadowLedgerService.cs"
+             Link="NovelAgent\Services\ForeshadowLedgerService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CanonMaintenanceService.cs"
+             Link="NovelAgent\Services\CanonMaintenanceService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CharacterLedgerService.cs"
+             Link="NovelAgent\Services\CharacterLedgerService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\ChapterNoveltyPlanner.cs"
+             Link="NovelAgent\Services\ChapterNoveltyPlanner.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\StoryStateSnapshotService.cs"
+             Link="NovelAgent\Services\StoryStateSnapshotService.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CommercialRhythmChecker.cs"
+             Link="NovelAgent\Services\CommercialRhythmChecker.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\HardcoreWritingEngine.cs"
+             Link="NovelAgent\Services\HardcoreWritingEngine.cs" />
+    <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\NovelAgentOrchestrator.cs"
+             Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
+    <Compile Include="..\..\Web\NovelAgentWeb\Support\AgentRecoveryEngine.cs"
+             Link="NovelAgentWeb\Support\AgentRecoveryEngine.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TM.Framework.Common.Helpers" />
+    <Using Include="TM.Framework.Common.Helpers.Storage" />
+    <Using Include="TM.Framework.Common.Services" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Fixtures\NovelAgent\**\*.json"
+          Link="Fixtures\NovelAgent\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
