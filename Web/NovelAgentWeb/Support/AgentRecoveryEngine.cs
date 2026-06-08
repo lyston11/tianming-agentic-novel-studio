@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -102,8 +105,20 @@ public sealed class StoryBibleDocument
 }
 
 // Stub interfaces for dependencies
-public interface IAgentToolRegistry { }
-public interface IAgentToolGuardrails { }
+public interface IAgentToolRegistry
+{
+    Task<AgentToolExecutionResult> ExecuteAsync(
+        AgentToolCall toolCall,
+        AgentSession session,
+        StoryBibleDocument bible,
+        bool validate,
+        CancellationToken ct);
+}
+
+public interface IAgentToolGuardrails
+{
+    bool CanAttempt(string toolName, Dictionary<string, string> arguments);
+}
 
 public sealed class AgentRecoveryEngine
 {
@@ -163,11 +178,56 @@ public sealed class AgentRecoveryEngine
         return analysis;
     }
 
+    public async Task<RecoveryResult> RecoverFromFailureAsync(
+        AgentToolCall failedCall,
+        AgentToolExecutionResult failedResult,
+        AgentSession session,
+        StoryBibleDocument bible,
+        CancellationToken ct)
+    {
+        // 1. Check guardrails - avoid infinite retry loops
+        if (!_guardrails.CanAttempt(failedCall.Name, failedCall.Arguments))
+        {
+            return RecoveryResult.Unrecoverable("工具执行失败次数过多，已被熔断器阻止");
+        }
+
+        // 2. Analyze failure type
+        var analysis = AnalyzeFailure(failedCall, failedResult, session, bible);
+
+        if (!analysis.IsRecoverable)
+        {
+            return RecoveryResult.Unrecoverable(analysis.Reason);
+        }
+
+        if (analysis.RecommendedChains.Count == 0)
+        {
+            return RecoveryResult.Unrecoverable("无法推理出有效的前置工具链");
+        }
+
+        // 3. Select best chain (highest priority)
+        var chain = analysis.RecommendedChains.OrderByDescending(c => c.Priority).First();
+
+        // 4. Execute prerequisite tool chain
+        foreach (var step in chain.Steps)
+        {
+            var stepResult = await _toolRegistry.ExecuteAsync(step.ToolCall, session, bible, false, ct).ConfigureAwait(false);
+            if (!stepResult.Success)
+            {
+                return RecoveryResult.ChainFailed(step.ToolCall.Name, stepResult.Message);
+            }
+        }
+
+        // 5. Retry original tool (最多 1 次完整链路)
+        var retryResult = await _toolRegistry.ExecuteAsync(failedCall, session, bible, false, ct).ConfigureAwait(false);
+        return RecoveryResult.FromRetry(retryResult);
+    }
+
     private ToolFailureType ClassifyFailure(string message)
     {
         // MissingPrerequisite patterns
         if (message.Contains("必须先") || message.Contains("需要先") ||
-            message.Contains("前必须") || message.Contains("还没有"))
+            message.Contains("前必须") || message.Contains("还没有") ||
+            message.Contains("还没选定") || message.Contains("还没"))
         {
             return ToolFailureType.MissingPrerequisite;
         }
