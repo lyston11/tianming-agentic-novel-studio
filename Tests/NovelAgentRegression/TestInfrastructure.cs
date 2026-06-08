@@ -58,6 +58,12 @@ namespace TM.Framework.Common.Helpers.Storage
             }
         }
 
+        public static string GetStorageRoot()
+        {
+            Directory.CreateDirectory(TestStorageRoot);
+            return TestStorageRoot;
+        }
+
         public static string GetFilePath(string layer, string subPath, string fileName)
         {
             var path = Path.Combine(TestStorageRoot, "Projects", CurrentProjectName, layer, NormalizeSubPath(subPath));

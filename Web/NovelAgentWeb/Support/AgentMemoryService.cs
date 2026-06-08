@@ -9,6 +9,14 @@ public sealed class AgentMemoryService
     private readonly NovelAgentWorkspace _workspace;
     private readonly object _fileLock = new();
 
+    // Magic numbers for list trimming
+    private const int MaxForbiddenDirections = 8;
+    private const int MaxUnresolvedThreads = 12;
+    private const int MaxShortTermPreferences = 24;
+    private const int MaxRepeatedBlockers = 24;
+    private const int MaxSuccessfulRepairNotes = 24;
+    private const int MaxStyleDislikes = 32;
+
     public AgentMemoryService(NovelAgentWorkspace workspace) => _workspace = workspace;
 
     public Task HydrateAsync(AgentSession session, NovelProjectInfo project, StoryBibleDocument bible, CancellationToken ct = default)
@@ -63,8 +71,15 @@ public sealed class AgentMemoryService
             return defaultProfile;
         }
 
-        var json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
-        return JsonSerializer.Deserialize<UserProfile>(json) ?? new UserProfile();
+        // Use Task.Run with _fileLock to avoid blocking async operations
+        return await Task.Run(() =>
+        {
+            lock (_fileLock)
+            {
+                var json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize<UserProfile>(json) ?? new UserProfile();
+            }
+        }, ct).ConfigureAwait(false);
     }
 
     private string GetUserProfilePath()
@@ -79,7 +94,15 @@ public sealed class AgentMemoryService
     {
         var path = GetUserProfilePath();
         var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(path, json, ct).ConfigureAwait(false);
+
+        // Use Task.Run with _fileLock to avoid blocking async operations
+        await Task.Run(() =>
+        {
+            lock (_fileLock)
+            {
+                File.WriteAllText(path, json);
+            }
+        }, ct).ConfigureAwait(false);
     }
 
     private Task<AgentProjectMemory?> LoadProjectMemoryAsync(NovelProjectInfo project, CancellationToken ct)
@@ -103,11 +126,11 @@ public sealed class AgentMemoryService
         {
             memory.ReaderPromise = bible.Constitution.ReaderPromise;
             memory.Tone = $"{bible.Constitution.Genre}/{bible.Constitution.SubGenre}";
-            memory.Constraints.AddRange(bible.Constitution.ForbiddenDirections.Take(8));
+            memory.Constraints.AddRange(bible.Constitution.ForbiddenDirections.Take(MaxForbiddenDirections));
             memory.UnresolvedThreads.AddRange(bible.ForeshadowLedger
                 .Where(f => !string.IsNullOrWhiteSpace(f.PlannedPayoffChapterId))
                 .Select(f => $"{f.Name} -> {f.PlannedPayoffChapterId}")
-                .Take(12));
+                .Take(MaxUnresolvedThreads));
         }
         return memory;
     }
@@ -124,8 +147,8 @@ public sealed class AgentMemoryService
                 memory.AuthorMemory.StyleDislikes.Add(preference);
         }
 
-        Trim(memory.SessionMemory.ShortTermPreferences, 24);
-        Trim(memory.AuthorMemory.StyleDislikes, 32);
+        Trim(memory.SessionMemory.ShortTermPreferences, MaxShortTermPreferences);
+        Trim(memory.AuthorMemory.StyleDislikes, MaxStyleDislikes);
     }
 
     private static void ApplyReflection(AgentSession session, AgentReflection? reflection)
@@ -149,9 +172,9 @@ public sealed class AgentMemoryService
             if (!author.StyleDislikes.Contains(item) && item.Contains("文风", StringComparison.OrdinalIgnoreCase))
                 author.StyleDislikes.Add(item);
 
-        Trim(execution.RepeatedBlockers, 24);
-        Trim(execution.SuccessfulRepairNotes, 24);
-        Trim(author.StyleDislikes, 32);
+        Trim(execution.RepeatedBlockers, MaxRepeatedBlockers);
+        Trim(execution.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
+        Trim(author.StyleDislikes, MaxStyleDislikes);
     }
 
     private AgentProjectMemory? LoadProjectMemory(NovelProjectInfo project) =>
@@ -198,8 +221,16 @@ public sealed class AgentMemoryService
             {
                 return JsonSerializer.Deserialize<T>(File.ReadAllText(path), JsonOptions());
             }
-            catch
+            catch (JsonException ex)
             {
+                // Log JSON deserialization errors and return default
+                Console.Error.WriteLine($"Failed to deserialize {typeof(T).Name} from {path}: {ex.Message}");
+                return default;
+            }
+            catch (IOException ex)
+            {
+                // Log I/O errors and return default
+                Console.Error.WriteLine($"I/O error reading {typeof(T).Name} from {path}: {ex.Message}");
                 return default;
             }
         }
@@ -209,7 +240,14 @@ public sealed class AgentMemoryService
     {
         lock (_fileLock)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Path cannot be null or empty", nameof(path));
+
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Path must contain a directory component", nameof(path));
+
+            Directory.CreateDirectory(directory);
             File.WriteAllText(path, JsonSerializer.Serialize(value, JsonOptions()));
         }
     }

@@ -198,16 +198,24 @@ public sealed class MemoryArchitectureTests
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "proj1" };
         var project = new NovelProjectInfo { Id = "proj1", Title = "测试小说", StorageProjectName = "test-novel" };
 
-        var context = await service.LoadRuntimeContextAsync(session, project, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var context = await service.LoadRuntimeContextAsync(session, project, CancellationToken.None).ConfigureAwait(false);
 
-        Assert.NotNull(context.User);
-        Assert.NotNull(context.ActiveProject);
-        Assert.NotNull(context.Session);
-        Assert.Equal("default", context.User.UserId);
-        Assert.Equal(project, context.ActiveProject);
-        Assert.Equal(session, context.Session);
+            Assert.NotNull(context.User);
+            Assert.NotNull(context.ActiveProject);
+            Assert.NotNull(context.Session);
+            Assert.Equal("default", context.User.UserId);
+            Assert.Equal(project, context.ActiveProject);
+            Assert.Equal(session, context.Session);
+        }
+        finally
+        {
+            // Dispose SemaphoreSlim to prevent resource leak
+            workspace.ProjectContextLock.Dispose();
 
-        // Cleanup
-        try { Directory.Delete(tempDir, true); } catch { }
+            // Cleanup temp directory
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
     }
 }
