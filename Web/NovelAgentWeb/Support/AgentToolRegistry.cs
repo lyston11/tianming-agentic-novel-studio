@@ -18,6 +18,40 @@ public sealed class AgentToolRegistry
         _entries = BuildEntries();
     }
 
+    private static readonly string[] ConversationTools = new[]
+    {
+        "QueryProjectStatus",
+        "StartNewNovelProject",
+    };
+
+    private static readonly string[] PlanningTools = new[]
+    {
+        "QueryProjectStatus",
+        "StartNewNovelProject",
+        "SearchCreativeKnowledge",
+        "PlanStoryFoundation",
+        "PlanVolumeArc",
+        "PlanChapter",
+        "SelectChapterCandidate",
+        "BuildChapterContextPackage",
+    };
+
+    private static readonly string[] CreationTools = new[]
+    {
+        "QueryProjectStatus",
+        "GenerateChapterWithChanges",
+        "RepairChapterDraft",
+        "ValidateChapterDraft",
+    };
+
+    private static readonly string[] ReviewTools = new[]
+    {
+        "QueryProjectStatus",
+        "CommitValidatedChapter",
+        "ReviewChapter",
+        "RefreshProjectIndexes",
+    };
+
     public IReadOnlyList<AgentToolDefinition> ListTools() => _entries.Values.Select(e => e.Definition).ToList();
 
     public IReadOnlyList<ToolSchema> ListToolSchemas() => _entries.Values.Select(e => new ToolSchema
@@ -28,6 +62,34 @@ public sealed class AgentToolRegistry
         RequiresConfirmation = false,
         Parameters = e.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
     }).ToList();
+
+    public IReadOnlyList<string> GetToolNamesForPhase(ConversationPhase phase)
+    {
+        return phase switch
+        {
+            ConversationPhase.Conversation => ConversationTools,
+            ConversationPhase.Planning => PlanningTools,
+            ConversationPhase.Creation => CreationTools,
+            ConversationPhase.Review => ReviewTools,
+            _ => ConversationTools,
+        };
+    }
+
+    public IReadOnlyList<ToolSchema> ListToolSchemasForPhase(ConversationPhase phase)
+    {
+        var allowedNames = GetToolNamesForPhase(phase);
+        return _entries
+            .Where(e => allowedNames.Contains(e.Key, StringComparer.OrdinalIgnoreCase))
+            .Select(e => new ToolSchema
+            {
+                Name = e.Value.Definition.Name,
+                Description = e.Value.Definition.Description,
+                Risk = e.Value.Definition.Risk,
+                RequiresConfirmation = false,
+                Parameters = e.Value.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
+            })
+            .ToList();
+    }
 
     public AgentToolDefinition? Find(string name) =>
         _entries.TryGetValue(name.Trim(), out var entry) ? entry.Definition : null;
