@@ -29,17 +29,6 @@ public enum ConversationPhase
     Review = 3,        // 质量评审、门禁检查
 }
 
-public enum TurnIntent
-{
-    StatusQuery = 0,        // 查询状态
-    Confirmation = 1,       // 确认操作
-    FreeChat = 2,          // 闲聊
-    CreativeBrief = 3,     // 创作简报
-    ContinueMission = 4,   // 继续任务
-    RevisionRequest = 5,   // 修复请求
-    NewProjectSeed = 6,    // 新项目种子
-}
-
 public sealed class AgentToolCall
 {
     public string Name { get; set; } = string.Empty;
