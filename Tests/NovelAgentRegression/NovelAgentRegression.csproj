@@ -49,6 +49,10 @@
              Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\AgentRecoveryEngine.cs"
              Link="NovelAgentWeb\Support\AgentRecoveryEngine.cs" />
+    <Compile Include="..\..\Web\NovelAgentWeb\Support\ProjectRouter.cs"
+             Link="NovelAgentWeb\Support\ProjectRouter.cs" />
+    <Compile Include="..\..\Web\NovelAgentWeb\Support\NovelProjectCatalog.cs"
+             Link="NovelAgentWeb\Support\NovelProjectCatalog.cs" />
   </ItemGroup>
 
   <ItemGroup>

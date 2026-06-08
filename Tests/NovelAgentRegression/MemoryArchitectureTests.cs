@@ -53,4 +53,26 @@ public sealed class MemoryArchitectureTests
         Assert.Equal("test", context.Mission.CurrentGoal);
         Assert.NotNull(context.MissionPlan);
     }
+
+    [Fact]
+    public async Task ClassifyIntentAsync_NewBookKeyword_ReturnsCreateNew()
+    {
+        var router = new ProjectRouter(null!, null!);
+        var session = new SessionContext { SessionId = "s1" };
+
+        var intent = await router.ClassifyIntentAsync("我要写一本新书", session, CancellationToken.None);
+
+        Assert.Equal(UserProjectIntent.CreateNew, intent);
+    }
+
+    [Fact]
+    public async Task ClassifyIntentAsync_ContinueKeyword_ReturnsContinueExisting()
+    {
+        var router = new ProjectRouter(null!, null!);
+        var session = new SessionContext { SessionId = "s1" };
+
+        var intent = await router.ClassifyIntentAsync("续写之前的小说", session, CancellationToken.None);
+
+        Assert.Equal(UserProjectIntent.ContinueExisting, intent);
+    }
 }
