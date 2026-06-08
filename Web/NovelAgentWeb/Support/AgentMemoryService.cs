@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TM.Framework.Common.Helpers.Storage;
 using TM.Services.Framework.AI.NovelAgent.Models;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -31,6 +32,64 @@ public sealed class AgentMemoryService
         SaveAuthorMemory(session.WorkingMemory.AuthorMemory);
         SaveExecutionMemory(project, session.WorkingMemory.ExecutionMemory);
         return Task.CompletedTask;
+    }
+
+    public async Task<AgentRuntimeContext> LoadRuntimeContextAsync(
+        SessionContext session,
+        NovelProjectInfo project,
+        CancellationToken ct)
+    {
+        var userProfile = await LoadUserProfileAsync(ct).ConfigureAwait(false);
+        var projectMemory = await LoadProjectMemoryAsync(project, ct).ConfigureAwait(false);
+        var executionMemory = await LoadExecutionMemoryAsync(project, ct).ConfigureAwait(false);
+
+        return new AgentRuntimeContext
+        {
+            User = userProfile,
+            ActiveProject = project,
+            Session = session,
+            Mission = new AgentMissionState(),
+            MissionPlan = new AgentMissionPlan(),
+        };
+    }
+
+    private async Task<UserProfile> LoadUserProfileAsync(CancellationToken ct)
+    {
+        var path = GetUserProfilePath();
+        if (!File.Exists(path))
+        {
+            var defaultProfile = new UserProfile { UserId = "default" };
+            await SaveUserProfileAsync(defaultProfile, ct).ConfigureAwait(false);
+            return defaultProfile;
+        }
+
+        var json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<UserProfile>(json) ?? new UserProfile();
+    }
+
+    private string GetUserProfilePath()
+    {
+        var root = StoragePathHelper.GetStorageRoot();
+        var userDir = Path.Combine(root, "Users", "default");
+        Directory.CreateDirectory(userDir);
+        return Path.Combine(userDir, "profile.json");
+    }
+
+    private async Task SaveUserProfileAsync(UserProfile profile, CancellationToken ct)
+    {
+        var path = GetUserProfilePath();
+        var json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(path, json, ct).ConfigureAwait(false);
+    }
+
+    private Task<AgentProjectMemory?> LoadProjectMemoryAsync(NovelProjectInfo project, CancellationToken ct)
+    {
+        return Task.FromResult(LoadProjectMemory(project));
+    }
+
+    private Task<AgentExecutionMemory?> LoadExecutionMemoryAsync(NovelProjectInfo project, CancellationToken ct)
+    {
+        return Task.FromResult(LoadExecutionMemory(project));
     }
 
     private static AgentProjectMemory BuildProjectMemory(NovelProjectInfo project, StoryBibleDocument bible)

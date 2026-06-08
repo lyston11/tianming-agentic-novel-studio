@@ -73,10 +73,16 @@ public sealed class AgentRuntimeContext
 public sealed class AgentMissionState
 {
     public string CurrentGoal { get; set; } = string.Empty;
+    public string CreativePhase { get; set; } = "idle";
+    public string Readiness { get; set; } = "unknown";
+    public string NextIntent { get; set; } = string.Empty;
 }
 
 public sealed class AgentMissionPlan
 {
+    public string MissionId { get; set; } = Guid.NewGuid().ToString("N");
+    public string ProjectId { get; set; } = string.Empty;
+    public string Status { get; set; } = "idle";
 }
 
 public sealed class AgentToolCall
@@ -107,4 +113,67 @@ public sealed class AgentWorkingMemory
     public string? SelectedChapterCandidateId { get; set; }
     public string? LastBuiltContextRunId { get; set; }
     public string? CurrentGoal { get; set; }
+    public AgentSessionMemory? SessionMemory { get; set; }
+    public AgentProjectMemory? ProjectMemory { get; set; }
+    public AgentAuthorMemory? AuthorMemory { get; set; }
+    public AgentExecutionMemory? ExecutionMemory { get; set; }
+    public List<string> UserPreferences { get; set; } = new();
 }
+
+// Memory layer types for AgentMemoryService
+public sealed class AgentSessionMemory
+{
+    public string ChatSummary { get; set; } = string.Empty;
+    public List<string> ShortTermPreferences { get; set; } = new();
+    public List<string> LastObservations { get; set; } = new();
+}
+
+public sealed class AgentProjectMemory
+{
+    public string ProjectId { get; set; } = string.Empty;
+    public string LongTermGoal { get; set; } = string.Empty;
+    public string ReaderPromise { get; set; } = string.Empty;
+    public string Tone { get; set; } = string.Empty;
+    public List<string> Constraints { get; set; } = new();
+    public List<string> UnresolvedThreads { get; set; } = new();
+}
+
+public sealed class AgentAuthorMemory
+{
+    public List<string> StyleLikes { get; set; } = new();
+    public List<string> StyleDislikes { get; set; } = new();
+    public string ConfirmationTolerance { get; set; } = "key_checkpoints";
+    public List<string> GenreHabits { get; set; } = new();
+}
+
+public sealed class AgentExecutionMemory
+{
+    public List<string> ToolFailurePatterns { get; set; } = new();
+    public List<string> RepeatedBlockers { get; set; } = new();
+    public List<string> SuccessfulRepairNotes { get; set; } = new();
+}
+
+public sealed class AgentReflection
+{
+    public string Summary { get; set; } = string.Empty;
+    public AgentQualityGateReport QualityGate { get; set; } = new();
+    public AgentMissionPatch MissionPatch { get; set; } = new();
+}
+
+public sealed class AgentQualityGateReport
+{
+    public string Status { get; set; } = "not_applicable";
+    public string RewriteDecision { get; set; } = string.Empty;
+}
+
+public sealed class AgentMissionPatch
+{
+    public List<AgentChapterTaskPatch> ChapterPatches { get; set; } = new();
+}
+
+public sealed class AgentChapterTaskPatch
+{
+    public string ChapterId { get; set; } = string.Empty;
+    public string QualityIssueSummary { get; set; } = string.Empty;
+}
+

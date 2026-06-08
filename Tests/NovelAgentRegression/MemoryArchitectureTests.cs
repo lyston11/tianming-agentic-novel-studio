@@ -1,3 +1,4 @@
+using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
 
@@ -182,5 +183,31 @@ public sealed class MemoryArchitectureTests
         Assert.NotNull(resolution.Project);
         Assert.Equal(resolution.Project.Id, session.ActiveProjectId);
         Assert.NotNull(session.ActiveProjectId);
+    }
+
+    [Fact]
+    public async Task LoadRuntimeContextAsync_LoadsThreeTiers()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "test-memory-" + Guid.NewGuid().ToString("N"));
+        var workspace = new NovelAgentWorkspace
+        {
+            StorageRoot = tempDir,
+            Orchestrator = null!  // Not needed for this test
+        };
+        var service = new AgentMemoryService(workspace);
+        var session = new SessionContext { SessionId = "s1", ActiveProjectId = "proj1" };
+        var project = new NovelProjectInfo { Id = "proj1", Title = "测试小说", StorageProjectName = "test-novel" };
+
+        var context = await service.LoadRuntimeContextAsync(session, project, CancellationToken.None).ConfigureAwait(false);
+
+        Assert.NotNull(context.User);
+        Assert.NotNull(context.ActiveProject);
+        Assert.NotNull(context.Session);
+        Assert.Equal("default", context.User.UserId);
+        Assert.Equal(project, context.ActiveProject);
+        Assert.Equal(session, context.Session);
+
+        // Cleanup
+        try { Directory.Delete(tempDir, true); } catch { }
     }
 }
