@@ -39,4 +39,56 @@ public sealed class PhaseInference
         // 7. Default to creative brief
         return TurnIntentType.CreativeBrief;
     }
+
+    public ConversationPhase InferPhase(
+        string userMessage,
+        AgentSession session)
+    {
+        var intent = ClassifyIntent(userMessage, session);
+
+        // 1. Status query always returns Conversation
+        if (intent == TurnIntentType.StatusQuery)
+            return ConversationPhase.Conversation;
+
+        // 2. Confirmation also returns Conversation
+        if (intent == TurnIntentType.Confirmation && session.WorkingMemory.PendingToolCall != null)
+            return ConversationPhase.Conversation;
+
+        // 3. Free chat returns Conversation
+        if (intent == TurnIntentType.FreeChat)
+            return ConversationPhase.Conversation;
+
+        // 4. Creative intents depend on mission state
+        if (intent == TurnIntentType.CreativeBrief || intent == TurnIntentType.ContinueMission)
+        {
+            var currentTask = GetCurrentTask(session.WorkingMemory.MissionPlan);
+
+            if (currentTask == null || string.IsNullOrWhiteSpace(currentTask.Status) || currentTask.Status == "unstarted")
+                return ConversationPhase.Planning;
+
+            if (currentTask.Status == "context_ready")
+                return ConversationPhase.Creation;
+
+            if (currentTask.Status == "draft_generated" || currentTask.Status == "validated")
+                return ConversationPhase.Review;
+
+            return ConversationPhase.Planning;
+        }
+
+        // 5. Revision request needs full context
+        if (intent == TurnIntentType.RevisionRequest)
+            return ConversationPhase.Creation;
+
+        // 6. Default
+        return ConversationPhase.Conversation;
+    }
+
+    private static AgentScheduledTask? GetCurrentTask(AgentMissionPlan missionPlan)
+    {
+        if (missionPlan?.SchedulerState?.Tasks == null)
+            return null;
+
+        return missionPlan.SchedulerState.Tasks
+            .FirstOrDefault(t => t.Status != "completed" && t.Status != "cancelled");
+    }
 }
