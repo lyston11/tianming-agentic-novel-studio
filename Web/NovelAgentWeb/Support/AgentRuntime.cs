@@ -5,6 +5,8 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class AgentRuntime
 {
+    private const int MaxRecentObservations = 16;
+
     private readonly NovelAgentWorkspace _workspace;
     private readonly AgentSessionManager _sessionManager;
     private readonly UserSettingsManager _settingsManager;
@@ -22,6 +24,7 @@ public sealed class AgentRuntime
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
     private readonly ProjectRouter _projectRouter;
+    private AgentAction? lastAction;
 
     public AgentRuntime(
         NovelAgentWorkspace workspace,
@@ -785,8 +788,8 @@ public sealed class AgentRuntime
             Artifact = result.Artifact,
         };
         session.WorkingMemory.RecentObservations.Add(observation);
-        if (session.WorkingMemory.RecentObservations.Count > 16)
-            session.WorkingMemory.RecentObservations.RemoveRange(0, session.WorkingMemory.RecentObservations.Count - 16);
+        if (session.WorkingMemory.RecentObservations.Count > MaxRecentObservations)
+            session.WorkingMemory.RecentObservations.RemoveRange(0, session.WorkingMemory.RecentObservations.Count - MaxRecentObservations);
         return observation;
     }
 
@@ -889,8 +892,8 @@ public sealed class AgentRuntime
             if (!session.WorkingMemory.UserPreferences.Contains(preference))
                 session.WorkingMemory.UserPreferences.Add(preference);
         }
-        if (session.WorkingMemory.UserPreferences.Count > 16)
-            session.WorkingMemory.UserPreferences.RemoveRange(0, session.WorkingMemory.UserPreferences.Count - 16);
+        if (session.WorkingMemory.UserPreferences.Count > MaxRecentObservations)
+            session.WorkingMemory.UserPreferences.RemoveRange(0, session.WorkingMemory.UserPreferences.Count - MaxRecentObservations);
     }
 
     private static void AddChatTurn(AgentSession session, string role, string content)
@@ -1074,6 +1077,4 @@ public sealed class AgentRuntime
         var lower = message.ToLowerInvariant();
         return lower.Contains("切换") || lower.Contains("换个") || lower.Contains("换一本");
     }
-
-    private AgentAction? lastAction;
 }
