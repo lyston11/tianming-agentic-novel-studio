@@ -24,6 +24,8 @@ public sealed class AgentRuntime
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
     private readonly ProjectRouter _projectRouter;
+    private readonly PhaseInference _phaseInference;
+    private readonly PhaseContextBuilder _contextBuilder;
     private AgentAction? lastAction;
 
     public AgentRuntime(
@@ -41,7 +43,9 @@ public sealed class AgentRuntime
         AgentTaskScheduler taskScheduler,
         MissionBlackboardRecoveryService blackboardRecovery,
         AgentToolGuardrails guardrails,
-        ConversationKernel conversationKernel)
+        ConversationKernel conversationKernel,
+        PhaseInference phaseInference,
+        PhaseContextBuilder contextBuilder)
     {
         _workspace = workspace;
         _sessionManager = sessionManager;
@@ -60,6 +64,8 @@ public sealed class AgentRuntime
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
         _projectRouter = new ProjectRouter(catalog, workspace);
+        _phaseInference = phaseInference;
+        _contextBuilder = contextBuilder;
     }
 
     // ═══════════════════════════════════════════════════════════════
