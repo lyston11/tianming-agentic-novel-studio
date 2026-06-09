@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
 using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
@@ -9,9 +10,16 @@ public sealed class WorkspaceViolationTracker : IWorkspaceViolationTracker, IDis
     private readonly ConcurrentDictionary<string, WorkspaceViolation> _violationsByKey = new();
     private readonly Timer _cleanupTimer;
     private readonly TimeSpan _defaultRetention = TimeSpan.FromHours(24);
+    private readonly WorkspaceAuditOptions _options;
+    private readonly IViolationAlertService? _alertService;
 
-    public WorkspaceViolationTracker()
+    public WorkspaceViolationTracker(
+        IOptions<WorkspaceAuditOptions> options,
+        IViolationAlertService? alertService = null)
     {
+        _options = options.Value;
+        _alertService = alertService;
+
         _cleanupTimer = new Timer(
             _ => ClearOldViolations(_defaultRetention),
             null,
@@ -37,6 +45,15 @@ public sealed class WorkspaceViolationTracker : IWorkspaceViolationTracker, IDis
             existing.Timestamp = DateTime.UtcNow;
             existing.RequestId = requestId;
             existing.Endpoint = path;
+
+            // Check if threshold reached for alerting
+            if (_options.EnableAlerts &&
+                existing.Count >= _options.AlertThreshold &&
+                _alertService != null)
+            {
+                _ = _alertService.SendAlertAsync(existing);
+            }
+
             return existing;
         }
 
