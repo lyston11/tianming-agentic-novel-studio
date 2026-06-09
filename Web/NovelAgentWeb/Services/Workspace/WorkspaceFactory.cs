@@ -3,7 +3,13 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -40,10 +46,56 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
             TimeSpan.FromSeconds(30));
     }
 
-    public Task<WorkspaceEntry> AcquireAsync(string userId, string projectId, CancellationToken cancellationToken = default)
+    public async Task<WorkspaceEntry> AcquireAsync(string userId, string projectId, CancellationToken cancellationToken = default)
     {
-        // Implementation in Task 9
-        throw new NotImplementedException();
+        var cacheKey = GetCacheKey(userId, projectId);
+
+        // Fast path: cache hit
+        if (_cache.TryGetValue(cacheKey, out var entry))
+        {
+            Interlocked.Increment(ref _cacheHits);
+            entry.AcquireLease();
+            return entry;
+        }
+
+        // Slow path: create new Workspace
+        Interlocked.Increment(ref _cacheMisses);
+
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            // Double-check after acquiring lock
+            if (_cache.TryGetValue(cacheKey, out entry))
+            {
+                entry.AcquireLease();
+                return entry;
+            }
+
+            // Enforce cache size limit before creating new instance
+            if (_cache.Count >= _options.MaxCachedWorkspaces)
+            {
+                await EvictOldestIdleWorkspaceAsync();
+            }
+
+            // Create new Workspace instance
+            var workspace = await CreateWorkspaceAsync(userId, projectId, cancellationToken);
+
+            entry = new WorkspaceEntry
+            {
+                UserId = userId,
+                ProjectId = projectId,
+                Workspace = workspace
+            };
+
+            entry.AcquireLease();
+            _cache[cacheKey] = entry;
+
+            return entry;
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public void Release(string userId, string projectId)
@@ -84,6 +136,52 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
     private static string GetCacheKey(string userId, string projectId)
     {
         return $"{userId}:{projectId}";
+    }
+
+    private async Task<NovelAgentWorkspace> CreateWorkspaceAsync(
+        string userId, string projectId, CancellationToken cancellationToken)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+
+        // Load project to verify it exists and belongs to user
+        var project = await db.NovelProjects
+            .Where(p => p.Id == projectId && p.UserId == userId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (project == null)
+        {
+            throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
+        }
+
+        // Get required services
+        var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var env = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
+        var settingsManager = scope.ServiceProvider.GetRequiredService<UserSettingsManager>();
+
+        // Create Workspace instance
+        var workspace = new NovelAgentWorkspace(env, config, settingsManager);
+
+        return workspace;
+    }
+
+    private async Task EvictOldestIdleWorkspaceAsync()
+    {
+        var idleTimeout = TimeSpan.FromMinutes(_options.IdleTimeoutMinutes);
+
+        var evictable = _cache.Values
+            .Where(e => e.IsEvictable(idleTimeout))
+            .OrderBy(e => e.LastAccessTime)
+            .FirstOrDefault();
+
+        if (evictable != null)
+        {
+            var cacheKey = GetCacheKey(evictable.UserId, evictable.ProjectId);
+            if (_cache.TryRemove(cacheKey, out _))
+            {
+                Interlocked.Increment(ref _evictionCount);
+            }
+        }
     }
 
     private Task EvictIdleWorkspacesAsync()
