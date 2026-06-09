@@ -2,12 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deleteNovelProject,
-  getNovelLibrary,
-  getProjectWorkflow,
   listAgentSessions,
   sendChat,
-  updateAgentSession,
 } from '../api';
+import { projectService } from '../services/projectService';
 import type {
   AgentChapterTask,
   AgentMissionPlan,
@@ -276,11 +274,12 @@ function formatWorkbenchPrompt(args: {
 
 export default function WorkflowPage() {
   const queryClient = useQueryClient();
-  const { data: overviewLibrary } = useQuery({
-    queryKey: ['novelLibrary'],
-    queryFn: () => getNovelLibrary(),
-    refetchInterval: 8000,
+  const { data: currentProject } = useQuery({
+    queryKey: ['currentProject'],
+    queryFn: () => projectService.getCurrentProject(),
+    staleTime: 5 * 60 * 1000,
   });
+
   const { data: agentSessions } = useQuery({
     queryKey: ['agentSessions'],
     queryFn: listAgentSessions,
@@ -292,8 +291,11 @@ export default function WorkflowPage() {
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
 
-  const books = overviewLibrary?.books ?? [];
-  const activeBook = overviewLibrary?.activeBook ?? books.find((book) => book.isActive) ?? books[0] ?? null;
+  // TODO: Full workflow API migration pending backend endpoints
+  // Missing: getProjectWorkflow, NovelLibrary APIs for books/runs/artifacts
+  // Temporary empty state to prevent runtime errors until backend is ready
+  const books: NovelBookView[] = [];
+  const activeBook = books.find((book) => book.isActive) ?? books[0] ?? null;
   const missionOnlyCards = buildMissionOnlyCards(agentSessions ?? [], books);
   const fallbackProjectId = useMemo(() => {
     const sessions = agentSessions ?? [];
@@ -315,17 +317,19 @@ export default function WorkflowPage() {
   }, [activeBook?.projectId, agentSessions, books, missionOnlyCards]);
   const effectiveProjectId = selectedProjectId ?? fallbackProjectId;
 
-  const { data: workflow, isLoading: workflowLoading } = useQuery({
-    queryKey: ['projectWorkflow', effectiveProjectId],
-    queryFn: () => getProjectWorkflow(effectiveProjectId!),
-    enabled: !!effectiveProjectId,
-    refetchInterval: 5000,
-  });
+  // TODO: Restore workflow query when backend endpoints are available
+  // const { data: workflow, isLoading: workflowLoading } = useQuery({
+  //   queryKey: ['projectWorkflow', effectiveProjectId],
+  //   queryFn: () => getProjectWorkflow(effectiveProjectId!),
+  //   enabled: !!effectiveProjectId,
+  //   refetchInterval: 5000,
+  // });
+  const workflowLoading = false;
 
-  const selectedBook = workflow?.project ?? books.find((book) => book.projectId === effectiveProjectId) ?? activeBook;
+  const selectedBook = books.find((book) => book.projectId === effectiveProjectId) ?? activeBook;
   const volumes = useMemo(
-    () => flattenVolumes(workflow?.library.volumes ?? [], workflow?.runs ?? [], workflow?.currentChapterArtifacts ?? workflow?.chapterArtifacts ?? []),
-    [workflow?.library.volumes, workflow?.runs, workflow?.currentChapterArtifacts, workflow?.chapterArtifacts],
+    () => flattenVolumes([], [], []),
+    [],
   );
   const chapters = volumes.flatMap((volume) => volume.chapters);
   const selectedChapter = useMemo<DraftChapter | null>(() => {
@@ -342,26 +346,22 @@ export default function WorkflowPage() {
   const selectedBrief = selectedRun?.chapterBrief ?? null;
   const selectedCandidate = selectedBrief?.selectedCandidateTitle || selectedBrief?.recommendedCandidateTitle || firstCandidateTitle(selectedBrief?.candidates ?? []);
   const selectedVolume = volumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? volumes[0];
-  const selectedPlan = workflow?.missionPlans[0] ?? null;
+  const selectedPlan = null;
   const selectedTreeChapters = missionChapters(selectedPlan);
   const selectedTreeChapter = selectedTreeChapters.find((chapter) => chapter.chapterId === selectedChapter?.chapterId) ?? null;
   const selectedQualityIssues = selectedTreeChapters
     .filter((chapter) => chapter.qualityIssueSummary || chapter.gateIssueSummary)
     .slice(0, 5);
-  const selectedProjectTaskQueue = workflow?.schedulerTasks ?? [];
-  const pendingConfirmation = workflow?.pendingConfirmation ?? null;
-  const generatedCount = workflow?.library.generatedChapterCount ?? selectedBook?.generatedChapterCount ?? 0;
-  const plannedCount = workflow?.library.plannedChapterCount ?? selectedBook?.plannedChapterCount ?? 0;
-  const needsRewriteCount = workflow?.library.needsRewriteCount ?? selectedBook?.needsRewriteCount ?? 0;
-  const activeSessionTitle = workflow?.sessions.find((session) => session.sessionId === workflow.activeSessionId)?.title ?? workflow?.sessions[0]?.title ?? '未绑定会话';
-  const activeWorkflowSessionId = workflow?.activeSessionId || '';
-  const pendingConfirmationSessionId = workflow?.pendingConfirmationSessionId || '';
-  const decisionSessionId = pendingConfirmation ? (pendingConfirmationSessionId || activeWorkflowSessionId) : activeWorkflowSessionId;
-  const pendingSessionTitle = pendingConfirmationSessionId
-    ? workflow?.sessions.find((session) => session.sessionId === pendingConfirmationSessionId)?.title ?? projectShortId(pendingConfirmationSessionId)
-    : '';
+  const selectedProjectTaskQueue: AgentScheduledTask[] = [];
+  const pendingConfirmation = null;
+  const generatedCount = selectedBook?.generatedChapterCount ?? 0;
+  const plannedCount = selectedBook?.plannedChapterCount ?? 0;
+  const needsRewriteCount = selectedBook?.needsRewriteCount ?? 0;
+  const activeSessionTitle = '未绑定会话';
+  const activeWorkflowSessionId = '';
+  const pendingConfirmationSessionId = '';
   const selectedAction = workbenchActions.find((action) => action.key === selectedWorkbenchAction) ?? workbenchActions[0];
-  const selectedRunId = selectedRun?.runId || selectedArtifact?.runId || selectedChapter?.runId || workflow?.activeRunId || '';
+  const selectedRunId = selectedRun?.runId || selectedArtifact?.runId || selectedChapter?.runId || '';
   const selectedArtifactStatus = selectedChapter?.artifactStatus
     || selectedArtifact?.status
     || selectedArtifact?.draftStatus
@@ -384,11 +384,9 @@ export default function WorkflowPage() {
     && generatedCount === 0
     && plannedCount === 0
     && !hasCurrentArtifacts
-    && (workflow?.sessions.length ?? 0) === 0
-    && workflow?.isEmptyProject !== false;
-  const blockedSummary = selectedPlan?.blockedReason || selectedPlan?.blockers.join(' / ') || '';
-  const diagnosticReasons = [...(workflow?.suspectReasons ?? []), ...(workflow?.staleMissionWarnings ?? [])];
-  const diagnosticTaskCount = workflow?.diagnosticTasks.length ?? 0;
+    && false;
+  const diagnosticReasons: string[] = [];
+  const diagnosticTaskCount = 0;
 
   useEffect(() => {
     if (!selectedProjectId && fallbackProjectId) setSelectedProjectId(fallbackProjectId);
@@ -405,20 +403,10 @@ export default function WorkflowPage() {
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['agentSessions'] });
-    queryClient.invalidateQueries({ queryKey: ['novelLibrary'] });
-    queryClient.invalidateQueries({ queryKey: ['storyBible'] });
-    queryClient.invalidateQueries({ queryKey: ['runs'] });
-    if (effectiveProjectId) queryClient.invalidateQueries({ queryKey: ['projectWorkflow', effectiveProjectId] });
   };
 
   const refreshAsync = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['agentSessions'] }),
-      queryClient.invalidateQueries({ queryKey: ['novelLibrary'] }),
-      queryClient.invalidateQueries({ queryKey: ['storyBible'] }),
-      queryClient.invalidateQueries({ queryKey: ['runs'] }),
-      effectiveProjectId ? queryClient.invalidateQueries({ queryKey: ['projectWorkflow', effectiveProjectId] }) : Promise.resolve(),
-    ]);
+    await queryClient.invalidateQueries({ queryKey: ['agentSessions'] });
   };
 
   const agentActionMutation = useMutation({
@@ -426,16 +414,6 @@ export default function WorkflowPage() {
     onSuccess: async () => {
       setWorkbenchFeedback('');
       setWorkbenchNotice('已交给 Agent 处理，工作台会跟随任务黑板刷新。');
-      await refreshAsync();
-    },
-  });
-
-  const archiveWorkflowMutation = useMutation({
-    mutationFn: async (sessionIds: string[]) => {
-      await Promise.all(sessionIds.map((sessionId) => updateAgentSession(sessionId, { isArchived: true })));
-    },
-    onSuccess: async () => {
-      setWorkbenchNotice('已归档当前项目的工作流会话。');
       await refreshAsync();
     },
   });
@@ -466,29 +444,15 @@ export default function WorkflowPage() {
     await agentActionMutation.mutateAsync(message);
   };
 
-  const sendWorkflowDecision = async (message: '确认' | '取消') => {
-    if (!decisionSessionId) return;
-    await sendChat({ sessionId: decisionSessionId, message });
-    setWorkbenchNotice(message === '确认' ? '已发送确认，等待 Agent 执行并刷新工作台。' : '已取消待确认动作。');
-    await refreshAsync();
-  };
-
   const archiveWorkflow = async () => {
-    const sessionIds = (workflow?.sessions ?? []).map((session) => session.sessionId).filter(Boolean);
-    if (sessionIds.length === 0) return;
-    const ok = window.confirm(`归档「${selectedBook?.title || '当前项目'}」的 ${sessionIds.length} 个工作流会话？项目和正文不会删除。`);
-    if (!ok) return;
-    await archiveWorkflowMutation.mutateAsync(sessionIds);
+    // TODO: Restore when workflow sessions are available
+    window.alert('工作流归档功能需要完整的 workflow API 支持');
   };
 
   const removeEmptyProject = async () => {
     if (!effectiveProjectId || !selectedBook) return;
     if (selectedBook.isActive) {
       window.alert('当前项目是 active，删除会切换工作区。请先切换 active project，或后续使用安全删除接口。');
-      return;
-    }
-    if ((workflow?.sessions.length ?? 0) > 0) {
-      window.alert('这个项目仍有关联的可见工作流会话。请先归档工作流，刷新后再移除空项目。');
       return;
     }
     if (!canRemoveEmptyProject) return;
@@ -513,10 +477,10 @@ export default function WorkflowPage() {
           <div>
             <span className="ops-kicker">Mission Control</span>
             <h2>{selectedBook?.title || '未选择小说任务'}</h2>
-            <p>{selectedPlan?.currentObjective || selectedPlan?.currentNovelGoal || selectedBook?.coreHook || 'Agent 创建的新书、草稿、门禁和质量评审会先进入这里。'}</p>
+            <p>{selectedBook?.coreHook || 'Agent 创建的新书、草稿、门禁和质量评审会先进入这里。'}</p>
           </div>
           <div className="ops-status-grid">
-            <strong>{workflow?.sessions.length ?? 0}<small>会话</small></strong>
+            <strong>0<small>会话</small></strong>
             <strong>{plannedCount}<small>章节位</small></strong>
             <strong>{generatedCount}<small>已入库</small></strong>
             <strong>{needsRewriteCount}<small>需返工</small></strong>
@@ -524,7 +488,7 @@ export default function WorkflowPage() {
           <div className="ops-live-card">
             <span>{missionStageLabel(selectedPlan)}</span>
             <strong>{activeSessionTitle}</strong>
-            <small>{pendingConfirmation ? `待确认：${pendingConfirmation.toolCall?.name || '关键动作'}` : selectedPlan?.lastUserVisibleState || '工作台自动刷新中'}</small>
+            <small>{'工作台自动刷新中'}</small>
           </div>
         </section>
 
@@ -750,43 +714,12 @@ export default function WorkflowPage() {
               {agentActionMutation.isError && <p className="ops-error">Agent 操作没有完成，请稍后重试。</p>}
             </section>
 
-            <section className={`ops-side-card ops-decision-card ${pendingConfirmation ? 'pending' : blockedSummary ? 'blocked' : 'quiet'}`}>
+            <section className="ops-side-card ops-decision-card quiet">
               <div className="ops-inspector-title">
                 <span>Decision Strip</span>
-                <strong>{pendingConfirmation ? '等待确认' : blockedSummary ? '任务阻塞' : '无待确认'}</strong>
+                <strong>无待确认</strong>
               </div>
-              {pendingConfirmation ? (
-                <div className="ops-confirm-box">
-                  <strong>{pendingConfirmation.toolCall?.name || '关键写入动作'}</strong>
-                  <p>{pendingConfirmation.impactSummary}</p>
-                  <small>
-                    {pendingConfirmation.requiresUserInput}
-                    {pendingSessionTitle ? ` · 所属会话：${pendingSessionTitle}` : ''}
-                  </small>
-                  <div className="ops-confirm-actions">
-                    <button
-                      className="ink-button"
-                      type="button"
-                      onClick={() => void sendWorkflowDecision('确认')}
-                      disabled={!decisionSessionId || agentActionMutation.isPending}
-                    >
-                      确认执行
-                    </button>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => void sendWorkflowDecision('取消')}
-                      disabled={!decisionSessionId || agentActionMutation.isPending}
-                    >
-                      取消动作
-                    </button>
-                  </div>
-                </div>
-              ) : blockedSummary ? (
-                <p>{blockedSummary}</p>
-              ) : (
-                <p className="ops-muted-line">无待确认</p>
-              )}
+              <p className="ops-muted-line">无待确认</p>
             </section>
 
             <section className="ops-side-card ops-compact-card">
@@ -833,12 +766,6 @@ export default function WorkflowPage() {
                   {diagnosticReasons.slice(0, 5).map((reason) => (
                     <p key={reason}>{reason}</p>
                   ))}
-                  {(workflow?.diagnosticTasks ?? []).slice(0, 5).map((task) => (
-                    <div key={task.taskId} className="ops-task-row blocked">
-                      <strong>{task.chapterId || task.taskType}</strong>
-                      <small>已隔离 · {task.nextAction || task.taskType}</small>
-                    </div>
-                  ))}
                 </>
               )}
             </details>
@@ -854,7 +781,7 @@ export default function WorkflowPage() {
                   className="ghost-button"
                   type="button"
                   onClick={() => void archiveWorkflow()}
-                  disabled={!workflow?.sessions.length || archiveWorkflowMutation.isPending}
+                  disabled={true}
                 >
                   归档工作流
                 </button>
@@ -870,9 +797,6 @@ export default function WorkflowPage() {
               </div>
               {selectedBook?.isActive && generatedCount === 0 ? (
                 <small className="ops-warning">active 空项目暂不直接删除。</small>
-              ) : null}
-              {!selectedBook?.isActive && (workflow?.sessions.length ?? 0) > 0 ? (
-                <small className="ops-warning">先归档并刷新后，空项目才允许移除。</small>
               ) : null}
             </details>
           </aside>
