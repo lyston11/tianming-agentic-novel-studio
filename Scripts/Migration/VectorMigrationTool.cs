@@ -75,7 +75,7 @@ class VectorMigrationTool
         // Configuration
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile("appsettings.json", optional: true)
             .AddJsonFile($"appsettings.{options.Environment}.json", optional: true)
             .Build();
 

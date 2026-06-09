@@ -43,7 +43,7 @@ class VerificationTool
             var chapters = await dbContext.Chapters.CountAsync();
             var characters = await dbContext.Characters.CountAsync();
             var foreshadows = await dbContext.Foreshadows.CountAsync();
-            var worldSettings = await dbContext.WorldSettings.CountAsync();
+            var worldSettings = await dbContext.WorldSettingEntries.CountAsync();
             var userSettings = await dbContext.UserSettings.CountAsync();
             var agentMemories = await dbContext.AgentMemories.CountAsync();
             var agentSessions = await dbContext.AgentSessions.CountAsync();

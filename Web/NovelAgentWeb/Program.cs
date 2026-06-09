@@ -118,7 +118,10 @@ builder.Services.AddSingleton<IMicroEmbeddingService, StubEmbeddingService>();
 // Register WorkspaceFactory with options
 builder.Services.Configure<WorkspaceFactoryOptions>(
     builder.Configuration.GetSection("WorkspaceFactory"));
+builder.Services.Configure<TM.Web.NovelAgentWeb.Services.Workspace.Models.WorkspaceAuditOptions>(
+    builder.Configuration.GetSection("WorkspaceAudit"));
 builder.Services.AddSingleton<IWorkspaceFactory, WorkspaceFactory>();
+builder.Services.AddSingleton<IViolationAlertService, LoggingViolationAlertService>();
 builder.Services.AddSingleton<IWorkspaceViolationTracker, WorkspaceViolationTracker>();
 
 // Register StoryBible Repository

@@ -101,33 +101,26 @@ public class WorkspaceUsageAuditMiddleware
         HttpContext context,
         IWorkspaceViolationTracker violationTracker,
         ViolationType type,
-        ViolationSeverity severity,
         string message,
         string? userId,
         string? projectId)
     {
-        var violation = new WorkspaceViolation
-        {
-            Type = type,
-            Severity = severity,
-            Timestamp = DateTime.UtcNow,
-            Endpoint = context.Request.Path,
-            Method = context.Request.Method,
-            UserId = userId,
-            ProjectId = projectId,
-            Message = message
-        };
+        var requestId = context.TraceIdentifier;
+        var path = context.Request.Path;
+
+        var violation = violationTracker.RecordViolation(
+            userId ?? "unknown",
+            projectId ?? "unknown",
+            requestId,
+            path,
+            type,
+            message);
 
         if (LogViolations)
         {
             _logger.LogWarning(
-                "Workspace violation: {Type} | {Severity} | {Endpoint} | {Method} | UserId={UserId} | ProjectId={ProjectId} | {Message}",
-                type, severity, context.Request.Path, context.Request.Method, userId, projectId, message);
-        }
-
-        if (TrackViolations)
-        {
-            violationTracker.TrackViolation(violation);
+                "Workspace violation: {Type} | {Severity} | {Endpoint} | {Method} | UserId={UserId} | ProjectId={ProjectId} | Count={Count} | {Message}",
+                type, violation.Severity, path, context.Request.Method, userId, projectId, violation.Count, message);
         }
 
         if (IsStrictMode)
@@ -138,7 +131,9 @@ public class WorkspaceUsageAuditMiddleware
             {
                 error = "WorkspaceViolation",
                 type = type.ToString(),
-                message = message
+                severity = violation.Severity.ToString(),
+                message = message,
+                count = violation.Count
             });
             return false;
         }
@@ -164,42 +159,43 @@ public class WorkspaceUsageAuditMiddleware
         // Extract projectId from multiple sources
         var projectId = await ExtractProjectIdAsync(context);
 
-        // Validate userId
-        if (string.IsNullOrEmpty(userId))
-        {
-            var canContinue = await HandleViolationAsync(
-                context, violationTracker,
-                ViolationType.MissingUserId,
-                ViolationSeverity.High,
-                "User ID missing in request context",
-                userId, projectId);
-
-            if (!canContinue) return;
-        }
-
-        // Validate projectId
-        if (string.IsNullOrEmpty(projectId))
-        {
-            var canContinue = await HandleViolationAsync(
-                context, violationTracker,
-                ViolationType.MissingProjectId,
-                ViolationSeverity.Medium,
-                "Project ID missing in request",
-                userId, projectId);
-
-            if (!canContinue) return;
-        }
-
-        // Check workspace is active (only if both userId and projectId are present)
+        // Check if workspace is active (only if both userId and projectId are present)
         if (!string.IsNullOrEmpty(userId) && !string.IsNullOrEmpty(projectId))
         {
-            if (!workspaceFactory.IsWorkspaceActive(userId, projectId))
+            var status = workspaceFactory.GetWorkspaceStatus(userId, projectId);
+
+            // Workspace not acquired
+            if (status == WorkspaceStatus.NotFound)
             {
                 var canContinue = await HandleViolationAsync(
                     context, violationTracker,
-                    ViolationType.WorkspaceNotActive,
-                    ViolationSeverity.Low,
-                    "Workspace not active in cache (will be created on demand)",
+                    ViolationType.WorkspaceNotAcquired,
+                    "Workspace not acquired before use (will be created on demand)",
+                    userId, projectId);
+
+                if (!canContinue) return;
+            }
+        }
+        else
+        {
+            // Missing userId or projectId - cannot check workspace status
+            if (string.IsNullOrEmpty(userId))
+            {
+                var canContinue = await HandleViolationAsync(
+                    context, violationTracker,
+                    ViolationType.WorkspaceNotAcquired,
+                    "User ID missing in request context",
+                    userId, projectId);
+
+                if (!canContinue) return;
+            }
+
+            if (string.IsNullOrEmpty(projectId))
+            {
+                var canContinue = await HandleViolationAsync(
+                    context, violationTracker,
+                    ViolationType.WorkspaceNotAcquired,
+                    "Project ID missing in request",
                     userId, projectId);
 
                 if (!canContinue) return;

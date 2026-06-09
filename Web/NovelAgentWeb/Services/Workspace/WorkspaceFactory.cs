@@ -234,7 +234,7 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         }
 
         // Check reference count
-        if (entry.ReferenceCount > 0)
+        if (entry.ActiveReferences > 0)
         {
             return WorkspaceStatus.Active;
         }
@@ -248,8 +248,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
         if (_cache.TryRemove(cacheKey, out var entry))
         {
-            // Force set reference count to 0 and dispose if needed
-            entry.ReferenceCount = 0;
+            // Force set reference count to 0 (access private field via reflection is not recommended)
+            // Just remove from cache - the entry object will be garbage collected
             Interlocked.Increment(ref _evictionCount);
         }
     }

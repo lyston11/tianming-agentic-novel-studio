@@ -45,6 +45,11 @@ public class DataMigrationService
         {
             _logger.LogInformation("Starting data migration from JSON to SQLite...");
 
+            // Ensure database is created with schema
+            _logger.LogInformation("Ensuring database schema exists...");
+            await _dbContext.Database.EnsureCreatedAsync();
+            _logger.LogInformation("Database schema ready.");
+
             // Check if data already exists
             if (!force && await _dbContext.Users.AnyAsync())
             {
@@ -264,13 +269,16 @@ public class DataMigrationService
                 var character = new Character
                 {
                     Id = Guid.NewGuid().ToString(),
+                    UserId = project.UserId,
                     ProjectId = newProjectId,
                     Name = legacyChar.Name,
-                    Role = legacyChar.Role,
-                    Identity = legacyChar.Identity,
-                    Description = legacyChar.Description,
+                    Role = legacyChar.Role ?? "supporting",
+                    Alias = legacyChar.Identity,
                     Personality = legacyChar.Personality,
-                    DetailJsonPath = legacyChar.DetailJsonPath
+                    Background = legacyChar.Description,
+                    Status = "active",
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
                 };
 
                 await _dbContext.Characters.AddAsync(character);
@@ -305,17 +313,19 @@ public class DataMigrationService
         {
             foreach (var legacyWorldSetting in storyBible.WorldSettings)
             {
-                var worldSetting = new WorldSetting
+                var worldSetting = new WorldSettingEntry
                 {
                     Id = Guid.NewGuid().ToString(),
+                    UserId = project.UserId,
                     ProjectId = newProjectId,
-                    Category = legacyWorldSetting.Category,
-                    Name = legacyWorldSetting.Name,
-                    Description = legacyWorldSetting.Description,
-                    Rules = legacyWorldSetting.Rules
+                    Category = legacyWorldSetting.Category ?? "other",
+                    Title = legacyWorldSetting.Name ?? "未命名设定",
+                    Content = legacyWorldSetting.Description ?? string.Empty,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
                 };
 
-                await _dbContext.WorldSettings.AddAsync(worldSetting);
+                await _dbContext.WorldSettingEntries.AddAsync(worldSetting);
                 result.WorldSettings++;
             }
         }

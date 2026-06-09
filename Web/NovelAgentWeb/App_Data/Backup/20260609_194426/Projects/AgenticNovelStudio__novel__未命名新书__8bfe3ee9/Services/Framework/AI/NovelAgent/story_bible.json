@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "constitution": null,
+  "macroCandidates": [],
+  "volumeArcs": [],
+  "foreshadowLedger": [],
+  "characterLedger": [],
+  "canonLedger": [],
+  "agentRuns": [
+    {
+      "runId": "6f6fab907b344b63963ecf3b1541a84c",
+      "userGoal": "用户确认选择D：全部都要但节奏快。要求：纯爽文、三章内必须有一次高潮、升级/打脸/夺宝全都要、不要冗长铺垫、快节奏。同时保留之前的偏好：每卷揭开一个真相但新真相推翻旧解释。",
+      "intent": 1,
+      "status": 3,
+      "targetChapterId": "",
+      "storyConstitution": {
+        "genre": "斗破苍穹风格玄幻，纯爽文，全都要但节奏快，三章内必须有一次高潮，升级打脸夺宝都要，快节奏不冗长铺垫",
+        "subGenre": "",
+        "readerPromise": "围绕“用户确认选择D：全部都要但节奏快。要求：纯爽文、三章内必须有一次高潮、升级/打脸/夺宝全都要、不要冗长铺垫、快节奏。同时保留之前的偏好：每卷揭开一个真相但新真相推翻旧解释。”持续兑现 斗破苍穹风格玄幻，纯爽文，全都要但节奏快，三章内必须有一次高潮，升级打脸夺宝都要，快节奏不冗长铺垫 读者期待：以压迫-反击-代价-升级为主循环，爽点必须有铺垫和代价。",
+        "coreHook": "主角面对一个会不断升级认知难度的核心困境：用户确认选择D：全部都要但节奏快。要求：纯爽文、三章内必须有一次高潮、升级/打脸/夺宝全都要、不要冗长铺垫、快节奏。同时保留之前的偏好：每卷揭开一个真相但新真相推翻旧解释。",
+        "coreTheme": "人在既定规则与自我选择之间，如何付出代价仍然改变命运。",
+        "mainPleasure": "压迫后的反击、成长兑现、资源获取和局势翻盘。",
+        "secondaryPleasure": "世界规则探索",
+        "worldCoreRule": "世界规则必须能产生冲突、代价和选择，不能只是背景介绍。",
+        "mainConflictEngine": "主角目标、世界规则、对手利益三者持续互相挤压，每卷至少升级一次冲突层级。",
+        "protagonistEngine": "主角的外在目标必须被内在缺陷阻碍，成长来自选择代价，而不是无条件变强。",
+        "noveltyPoint": "每个关键胜利都带来新的约束或认知反转，避免单纯重复升级。",
+        "depthLayer": "用类型快感承载更深层的价值冲突，而不是把主题写成说教。",
+        "forbiddenDirections": [
+          "禁止只靠临时新设定解决危机。",
+          "禁止章节没有故事变量变化。",
+          "禁止角色行为只服务剧情方便而缺少动机。",
+          "避免反派降智、无代价开挂、重复打脸。"
+        ],
+        "commercialRhythm": "开篇强钩子，三章内建立核心困境；每卷中段升级代价，卷末给出认知反转或重大状态变化。",
+        "genreProfile": {
+          "pleasureStrength": 9,
+          "mysteryStrength": 5,
+          "emotionStrength": 5,
+          "worldbuildingStrength": 7,
+          "ensembleStrength": 4,
+          "depthStrength": 5,
+          "paceStrength": 8,
+          "strategy": "以压迫-反击-代价-升级为主循环，爽点必须有铺垫和代价。",
+          "riskWarnings": [
+            "避免反派降智、无代价开挂、重复打脸。"
+          ]
+        }
+      },
+      "macroCandidates": [
+        {
+          "title": "规则反噬型",
+          "coreHook": "主角面对一个会不断升级认知难度的核心困境：用户确认选择D：全部都要但节奏快。要求：纯爽文、三章内必须有一次高潮、升级/打脸/夺宝全都要、不要冗长铺垫、快节奏。同时保留之前的偏好：每卷揭开一个真相但新真相推翻旧解释。",
+          "worldCoreRule": "主角每次利用世界规则获胜，都会被规则记录并在后续反噬。",
+          "mainConflictEngine": "胜利不是终点，而是下一层约束的开始。",
+          "protagonistEngine": "主角必须在短期收益和长期代价之间做选择。",
+          "depthLayer": "自由选择与系统性代价的冲突。",
+          "noveltyScore": 8,
+          "sustainabilityScore": 9,
+          "typeMatchScore": 8,
+          "risks": [
+            "需要持续维护代价账本，否则会退化为普通升级流。"
+          ]
+        },
+        {
+          "title": "真相递进型",
+          "coreHook": "每卷揭开一个真相，但新真相会推翻旧解释。",
+          "worldCoreRule": "世界表层规则可被学习，深层规则只能通过代价和失败逼近。",
+          "mainConflictEngine": "主角越接近真相，对手越不再只是具体敌人，而是规则本身。",
+          "protagonistEngine": "主角靠判断力和选择承担风险，而不是单纯靠战力解决问题。",
+          "depthLayer": "认知、信念与现实可塑性的冲突。",
+          "noveltyScore": 9,
+          "sustainabilityScore": 8,
+          "typeMatchScore": 8,
+          "risks": [
+            "线索必须公平埋设，避免强行反转。"
+          ]
+        },
+        {
+          "title": "关系代价型",
+          "coreHook": "主角每次推进主线，都必须改变一段重要关系。",
+          "worldCoreRule": "力量、信息或资源的获得必须通过关系网络流动。",
+          "mainConflictEngine": "外部敌人和内部关系同时制造压力。",
+          "protagonistEngine": "主角的成长体现在承担关系后果，而不是独自变强。",
+          "depthLayer": "个人命运与关系责任之间的冲突。",
+          "noveltyScore": 7,
+          "sustainabilityScore": 8,
+          "typeMatchScore": 7,
+          "risks": [
+            "要避免感情戏脱离主线，关系变化必须影响剧情推进。"
+          ]
+        }
+      ],
+      "chapterBrief": null,
+      "volumeArcPlan": null,
+      "storyState": null,
+      "contextPackage": null,
+      "draftArtifact": null,
+      "gateReport": null,
+      "dependencyImpact": null,
+      "postGenerationReview": null,
+      "rewriteAttempts": [],
+      "steps": [
+        {
+          "id": "df980fd947384311b2afa36d74451ee4",
+          "name": "生成宏观创意候选",
+          "purpose": "围绕题材、读者承诺、世界核心规则和主线冲突生成 3 个整书方案。",
+          "toolName": "BookConceptDesigner.GenerateMacroCandidates",
+          "status": 2,
+          "riskLevel": 0,
+          "requiresConfirmation": false,
+          "inputs": {}
+        },
+        {
+          "id": "c3ed93758aed415b88eebdccfbd77c22",
+          "name": "固化 Story Bible",
+          "purpose": "用户确认后，将作品宪法、类型风向和禁止方向写入项目设定。",
+          "toolName": "StoryBible.CommitConstitution",
+          "status": 5,
+          "riskLevel": 2,
+          "requiresConfirmation": true,
+          "inputs": {}
+        }
+      ],
+      "createdAt": "2026-06-07T15:08:31.476609+08:00",
+      "updatedAt": "2026-06-07T15:08:31.476686+08:00",
+      "notes": [
+        "已生成故事创意宪法草案。进入正式 Story Bible 前建议由用户确认。"
+      ]
+    },
+    {
+      "runId": "43ba6f40df174a0fb2952f78752d1f20",
+      "userGoal": "我要写一本斗破苍穹风格的小说。斗破苍穹核心元素：废柴逆袭、炼药师体系、斗气等级（斗者→斗师→斗灵→斗王→斗皇→斗宗→斗尊→斗圣→斗帝）、异火收集、退婚流开局、家族兴衰、上古种族、天阶功法争夺。希望在此基础上做反套路创新，避免流水账式升级打怪。",
+      "intent": 1,
+      "status": 3,
+      "targetChapterId": "",
+      "storyConstitution": {
+        "genre": "玄幻修仙 网文类型",
+        "subGenre": "",
+        "readerPromise": "围绕“我要写一本斗破苍穹风格的小说。斗破苍穹核心元素：废柴逆袭、炼药师体系、斗气等级（斗者→斗师→斗灵→斗王→斗皇→斗宗→斗尊→斗圣→斗帝）、异火收集、退婚流开局、家族兴衰、上古种族、天阶功法争夺。希望在此基础上做反套路创新，避免流水账式升级打怪。”持续兑现 玄幻修仙 网文类型 读者期待：以压迫-反击-代价-升级为主循环，爽点必须有铺垫和代价。",
+        "coreHook": "主角面对一个会不断升级认知难度的核心困境：我要写一本斗破苍穹风格的小说。斗破苍穹核心元素：废柴逆袭、炼药师体系、斗气等级（斗者→斗师→斗灵→斗王→斗皇→斗宗→斗尊→斗圣→斗帝）、异火收集、退婚流开局、家族兴衰、上古种族、天阶功法争夺。希望在此基础上做反套路创新，避免流水账式升级打怪。",
+        "coreTheme": "人在既定规则与自我选择之间，如何付出代价仍然改变命运。",
+        "mainPleasure": "压迫后的反击、成长兑现、资源获取和局势翻盘。",
+        "secondaryPleasure": "世界规则探索",
+        "worldCoreRule": "世界规则必须能产生冲突、代价和选择，不能只是背景介绍。",
+        "mainConflictEngine": "主角目标、世界规则、对手利益三者持续互相挤压，每卷至少升级一次冲突层级。",
+        "protagonistEngine": "主角的外在目标必须被内在缺陷阻碍，成长来自选择代价，而不是无条件变强。",
+        "noveltyPoint": "每个关键胜利都带来新的约束或认知反转，避免单纯重复升级。",
+        "depthLayer": "用类型快感承载更深层的价值冲突，而不是把主题写成说教。",
+        "forbiddenDirections": [
+          "禁止只靠临时新设定解决危机。",
+          "禁止章节没有故事变量变化。",
+          "禁止角色行为只服务剧情方便而缺少动机。",
+          "避免反派降智、无代价开挂、重复打脸。"
+        ],
+        "commercialRhythm": "开篇强钩子，三章内建立核心困境；每卷中段升级代价，卷末给出认知反转或重大状态变化。",
+        "genreProfile": {
+          "pleasureStrength": 9,
+          "mysteryStrength": 5,
+          "emotionStrength": 5,
+          "worldbuildingStrength": 7,
+          "ensembleStrength": 4,
+          "depthStrength": 5,
+          "paceStrength": 8,
+          "strategy": "以压迫-反击-代价-升级为主循环，爽点必须有铺垫和代价。",
+          "riskWarnings": [
+            "避免反派降智、无代价开挂、重复打脸。"
+          ]
+        }
+      },
+      "macroCandidates": [
+        {
+          "title": "规则反噬型",
+          "coreHook": "主角面对一个会不断升级认知难度的核心困境：我要写一本斗破苍穹风格的小说。斗破苍穹核心元素：废柴逆袭、炼药师体系、斗气等级（斗者→斗师→斗灵→斗王→斗皇→斗宗→斗尊→斗圣→斗帝）、异火收集、退婚流开局、家族兴衰、上古种族、天阶功法争夺。希望在此基础上做反套路创新，避免流水账式升级打怪。",
+          "worldCoreRule": "主角每次利用世界规则获胜，都会被规则记录并在后续反噬。",
+          "mainConflictEngine": "胜利不是终点，而是下一层约束的开始。",
+          "protagonistEngine": "主角必须在短期收益和长期代价之间做选择。",
+          "depthLayer": "自由选择与系统性代价的冲突。",
+          "noveltyScore": 8,
+          "sustainabilityScore": 9,
+          "typeMatchScore": 8,
+          "risks": [
+            "需要持续维护代价账本，否则会退化为普通升级流。"
+          ]
+        },
+        {
+          "title": "真相递进型",
+          "coreHook": "每卷揭开一个真相，但新真相会推翻旧解释。",
+          "worldCoreRule": "世界表层规则可被学习，深层规则只能通过代价和失败逼近。",
+          "mainConflictEngine": "主角越接近真相，对手越不再只是具体敌人，而是规则本身。",
+          "protagonistEngine": "主角靠判断力和选择承担风险，而不是单纯靠战力解决问题。",
+          "depthLayer": "认知、信念与现实可塑性的冲突。",
+          "noveltyScore": 9,
+          "sustainabilityScore": 8,
+          "typeMatchScore": 8,
+          "risks": [
+            "线索必须公平埋设，避免强行反转。"
+          ]
+        },
+        {
+          "title": "关系代价型",
+          "coreHook": "主角每次推进主线，都必须改变一段重要关系。",
+          "worldCoreRule": "力量、信息或资源的获得必须通过关系网络流动。",
+          "mainConflictEngine": "外部敌人和内部关系同时制造压力。",
+          "protagonistEngine": "主角的成长体现在承担关系后果，而不是独自变强。",
+          "depthLayer": "个人命运与关系责任之间的冲突。",
+          "noveltyScore": 7,
+          "sustainabilityScore": 8,
+          "typeMatchScore": 7,
+          "risks": [
+            "要避免感情戏脱离主线，关系变化必须影响剧情推进。"
+          ]
+        }
+      ],
+      "chapterBrief": null,
+      "volumeArcPlan": null,
+      "storyState": null,
+      "contextPackage": null,
+      "draftArtifact": null,
+      "gateReport": null,
+      "dependencyImpact": null,
+      "postGenerationReview": null,
+      "rewriteAttempts": [],
+      "steps": [
+        {
+          "id": "c2babe54cbe7425fa30a5fc7400e35ea",
+          "name": "生成宏观创意候选",
+          "purpose": "围绕题材、读者承诺、世界核心规则和主线冲突生成 3 个整书方案。",
+          "toolName": "BookConceptDesigner.GenerateMacroCandidates",
+          "status": 2,
+          "riskLevel": 0,
+          "requiresConfirmation": false,
+          "inputs": {}
+        },
+        {
+          "id": "5400dda95728414fa14985d477342251",
+          "name": "固化 Story Bible",
+          "purpose": "用户确认后，将作品宪法、类型风向和禁止方向写入项目设定。",
+          "toolName": "StoryBible.CommitConstitution",
+          "status": 5,
+          "riskLevel": 2,
+          "requiresConfirmation": true,
+          "inputs": {}
+        }
+      ],
+      "createdAt": "2026-06-07T15:01:54.617887+08:00",
+      "updatedAt": "2026-06-07T15:01:54.619548+08:00",
+      "notes": [
+        "已生成故事创意宪法草案。进入正式 Story Bible 前建议由用户确认。"
+      ]
+    }
+  ],
+  "revisions": [],
+  "createdAt": "2026-06-07T15:01:54.619683+08:00",
+  "updatedAt": "2026-06-07T15:08:31.477456+08:00"
+}
