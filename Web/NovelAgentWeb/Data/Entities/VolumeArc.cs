@@ -24,6 +24,7 @@ public sealed class VolumeArc
 
     [Required]
     [Column("volume_number")]
+    [Range(1, int.MaxValue)]
     public int VolumeNumber { get; set; }
 
     [Required]
@@ -43,30 +44,37 @@ public sealed class VolumeArc
     public int CurrentChapters { get; set; }
 
     [Column("act1_setup")]
+    [StringLength(5000)]
     public string? Act1Setup { get; set; }
 
     [Column("act2_confrontation")]
+    [StringLength(5000)]
     public string? Act2Confrontation { get; set; }
 
     [Column("act3_climax")]
+    [StringLength(5000)]
     public string? Act3Climax { get; set; }
 
     [Column("act4_resolution")]
+    [StringLength(5000)]
     public string? Act4Resolution { get; set; }
 
     [Column("key_events")]
+    [StringLength(2000)]
     public string? KeyEvents { get; set; }
 
     [Column("major_conflict")]
+    [StringLength(2000)]
     public string? MajorConflict { get; set; }
 
     [Column("conflict_escalation")]
+    [StringLength(2000)]
     public string? ConflictEscalation { get; set; }
 
     [Required]
     [Column("status")]
     [StringLength(50)]
-    public string Status { get; set; } = string.Empty; // Expected values: "planned", "in_progress", "completed"
+    public string Status { get; set; } = "planned"; // Expected values: "planned", "in_progress", "completed"
 
     [Required]
     [Column("created_at")]
