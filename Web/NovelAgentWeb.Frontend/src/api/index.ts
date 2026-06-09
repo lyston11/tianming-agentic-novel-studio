@@ -5,6 +5,8 @@ import type {
   AgentSessionInfo,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
+  KnowledgeResponse,
+  KnowledgeSearchResponse,
   MaterialContentResponse,
   MaterialListResponse,
   MaterialResponse,
@@ -50,6 +52,25 @@ export const updateMaterialById = (id: string, req: { title?: string; category?:
 
 export const deleteMaterialById = (id: string) =>
   api<void>(`/materials/${id}`, { method: 'DELETE' });
+
+// Knowledge API (new multi-user endpoints)
+export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; category?: string }) =>
+  post<KnowledgeSearchResponse>('/knowledge/search', req);
+
+export const listKnowledgeEntries = (projectId: string, category?: string) =>
+  get<KnowledgeResponse[]>(`/knowledge?projectId=${encodeURIComponent(projectId)}${category ? `&category=${encodeURIComponent(category)}` : ''}`);
+
+export const createKnowledgeEntry = (req: { projectId: string; title: string; content: string; category: string; tags?: string; sourceType?: string; sourceId?: string }) =>
+  post<KnowledgeResponse>('/knowledge', req);
+
+export const updateKnowledgeEntryById = (id: string, req: { title?: string; content?: string; category?: string; tags?: string }) =>
+  api<KnowledgeResponse>(`/knowledge/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+
+export const deleteKnowledgeEntryById = (id: string) =>
+  api<void>(`/knowledge/${id}`, { method: 'DELETE' });
 
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
