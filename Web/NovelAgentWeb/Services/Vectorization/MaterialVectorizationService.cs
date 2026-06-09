@@ -42,54 +42,111 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
             throw new KeyNotFoundException($"Material {materialId} not found");
         }
 
-        // Ensure collection exists
-        await _collectionManager.EnsureUserCollectionAsync(userId, ct);
-
-        // Read material content
-        var content = await File.ReadAllTextAsync(material.FilePath ?? "", ct);
-
-        // Chunk material
-        var chunks = _chunker.ChunkText(content, materialId);
-        _logger.LogInformation("Material {MaterialId} chunked into {ChunkCount} pieces", materialId, chunks.Count);
-
-        // Generate embeddings and upsert to Qdrant
-        var collectionName = $"novel_agent_{userId}";
-        var points = new List<PointStruct>();
-
-        foreach (var chunk in chunks)
+        try
         {
-            var embedding = await _embedding.EncodeAsync(chunk.Content, EmbeddingMode.Passage, ct);
+            // Ensure collection exists
+            await _collectionManager.EnsureUserCollectionAsync(userId, ct);
 
-            var point = new PointStruct
+            // Read material content from FilePath or Content column
+            string content;
+            if (!string.IsNullOrEmpty(material.FilePath))
             {
-                Id = new PointId { Uuid = Guid.NewGuid().ToString() },
-                Vectors = embedding,
-                Payload =
+                try
                 {
-                    ["user_id"] = userId,
-                    ["project_id"] = material.ProjectId ?? "",
-                    ["entity_type"] = "material",
-                    ["entity_id"] = materialId,
-                    ["chunk_id"] = chunk.ChunkId,
-                    ["chunk_index"] = chunk.ChunkIndex,
-                    ["chunk_total"] = chunk.ChunkTotal,
-                    ["content"] = chunk.Content,
-                    ["title"] = material.Title,
-                    ["category"] = material.Category ?? "",
-                    ["created_at"] = new DateTimeOffset(material.CreatedAt).ToUnixTimeSeconds()
+                    content = await File.ReadAllTextAsync(material.FilePath, ct);
                 }
-            };
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to read file {FilePath} for material {MaterialId}", material.FilePath, materialId);
+                    throw;
+                }
+            }
+            else if (!string.IsNullOrEmpty(material.Content))
+            {
+                content = material.Content;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Material {materialId} has neither FilePath nor Content");
+            }
 
-            points.Add(point);
+            // Chunk material
+            var chunks = _chunker.ChunkText(content, materialId);
+            _logger.LogInformation("Material {MaterialId} chunked into {ChunkCount} pieces", materialId, chunks.Count);
+
+            var collectionName = $"novel_agent_{userId}";
+
+            // Delete existing vectors for this material to avoid duplicates
+            try
+            {
+                await _qdrant.DeleteAsync(
+                    collectionName,
+                    new Filter
+                    {
+                        Must =
+                        {
+                            new Condition
+                            {
+                                Field = new FieldCondition
+                                {
+                                    Key = "entity_id",
+                                    Match = new Match { Keyword = materialId }
+                                }
+                            }
+                        }
+                    },
+                    cancellationToken: ct
+                );
+                _logger.LogInformation("Deleted existing vectors for material {MaterialId}", materialId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete existing vectors for material {MaterialId}, continuing with upsert", materialId);
+            }
+
+            // Generate embeddings and upsert to Qdrant
+            var points = new List<PointStruct>();
+
+            foreach (var chunk in chunks)
+            {
+                var embedding = await _embedding.EncodeAsync(chunk.Content, EmbeddingMode.Passage, ct);
+
+                var point = new PointStruct
+                {
+                    Id = new PointId { Uuid = Guid.NewGuid().ToString() },
+                    Vectors = embedding,
+                    Payload =
+                    {
+                        ["user_id"] = userId,
+                        ["project_id"] = material.ProjectId ?? "",
+                        ["entity_type"] = "material",
+                        ["entity_id"] = materialId,
+                        ["chunk_id"] = chunk.ChunkId,
+                        ["chunk_index"] = chunk.ChunkIndex,
+                        ["chunk_total"] = chunk.ChunkTotal,
+                        ["content"] = chunk.Content,
+                        ["title"] = material.Title,
+                        ["category"] = material.Category ?? "",
+                        ["created_at"] = new DateTimeOffset(material.CreatedAt).ToUnixTimeSeconds()
+                    }
+                };
+
+                points.Add(point);
+            }
+
+            await _qdrant.UpsertAsync(collectionName, points, cancellationToken: ct);
+
+            // Update material vector count
+            material.VectorChunkCount = chunks.Count;
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation("Vectorized material {MaterialId} with {ChunkCount} chunks", materialId, chunks.Count);
         }
-
-        await _qdrant.UpsertAsync(collectionName, points, cancellationToken: ct);
-
-        // Update material vector count
-        material.VectorChunkCount = chunks.Count;
-        await _db.SaveChangesAsync(ct);
-
-        _logger.LogInformation("Vectorized material {MaterialId} with {ChunkCount} chunks", materialId, chunks.Count);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to vectorize material {MaterialId}", materialId);
+            throw;
+        }
     }
 
     public async Task<int> VectorizeAllMaterialsAsync(string projectId, string userId, CancellationToken ct = default)
@@ -98,13 +155,28 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
             .Where(m => m.ProjectId == projectId && m.UserId == userId)
             .ToListAsync(ct);
 
-        int count = 0;
+        int successCount = 0;
+        int failureCount = 0;
+
+        _logger.LogInformation("Starting batch vectorization of {TotalCount} materials for project {ProjectId}", materials.Count, projectId);
+
         foreach (var material in materials)
         {
-            await VectorizeMaterialAsync(material.Id, userId, ct);
-            count++;
+            try
+            {
+                await VectorizeMaterialAsync(material.Id, userId, ct);
+                successCount++;
+                _logger.LogInformation("Progress: {SuccessCount}/{TotalCount} materials vectorized successfully", successCount, materials.Count);
+            }
+            catch (Exception ex)
+            {
+                failureCount++;
+                _logger.LogError(ex, "Failed to vectorize material {MaterialId} (title: {Title}). Continuing with remaining materials.", material.Id, material.Title);
+            }
         }
 
-        return count;
+        _logger.LogInformation("Batch vectorization completed: {SuccessCount} succeeded, {FailureCount} failed out of {TotalCount} materials", successCount, failureCount, materials.Count);
+
+        return successCount;
     }
 }
