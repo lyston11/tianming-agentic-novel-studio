@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -32,4 +33,19 @@ public interface IWorkspaceFactory
     /// Get current factory statistics for monitoring.
     /// </summary>
     WorkspaceFactoryStats GetStats();
+
+    /// <summary>
+    /// Check if a workspace is currently active in cache.
+    /// </summary>
+    bool IsWorkspaceActive(string userId, string projectId);
+
+    /// <summary>
+    /// Get detailed statistics including active workspace count and timing metrics.
+    /// </summary>
+    WorkspaceFactoryStats GetDetailedStats();
+
+    /// <summary>
+    /// Perform health diagnostics on the workspace factory.
+    /// </summary>
+    Task<WorkspaceFactoryHealthStatus> CheckHealthAsync();
 }
