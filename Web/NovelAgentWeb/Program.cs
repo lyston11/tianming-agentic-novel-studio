@@ -16,6 +16,7 @@ using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Materials;
 using TM.Web.NovelAgentWeb.Services.Projects;
 using TM.Web.NovelAgentWeb.Services.Repositories;
+using TM.Web.NovelAgentWeb.Services.StoryBible;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 using TM.Web.NovelAgentWeb.Services.Workspace;
@@ -100,6 +101,9 @@ builder.Services.AddScoped<IMaterialService, MaterialService>();
 
 // Register Knowledge Service
 builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
+
+// Register StoryBible Service
+builder.Services.AddScoped<IStoryBibleService, StoryBibleService>();
 
 // Register Agent Session Service
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
