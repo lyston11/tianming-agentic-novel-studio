@@ -665,7 +665,9 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("user_id");
 
                     b.Property<int>("VectorChunkCount")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
                         .HasColumnName("vector_chunk_count");
 
                     b.HasKey("Id");

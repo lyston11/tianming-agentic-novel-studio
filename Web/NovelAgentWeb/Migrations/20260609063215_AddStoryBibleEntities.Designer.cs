@@ -11,8 +11,8 @@ using TM.Web.NovelAgentWeb.Data;
 namespace TM.Web.NovelAgentWeb.Migrations
 {
     [DbContext(typeof(NovelAgentDbContext))]
-    [Migration("20260609061150_AddVectorTracking")]
-    partial class AddVectorTracking
+    [Migration("20260609063215_AddStoryBibleEntities")]
+    partial class AddStoryBibleEntities
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -668,7 +668,9 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("user_id");
 
                     b.Property<int>("VectorChunkCount")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
                         .HasColumnName("vector_chunk_count");
 
                     b.HasKey("Id");

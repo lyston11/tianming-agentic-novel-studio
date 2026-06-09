@@ -244,6 +244,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Content).HasColumnName("content");
             entity.Property(e => e.FilePath).HasColumnName("file_path");
             entity.Property(e => e.Tags).HasColumnName("tags");
+            entity.Property(e => e.VectorChunkCount).HasColumnName("vector_chunk_count").HasDefaultValue(0);
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.UserId).HasDatabaseName("idx_materials_user");
@@ -271,6 +272,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Title).HasColumnName("title").IsRequired();
             entity.Property(e => e.Content).HasColumnName("content").IsRequired();
             entity.Property(e => e.UsageCount).HasColumnName("usage_count").HasDefaultValue(0);
+            entity.Property(e => e.VectorId).HasColumnName("vector_id").HasMaxLength(100);
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasOne(e => e.Project)
