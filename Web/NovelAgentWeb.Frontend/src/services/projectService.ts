@@ -48,6 +48,18 @@ export const projectService = {
   },
 
   /**
+   * Get all projects for the current user (unpaginated).
+   * Returns a simple array of projects.
+   * Authorization header is automatically added by api client.
+   */
+  async listProjects(): Promise<ProjectResponse[]> {
+    const response = await api<PagedResponse<ProjectResponse>>(
+      '/project?pageNumber=1&pageSize=1000'
+    );
+    return response.items;
+  },
+
+  /**
    * Get user statistics (project count, storage usage).
    * Returns derived stats from projects list for now.
    */

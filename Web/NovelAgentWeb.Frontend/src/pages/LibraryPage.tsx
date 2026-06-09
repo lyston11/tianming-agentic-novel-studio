@@ -9,19 +9,6 @@ import '../styles/library.css';
 
 type LibraryMode = 'store' | 'detail' | 'reader';
 
-function flattenChapters(volumes: NovelVolumeView[]) {
-  return volumes.flatMap((volume) => volume.chapters);
-}
-
-function keepGeneratedVolumes(volumes: NovelVolumeView[]) {
-  return volumes
-    .map((volume) => ({
-      ...volume,
-      chapters: volume.chapters.filter((chapter) => chapter.hasGeneratedContent && chapter.visibleInLibrary !== false),
-    }))
-    .filter((volume) => volume.chapters.length > 0);
-}
-
 function formatDate(value: string) {
   if (!value) return '尚未更新';
   return value;
@@ -163,10 +150,10 @@ export default function LibraryPage() {
           rewriteAttemptCount: 0,
           reviewChecks: [],
           nextSuggestions: [],
-          writingStatus: 'pending',
-          contextPackageStatus: 'pending',
-          draftArtifactStatus: 'pending',
-          gateStatus: 'pending',
+          writingStatus: '',
+          contextPackageStatus: '',
+          draftArtifactStatus: '',
+          gateStatus: '',
           changesProtocolPassed: false,
           factSnapshotPassed: false,
           blueprintPassed: false,
@@ -178,8 +165,12 @@ export default function LibraryPage() {
           dependencyWarnings: [],
           contextWarnings: [],
           visibleInWorkflow: true,
-          visibleInLibrary: true,
-          userVisibleStatus: 'placeholder',
+          visibleInLibrary: false,
+          userVisibleStatus: '',
+          artifactStatus: '',
+          draftArtifactId: '',
+          gateReportId: '',
+          qualityReportId: '',
         } as NovelChapterView,
       ],
     }));
@@ -187,14 +178,14 @@ export default function LibraryPage() {
 
   // TODO: Once chapter API is available, filter by hasGeneratedContent
   const filteredVolumes = useMemo(() => volumeViews, [volumeViews]);
+  const allChapters = useMemo(() => filteredVolumes.flatMap((vol) => vol.chapters), [filteredVolumes]);
   const selectedChapter = useMemo(() => {
-    const allChapters = filteredVolumes.flatMap((vol) => vol.chapters);
     if (allChapters.length === 0) return null;
     return (
       allChapters.find((chapter) => chapter.chapterId === selectedChapterId) ??
       allChapters[0]
     );
-  }, [filteredVolumes, selectedChapterId]);
+  }, [allChapters, selectedChapterId]);
   const selectedVolume = filteredVolumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? filteredVolumes[0];
   const readyChapters = selectedBook?.generatedChapterCount ?? 0;
   const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
@@ -347,7 +338,7 @@ export default function LibraryPage() {
                 <strong>{readyChapters}<small>入库章节</small></strong>
                 <strong>{plannedChapters}<small>规划章节</small></strong>
               </div>
-              <button className="ink-button" onClick={() => openReader(selectedChapter)} disabled={bibleLoading || volumesLoading || chapters.length === 0}>
+              <button className="ink-button" onClick={() => openReader(selectedChapter)} disabled={bibleLoading || volumesLoading || allChapters.length === 0}>
                 进入阅读
               </button>
             </main>

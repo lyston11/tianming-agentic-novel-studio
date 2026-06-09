@@ -20,6 +20,7 @@ import type {
   UploadMaterialResponse,
   UserSettings,
   VolumeArcResponse,
+  WorkspaceInfo,
 } from './types';
 
 // Materials API (new multi-user endpoints)
@@ -173,3 +174,6 @@ export const testConnection = (settings: Partial<UserSettings>) =>
     apiKey: settings.llmApiKey,
     model: settings.llmModel,
   });
+
+// Workspace
+export const getWorkspace = () => get<WorkspaceInfo>('/workspace');

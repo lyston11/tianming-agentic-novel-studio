@@ -5,7 +5,6 @@ import {
   listAgentSessions,
   sendChat,
 } from '../api';
-import { projectService } from '../services/projectService';
 import type {
   AgentChapterTask,
   AgentMissionPlan,
@@ -274,12 +273,6 @@ function formatWorkbenchPrompt(args: {
 
 export default function WorkflowPage() {
   const queryClient = useQueryClient();
-  const { data: currentProject } = useQuery({
-    queryKey: ['currentProject'],
-    queryFn: () => projectService.getCurrentProject(),
-    staleTime: 5 * 60 * 1000,
-  });
-
   const { data: agentSessions } = useQuery({
     queryKey: ['agentSessions'],
     queryFn: listAgentSessions,
@@ -353,13 +346,11 @@ export default function WorkflowPage() {
     .filter((chapter) => chapter.qualityIssueSummary || chapter.gateIssueSummary)
     .slice(0, 5);
   const selectedProjectTaskQueue: AgentScheduledTask[] = [];
-  const pendingConfirmation = null;
   const generatedCount = selectedBook?.generatedChapterCount ?? 0;
   const plannedCount = selectedBook?.plannedChapterCount ?? 0;
   const needsRewriteCount = selectedBook?.needsRewriteCount ?? 0;
   const activeSessionTitle = '未绑定会话';
   const activeWorkflowSessionId = '';
-  const pendingConfirmationSessionId = '';
   const selectedAction = workbenchActions.find((action) => action.key === selectedWorkbenchAction) ?? workbenchActions[0];
   const selectedRunId = selectedRun?.runId || selectedArtifact?.runId || selectedChapter?.runId || '';
   const selectedArtifactStatus = selectedChapter?.artifactStatus

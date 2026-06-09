@@ -1,15 +1,14 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listMaterials,
   uploadMaterial,
-  analyzeMaterial,
   deleteMaterialById,
   updateMaterialById,
-  getMaterialContent,
+  createMaterialFromText,
 } from '../api';
+import type { MaterialResponse } from '../api/types';
 import { projectService } from '../services/projectService';
-import type { MaterialReference } from '../api/types';
 import { useMaterialStore } from '../stores/useMaterialStore';
 import { useAppStore } from '../stores/useAppStore';
 import Topbar from '../components/layout/Topbar';
@@ -23,15 +22,12 @@ export default function MaterialsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteContent, setPasteContent] = useState('');
-  const [pasteFileName, setPasteFileName] = useState('');
+  const [pasteTitle, setPasteTitle] = useState('');
   const [ingestOpen, setIngestOpen] = useState(false);
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
-  const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
-  const [editFileName, setEditFileName] = useState('');
-  const [editSummary, setEditSummary] = useState('');
+  const [editTitle, setEditTitle] = useState('');
+  const [editCategory, setEditCategory] = useState('');
   const [editTags, setEditTags] = useState('');
-  const [editContent, setEditContent] = useState('');
-  const [originalEditContent, setOriginalEditContent] = useState('');
 
   const { data: currentProject } = useQuery({
     queryKey: ['currentProject'],
@@ -40,8 +36,7 @@ export default function MaterialsPage() {
   });
   const currentProjectId = currentProject?.id ?? null;
 
-  const { isAnalyzing, analysisStages, currentStage, startAnalysis, updateProgress, completeAnalysis } =
-    useMaterialStore();
+  const { isAnalyzing, analysisStages, currentStage } = useMaterialStore();
 
   const { data: materialsData } = useQuery({
     queryKey: ['materials', currentProjectId],
@@ -52,27 +47,36 @@ export default function MaterialsPage() {
   const uploadMutation = useMutation({
     mutationFn: (file: File) => {
       if (!currentProjectId) throw new Error('No project selected');
-      return uploadMaterial(currentProjectId, file, 'Reference', '');
+      return uploadMaterial(currentProjectId, file, 'Research');
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
-      addLog(`文件已上传: ${data.title}`);
-      addLog(`正在自动拆解...`);
-      startAnalysis(data.id);
-      connectSSE(data.id);
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
+      addLog('素材上传成功');
     },
     onError: (err) => addLog(`上传失败: ${err}`),
   });
 
-  const analyzeMutation = useMutation({
-    mutationFn: analyzeMaterial,
-    onSuccess: (data) => {
+  const createTextMutation = useMutation({
+    mutationFn: () => {
+      if (!currentProjectId) throw new Error('No project selected');
+      const content = pasteContent.trim();
+      if (!content) throw new Error('内容为空');
+      return createMaterialFromText({
+        projectId: currentProjectId,
+        title: pasteTitle || `粘贴素材-${new Date().toISOString().slice(0, 10)}.txt`,
+        content,
+        category: 'Research',
+      });
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
       queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
-      addLog(`拆解完成: ${data.fileName}，提取 ${data.totalEntriesCreated} 条知识`);
-      completeAnalysis();
+      addLog('素材创建成功');
+      setPasteContent('');
+      setPasteTitle('');
     },
-    onError: (err) => { addLog(`分析失败: ${err}`); completeAnalysis(); },
+    onError: (err) => addLog(`创建失败: ${err}`),
   });
 
   const deleteMutation = useMutation({
@@ -89,10 +93,9 @@ export default function MaterialsPage() {
     mutationFn: () => {
       if (!editingMaterialId) throw new Error('未选择素材');
       return updateMaterialById(editingMaterialId, {
-        fileName: editFileName,
-        summary: editSummary,
+        title: editTitle,
+        category: editCategory,
         tags: editTags,
-        content: editContent !== originalEditContent ? editContent : '',
       });
     },
     onSuccess: () => {
@@ -103,31 +106,6 @@ export default function MaterialsPage() {
     },
     onError: (err) => addLog(`更新失败: ${err}`),
   });
-
-  const connectSSE = useCallback((materialId: string) => {
-    const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-    const es = new EventSource(`${BASE_URL}/materials/analyze/${materialId}/stream`);
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.status === 'done' || data.status === 'failed') {
-          es.close();
-          completeAnalysis();
-          queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
-          queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
-          if (data.status === 'done') addLog(data.message);
-        } else {
-          updateProgress(data);
-        }
-      } catch { /* ignore parse errors */ }
-    };
-
-    es.onerror = () => {
-      es.close();
-      completeAnalysis();
-    };
-  }, [addLog, completeAnalysis, queryClient, updateProgress, currentProjectId]);
 
   const handleFile = async (file: File) => {
     uploadMutation.mutate(file);
@@ -148,39 +126,14 @@ export default function MaterialsPage() {
   const handlePasteSubmit = () => {
     const content = pasteContent.trim();
     if (!content) return;
-    startAnalysis('paste');
-    analyzeMutation.mutate({
-      fileName: pasteFileName || `粘贴素材-${new Date().toISOString().slice(0, 10)}.txt`,
-      content,
-      sourceType: 'Paste',
-    });
-    setPasteContent('');
-    setPasteFileName('');
+    createTextMutation.mutate();
   };
 
-  const openMaterialEditor = async (material: MaterialReference) => {
+  const openMaterialEditor = (material: MaterialResponse) => {
     setEditingMaterialId(material.id);
-    setEditFileName(material.fileName);
-    setEditSummary(material.summary);
-    setEditTags(material.tags.join('，'));
-    setEditContent('');
-    setOriginalEditContent('');
-    setLoadingEditId(material.id);
-    try {
-      const result = await getMaterialContent(material.id);
-      setEditContent(result.content);
-      setOriginalEditContent(result.content);
-    } catch (err) {
-      addLog(`读取素材原文失败: ${err}`);
-    } finally {
-      setLoadingEditId(null);
-    }
-  };
-
-  const handleReanalyzeMaterial = (materialId: string) => {
-    startAnalysis(materialId);
-    addLog('正在重新拆解素材...');
-    connectSSE(materialId);
+    setEditTitle(material.title);
+    setEditCategory(material.category || '');
+    setEditTags(material.tags || '');
   };
 
   const materials = materialsData?.materials ?? [];
@@ -191,6 +144,7 @@ export default function MaterialsPage() {
       <div className="materials-page">
         <main className="materials-knowledge">
           <KnowledgeBaseBrowser
+            projectId={currentProjectId || ''}
             actions={(
               <button className="ink-button" onClick={() => setIngestOpen(true)}>
                 导入素材
@@ -250,8 +204,8 @@ export default function MaterialsPage() {
                   <span>粘贴文本</span>
                   <input
                     placeholder="素材名称"
-                    value={pasteFileName}
-                    onChange={(e) => setPasteFileName(e.target.value)}
+                    value={pasteTitle}
+                    onChange={(e) => setPasteTitle(e.target.value)}
                   />
                 </div>
                 <textarea
@@ -263,17 +217,19 @@ export default function MaterialsPage() {
                 <button
                   className="ink-button"
                   onClick={handlePasteSubmit}
-                  disabled={analyzeMutation.isPending || !pasteContent.trim()}
+                  disabled={createTextMutation.isPending || !pasteContent.trim()}
                 >
-                  {analyzeMutation.isPending ? '拆解中...' : '拆解入库'}
+                  {createTextMutation.isPending ? '创建中...' : '创建素材'}
                 </button>
               </div>
 
-              <AnalysisProgress
-                stages={analysisStages}
-                currentStage={currentStage}
-                isAnalyzing={isAnalyzing}
-              />
+              {isAnalyzing && (
+                <AnalysisProgress
+                  stages={analysisStages}
+                  currentStage={currentStage}
+                  isAnalyzing={isAnalyzing}
+                />
+              )}
             </div>
 
             <div className="material-list-section">
@@ -288,20 +244,13 @@ export default function MaterialsPage() {
                   {materials.map((m) => (
                     <div key={m.id} className="material-card">
                       <div className="material-card-top">
-                        <div className="material-name">{m.fileName}</div>
+                        <div className="material-name">{m.title}</div>
                         <div className="material-card-actions">
                           <button
                             className="ghost-button"
                             onClick={() => openMaterialEditor(m)}
                           >
                             编辑
-                          </button>
-                          <button
-                            className="ghost-button"
-                            onClick={() => handleReanalyzeMaterial(m.id)}
-                            disabled={isAnalyzing}
-                          >
-                            拆解
                           </button>
                           <button
                             className="ghost-button"
@@ -315,33 +264,21 @@ export default function MaterialsPage() {
                         <div className="material-edit-form">
                           <label>
                             <span>素材名称</span>
-                            <input value={editFileName} onChange={(e) => setEditFileName(e.target.value)} />
+                            <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
                           </label>
                           <label>
-                            <span>摘要</span>
-                            <textarea value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={3} />
+                            <span>分类</span>
+                            <input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} />
                           </label>
                           <label>
                             <span>标签</span>
                             <input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="用逗号分隔" />
                           </label>
-                          <label>
-                            <span>原文</span>
-                            <textarea
-                              value={loadingEditId === m.id ? '正在读取素材原文...' : editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              rows={7}
-                              disabled={loadingEditId === m.id}
-                            />
-                          </label>
-                          <div className="material-edit-hint">
-                            修改原文后，这份素材会标记为未拆解，需要重新拆解入库。
-                          </div>
                           <div className="material-edit-actions">
                             <button
                               className="ink-button"
                               onClick={() => updateMutation.mutate()}
-                              disabled={updateMutation.isPending || loadingEditId === m.id}
+                              disabled={updateMutation.isPending}
                             >
                               {updateMutation.isPending ? '保存中...' : '保存修改'}
                             </button>
@@ -353,24 +290,13 @@ export default function MaterialsPage() {
                       ) : (
                         <>
                           <div className="material-meta">
-                            {m.sourceType} · {m.characterCount} 字
-                            {m.isAnalyzed ? <span className="tag jade">已拆解</span> : <span className="tag">待拆解</span>}
+                            {m.category || 'Uncategorized'} · {m.vectorChunkCount} 个向量块
                           </div>
-                          <div className="material-summary">{m.summary}</div>
                           <div className="material-tags">
-                            {m.tags.slice(0, 5).map((t, i) => (
-                              <span key={i} className="tag">{t}</span>
-                            ))}
+                            {m.tags ? m.tags.split(',').slice(0, 5).map((t, i) => (
+                              <span key={i} className="tag">{t.trim()}</span>
+                            )) : null}
                           </div>
-                          {m.isAnalyzed && m.analysisResults.length > 0 && (
-                            <div className="analysis-summary">
-                              {m.analysisResults.map((r, i) => (
-                                <span key={i} className="analysis-badge">
-                                  {r.stageLabel}: {r.entriesCreated}
-                                </span>
-                              ))}
-                            </div>
-                          )}
                         </>
                       )}
                     </div>

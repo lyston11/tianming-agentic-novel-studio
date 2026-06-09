@@ -43,7 +43,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `${response.status} ${response.statusUrl}`);
+    throw new Error(text || `${response.status} ${response.statusText}`);
   }
   return response.json();
 }
