@@ -333,17 +333,32 @@ public class NovelAgentDbContext : DbContext
         // StoryConstitution entity configuration
         modelBuilder.Entity<StoryConstitution>(entity =>
         {
+            entity.ToTable("story_constitutions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.Genre).HasColumnName("genre").IsRequired();
+            entity.Property(e => e.SubGenre).HasColumnName("sub_genre");
+            entity.Property(e => e.CoreHook).HasColumnName("core_hook").IsRequired();
+            entity.Property(e => e.ReaderPromise).HasColumnName("reader_promise");
+            entity.Property(e => e.GenreProfile).HasColumnName("genre_profile");
+            entity.Property(e => e.TargetAudience).HasColumnName("target_audience");
+            entity.Property(e => e.Taboos).HasColumnName("taboos");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
             entity.HasIndex(e => e.ProjectId).IsUnique();
             entity.HasIndex(e => e.UserId);
 
             entity.HasOne(e => e.User)
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(e => e.Project)
-                .WithMany()
-                .HasForeignKey(e => e.ProjectId)
+                .WithOne(p => p.StoryConstitution)
+                .HasForeignKey<StoryConstitution>(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
