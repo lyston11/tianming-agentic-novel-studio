@@ -1,13 +1,14 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  getMaterials,
-  uploadMaterialFile,
+  listMaterials,
+  uploadMaterial,
   analyzeMaterial,
-  deleteMaterial,
-  updateMaterial,
+  deleteMaterialById,
+  updateMaterialById,
   getMaterialContent,
 } from '../api';
+import { projectService } from '../services/projectService';
 import type { MaterialReference } from '../api/types';
 import { useMaterialStore } from '../stores/useMaterialStore';
 import { useAppStore } from '../stores/useAppStore';
@@ -31,20 +32,34 @@ export default function MaterialsPage() {
   const [editTags, setEditTags] = useState('');
   const [editContent, setEditContent] = useState('');
   const [originalEditContent, setOriginalEditContent] = useState('');
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    projectService.getCurrentProject().then((project) => {
+      if (project) setCurrentProjectId(project.id);
+    });
+  }, []);
 
   const { isAnalyzing, analysisStages, currentStage, startAnalysis, updateProgress, completeAnalysis } =
     useMaterialStore();
 
-  const { data: materialsData } = useQuery({ queryKey: ['materials'], queryFn: getMaterials });
+  const { data: materialsData } = useQuery({
+    queryKey: ['materials', currentProjectId],
+    queryFn: () => currentProjectId ? listMaterials(currentProjectId) : Promise.resolve({ materials: [], totalCount: 0 }),
+    enabled: !!currentProjectId
+  });
 
   const uploadMutation = useMutation({
-    mutationFn: uploadMaterialFile,
+    mutationFn: (file: File) => {
+      if (!currentProjectId) throw new Error('No project selected');
+      return uploadMaterial(currentProjectId, file, 'Reference', '');
+    },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      addLog(`文件已上传: ${data.fileName} (${data.characterCount} 字)`);
+      queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+      addLog(`文件已上传: ${data.title}`);
       addLog(`正在自动拆解...`);
-      startAnalysis(data.materialId);
-      connectSSE(data.materialId);
+      startAnalysis(data.id);
+      connectSSE(data.id);
     },
     onError: (err) => addLog(`上传失败: ${err}`),
   });
@@ -52,8 +67,8 @@ export default function MaterialsPage() {
   const analyzeMutation = useMutation({
     mutationFn: analyzeMaterial,
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
       addLog(`拆解完成: ${data.fileName}，提取 ${data.totalEntriesCreated} 条知识`);
       completeAnalysis();
     },
@@ -61,10 +76,10 @@ export default function MaterialsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deleteMaterial,
+    mutationFn: deleteMaterialById,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
       addLog('素材已删除');
     },
     onError: (err) => addLog(`删除失败: ${err}`),
@@ -73,7 +88,7 @@ export default function MaterialsPage() {
   const updateMutation = useMutation({
     mutationFn: () => {
       if (!editingMaterialId) throw new Error('未选择素材');
-      return updateMaterial(editingMaterialId, {
+      return updateMaterialById(editingMaterialId, {
         fileName: editFileName,
         summary: editSummary,
         tags: editTags,
@@ -81,8 +96,8 @@ export default function MaterialsPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
       addLog('素材已更新');
       setEditingMaterialId(null);
     },
@@ -99,8 +114,8 @@ export default function MaterialsPage() {
         if (data.status === 'done' || data.status === 'failed') {
           es.close();
           completeAnalysis();
-          queryClient.invalidateQueries({ queryKey: ['materials'] });
-          queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+          queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+          queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
           if (data.status === 'done') addLog(data.message);
         } else {
           updateProgress(data);
@@ -112,7 +127,7 @@ export default function MaterialsPage() {
       es.close();
       completeAnalysis();
     };
-  }, [addLog, completeAnalysis, queryClient, updateProgress]);
+  }, [addLog, completeAnalysis, queryClient, updateProgress, currentProjectId]);
 
   const handleFile = async (file: File) => {
     uploadMutation.mutate(file);
