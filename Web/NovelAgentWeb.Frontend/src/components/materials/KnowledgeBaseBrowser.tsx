@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getKnowledgeEntries, deleteKnowledgeEntry, updateKnowledgeEntry } from '../../api';
+import { listKnowledgeEntries, deleteKnowledgeEntryById, updateKnowledgeEntryById } from '../../api';
 import type { CreativeKnowledgeCategory, CreativeKnowledgeEntry } from '../../api/types';
 
 const CATEGORIES: { key: CreativeKnowledgeCategory | 'All'; label: string }[] = [
@@ -15,10 +15,6 @@ const CATEGORIES: { key: CreativeKnowledgeCategory | 'All'; label: string }[] = 
   { key: 'RelationshipDynamic', label: '关系动态' },
   { key: 'ProjectUsedPattern', label: '项目记忆' },
 ];
-
-const EDITABLE_CATEGORIES = CATEGORIES.filter(
-  (cat): cat is { key: CreativeKnowledgeCategory; label: string } => cat.key !== 'All',
-);
 
 const CATEGORY_COLORS: Record<string, string> = {
   GenrePrinciple: 'var(--gold)',
@@ -53,34 +49,60 @@ function getShortContent(entry: CreativeKnowledgeEntry) {
 }
 
 interface KnowledgeBaseBrowserProps {
+  projectId: string;
   actions?: ReactNode;
 }
 
-export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserProps) {
+export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBaseBrowserProps) {
   const queryClient = useQueryClient();
   const [selectedCategory, setSelectedCategory] = useState<CreativeKnowledgeCategory | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editCategory, setEditCategory] = useState<CreativeKnowledgeCategory>('GenrePrinciple');
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
-  const [editGenre, setEditGenre] = useState('');
-  const [editSubGenre, setEditSubGenre] = useState('');
-  const [editTags, setEditTags] = useState('');
-  const [editWeight, setEditWeight] = useState(5);
 
-  const { data: entries = [] } = useQuery({
-    queryKey: ['knowledgeEntries'],
-    queryFn: getKnowledgeEntries,
+  const { data: rawEntries = [] } = useQuery({
+    queryKey: ['knowledgeEntries', projectId],
+    queryFn: () => listKnowledgeEntries(projectId),
+    enabled: !!projectId,
   });
 
+  // Map backend KnowledgeResponse to frontend CreativeKnowledgeEntry
+  const entries: CreativeKnowledgeEntry[] = useMemo(
+    () => rawEntries.map(e => {
+      // Validate category with fallback
+      const validCategories: CreativeKnowledgeCategory[] = [
+        'GenrePrinciple', 'TropePattern', 'AntiTropeStrategy', 'ReaderPromise',
+        'ThemeDepth', 'EmotionArc', 'RelationshipDynamic', 'ProjectUsedPattern'
+      ];
+      const category = validCategories.includes(e.entryType as CreativeKnowledgeCategory)
+        ? (e.entryType as CreativeKnowledgeCategory)
+        : 'GenrePrinciple';
+
+      return {
+        id: e.id,
+        category,
+        title: e.title,
+        content: e.content,
+        genre: '',
+        subGenre: '',
+        tags: [],
+        weight: 5,
+        source: '',
+        usageCount: e.usageCount,
+        createdAt: e.createdAt,
+      };
+    }),
+    [rawEntries]
+  );
+
   const deleteMutation = useMutation({
-    mutationFn: deleteKnowledgeEntry,
+    mutationFn: (id: string) => deleteKnowledgeEntryById(id),
     onSuccess: () => {
       setEditingId(null);
       setSelectedId(null);
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', projectId] });
     },
   });
 
@@ -88,37 +110,22 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
     mutationFn: () => {
       const base = entries.find((entry) => entry.id === editingId);
       if (!base) throw new Error('未选择知识条目');
-      return updateKnowledgeEntry(base.id, {
-        ...base,
-        category: editCategory,
+      return updateKnowledgeEntryById(base.id, {
         title: editTitle,
         content: editContent,
-        genre: editGenre,
-        subGenre: editSubGenre,
-        tags: editTags
-          .split(/[,，]/)
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-        weight: Math.max(1, Math.min(10, Number(editWeight) || 5)),
       });
     },
-    onSuccess: (result) => {
-      if (result.entry?.id) setSelectedId(result.entry.id);
+    onSuccess: () => {
       setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', projectId] });
     },
   });
 
   const startEditing = (entry: CreativeKnowledgeEntry) => {
     setSelectedId(entry.id);
     setEditingId(entry.id);
-    setEditCategory(entry.category);
     setEditTitle(entry.title);
     setEditContent(entry.content);
-    setEditGenre(entry.genre);
-    setEditSubGenre(entry.subGenre);
-    setEditTags(entry.tags.join('，'));
-    setEditWeight(entry.weight);
   };
 
   const categoryCounts = useMemo(() => {
@@ -137,32 +144,16 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
         if (!q) return true;
         return (
           entry.title.toLowerCase().includes(q) ||
-          entry.content.toLowerCase().includes(q) ||
-          entry.source.toLowerCase().includes(q) ||
-          entry.genre.toLowerCase().includes(q) ||
-          entry.subGenre.toLowerCase().includes(q) ||
-          entry.tags.some((tag) => tag.toLowerCase().includes(q))
+          entry.content.toLowerCase().includes(q)
         );
       })
-      .sort((a, b) => b.weight - a.weight || a.title.localeCompare(b.title, 'zh-Hans-CN'));
+      .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
   }, [entries, searchQuery, selectedCategory]);
 
   const selectedEntry = useMemo(() => {
     if (filtered.length === 0) return null;
     return filtered.find((entry) => entry.id === selectedId) ?? filtered[0];
   }, [filtered, selectedId]);
-
-  const topTags = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const entry of filtered) {
-      for (const tag of entry.tags) {
-        counts.set(tag, (counts.get(tag) ?? 0) + 1);
-      }
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-Hans-CN'))
-      .slice(0, 12);
-  }, [filtered]);
 
   return (
     <section className="knowledge-browser">
@@ -175,7 +166,6 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
           <div className="knowledge-command-stats" aria-label="知识库统计">
             <span><strong>{entries.length}</strong> 条目</span>
             <span><strong>{filtered.length}</strong> 当前</span>
-            <span><strong>{topTags.length}</strong> 标签</span>
           </div>
           {actions && <div className="knowledge-command-actions">{actions}</div>}
         </div>
@@ -184,7 +174,7 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
       <div className="knowledge-search-row">
         <input
           className="knowledge-search"
-          placeholder="搜索题材、桥段、关系、标签或来源"
+          placeholder="搜索标题或内容"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -217,16 +207,6 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
         </aside>
 
         <div className="knowledge-results">
-          {topTags.length > 0 && (
-            <div className="knowledge-tag-cloud">
-              {topTags.map(([tag, count]) => (
-                <button key={tag} className="knowledge-tag" onClick={() => setSearchQuery(tag)}>
-                  {tag}<span>{count}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
           {filtered.length === 0 ? (
             <div className="empty knowledge-empty">暂无知识条目</div>
           ) : (
@@ -244,15 +224,9 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
                     >
                       {getCategoryLabel(entry.category)}
                     </span>
-                    <span className="knowledge-weight">W{entry.weight}</span>
                   </div>
                   <div className="knowledge-title">{entry.title}</div>
                   <div className="knowledge-content">{getShortContent(entry)}</div>
-                  <div className="knowledge-tags">
-                    {entry.tags.slice(0, 5).map((tag, i) => (
-                      <span key={i} className="tag">{tag}</span>
-                    ))}
-                  </div>
                 </article>
               ))}
             </div>
@@ -269,7 +243,6 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
                 >
                   {getCategoryLabel(selectedEntry.category)}
                 </span>
-                <span className="knowledge-weight">W{selectedEntry.weight}</span>
               </div>
               {editingId === selectedEntry.id ? (
                 <div className="knowledge-edit-form">
@@ -279,44 +252,7 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
                   </label>
                   <label>
                     <span>内容</span>
-                    <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={7} />
-                  </label>
-                  <div className="knowledge-edit-grid">
-                    <label>
-                      <span>分类</span>
-                      <select
-                        value={editCategory}
-                        onChange={(e) => setEditCategory(e.target.value as CreativeKnowledgeCategory)}
-                      >
-                        {EDITABLE_CATEGORIES.map((cat) => (
-                          <option key={cat.key} value={cat.key}>{cat.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>权重</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={editWeight}
-                        onChange={(e) => setEditWeight(Number(e.target.value))}
-                      />
-                    </label>
-                  </div>
-                  <div className="knowledge-edit-grid">
-                    <label>
-                      <span>题材</span>
-                      <input value={editGenre} onChange={(e) => setEditGenre(e.target.value)} />
-                    </label>
-                    <label>
-                      <span>子题材</span>
-                      <input value={editSubGenre} onChange={(e) => setEditSubGenre(e.target.value)} />
-                    </label>
-                  </div>
-                  <label>
-                    <span>标签</span>
-                    <input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="用逗号分隔" />
+                    <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={10} />
                   </label>
                   <div className="knowledge-detail-actions">
                     <button
@@ -336,25 +272,6 @@ export default function KnowledgeBaseBrowser({ actions }: KnowledgeBaseBrowserPr
                 <>
                   <h3>{selectedEntry.title}</h3>
                   <p>{selectedEntry.content}</p>
-
-                  <div className="knowledge-detail-tags">
-                    {selectedEntry.tags.map((tag, i) => (
-                      <button key={i} className="tag" onClick={() => setSearchQuery(tag)}>
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
-
-                  <dl className="knowledge-detail-meta">
-                    <div>
-                      <dt>来源</dt>
-                      <dd>{selectedEntry.source || '内置知识'}</dd>
-                    </div>
-                    <div>
-                      <dt>题材</dt>
-                      <dd>{selectedEntry.genre || '通用'} / {selectedEntry.subGenre || '通用'}</dd>
-                    </div>
-                  </dl>
 
                   <div className="knowledge-detail-actions">
                     <button className="ink-button" onClick={() => startEditing(selectedEntry)}>
