@@ -119,6 +119,7 @@ builder.Services.AddSingleton<IMicroEmbeddingService, StubEmbeddingService>();
 builder.Services.Configure<WorkspaceFactoryOptions>(
     builder.Configuration.GetSection("WorkspaceFactory"));
 builder.Services.AddSingleton<IWorkspaceFactory, WorkspaceFactory>();
+builder.Services.AddSingleton<IWorkspaceViolationTracker, WorkspaceViolationTracker>();
 
 // Register StoryBible Repository
 builder.Services.AddScoped<IStoryBibleRepository, StoryBibleRepository>();
@@ -200,6 +201,7 @@ if (app.Environment.IsDevelopment())
 app.UseCors("Dev");
 app.UseAuthentication();
 app.UseMiddleware<UserContextMiddleware>(); // Extract user context from JWT after authentication
+app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
