@@ -24,6 +24,9 @@ public class NovelAgentDbContext : DbContext
     public DbSet<AgentSession> AgentSessions { get; set; } = null!;
     public DbSet<StoryConstitution> StoryConstitutions { get; set; } = null!;
     public DbSet<VolumeArc> VolumeArcs { get; set; } = null!;
+    public DbSet<ForeshadowEntry> ForeshadowEntries { get; set; } = null!;
+    public DbSet<WorldSettingEntry> WorldSettingEntries { get; set; } = null!;
+    public DbSet<AgentRun> AgentRuns { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -192,26 +195,40 @@ public class NovelAgentDbContext : DbContext
             entity.ToTable("characters");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
             entity.Property(e => e.Name).HasColumnName("name").IsRequired();
-            entity.Property(e => e.Role).HasColumnName("role");
-            entity.Property(e => e.Identity).HasColumnName("identity");
-            entity.Property(e => e.Description).HasColumnName("description");
+            entity.Property(e => e.Role).HasColumnName("role").IsRequired();
+            entity.Property(e => e.Alias).HasColumnName("alias");
+            entity.Property(e => e.Age).HasColumnName("age");
+            entity.Property(e => e.Gender).HasColumnName("gender");
+            entity.Property(e => e.Appearance).HasColumnName("appearance");
             entity.Property(e => e.Personality).HasColumnName("personality");
-            entity.Property(e => e.FirstAppearanceChapterId).HasColumnName("first_appearance_chapter_id");
-            entity.Property(e => e.DetailJsonPath).HasColumnName("detail_json_path");
+            entity.Property(e => e.Background).HasColumnName("background");
+            entity.Property(e => e.InitialPowerLevel).HasColumnName("initial_power_level");
+            entity.Property(e => e.CurrentPowerLevel).HasColumnName("current_power_level");
+            entity.Property(e => e.SpecialAbilities).HasColumnName("special_abilities");
+            entity.Property(e => e.CoreGoal).HasColumnName("core_goal");
+            entity.Property(e => e.Motivation).HasColumnName("motivation");
+            entity.Property(e => e.Relationships).HasColumnName("relationships");
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("active");
+            entity.Property(e => e.FirstAppearChapter).HasColumnName("first_appear_chapter");
+            entity.Property(e => e.LastAppearChapter).HasColumnName("last_appear_chapter");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.ProjectId).HasDatabaseName("idx_characters_project");
+            entity.HasIndex(e => e.UserId);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.Characters)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.FirstAppearanceChapter)
-                .WithMany(c => c.CharactersFirstAppearance)
-                .HasForeignKey(e => e.FirstAppearanceChapterId)
-                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // WorldSetting entity configuration
@@ -390,6 +407,116 @@ public class NovelAgentDbContext : DbContext
 
             entity.HasIndex(e => new { e.ProjectId, e.VolumeNumber }).IsUnique();
             entity.HasIndex(e => e.UserId);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ForeshadowEntry entity configuration
+        modelBuilder.Entity<ForeshadowEntry>(entity =>
+        {
+            entity.ToTable("foreshadow_ledger");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.Title).HasColumnName("title").IsRequired();
+            entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.Category).HasColumnName("category").IsRequired();
+            entity.Property(e => e.PlantedInChapter).HasColumnName("planted_in_chapter").IsRequired();
+            entity.Property(e => e.PlantedContext).HasColumnName("planted_context");
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("planted");
+            entity.Property(e => e.ResolvedInChapter).HasColumnName("resolved_in_chapter");
+            entity.Property(e => e.ResolvedContext).HasColumnName("resolved_context");
+            entity.Property(e => e.PlantedAt).HasColumnName("planted_at");
+            entity.Property(e => e.ResolvedAt).HasColumnName("resolved_at");
+            entity.Property(e => e.Priority).HasColumnName("priority").HasDefaultValue(5);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Status);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // WorldSettingEntry entity configuration
+        modelBuilder.Entity<WorldSettingEntry>(entity =>
+        {
+            entity.ToTable("world_settings");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.Category).HasColumnName("category").IsRequired();
+            entity.Property(e => e.SubCategory).HasColumnName("sub_category");
+            entity.Property(e => e.Title).HasColumnName("title").IsRequired();
+            entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.FirstMentionedChapter).HasColumnName("first_mentioned_chapter");
+            entity.Property(e => e.ReferencedChapters).HasColumnName("referenced_chapters");
+            entity.Property(e => e.Version).HasColumnName("version").HasDefaultValue(1);
+            entity.Property(e => e.PreviousVersion).HasColumnName("previous_version");
+            entity.Property(e => e.ChangeLog).HasColumnName("change_log");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Category);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AgentRun entity configuration
+        modelBuilder.Entity<AgentRun>(entity =>
+        {
+            entity.ToTable("agent_runs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.RunType).HasColumnName("run_type").IsRequired();
+            entity.Property(e => e.TargetChapterId).HasColumnName("target_chapter_id");
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("running");
+            entity.Property(e => e.InputParams).HasColumnName("input_params");
+            entity.Property(e => e.OutputData).HasColumnName("output_data");
+            entity.Property(e => e.ContextPackageSize).HasColumnName("context_package_size");
+            entity.Property(e => e.ContextPackagePath).HasColumnName("context_package_path");
+            entity.Property(e => e.GateReportPath).HasColumnName("gate_report_path");
+            entity.Property(e => e.StartedAt).HasColumnName("started_at");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+            entity.Property(e => e.DurationMs).HasColumnName("duration_ms");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.RunType);
 
             entity.HasOne(e => e.User)
                 .WithMany()
