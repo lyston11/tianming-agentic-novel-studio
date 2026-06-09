@@ -1,0 +1,73 @@
+using System.ComponentModel.DataAnnotations;
+
+namespace TM.Web.NovelAgentWeb.DTOs;
+
+/// <summary>
+/// Request DTO for creating a knowledge entry.
+/// </summary>
+public class CreateKnowledgeRequest
+{
+    [Required]
+    public string ProjectId { get; set; } = null!;
+
+    [Required]
+    public string EntryType { get; set; } = null!;
+
+    [Required]
+    public string Title { get; set; } = null!;
+
+    [Required]
+    public string Content { get; set; } = null!;
+}
+
+/// <summary>
+/// Request DTO for updating a knowledge entry.
+/// </summary>
+public class UpdateKnowledgeRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+}
+
+/// <summary>
+/// Request DTO for semantic search in knowledge base.
+/// </summary>
+public class SearchKnowledgeRequest
+{
+    [Required]
+    public string ProjectId { get; set; } = null!;
+
+    [Required]
+    public string Query { get; set; } = null!;
+
+    public int TopK { get; set; } = 10;
+
+    public string? EntryType { get; set; }
+}
+
+/// <summary>
+/// Response DTO for knowledge entry.
+/// </summary>
+public class KnowledgeResponse
+{
+    public string Id { get; set; } = null!;
+    public string ProjectId { get; set; } = null!;
+    public string EntryType { get; set; } = null!;
+    public string Title { get; set; } = null!;
+    public string Content { get; set; } = null!;
+    public int UsageCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string? VectorId { get; set; }
+}
+
+/// <summary>
+/// Response DTO for semantic search result.
+/// </summary>
+public class KnowledgeSearchResult
+{
+    public string Id { get; set; } = null!;
+    public string EntryType { get; set; } = null!;
+    public string Title { get; set; } = null!;
+    public string Content { get; set; } = null!;
+    public float Score { get; set; }
+}

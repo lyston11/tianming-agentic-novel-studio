@@ -12,6 +12,7 @@ using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Chapters;
 using TM.Web.NovelAgentWeb.Services.Embedding;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Materials;
 using TM.Web.NovelAgentWeb.Services.Projects;
 using TM.Web.NovelAgentWeb.Services.Repositories;
@@ -96,6 +97,9 @@ builder.Services.AddScoped<IChapterService, ChapterService>();
 
 // Register Material Service
 builder.Services.AddScoped<IMaterialService, MaterialService>();
+
+// Register Knowledge Service
+builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
 
 // Register Agent Session Service
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();

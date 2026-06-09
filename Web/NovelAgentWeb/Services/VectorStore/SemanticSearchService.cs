@@ -90,13 +90,21 @@ public sealed class SemanticSearchService
                 payload.TryGetValue("entity_type", out var entityTypeValue);
                 payload.TryGetValue("entity_id", out var entityIdValue);
 
+                // Convert Qdrant payload to dictionary
+                var payloadDict = new Dictionary<string, object>();
+                foreach (var kvp in payload)
+                {
+                    payloadDict[kvp.Key] = kvp.Value;
+                }
+
                 return new SemanticSearchResult
                 {
                     ChunkId = chunkIdValue?.StringValue ?? string.Empty,
                     Content = contentValue?.StringValue ?? string.Empty,
                     Score = r.Score,
                     EntityType = entityTypeValue?.StringValue ?? string.Empty,
-                    EntityId = entityIdValue?.StringValue ?? string.Empty
+                    EntityId = entityIdValue?.StringValue ?? string.Empty,
+                    Payload = payloadDict
                 };
             }).ToList();
         }
@@ -136,4 +144,5 @@ public class SemanticSearchResult
     public float Score { get; set; }
     public string EntityType { get; set; } = string.Empty;
     public string EntityId { get; set; } = string.Empty;
+    public Dictionary<string, object> Payload { get; set; } = new();
 }
