@@ -1,6 +1,21 @@
+using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using TM.Services.Framework.AI.Embedding;
+using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Middleware;
 using TM.Web.NovelAgentWeb.Services;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.Chapters;
+using TM.Web.NovelAgentWeb.Services.Embedding;
+using TM.Web.NovelAgentWeb.Services.Projects;
+using TM.Web.NovelAgentWeb.Services.Repositories;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,10 +38,77 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Add HttpClientFactory for Qdrant health check
+builder.Services.AddHttpClient();
+
+// Add DbContext with SQLite
+builder.Services.AddDbContext<NovelAgentDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("NovelAgentDb")));
+
+// Configure JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey is not configured");
+var issuer = jwtSettings["Issuer"] ?? "NovelAgentWeb";
+var audience = jwtSettings["Audience"] ?? "NovelAgentWeb";
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+        ValidateIssuer = true,
+        ValidIssuer = issuer,
+        ValidateAudience = true,
+        ValidAudience = audience,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// Register Memory Cache
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
+
+// Register Authentication Services
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<JwtTokenGenerator>();
+
+// Register Current User Service (for authorization and data isolation)
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+// Register Project Service
+builder.Services.AddScoped<IProjectService, ProjectService>();
+
+// Register Chapter Service
+builder.Services.AddScoped<IChapterService, ChapterService>();
+
+// Register Agent Session Service
+builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
+
+// Register Embedding Service (using stub for now - replace with BgeSmallZhEmbeddingService when ML packages are configured)
+builder.Services.AddSingleton<IMicroEmbeddingService, StubEmbeddingService>();
+
+// Register WorkspaceFactory with options
+builder.Services.Configure<WorkspaceFactoryOptions>(
+    builder.Configuration.GetSection("WorkspaceFactory"));
+builder.Services.AddSingleton<IWorkspaceFactory, WorkspaceFactory>();
+
+// Register StoryBible Repository
+builder.Services.AddScoped<IStoryBibleRepository, StoryBibleRepository>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Dev", policy =>
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins("http://localhost:3000")
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
@@ -66,7 +148,10 @@ builder.Services.AddSingleton<PhaseInference>();
 builder.Services.AddSingleton<PhaseContextBuilder>();
 builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<AgentRouter>();
+builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
+builder.Services.AddSingleton<QdrantSearchService>(); // Vector search service with user isolation
 builder.Services.AddHostedService<AgentSchedulerHostedService>();
+builder.Services.AddHostedService<QdrantHealthCheck>();
 
 var app = builder.Build();
 
@@ -79,9 +164,18 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("Dev");
+app.UseAuthentication();
+app.UseMiddleware<UserContextMiddleware>(); // Extract user context from JWT after authentication
+app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
 app.Run();
+
+// Make Program class accessible to tests - must be public for WebApplicationFactory
+namespace TM.Web.NovelAgentWeb
+{
+    public partial class Program { }
+}
