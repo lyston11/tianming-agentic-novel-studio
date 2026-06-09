@@ -587,6 +587,137 @@ export interface MaterialUpdateRequest {
   content?: string;
 }
 
+// ============================================================
+// REST API Response Types (Phase 4)
+// ============================================================
+
+// Material response types
+export interface MaterialResponse {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  title: string;
+  category: string | null;
+  contentType: string | null;
+  filePath: string | null;
+  tags: string | null;
+  createdAt: string;
+  vectorChunkCount: number;
+}
+
+export interface MaterialListResponse {
+  materials: MaterialResponse[];
+  totalCount: number;
+}
+
+export interface MaterialContentResponse {
+  id: string;
+  title: string;
+  contentType: string | null;
+  content: string;
+}
+
+export interface UploadMaterialResponse {
+  id: string;
+  title: string;
+  filePath: string;
+  category: string | null;
+}
+
+// Knowledge response types
+export interface KnowledgeResponse {
+  id: string;
+  projectId: string;
+  entryType: string;
+  title: string;
+  content: string;
+  usageCount: number;
+  createdAt: string;
+  vectorId: string | null;
+}
+
+export interface KnowledgeSearchResult {
+  id: string;
+  entryType: string;
+  title: string;
+  content: string;
+  score: number;
+}
+
+export interface KnowledgeSearchResponse {
+  results: KnowledgeSearchResult[];
+  totalCount: number;
+}
+
+// StoryBible response types
+export interface StoryConstitutionResponse {
+  id: string;
+  userId: string;
+  projectId: string;
+  genre: string;
+  subGenre: string | null;
+  coreHook: string;
+  readerPromise: string | null;
+  genreProfile: string | null;
+  targetAudience: string | null;
+  taboos: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CharacterResponse {
+  id: string;
+  userId: string;
+  projectId: string;
+  name: string;
+  role: string;
+  alias: string | null;
+  age: number | null;
+  gender: string | null;
+  appearance: string | null;
+  personality: string | null;
+  background: string | null;
+  initialPowerLevel: string | null;
+  currentPowerLevel: string | null;
+  specialAbilities: string | null;
+  coreGoal: string | null;
+  motivation: string | null;
+  relationships: string | null;
+  status: string;
+  firstAppearChapter: string | null;
+  lastAppearChapter: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryBibleResponse {
+  constitution: StoryConstitutionResponse | null;
+  characters: CharacterResponse[];
+}
+
+// VolumeArc response types
+export interface VolumeArcResponse {
+  id: string;
+  userId: string;
+  projectId: string;
+  volumeNumber: number;
+  volumeTitle: string;
+  volumeTheme: string | null;
+  targetChapters: number | null;
+  currentChapters: number;
+  act1Setup: string | null;
+  act2Confrontation: string | null;
+  act3Climax: string | null;
+  act4Resolution: string | null;
+  keyEvents: string | null;
+  majorConflict: string | null;
+  conflictEscalation: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
 export interface StoryFoundationRequest {
   userSeed: string;
   genre: string;
