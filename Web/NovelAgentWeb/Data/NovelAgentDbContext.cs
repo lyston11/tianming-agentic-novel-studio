@@ -17,7 +17,6 @@ public class NovelAgentDbContext : DbContext
     public DbSet<Chapter> Chapters { get; set; } = null!;
     public DbSet<Foreshadow> Foreshadows { get; set; } = null!;
     public DbSet<Character> Characters { get; set; } = null!;
-    public DbSet<WorldSetting> WorldSettings { get; set; } = null!;
     public DbSet<Material> Materials { get; set; } = null!;
     public DbSet<KnowledgeBase> KnowledgeBases { get; set; } = null!;
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
@@ -231,24 +230,6 @@ public class NovelAgentDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // WorldSetting entity configuration
-        modelBuilder.Entity<WorldSetting>(entity =>
-        {
-            entity.ToTable("world_settings");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
-            entity.Property(e => e.Category).HasColumnName("category").IsRequired();
-            entity.Property(e => e.Name).HasColumnName("name").IsRequired();
-            entity.Property(e => e.Description).HasColumnName("description");
-            entity.Property(e => e.Rules).HasColumnName("rules");
-
-            entity.HasOne(e => e.Project)
-                .WithMany(p => p.WorldSettings)
-                .HasForeignKey(e => e.ProjectId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
         // Material entity configuration
         modelBuilder.Entity<Material>(entity =>
         {
@@ -451,7 +432,7 @@ public class NovelAgentDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(e => e.Project)
-                .WithMany()
+                .WithMany(p => p.ForeshadowEntries)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
@@ -486,7 +467,7 @@ public class NovelAgentDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(e => e.Project)
-                .WithMany()
+                .WithMany(p => p.WorldSettingEntries)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
@@ -524,7 +505,7 @@ public class NovelAgentDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(e => e.Project)
-                .WithMany()
+                .WithMany(p => p.AgentRuns)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

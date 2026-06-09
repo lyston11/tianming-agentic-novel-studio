@@ -22,9 +22,11 @@ public class NovelProject
     public ICollection<Chapter> Chapters { get; set; } = new List<Chapter>();
     public ICollection<Foreshadow> Foreshadows { get; set; } = new List<Foreshadow>();
     public ICollection<Character> Characters { get; set; } = new List<Character>();
-    public ICollection<WorldSetting> WorldSettings { get; set; } = new List<WorldSetting>();
     public ICollection<Material> Materials { get; set; } = new List<Material>();
     public ICollection<KnowledgeBase> KnowledgeBases { get; set; } = new List<KnowledgeBase>();
     public ICollection<AgentMemory> AgentMemories { get; set; } = new List<AgentMemory>();
     public ICollection<AgentSession> AgentSessions { get; set; } = new List<AgentSession>();
+    public ICollection<ForeshadowEntry> ForeshadowEntries { get; set; } = new List<ForeshadowEntry>();
+    public ICollection<WorldSettingEntry> WorldSettingEntries { get; set; } = new List<WorldSettingEntry>();
+    public ICollection<AgentRun> AgentRuns { get; set; } = new List<AgentRun>();
 }
