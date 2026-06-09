@@ -1,3 +1,4 @@
+// WorkspaceViolation.cs
 namespace TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
 public sealed class WorkspaceViolation
@@ -10,8 +11,5 @@ public sealed class WorkspaceViolation
     public string Method { get; set; } = string.Empty;
     public string? UserId { get; set; }
     public string? ProjectId { get; set; }
-    public string? RequestId { get; set; }
     public string Message { get; set; } = string.Empty;
-    public int Count { get; set; } = 1;  // For tracking repeat violations
-    public string Key => $"{UserId}:{ProjectId}:{Type}";  // Composite key for grouping
 }

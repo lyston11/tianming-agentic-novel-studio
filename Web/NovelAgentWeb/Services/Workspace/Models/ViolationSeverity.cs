@@ -1,3 +1,4 @@
+// ViolationSeverity.cs
 namespace TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
 public enum ViolationSeverity
