@@ -36,6 +36,21 @@ public sealed class WorkspaceFactoryStats
     public long CacheMisses { get; init; }
 
     /// <summary>
+    /// Number of workspaces currently active in cache.
+    /// </summary>
+    public int ActiveWorkspacesCount { get; init; }
+
+    /// <summary>
+    /// Age of the oldest workspace in cache.
+    /// </summary>
+    public TimeSpan? OldestWorkspaceAge { get; init; }
+
+    /// <summary>
+    /// Average time taken to load workspace from database.
+    /// </summary>
+    public TimeSpan? AverageDatabaseLoadTime { get; init; }
+
+    /// <summary>
     /// Cache hit rate (0.0 to 1.0).
     /// </summary>
     public double CacheHitRate => (CacheHits + CacheMisses) == 0 ? 0.0 : (double)CacheHits / (CacheHits + CacheMisses);
