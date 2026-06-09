@@ -5,12 +5,51 @@ import type {
   AgentSessionInfo,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
+  MaterialContentResponse,
+  MaterialListResponse,
+  MaterialResponse,
   NovelProjectCreateRequest,
   NovelProjectDeleteResult,
   NovelProjectInfo,
   NovelProjectUpdateRequest,
+  UploadMaterialResponse,
   UserSettings,
 } from './types';
+
+// Materials API (new multi-user endpoints)
+export const listMaterials = (projectId: string) =>
+  get<MaterialListResponse>(`/materials?projectId=${encodeURIComponent(projectId)}`);
+
+export const getMaterialById = (id: string) =>
+  get<MaterialResponse>(`/materials/${id}`);
+
+export const getMaterialContent = (id: string) =>
+  get<MaterialContentResponse>(`/materials/${id}/content`);
+
+export const uploadMaterial = async (projectId: string, file: File, category: string, tags?: string) => {
+  const formData = new FormData();
+  formData.append('File', file);
+  formData.append('ProjectId', projectId);
+  formData.append('Category', category);
+  if (tags) formData.append('Tags', tags);
+
+  return api<UploadMaterialResponse>('/materials/upload', {
+    method: 'POST',
+    body: formData,
+  });
+};
+
+export const createMaterialFromText = (req: { projectId: string; title: string; content: string; category: string; tags?: string }) =>
+  post<MaterialResponse>('/materials', req);
+
+export const updateMaterialById = (id: string, req: { title?: string; category?: string; tags?: string }) =>
+  api<MaterialResponse>(`/materials/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+
+export const deleteMaterialById = (id: string) =>
+  api<void>(`/materials/${id}`, { method: 'DELETE' });
 
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>

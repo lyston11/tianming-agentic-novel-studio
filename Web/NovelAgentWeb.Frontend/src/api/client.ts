@@ -15,9 +15,13 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   // Get token from localStorage (Zustand persist format)
   const token = getToken();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = {};
+
+  // Only set Content-Type for non-FormData requests
+  // (FormData sets its own Content-Type with boundary)
+  if (!(options?.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   // Add Authorization header if token exists
   if (token) {
@@ -39,7 +43,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    throw new Error(text || `${response.status} ${response.statusUrl}`);
   }
   return response.json();
 }
