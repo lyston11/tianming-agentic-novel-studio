@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listMaterials,
@@ -32,13 +32,13 @@ export default function MaterialsPage() {
   const [editTags, setEditTags] = useState('');
   const [editContent, setEditContent] = useState('');
   const [originalEditContent, setOriginalEditContent] = useState('');
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
 
-  useEffect(() => {
-    projectService.getCurrentProject().then((project) => {
-      if (project) setCurrentProjectId(project.id);
-    });
-  }, []);
+  const { data: currentProject } = useQuery({
+    queryKey: ['currentProject'],
+    queryFn: () => projectService.getCurrentProject(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const currentProjectId = currentProject?.id ?? null;
 
   const { isAnalyzing, analysisStages, currentStage, startAnalysis, updateProgress, completeAnalysis } =
     useMaterialStore();

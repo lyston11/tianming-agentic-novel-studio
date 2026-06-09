@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { getWorkspace } from '../../api';
 import { useAuthStore } from '../../stores/authStore';
+import { projectService } from '../../services/projectService';
+import { useQuery } from '@tanstack/react-query';
 
 const navItems = [
   { path: '/', label: 'Agent 对话', num: '01' },
@@ -12,7 +12,11 @@ const navItems = [
 ];
 
 export default function Rail() {
-  const { data: workspace } = useQuery({ queryKey: ['workspace'], queryFn: getWorkspace });
+  const { data: currentProject, isError } = useQuery({
+    queryKey: ['currentProject'],
+    queryFn: () => projectService.getCurrentProject(),
+    staleTime: 5 * 60 * 1000,
+  });
   const { user, clearAuth } = useAuthStore();
   const navigate = useNavigate();
 
@@ -49,7 +53,7 @@ export default function Rail() {
       </nav>
 
       <div className="rail-footer">
-        <div>{workspace?.projectName ?? '加载中...'}</div>
+        <div>{isError ? '加载项目失败' : (currentProject?.title ?? '选择项目...')}</div>
         {user && (
           <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             {user.username}
