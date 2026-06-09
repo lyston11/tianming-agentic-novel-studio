@@ -5,6 +5,7 @@ import type {
   AgentSessionInfo,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
+  CharacterResponse,
   KnowledgeResponse,
   KnowledgeSearchResponse,
   MaterialContentResponse,
@@ -14,6 +15,8 @@ import type {
   NovelProjectDeleteResult,
   NovelProjectInfo,
   NovelProjectUpdateRequest,
+  StoryBibleResponse,
+  StoryConstitutionResponse,
   UploadMaterialResponse,
   UserSettings,
 } from './types';
@@ -71,6 +74,31 @@ export const updateKnowledgeEntryById = (id: string, req: { title?: string; cont
 
 export const deleteKnowledgeEntryById = (id: string) =>
   api<void>(`/knowledge/${id}`, { method: 'DELETE' });
+
+// StoryBible API (new multi-user endpoints)
+export const getStoryBibleByProject = (projectId: string) =>
+  get<StoryBibleResponse>(`/storybible?projectId=${encodeURIComponent(projectId)}`);
+
+export const getConstitution = (projectId: string) =>
+  get<StoryConstitutionResponse>(`/storybible/constitution?projectId=${encodeURIComponent(projectId)}`);
+
+export const createOrUpdateConstitution = (req: { projectId: string; genre: string; subGenre?: string; coreHook: string; readerPromise?: string; genreProfile?: string; targetAudience?: string; taboos?: string }) =>
+  post<StoryConstitutionResponse>('/storybible/constitution', req);
+
+export const listCharacters = (projectId: string) =>
+  get<CharacterResponse[]>(`/storybible/characters?projectId=${encodeURIComponent(projectId)}`);
+
+export const createCharacter = (req: { projectId: string; name: string; role: string; alias?: string; age?: number; gender?: string; appearance?: string; personality?: string; background?: string; coreGoal?: string; motivation?: string }) =>
+  post<CharacterResponse>('/storybible/characters', req);
+
+export const updateCharacterById = (id: string, req: { name?: string; role?: string; alias?: string; age?: number; gender?: string; appearance?: string; personality?: string; background?: string; coreGoal?: string; motivation?: string }) =>
+  api<CharacterResponse>(`/storybible/characters/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+
+export const deleteCharacterById = (id: string) =>
+  api<void>(`/storybible/characters/${id}`, { method: 'DELETE' });
 
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
