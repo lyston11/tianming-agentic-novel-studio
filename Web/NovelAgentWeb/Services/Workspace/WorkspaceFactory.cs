@@ -10,6 +10,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Support;
+using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -30,6 +31,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
     private long _cacheHits = 0;
     private long _cacheMisses = 0;
     private long _evictionCount = 0;
+    private long _totalDatabaseLoadTimeMs = 0;
+    private long _databaseLoadCount = 0;
 
     public WorkspaceFactory(
         IOptions<WorkspaceFactoryOptions> options,
@@ -133,6 +136,87 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         };
     }
 
+    public bool IsWorkspaceActive(string userId, string projectId)
+    {
+        var cacheKey = GetCacheKey(userId, projectId);
+        return _cache.ContainsKey(cacheKey);
+    }
+
+    public WorkspaceFactoryStats GetDetailedStats()
+    {
+        var entries = _cache.Values.ToList();
+        var now = DateTime.UtcNow;
+
+        TimeSpan? oldestAge = null;
+        if (entries.Any())
+        {
+            var oldestEntry = entries.OrderBy(e => e.LastAccessTime).First();
+            oldestAge = now - oldestEntry.LastAccessTime;
+        }
+
+        TimeSpan? avgLoadTime = null;
+        var loadCount = Interlocked.Read(ref _databaseLoadCount);
+        if (loadCount > 0)
+        {
+            var totalMs = Interlocked.Read(ref _totalDatabaseLoadTimeMs);
+            avgLoadTime = TimeSpan.FromMilliseconds((double)totalMs / loadCount);
+        }
+
+        return new WorkspaceFactoryStats
+        {
+            TotalWorkspaces = entries.Count,
+            ActiveReferences = entries.Sum(e => e.ActiveReferences),
+            IdleWorkspaces = entries.Count(e => e.ActiveReferences == 0),
+            TotalEvictions = _evictionCount,
+            CacheHits = _cacheHits,
+            CacheMisses = _cacheMisses,
+            ActiveWorkspacesCount = entries.Count,
+            OldestWorkspaceAge = oldestAge,
+            AverageDatabaseLoadTime = avgLoadTime
+        };
+    }
+
+    public async Task<WorkspaceFactoryHealthStatus> CheckHealthAsync()
+    {
+        var stats = GetDetailedStats();
+        var isHealthy = true;
+        var messages = new List<string>();
+
+        // Check cache capacity
+        if (stats.TotalWorkspaces >= _options.MaxCachedWorkspaces)
+        {
+            isHealthy = false;
+            messages.Add($"Cache at capacity: {stats.TotalWorkspaces}/{_options.MaxCachedWorkspaces}");
+        }
+
+        // Check eviction rate (> 100/min indicates pressure)
+        var evictionRate = stats.TotalEvictions;
+        if (evictionRate > 100)
+        {
+            messages.Add($"High eviction count: {evictionRate}");
+        }
+
+        // Test database connectivity
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            await db.Database.ExecuteSqlRawAsync("SELECT 1");
+        }
+        catch (Exception ex)
+        {
+            isHealthy = false;
+            messages.Add($"Database connectivity failed: {ex.Message}");
+        }
+
+        return new WorkspaceFactoryHealthStatus
+        {
+            IsHealthy = isHealthy,
+            Message = messages.Any() ? string.Join("; ", messages) : "All checks passed",
+            LastCheckTimestamp = DateTime.UtcNow
+        };
+    }
+
     private static string GetCacheKey(string userId, string projectId)
     {
         return $"{userId}:{projectId}";
@@ -141,6 +225,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
     private async Task<NovelAgentWorkspace> CreateWorkspaceAsync(
         string userId, string projectId, CancellationToken cancellationToken)
     {
+        var startTime = DateTime.UtcNow;
+
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
 
@@ -161,6 +247,11 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
         // Create Workspace instance
         var workspace = new NovelAgentWorkspace(env, config, settingsManager);
+
+        // Track load time
+        var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
+        Interlocked.Add(ref _totalDatabaseLoadTimeMs, loadTimeMs);
+        Interlocked.Increment(ref _databaseLoadCount);
 
         return workspace;
     }
