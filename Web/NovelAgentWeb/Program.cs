@@ -15,8 +15,10 @@ using TM.Web.NovelAgentWeb.Services.Embedding;
 using TM.Web.NovelAgentWeb.Services.Projects;
 using TM.Web.NovelAgentWeb.Services.Repositories;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Vectorization;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
+using Qdrant.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -150,6 +152,21 @@ builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<AgentRouter>();
 builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 builder.Services.AddSingleton<QdrantSearchService>(); // Vector search service with user isolation
+
+// Register QdrantClient for vectorization services
+builder.Services.AddSingleton<QdrantClient>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var qdrantHost = config["Qdrant:Host"] ?? "localhost";
+    var qdrantPort = config.GetValue<int>("Qdrant:Port", 6334);
+    return new QdrantClient(host: qdrantHost, port: qdrantPort, https: false);
+});
+
+// Register vectorization services
+builder.Services.AddScoped<IMaterialChunker, MaterialChunker>();
+builder.Services.AddScoped<IQdrantCollectionManager, QdrantCollectionManager>();
+builder.Services.AddScoped<IMaterialVectorizationService, MaterialVectorizationService>();
+
 builder.Services.AddHostedService<AgentSchedulerHostedService>();
 builder.Services.AddHostedService<QdrantHealthCheck>();
 
