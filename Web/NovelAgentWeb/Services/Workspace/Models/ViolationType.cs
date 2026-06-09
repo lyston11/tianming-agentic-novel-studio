@@ -5,5 +5,9 @@ public enum ViolationType
 {
     MissingUserId,
     MissingProjectId,
-    WorkspaceNotActive
+    WorkspaceNotActive,
+    WorkspaceNotAcquired,
+    WorkspaceExpired,
+    WorkspaceMismatch,
+    ConcurrentAccessDetected
 }

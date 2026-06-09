@@ -27,6 +27,14 @@ public sealed class WorkspaceViolationTracker : IWorkspaceViolationTracker, IDis
             TimeSpan.FromMinutes(5));
     }
 
+    public void TrackViolation(WorkspaceViolation violation)
+    {
+        if (violation == null)
+            throw new ArgumentNullException(nameof(violation));
+
+        _violations.TryAdd(violation.Id, violation);
+    }
+
     public WorkspaceViolation RecordViolation(
         string userId,
         string projectId,

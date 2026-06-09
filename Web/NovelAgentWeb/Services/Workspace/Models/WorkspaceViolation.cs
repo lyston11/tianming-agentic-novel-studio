@@ -11,5 +11,8 @@ public sealed class WorkspaceViolation
     public string Method { get; set; } = string.Empty;
     public string? UserId { get; set; }
     public string? ProjectId { get; set; }
+    public string? RequestId { get; set; }
     public string Message { get; set; } = string.Empty;
+    public int Count { get; set; } = 1;
+    public string Key => $"{UserId}:{ProjectId}:{Type}";
 }
