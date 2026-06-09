@@ -12,8 +12,8 @@ public class NovelProject
     public int WordCount { get; set; } = 0;
     public string? CoverImageUrl { get; set; }
     public string? StorageProjectName { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
 
     // Navigation properties
     public User User { get; set; } = null!;
