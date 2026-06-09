@@ -212,4 +212,152 @@ public class WorkspaceMonitoringController : ControllerBase
             });
         }
     }
+
+    /// <summary>
+    /// Force release and evict a workspace from cache.
+    /// Used to clean up zombie resources.
+    /// </summary>
+    /// <param name="userId">User ID</param>
+    /// <param name="projectId">Project ID</param>
+    /// <returns>Result of force release operation</returns>
+    [HttpPost("users/{userId}/projects/{projectId}/force-release")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public IActionResult ForceRelease(string userId, string projectId)
+    {
+        try
+        {
+            var status = _workspaceFactory.GetWorkspaceStatus(userId, projectId);
+
+            if (status == WorkspaceStatus.NotFound)
+            {
+                return NotFound(new
+                {
+                    message = "Workspace not found in cache",
+                    userId = userId,
+                    projectId = projectId
+                });
+            }
+
+            _workspaceFactory.ForceRelease(userId, projectId);
+
+            _logger.LogInformation(
+                "Force released workspace for user {UserId}, project {ProjectId}",
+                userId,
+                projectId);
+
+            return Ok(new
+            {
+                message = "Workspace force released successfully",
+                userId = userId,
+                projectId = projectId,
+                previousStatus = status.ToString()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to force release workspace for user {UserId}, project {ProjectId}", userId, projectId);
+            return StatusCode(500, new { message = "Failed to force release workspace", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Reset violations for a specific user/project combination.
+    /// </summary>
+    /// <param name="userId">User ID</param>
+    /// <param name="projectId">Project ID</param>
+    /// <returns>Result of reset operation</returns>
+    [HttpPost("violations/{userId}/{projectId}/reset")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public IActionResult ResetViolations(string userId, string projectId)
+    {
+        try
+        {
+            // Clear violations for all types for this user/project
+            foreach (ViolationType type in Enum.GetValues(typeof(ViolationType)))
+            {
+                var key = $"{userId}:{projectId}:{type}";
+                _violationTracker.ClearViolation(key);
+            }
+
+            _logger.LogInformation(
+                "Reset violations for user {UserId}, project {ProjectId}",
+                userId,
+                projectId);
+
+            return Ok(new
+            {
+                message = "Violations reset successfully",
+                userId = userId,
+                projectId = projectId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reset violations for user {UserId}, project {ProjectId}", userId, projectId);
+            return StatusCode(500, new { message = "Failed to reset violations", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Clear all workspaces from cache.
+    /// Used for emergency maintenance without restarting the service.
+    /// </summary>
+    /// <returns>Result of cache clear operation</returns>
+    [HttpPost("cache/clear")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public IActionResult ClearCache()
+    {
+        try
+        {
+            var statsBefore = _workspaceFactory.GetDetailedStats();
+            _workspaceFactory.ClearAll();
+
+            _logger.LogWarning("All workspaces cleared from cache by admin");
+
+            return Ok(new
+            {
+                message = "Cache cleared successfully",
+                workspacesCleared = statsBefore.ActiveWorkspacesCount
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to clear cache");
+            return StatusCode(500, new { message = "Failed to clear cache", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get detailed status of a specific workspace (NotFound, Active, Idle, Evicting).
+    /// </summary>
+    /// <param name="userId">User ID</param>
+    /// <param name="projectId">Project ID</param>
+    /// <returns>Workspace status</returns>
+    [HttpGet("users/{userId}/projects/{projectId}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public IActionResult GetWorkspaceStatus(string userId, string projectId)
+    {
+        try
+        {
+            var status = _workspaceFactory.GetWorkspaceStatus(userId, projectId);
+
+            return Ok(new
+            {
+                userId = userId,
+                projectId = projectId,
+                status = status.ToString(),
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get workspace status for user {UserId}, project {ProjectId}", userId, projectId);
+            return StatusCode(500, new { message = "Failed to get workspace status", error = ex.Message });
+        }
+    }
 }
