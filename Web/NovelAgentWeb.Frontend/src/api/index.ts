@@ -19,6 +19,7 @@ import type {
   StoryConstitutionResponse,
   UploadMaterialResponse,
   UserSettings,
+  VolumeArcResponse,
 } from './types';
 
 // Materials API (new multi-user endpoints)
@@ -99,6 +100,25 @@ export const updateCharacterById = (id: string, req: { name?: string; role?: str
 
 export const deleteCharacterById = (id: string) =>
   api<void>(`/storybible/characters/${id}`, { method: 'DELETE' });
+
+// Workflow API (new multi-user endpoints)
+export const listVolumeArcs = (projectId: string) =>
+  get<VolumeArcResponse[]>(`/workflow/volumes?projectId=${encodeURIComponent(projectId)}`);
+
+export const getVolumeArc = (id: string) =>
+  get<VolumeArcResponse>(`/workflow/volumes/${id}`);
+
+export const createVolumeArc = (req: { projectId: string; volumeNumber: number; volumeTitle: string; volumeTheme?: string; targetChapters?: number; act1Setup?: string; act2Confrontation?: string; act3Climax?: string; act4Resolution?: string; keyEvents?: string; majorConflict?: string; conflictEscalation?: string }) =>
+  post<VolumeArcResponse>('/workflow/volumes', req);
+
+export const updateVolumeArc = (id: string, req: { volumeTitle?: string; volumeTheme?: string; targetChapters?: number; currentChapters?: number; act1Setup?: string; act2Confrontation?: string; act3Climax?: string; act4Resolution?: string; keyEvents?: string; majorConflict?: string; conflictEscalation?: string; status?: string }) =>
+  api<VolumeArcResponse>(`/workflow/volumes/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+
+export const deleteVolumeArc = (id: string) =>
+  api<void>(`/workflow/volumes/${id}`, { method: 'DELETE' });
 
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
