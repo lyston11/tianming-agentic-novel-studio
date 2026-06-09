@@ -7,7 +7,7 @@ namespace TM.Web.NovelAgentWeb.Services.VectorStore;
 /// Manages Qdrant collections at the user level for multi-tenant SaaS architecture.
 /// Collections follow the pattern: novel_agent_{userId}
 /// </summary>
-public class QdrantCollectionManager
+public class QdrantCollectionManager : IQdrantCollectionManager
 {
     private readonly QdrantClient _client;
     private readonly ILogger<QdrantCollectionManager> _logger;
@@ -32,6 +32,9 @@ public class QdrantCollectionManager
     /// <returns>True if collection was created, false if it already existed</returns>
     public async Task<bool> EnsureUserCollectionAsync(string userId, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("User ID cannot be null or empty", nameof(userId));
+
         var collectionName = GetCollectionName(userId);
 
         if (await CollectionExistsAsync(collectionName, ct))
@@ -81,6 +84,9 @@ public class QdrantCollectionManager
     /// </summary>
     public async Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("User ID cannot be null or empty", nameof(userId));
+
         var collectionName = GetCollectionName(userId);
 
         if (!await CollectionExistsAsync(collectionName, ct))
