@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deleteNovelProject, getNovelLibrary, updateNovelProject } from '../api';
+import { deleteNovelProject, updateNovelProject, getStoryBibleByProject, listVolumeArcs } from '../api';
 import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
 import { projectService } from '../services/projectService';
 import { useAuthStore } from '../stores/authStore';
@@ -46,9 +46,9 @@ function coverMark(title: string) {
 export default function LibraryPage() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  const { data: overviewLibrary, isLoading } = useQuery({
-    queryKey: ['novelLibrary'],
-    queryFn: () => getNovelLibrary(),
+  const { data: projects, isLoading } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => projectService.listProjects(),
     refetchInterval: 10000,
   });
   const { data: userStats } = useQuery({
@@ -60,51 +60,159 @@ export default function LibraryPage() {
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  const books = overviewLibrary?.books ?? [];
-  const libraryBooks = useMemo(
-    () => books.filter((book) => book.generatedChapterCount > 0),
-    [books],
-  );
-  const effectiveProjectId = selectedProjectId ?? libraryBooks[0]?.projectId ?? null;
-  const { data: selectedLibrary, isLoading: selectedLibraryLoading } = useQuery({
-    queryKey: ['novelLibrary', effectiveProjectId],
-    queryFn: () => getNovelLibrary(effectiveProjectId!),
+  const projectsList = projects ?? [];
+  const effectiveProjectId = selectedProjectId ?? projectsList[0]?.id ?? null;
+
+  const { data: storyBible, isLoading: bibleLoading } = useQuery({
+    queryKey: ['storyBible', effectiveProjectId],
+    queryFn: () => effectiveProjectId ? getStoryBibleByProject(effectiveProjectId) : Promise.resolve(null),
     enabled: !!effectiveProjectId,
     refetchInterval: 10000,
   });
 
-  const selectedBook =
-    selectedLibrary?.activeBook ??
-    libraryBooks.find((book) => book.projectId === effectiveProjectId) ??
-    null;
-  const volumes = useMemo(() => keepGeneratedVolumes(selectedLibrary?.volumes ?? []), [selectedLibrary?.volumes]);
-  const chapters = useMemo(() => flattenChapters(volumes), [volumes]);
-  const selectedChapter = useMemo(() => {
-    if (chapters.length === 0) return null;
-    return (
-      chapters.find((chapter) => chapter.chapterId === selectedChapterId) ??
-      (selectedLibrary?.selectedChapter?.hasGeneratedContent && selectedLibrary.selectedChapter.visibleInLibrary !== false ? selectedLibrary.selectedChapter : null) ??
-      chapters[0]
+  const { data: volumes, isLoading: volumesLoading } = useQuery({
+    queryKey: ['volumeArcs', effectiveProjectId],
+    queryFn: () => effectiveProjectId ? listVolumeArcs(effectiveProjectId) : Promise.resolve([]),
+    enabled: !!effectiveProjectId,
+    refetchInterval: 10000,
+  });
+
+  // Convert project data to NovelBookView format for compatibility
+  const books: NovelBookView[] = useMemo(() => {
+    return projectsList.map(project => ({
+      projectId: project.id,
+      title: project.title,
+      genre: project.genre || '',
+      subGenre: project.subGenre || '',
+      coreHook: project.coreHook || '',
+      readerPromise: '',
+      status: project.status,
+      isActive: true,
+      volumeCount: 0,
+      generatedChapterCount: 0,
+      plannedChapterCount: 0,
+      needsRewriteCount: 0,
+      updatedAt: project.updatedAt,
+      selectedChapter: null,
+    }));
+  }, [projectsList]);
+
+  // For now, show all projects in library (not just those with generated chapters)
+  // TODO: We may want to fetch volume counts for all projects to filter properly
+  const libraryBooks = useMemo(
+    () => books,
+    [books],
+  );
+
+  // Enhance the selected book with StoryBible and volume data
+  const selectedBook = useMemo(() => {
+    const baseBook = books.find((book) => book.projectId === effectiveProjectId);
+    if (!baseBook) return null;
+
+    const projectVolumes = volumes ?? [];
+    const generatedChapterCount = projectVolumes.reduce((sum, vol) =>
+      sum + (vol.currentChapters || 0), 0
     );
-  }, [chapters, selectedChapterId, selectedLibrary?.selectedChapter]);
-  const selectedVolume = volumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? volumes[0];
-  const readyChapters = selectedLibrary?.generatedChapterCount ?? selectedBook?.generatedChapterCount ?? 0;
-  const plannedChapters = selectedLibrary?.plannedChapterCount ?? selectedBook?.plannedChapterCount ?? 0;
+    const plannedChapterCount = projectVolumes.reduce((sum, vol) =>
+      sum + (vol.targetChapters || vol.currentChapters || 0), 0
+    );
+
+    return {
+      ...baseBook,
+      coreHook: storyBible?.constitution?.coreHook || baseBook.coreHook,
+      readerPromise: storyBible?.constitution?.readerPromise || '',
+      genre: storyBible?.constitution?.genre || baseBook.genre,
+      volumeCount: projectVolumes.length,
+      generatedChapterCount,
+      plannedChapterCount,
+    };
+  }, [books, effectiveProjectId, storyBible, volumes]);
+
+  // Convert VolumeArcResponse[] to NovelVolumeView[] format
+  const volumeViews: NovelVolumeView[] = useMemo(() => {
+    if (!volumes) return [];
+    return volumes.map(vol => ({
+      volumeId: vol.id,
+      title: vol.volumeTitle,
+      status: vol.status,
+      startChapterId: '',
+      endChapterId: '',
+      expectedChapterCount: vol.targetChapters || 0,
+      chapters: [
+        {
+          chapterId: vol.id + '-placeholder',
+          volumeId: vol.id,
+          volumeTitle: vol.volumeTitle || '待生成',
+          title: vol.volumeTitle || '待生成',
+          beatIndex: 0,
+          beatRole: '',
+          goal: '',
+          turn: '',
+          cost: '',
+          status: 'placeholder',
+          runId: '',
+          intent: '',
+          updatedAt: '',
+          hasGeneratedContent: false,
+          needsRewrite: false,
+          wordCount: 0,
+          summary: '',
+          content: '',
+          selectedCandidateTitle: '',
+          qualityScore: 0,
+          rewriteAttemptCount: 0,
+          reviewChecks: [],
+          nextSuggestions: [],
+          writingStatus: 'pending',
+          contextPackageStatus: 'pending',
+          draftArtifactStatus: 'pending',
+          gateStatus: 'pending',
+          changesProtocolPassed: false,
+          factSnapshotPassed: false,
+          blueprintPassed: false,
+          longDistanceRagPassed: false,
+          ragRecallCount: 0,
+          repairAttemptCount: 0,
+          gateIssues: [],
+          repairHints: [],
+          dependencyWarnings: [],
+          contextWarnings: [],
+          visibleInWorkflow: true,
+          visibleInLibrary: true,
+          userVisibleStatus: 'placeholder',
+        } as NovelChapterView,
+      ],
+    }));
+  }, [volumes]);
+
+  // TODO: Once chapter API is available, filter by hasGeneratedContent
+  const filteredVolumes = useMemo(() => volumeViews, [volumeViews]);
+  const selectedChapter = useMemo(() => {
+    const allChapters = filteredVolumes.flatMap((vol) => vol.chapters);
+    if (allChapters.length === 0) return null;
+    return (
+      allChapters.find((chapter) => chapter.chapterId === selectedChapterId) ??
+      allChapters[0]
+    );
+  }, [filteredVolumes, selectedChapterId]);
+  const selectedVolume = filteredVolumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? filteredVolumes[0];
+  const readyChapters = selectedBook?.generatedChapterCount ?? 0;
+  const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
 
   useEffect(() => {
-    if (selectedProjectId && libraryBooks.some((book) => book.projectId === selectedProjectId)) return;
-    setSelectedProjectId(libraryBooks[0]?.projectId ?? null);
+    if (selectedProjectId && projectsList.some((project) => project.id === selectedProjectId)) return;
+    setSelectedProjectId(projectsList[0]?.id ?? null);
     setSelectedChapterId(null);
-    if (libraryBooks.length === 0 && mode !== 'store') setMode('store');
-  }, [libraryBooks, mode, selectedProjectId]);
+    if (projectsList.length === 0 && mode !== 'store') setMode('store');
+  }, [projectsList, mode, selectedProjectId]);
 
   const deleteMutation = useMutation({
     mutationFn: (projectId: string) => deleteNovelProject(projectId),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['novelLibrary'] }),
+        queryClient.invalidateQueries({ queryKey: ['projects'] }),
         queryClient.invalidateQueries({ queryKey: ['storyBible'] }),
-        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['volumeArcs'] }),
       ]);
       setSelectedProjectId(null);
       setSelectedChapterId(null);
@@ -116,7 +224,7 @@ export default function LibraryPage() {
     mutationFn: ({ projectId, title }: { projectId: string; title: string }) =>
       updateNovelProject(projectId, { title }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['novelLibrary'] });
+      await queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
   });
 
@@ -235,19 +343,19 @@ export default function LibraryPage() {
               <h2>{selectedBook?.title || '未命名小说'}</h2>
               <p>{selectedBook?.readerPromise || selectedBook?.coreHook || '这本书的阅读承诺会在 Story Bible 固化后展示。'}</p>
               <div className="profile-stats">
-                <strong>{volumes.length}<small>卷</small></strong>
+                <strong>{filteredVolumes.length}<small>卷</small></strong>
                 <strong>{readyChapters}<small>入库章节</small></strong>
                 <strong>{plannedChapters}<small>规划章节</small></strong>
               </div>
-              <button className="ink-button" onClick={() => openReader(selectedChapter)} disabled={selectedLibraryLoading || chapters.length === 0}>
+              <button className="ink-button" onClick={() => openReader(selectedChapter)} disabled={bibleLoading || volumesLoading || chapters.length === 0}>
                 进入阅读
               </button>
             </main>
             <aside className="profile-toc">
               <span>目录</span>
-              {volumes.length === 0 ? (
+              {filteredVolumes.length === 0 ? (
                 <p>暂无已入库章节。</p>
-              ) : volumes.map((volume) => (
+              ) : filteredVolumes.map((volume) => (
                 <section key={volume.volumeId}>
                   <strong>{volume.title}</strong>
                   {volume.chapters.map((chapter) => (
@@ -272,7 +380,7 @@ export default function LibraryPage() {
               </div>
 
               <div className="volume-list">
-                {volumes.map((volume) => (
+                {filteredVolumes.map((volume) => (
                   <div key={volume.volumeId} className="volume-group">
                     <div className="volume-title">
                       <strong>{volume.title}</strong>
