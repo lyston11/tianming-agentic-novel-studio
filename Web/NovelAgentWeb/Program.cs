@@ -166,6 +166,7 @@ builder.Services.AddSingleton<QdrantClient>(sp =>
 builder.Services.AddScoped<IMaterialChunker, MaterialChunker>();
 builder.Services.AddScoped<IQdrantCollectionManager, QdrantCollectionManager>();
 builder.Services.AddScoped<IMaterialVectorizationService, MaterialVectorizationService>();
+builder.Services.AddScoped<SemanticSearchService>();
 
 builder.Services.AddHostedService<AgentSchedulerHostedService>();
 builder.Services.AddHostedService<QdrantHealthCheck>();
