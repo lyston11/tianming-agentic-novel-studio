@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="../build/NovelAgentWeb.props" />
+</Project>

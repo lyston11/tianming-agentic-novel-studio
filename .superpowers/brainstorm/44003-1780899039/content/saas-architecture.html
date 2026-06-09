@@ -1,0 +1,70 @@
+<h2>SaaS 多租户架构方向</h2>
+<p class="subtitle">选择最符合你产品定位的架构模式</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>团队协作型 (Team-based)</h3>
+      <p><strong>模式：</strong>一个组织（Organization）包含多个团队（Team），每个团队有多个成员</p>
+      <ul style="margin-top: 8px; font-size: 13px; color: #8b7355;">
+        <li>用户可以加入多个组织/团队</li>
+        <li>角色：Owner、Admin、Editor、Viewer</li>
+        <li>项目归属于团队，团队成员共享访问</li>
+        <li>记忆层级：用户记忆 → 团队共享记忆 → 项目记忆</li>
+      </ul>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>适合：</strong>出版社、工作室、写作小组</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>个人工作区型 (Personal Workspace)</h3>
+      <p><strong>模式：</strong>每个用户有独立的工作区，可以邀请协作者到特定项目</p>
+      <ul style="margin-top: 8px; font-size: 13px; color: #8b7355;">
+        <li>以个人为中心，项目归个人所有</li>
+        <li>角色：Owner、Collaborator（项目级别）</li>
+        <li>可以将特定项目共享给其他用户</li>
+        <li>记忆层级：用户记忆（私有）→ 项目记忆（可共享）</li>
+      </ul>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>适合：</strong>独立作者为主，偶尔需要编辑协助</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>租户隔离型 (Multi-tenant SaaS)</h3>
+      <p><strong>模式：</strong>标准 SaaS 租户架构，每个租户（企业/机构）完全隔离</p>
+      <ul style="margin-top: 8px; font-size: 13px; color: #8b7355;">
+        <li>租户管理员管理本租户的用户和权限</li>
+        <li>角色：Tenant Admin、User、Guest</li>
+        <li>租户之间数据完全隔离</li>
+        <li>记忆层级：租户级配置 → 用户记忆 → 项目记忆</li>
+      </ul>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>适合：</strong>面向企业客户，需要严格的数据隔离</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="d" onclick="toggleSelect(this)">
+    <div class="letter">D</div>
+    <div class="content">
+      <h3>混合型 (Hybrid)</h3>
+      <p><strong>模式：</strong>个人工作区 + 可选的团队功能</p>
+      <ul style="margin-top: 8px; font-size: 13px; color: #8b7355;">
+        <li>默认个人使用，可升级创建团队</li>
+        <li>个人项目和团队项目并存</li>
+        <li>灵活的权限控制</li>
+        <li>记忆层级：用户记忆 → 团队记忆（可选）→ 项目记忆</li>
+      </ul>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>适合：</strong>个人和小团队用户，逐步增长</p>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 32px; padding: 16px; background: rgba(184, 137, 63, 0.08); border-left: 3px solid #b8893f; border-radius: 4px;">
+  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #b8893f;">
+    <strong>提示：</strong>选择后，我们会进一步讨论用户角色、权限粒度、和记忆系统如何与多用户架构结合。
+  </p>
+</div>

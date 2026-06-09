@@ -1,0 +1,80 @@
+<h2>记忆系统重构方向</h2>
+<p class="subtitle">当前架构 vs 多用户架构下的记忆分层</p>
+
+<div class="section">
+  <h3 style="color: #b8893f; margin-bottom: 12px;">📊 当前架构（单用户）</h3>
+  <div style="background: rgba(0,0,0,0.3); padding: 16px; border-radius: 6px; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.6;">
+    <div style="color: #8b7355;">App_Data/Projects/AgenticNovelStudio/</div>
+    <div style="padding-left: 20px; color: #b8893f;">├── Agent/</div>
+    <div style="padding-left: 40px;">│   ├── <span style="color: #b83b2f;">author_memory.json</span>  <span style="color: #6b5d4f;">← 全局作者记忆（写作风格偏好）</span></div>
+    <div style="padding-left: 40px;">│   └── sessions.json</div>
+    <div style="padding-left: 20px; color: #b8893f;">├── Settings/</div>
+    <div style="padding-left: 40px;">│   └── <span style="color: #b83b2f;">user_settings.json</span>  <span style="color: #6b5d4f;">← 全局用户设置（LLM配置）</span></div>
+    <div style="padding-left: 20px; color: #b8893f;">└── NovelProjects/</div>
+    <div style="padding-left: 40px;">    └── [每个小说项目]/</div>
+    <div style="padding-left: 60px;">        └── Agent/</div>
+    <div style="padding-left: 80px;">            ├── <span style="color: #b83b2f;">project_memory.json</span>  <span style="color: #6b5d4f;">← 项目记忆</span></div>
+    <div style="padding-left: 80px;">            └── <span style="color: #b83b2f;">execution_memory.json</span>  <span style="color: #6b5d4f;">← 执行记忆</span></div>
+  </div>
+  <p style="margin-top: 12px; font-size: 13px; color: #b83b2f;"><strong>问题：</strong>所有数据在同一个文件夹下，无法区分不同用户</p>
+</div>
+
+<div style="margin-top: 24px;" class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>方案A：用户目录隔离</h3>
+      <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.5; margin-top: 8px;">
+        <div style="color: #8b7355;">App_Data/</div>
+        <div style="padding-left: 15px; color: #b8893f;">└── Users/</div>
+        <div style="padding-left: 30px;">    └── <span style="color: #b83b2f;">[userId]/</span>  <span style="color: #6b5d4f;">← 按用户隔离</span></div>
+        <div style="padding-left: 45px;">        ├── Settings/user_settings.json</div>
+        <div style="padding-left: 45px;">        ├── Memory/author_memory.json</div>
+        <div style="padding-left: 45px;">        └── Projects/</div>
+        <div style="padding-left: 60px;">            └── [projectId]/</div>
+        <div style="padding-left: 75px;">                ├── project_memory.json</div>
+        <div style="padding-left: 75px;">                └── execution_memory.json</div>
+      </div>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>优点：</strong>清晰的用户隔离，路径直观<br><strong>缺点：</strong>需要重构大量文件路径逻辑</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>方案B：数据库 + 文件混合</h3>
+      <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.5; margin-top: 8px;">
+        <div style="color: #8b7355;">数据库（SQLite/PostgreSQL）：</div>
+        <div style="padding-left: 15px;">├── Users 表（userId, username, role, settings）</div>
+        <div style="padding-left: 15px;">├── Projects 表（projectId, userId, title, metadata）</div>
+        <div style="padding-left: 15px;">└── Memories 表（id, userId, type, content）</div>
+        <div style="color: #8b7355; margin-top: 8px;">文件系统：</div>
+        <div style="padding-left: 15px;">└── App_Data/Users/[userId]/Projects/[projectId]/</div>
+        <div style="padding-left: 30px;">    └── chapters/ <span style="color: #6b5d4f;">← 大文本内容</span></div>
+      </div>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>优点：</strong>结构化查询方便，权限控制容易<br><strong>缺点：</strong>引入数据库依赖</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>方案C：最小改动（推荐MVP）</h3>
+      <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.5; margin-top: 8px;">
+        <div style="color: #8b7355;">App_Data/Projects/</div>
+        <div style="padding-left: 15px;">└── <span style="color: #b83b2f;">[projectName]__user__[userId]/</span>  <span style="color: #6b5d4f;">← 用户ID后缀</span></div>
+        <div style="padding-left: 30px;">    ├── Settings/user_settings.json</div>
+        <div style="padding-left: 30px;">    ├── Agent/author_memory.json</div>
+        <div style="padding-left: 30px;">    └── NovelProjects/[novelId]/</div>
+        <div style="padding-left: 45px;">        └── Agent/project_memory.json</div>
+      </div>
+      <p style="margin-top: 8px; font-size: 12px; color: #6b5d4f;"><strong>优点：</strong>改动最小，复用现有 UserSettingsManager<br><strong>缺点：</strong>路径命名约定较重，不够优雅</p>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: rgba(184, 137, 63, 0.08); border-left: 3px solid #b8893f; border-radius: 4px;">
+  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #b8893f;">
+    <strong>建议：</strong>如果你希望快速上线MVP，选择方案C；如果这是长期产品，选择方案A或B打好基础。
+  </p>
+</div>

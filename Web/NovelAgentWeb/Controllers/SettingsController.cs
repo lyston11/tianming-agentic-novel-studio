@@ -1,43 +1,110 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using TM.Web.NovelAgentWeb.Support;
+using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Services.Auth;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
 
 [ApiController]
 [Route("api")]
+[Authorize]
 public class SettingsController : ControllerBase
 {
-    private readonly UserSettingsManager _settingsManager;
+    private readonly IAuthService _authService;
+    private readonly ICurrentUserService _currentUserService;
 
-    public SettingsController(UserSettingsManager settingsManager) => _settingsManager = settingsManager;
+    public SettingsController(
+        IAuthService authService,
+        ICurrentUserService currentUserService)
+    {
+        _authService = authService;
+        _currentUserService = currentUserService;
+    }
 
     [HttpGet("settings")]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
-        var settings = await _settingsManager.LoadAsync(ct);
+        var userId = _currentUserService.GetUserId();
+        var settings = await _authService.GetUserSettingsAsync(userId, ct);
+
+        if (settings == null)
+        {
+            return NotFound(new { success = false, message = "用户设置未找到" });
+        }
+
         return Ok(ToClientSettings(settings));
     }
 
     [HttpPost("settings")]
-    public async Task<IActionResult> Save([FromBody] UserSettings settings, CancellationToken ct)
+    public async Task<IActionResult> Save([FromBody] UserSettingsDto dto, CancellationToken ct)
     {
-        // Don't overwrite API keys with masked values
-        var existing = await _settingsManager.LoadAsync(ct);
-        if (IsMasked(settings.LlmApiKey)) settings.LlmApiKey = existing.LlmApiKey;
-        if (IsMasked(settings.EmbeddingApiKey)) settings.EmbeddingApiKey = existing.EmbeddingApiKey;
+        var userId = _currentUserService.GetUserId();
+        var existing = await _authService.GetUserSettingsAsync(userId, ct);
 
-        await _settingsManager.SaveAsync(settings, ct);
+        if (existing == null)
+        {
+            return NotFound(new { success = false, message = "用户设置未找到" });
+        }
+
+        // Don't overwrite API keys with masked values
+        if (!IsMasked(dto.LlmApiKey))
+        {
+            existing.LlmApiKeyEncrypted = dto.LlmApiKey; // TODO: Encrypt in production
+        }
+
+        // Update fields
+        existing.LlmProvider = dto.LlmProvider;
+        existing.LlmBaseUrl = dto.LlmBaseUrl;
+        existing.LlmModel = dto.LlmModel;
+        existing.LlmTemperature = (float)dto.LlmTemperature;
+        existing.LlmMaxTokens = dto.LlmMaxTokens;
+        existing.EmbeddingProvider = dto.EmbeddingProvider;
+        existing.EmbeddingModel = dto.EmbeddingModel;
+        existing.AgentDefaultRisk = dto.AgentDefaultRisk;
+        existing.AgentAutoContinue = dto.AgentAutoContinue;
+        existing.AgentMaxAutoSteps = dto.AgentMaxAutoSteps;
+        existing.DefaultGenre = dto.DefaultGenre;
+        existing.DefaultChapterWordCount = dto.DefaultChapterWordCount;
+        existing.Theme = dto.Theme;
+        existing.Language = dto.Language;
+
+        await _authService.UpdateUserSettingsAsync(existing, ct);
         return Ok(new { success = true, message = "设置已保存" });
     }
 
     [HttpPost("settings/reset")]
     public async Task<IActionResult> Reset(CancellationToken ct)
     {
-        var settings = await _settingsManager.ResetAsync(ct);
-        return Ok(ToClientSettings(settings));
+        var userId = _currentUserService.GetUserId();
+        var existing = await _authService.GetUserSettingsAsync(userId, ct);
+
+        if (existing == null)
+        {
+            return NotFound(new { success = false, message = "用户设置未找到" });
+        }
+
+        // Reset to defaults
+        existing.LlmProvider = null;
+        existing.LlmApiKeyEncrypted = null;
+        existing.LlmBaseUrl = null;
+        existing.LlmModel = null;
+        existing.LlmTemperature = 0.7f;
+        existing.LlmMaxTokens = 4096;
+        existing.EmbeddingProvider = "local";
+        existing.EmbeddingModel = "bge-small-zh-v1.5";
+        existing.AgentDefaultRisk = "Medium";
+        existing.AgentAutoContinue = true;
+        existing.AgentMaxAutoSteps = 12;
+        existing.DefaultGenre = "玄幻";
+        existing.DefaultChapterWordCount = 3000;
+        existing.Theme = "dark";
+        existing.Language = "zh-CN";
+
+        await _authService.UpdateUserSettingsAsync(existing, ct);
+        return Ok(ToClientSettings(existing));
     }
 
     [HttpPost("settings/test-connection")]
@@ -51,8 +118,9 @@ public class SettingsController : ControllerBase
             if (string.IsNullOrWhiteSpace(request.Model))
                 return Ok(new { success = false, message = "请先填写模型名称。" });
 
-            var settings = await _settingsManager.LoadAsync(ct);
-            var apiKey = IsMasked(request.ApiKey) ? settings.LlmApiKey : request.ApiKey;
+            var userId = _currentUserService.GetUserId();
+            var settings = await _authService.GetUserSettingsAsync(userId, ct);
+            var apiKey = IsMasked(request.ApiKey) ? settings?.LlmApiKeyEncrypted : request.ApiKey;
             if (RequiresApiKey(request.Provider) && string.IsNullOrWhiteSpace(apiKey))
                 return Ok(new { success = false, message = "请先填写 API Key。" });
 
@@ -105,26 +173,20 @@ public class SettingsController : ControllerBase
     private static object ToClientSettings(UserSettings settings) => new
     {
         settings.LlmProvider,
-        LlmApiKey = MaskKey(settings.LlmApiKey),
+        LlmApiKey = MaskKey(settings.LlmApiKeyEncrypted),
         settings.LlmBaseUrl,
         settings.LlmModel,
         settings.LlmTemperature,
         settings.LlmMaxTokens,
         settings.EmbeddingProvider,
-        EmbeddingApiKey = MaskKey(settings.EmbeddingApiKey),
-        settings.EmbeddingBaseUrl,
         settings.EmbeddingModel,
         settings.AgentDefaultRisk,
         settings.AgentAutoContinue,
         settings.AgentMaxAutoSteps,
         settings.DefaultGenre,
-        settings.DefaultSubGenre,
         settings.DefaultChapterWordCount,
-        settings.DefaultVolumeChapterCount,
         settings.Theme,
         settings.Language,
-        settings.ShowStepDetails,
-        settings.Presets,
     };
 
     private static bool RequiresApiKey(string? provider) =>
@@ -206,3 +268,22 @@ public sealed record TestConnectionRequest(
     string BaseUrl = "",
     string ApiKey = "",
     string Model = "");
+
+public sealed record UserSettingsDto
+{
+    public string? LlmProvider { get; set; }
+    public string? LlmApiKey { get; set; }
+    public string? LlmBaseUrl { get; set; }
+    public string? LlmModel { get; set; }
+    public double LlmTemperature { get; set; } = 0.7;
+    public int LlmMaxTokens { get; set; } = 4096;
+    public string EmbeddingProvider { get; set; } = "local";
+    public string EmbeddingModel { get; set; } = "bge-small-zh-v1.5";
+    public string AgentDefaultRisk { get; set; } = "Medium";
+    public bool AgentAutoContinue { get; set; } = true;
+    public int AgentMaxAutoSteps { get; set; } = 12;
+    public string DefaultGenre { get; set; } = "玄幻";
+    public int DefaultChapterWordCount { get; set; } = 3000;
+    public string Theme { get; set; } = "dark";
+    public string Language { get; set; } = "zh-CN";
+}

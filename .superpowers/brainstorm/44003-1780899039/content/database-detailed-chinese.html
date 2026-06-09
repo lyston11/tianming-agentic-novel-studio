@@ -1,0 +1,211 @@
+<h2>数据库方案详解（通俗版）</h2>
+<p class="subtitle">三个方案的本质区别和选择建议</p>
+
+<div style="background: rgba(184,59,47,0.08); padding: 16px; border-radius: 8px; margin-bottom: 24px;">
+  <div style="font-size: 14px; color: #b83b2f; font-weight: 600; margin-bottom: 10px;">🔍 先理解当前问题</div>
+  <div style="font-size: 13px; color: #8b7355; line-height: 1.9;">
+    <strong style="color: #f4ecd9;">您的项目现状：</strong><br>
+    • 完全没有数据库，所有数据都存在文件里（JSON 和 Markdown）<br>
+    • 这就像用记事本管理公司员工档案，虽然能用，但：<br>
+    &nbsp;&nbsp;❌ 删除章节后，伏笔引用还在（数据不一致）<br>
+    &nbsp;&nbsp;❌ 无法快速查询"哪些伏笔还没解决"（没有查询功能）<br>
+    &nbsp;&nbsp;❌ 多个操作同时进行容易出错（没有并发保护）<br>
+    <br>
+    <strong style="color: #f4ecd9;">核心矛盾：</strong><br>
+    • 需要数据库来管理"结构化数据"（用户、项目、章节列表、伏笔关系）<br>
+    • 但您已经有自己实现的"向量搜索系统"（用于语义检索章节内容）<br>
+    • 要决定：是完全替换成数据库，还是混合使用？
+  </div>
+</div>
+
+<div style="margin-bottom: 32px;">
+  <h3 style="color: #b8893f; margin-bottom: 16px; font-size: 20px;">📦 方案A：渐进式混合（推荐）</h3>
+
+  <div style="background: rgba(184,137,63,0.12); padding: 18px; border-left: 4px solid #b8893f; border-radius: 6px; margin-bottom: 16px;">
+    <div style="font-size: 15px; font-weight: 600; color: #b8893f; margin-bottom: 10px;">核心思路：只把"该用数据库的"放数据库</div>
+    <div style="font-size: 13px; color: #8b7355; line-height: 1.9;">
+      <strong style="color: #f4ecd9;">第一阶段：把元数据迁移到 SQLite</strong><br>
+      什么是元数据？就是"数据的目录"，比如：<br>
+      • 用户表：用户名、邮箱、密码<br>
+      • 小说项目表：小说标题、作者、创建时间<br>
+      • 章节表：章节标题、字数、状态<br>
+      • 伏笔表：伏笔名称、在哪个章节埋下、在哪个章节解决<br>
+      <br>
+      <strong style="color: #f4ecd9;">为什么用 SQLite？</strong><br>
+      SQLite 就是一个"文件版数据库"，不需要安装数据库软件，只需要一个 <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">novelagent.db</code> 文件。<br>
+      就像 Excel 文件，双击就能打开，但比 Excel 强大一万倍。<br>
+      <br>
+      <strong style="color: #f4ecd9;">第二阶段：保留现有优势</strong><br>
+      • <span style="color: #5fad56;">✓</span> 章节内容继续用 Markdown 文件存（方便版本控制，用 Git 管理）<br>
+      • <span style="color: #5fad56;">✓</span> 向量索引继续用文件存（您的自研系统已经够用，1000 章以内性能很好）<br>
+      • <span style="color: #5fad56;">✓</span> Embedding 继续用本地模型（不改动）<br>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+    <div style="padding: 14px; background: rgba(95,173,86,0.1); border: 1px solid #5fad56; border-radius: 6px;">
+      <div style="font-weight: 600; color: #5fad56; margin-bottom: 8px; font-size: 13px;">✅ 优点</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • <strong>解决核心痛点</strong>：删除章节后，数据库自动清理相关伏笔（外键约束）<br>
+        • <strong>支持复杂查询</strong>："查询所有未解决的伏笔"这种操作变得简单<br>
+        • <strong>开发快</strong>：2-3 周完成<br>
+        • <strong>零配置</strong>：不需要安装额外软件<br>
+        • <strong>风险低</strong>：保留现有优势，只改必须改的
+      </div>
+    </div>
+    <div style="padding: 14px; background: rgba(184,59,47,0.08); border: 1px solid rgba(184,59,47,0.3); border-radius: 6px;">
+      <div style="font-weight: 600; color: #b83b2f; margin-bottom: 8px; font-size: 13px;">⚠️ 局限</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • SQLite 并发写入能力有限（同时只能一个人写入）<br>
+        • 适合中小规模（<10,000 用户）<br>
+        • 如果以后用户量暴增，需要迁移到 PostgreSQL（但很容易迁移）
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px; background: rgba(0,0,0,0.25); border-radius: 6px;">
+    <div style="font-size: 13px; color: #f4ecd9; margin-bottom: 8px;"><strong>适合场景：</strong></div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+      • 你现在的情况（需要多用户系统，但用户量不会很大）<br>
+      • 想快速上线验证产品（2-3 周 vs 4-6 周）<br>
+      • 不想维护复杂的数据库服务<br>
+      • 以后可以无缝升级到 PostgreSQL（.NET 的 EF Core 支持平滑迁移）
+    </div>
+  </div>
+</div>
+
+<div style="margin-bottom: 32px;">
+  <h3 style="color: #b8893f; margin-bottom: 16px; font-size: 20px;">🚀 方案B：PostgreSQL + pgvector（一步到位）</h3>
+
+  <div style="background: rgba(244,236,217,0.06); padding: 18px; border-left: 4px solid rgba(244,236,217,0.3); border-radius: 6px; margin-bottom: 16px;">
+    <div style="font-size: 15px; font-weight: 600; color: #f4ecd9; margin-bottom: 10px;">核心思路：用工业级数据库全面替换</div>
+    <div style="font-size: 13px; color: #8b7355; line-height: 1.9;">
+      <strong style="color: #f4ecd9;">全面升级：</strong><br>
+      • 所有结构化数据 → PostgreSQL（比 SQLite 强大得多）<br>
+      • 向量数据也迁移 → pgvector 扩展（PostgreSQL 的向量搜索插件）<br>
+      • 用 HNSW 索引（一种高效的向量检索算法）<br>
+      <br>
+      <strong style="color: #f4ecd9;">PostgreSQL 是什么？</strong><br>
+      世界上最先进的开源数据库之一，互联网大公司都在用。<br>
+      支持高并发（成千上万人同时访问不会卡）、支持复杂查询、生产级稳定性。<br>
+      <br>
+      <strong style="color: #f4ecd9;">pgvector 是什么？</strong><br>
+      PostgreSQL 的一个扩展，专门用来存储和检索向量数据。<br>
+      可以替代您自己实现的文件向量索引。
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+    <div style="padding: 14px; background: rgba(95,173,86,0.1); border: 1px solid #5fad56; border-radius: 6px;">
+      <div style="font-weight: 600; color: #5fad56; margin-bottom: 8px; font-size: 13px;">✅ 优点</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • <strong>性能天花板高</strong>：可以支持百万级用户<br>
+        • <strong>并发能力强</strong>：成千上万人同时使用不会卡<br>
+        • <strong>功能丰富</strong>：支持全文搜索、地理数据、JSON 查询等<br>
+        • <strong>一劳永逸</strong>：不需要再升级数据库
+      </div>
+    </div>
+    <div style="padding: 14px; background: rgba(184,59,47,0.08); border: 1px solid rgba(184,59,47,0.3); border-radius: 6px;">
+      <div style="font-weight: 600; color: #b83b2f; margin-bottom: 8px; font-size: 13px;">⚠️ 代价</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • <strong>需要安装 PostgreSQL</strong>（一个独立的数据库服务）<br>
+        • <strong>运维复杂</strong>：要监控、备份、优化性能<br>
+        • <strong>开发慢</strong>：4-6 周（数据迁移 + 向量索引重构）<br>
+        • <strong>资源消耗大</strong>：PostgreSQL 比 SQLite 吃内存
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px; background: rgba(0,0,0,0.25); border-radius: 6px;">
+    <div style="font-size: 13px; color: #f4ecd9; margin-bottom: 8px;"><strong>适合场景：</strong></div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+      • 你明确知道会有大量用户（>10,000 人）<br>
+      • 对性能和并发有极高要求<br>
+      • 有专业运维人员或愿意学习数据库运维<br>
+      • 章节数会超过 2000 章，向量检索成为瓶颈<br>
+      <br>
+      <span style="color: #b83b2f;"><strong>问题：</strong></span>你现在用户量不大，章节数也不多，用这个方案有点"杀鸡用牛刀"。
+    </div>
+  </div>
+</div>
+
+<div style="margin-bottom: 32px;">
+  <h3 style="color: #b8893f; margin-bottom: 16px; font-size: 20px;">🔗 方案C：SQLite + 外部向量数据库</h3>
+
+  <div style="background: rgba(244,236,217,0.06); padding: 18px; border-left: 4px solid rgba(244,236,217,0.3); border-radius: 6px; margin-bottom: 16px;">
+    <div style="font-size: 15px; font-weight: 600; color: #f4ecd9; margin-bottom: 10px;">核心思路：结构化数据用 SQLite，向量数据用专业工具</div>
+    <div style="font-size: 13px; color: #8b7355; line-height: 1.9;">
+      <strong style="color: #f4ecd9;">混合架构：</strong><br>
+      • 结构化数据（用户、项目、章节列表）→ SQLite<br>
+      • 向量数据（Embedding、语义检索）→ Qdrant 或 Milvus（专业向量数据库）<br>
+      <br>
+      <strong style="color: #f4ecd9;">Qdrant/Milvus 是什么？</strong><br>
+      专门为 AI 应用设计的向量数据库，比自己实现的文件索引性能好得多。<br>
+      支持高效的相似度搜索、过滤、聚合等操作。<br>
+      可以用 Docker 一键部署。
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+    <div style="padding: 14px; background: rgba(95,173,86,0.1); border: 1px solid #5fad56; border-radius: 6px;">
+      <div style="font-weight: 600; color: #5fad56; margin-bottom: 8px; font-size: 13px;">✅ 优点</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • <strong>术业有专攻</strong>：向量检索比方案A快很多<br>
+        • <strong>支持高级功能</strong>：混合搜索、过滤、聚合<br>
+        • <strong>可扩展性好</strong>：向量数据可以独立扩展<br>
+        • <strong>保持简单</strong>：结构化数据还是 SQLite（不需要 PostgreSQL）
+      </div>
+    </div>
+    <div style="padding: 14px; background: rgba(184,59,47,0.08); border: 1px solid rgba(184,59,47,0.3); border-radius: 6px;">
+      <div style="font-weight: 600; color: #b83b2f; margin-bottom: 8px; font-size: 13px;">⚠️ 问题</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+        • <strong>架构复杂</strong>：要维护两套系统（SQLite + 向量数据库）<br>
+        • <strong>需要 Docker</strong>：向量数据库要跑在容器里<br>
+        • <strong>当前不需要</strong>：你的文件向量索引性能还不错（<100ms）<br>
+        • <strong>增加成本</strong>：多一个服务就多一份维护负担
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 14px; background: rgba(0,0,0,0.25); border-radius: 6px;">
+    <div style="font-size: 13px; color: #f4ecd9; margin-bottom: 8px;"><strong>适合场景：</strong></div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+      • 向量检索变慢了（延迟 >200ms）<br>
+      • 章节数超过 1000 章<br>
+      • 需要复杂的向量过滤和聚合功能<br>
+      <br>
+      <span style="color: #b8893f;"><strong>问题：</strong></span>你现在还没到这个阶段，引入专业向量数据库是"过度设计"。
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 40px; padding: 24px; background: rgba(184,137,63,0.12); border: 2px solid #b8893f; border-radius: 8px;">
+  <h3 style="color: #b8893f; margin-bottom: 16px; font-size: 18px;">🎯 我的推荐：选方案A</h3>
+  <div style="font-size: 14px; color: #8b7355; line-height: 2;">
+    <strong style="color: #f4ecd9;">为什么推荐A？</strong><br>
+    <br>
+    1️⃣ <strong>解决核心问题</strong>：引用完整性（删除章节自动清理伏笔）、结构化查询、并发安全<br>
+    2️⃣ <strong>开发快</strong>：2-3 周 vs 4-6 周，能更快验证多用户系统是否好用<br>
+    3️⃣ <strong>零配置</strong>：SQLite 是一个文件，不需要安装数据库软件<br>
+    4️⃣ <strong>保留优势</strong>：你的向量索引系统继续用，Markdown 文件继续用，不推倒重来<br>
+    5️⃣ <strong>可升级</strong>：以后用户量大了，可以无缝升级到 PostgreSQL（.NET 支持）<br>
+    <br>
+    <strong style="color: #f4ecd9;">方案B什么时候选？</strong><br>
+    • 你已经有 1 万以上用户<br>
+    • 并发写入成为瓶颈（多人同时编辑卡顿）<br>
+    • 章节数超过 2000，向量检索变慢<br>
+    <br>
+    <strong style="color: #f4ecd9;">方案C什么时候选？</strong><br>
+    • 向量检索延迟超过 200ms<br>
+    • 需要复杂的向量过滤（比如"找出所有包含'修仙'和'战斗'场景的章节"）<br>
+    <br>
+    <span style="color: #5fad56; font-size: 15px;"><strong>现在的情况：</strong>方案A最合适，快速上线，遇到瓶颈再升级。</span>
+  </div>
+</div>
+
+<div style="margin-top: 24px; padding: 18px; background: rgba(184,59,47,0.08); border-left: 3px solid #b83b2f; border-radius: 4px;">
+  <p style="margin: 0; font-size: 14px; line-height: 1.8; color: #f4ecd9;">
+    <strong>请告诉我您的选择：A、B 还是 C？</strong><br>
+    <span style="font-size: 13px; color: #8b7355;">选定后，我立即编写完整的设计文档，然后开始实施。</span>
+  </p>
+</div>

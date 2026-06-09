@@ -3,11 +3,14 @@ import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { getSettings } from './api';
 import Rail from './components/layout/Rail';
+import ProtectedRoute from './components/ProtectedRoute';
 import AgentPage from './pages/AgentPage';
 import MaterialsPage from './pages/MaterialsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import LibraryPage from './pages/LibraryPage';
 import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,11 +35,11 @@ function AppLayout() {
       <Rail />
       <main className="desk">
         <Routes>
-          <Route path="/" element={<AgentPage />} />
-          <Route path="/materials" element={<MaterialsPage />} />
-          <Route path="/workflow" element={<WorkflowPage />} />
-          <Route path="/library" element={<LibraryPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
+          <Route path="/materials" element={<ProtectedRoute><MaterialsPage /></ProtectedRoute>} />
+          <Route path="/workflow" element={<ProtectedRoute><WorkflowPage /></ProtectedRoute>} />
+          <Route path="/library" element={<ProtectedRoute><LibraryPage /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         </Routes>
       </main>
     </div>
@@ -47,7 +50,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppLayout />
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/*" element={<AppLayout />} />
+        </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   );

@@ -1,31 +1,42 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
 
 [ApiController]
 [Route("api")]
+[Authorize]
 public class AgentController : ControllerBase
 {
     private readonly AgentRouter _router;
     private readonly AgentSessionManager _sessionManager;
-    private readonly NovelAgentWorkspace _workspace;
+    private readonly IWorkspaceFactory _workspaceFactory;
     private readonly ProjectScopedExecutor _projectScope;
+    private readonly IAgentSessionService _agentSessionService;
+    private readonly ICurrentUserService _currentUserService;
 
     public AgentController(
         AgentRouter router,
         AgentSessionManager sessionManager,
-        NovelAgentWorkspace workspace,
-        ProjectScopedExecutor projectScope)
+        IWorkspaceFactory workspaceFactory,
+        ProjectScopedExecutor projectScope,
+        IAgentSessionService agentSessionService,
+        ICurrentUserService currentUserService)
     {
         _router = router;
         _sessionManager = sessionManager;
-        _workspace = workspace;
+        _workspaceFactory = workspaceFactory;
         _projectScope = projectScope;
+        _agentSessionService = agentSessionService;
+        _currentUserService = currentUserService;
     }
 
     [HttpPost("agent/chat")]
@@ -61,41 +72,60 @@ public class AgentController : ControllerBase
     }
 
     [HttpGet("agent/session/{sessionId}")]
-    public IActionResult GetSession(string sessionId)
+    public async Task<IActionResult> GetSession(string sessionId, CancellationToken ct)
     {
-        var session = _sessionManager.GetSession(sessionId);
-        if (session == null) return NotFound();
-        return Ok(ToDetail(session));
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var isAdmin = _currentUserService.IsAdmin();
+            var session = await _agentSessionService.GetSessionByIdAsync(sessionId, userId, isAdmin, ct);
+            return Ok(session);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     [HttpGet("agent/sessions")]
-    public IActionResult ListSessions()
+    public async Task<IActionResult> ListSessions(CancellationToken ct)
     {
-        return Ok(_sessionManager.ListSessions().Select(ToSummary).ToList());
+        var userId = _currentUserService.GetUserId();
+        var isAdmin = _currentUserService.IsAdmin();
+
+        var sessions = await _agentSessionService.ListUserSessionsAsync(userId, isAdmin, includeArchived: false, ct);
+        return Ok(sessions);
     }
 
     [HttpPost("agent/session")]
-    public IActionResult CreateSession()
+    public async Task<IActionResult> CreateSession([FromQuery] string? projectId, CancellationToken ct)
     {
-        var session = _sessionManager.GetOrCreateSession();
-        return Ok(ToDetail(session));
+        var userId = _currentUserService.GetUserId();
+        var session = await _agentSessionService.GetOrCreateSessionAsync(null, userId, projectId, ct);
+        return Ok(session);
     }
 
     [HttpPatch("agent/session/{sessionId}")]
-    public IActionResult UpdateSession(string sessionId, [FromBody] AgentSessionUpdateRequest request)
+    public async Task<IActionResult> UpdateSession(string sessionId, [FromBody] AgentSessionUpdateRequest request, CancellationToken ct)
     {
-        var session = _sessionManager.GetSession(sessionId);
-        if (session == null) return NotFound("Session not found.");
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var isAdmin = _currentUserService.IsAdmin();
 
-        if (!string.IsNullOrWhiteSpace(request.Title))
-            session.Title = request.Title.Trim();
+            var updateRequest = new Models.AgentSessions.UpdateAgentSessionRequest
+            {
+                Title = request.Title,
+                IsArchived = request.IsArchived
+            };
 
-        if (request.IsArchived.HasValue)
-            session.IsArchived = request.IsArchived.Value;
-
-        session.UpdatedAt = DateTime.UtcNow;
-        _sessionManager.SaveSession(session);
-        return Ok(ToDetail(session));
+            var session = await _agentSessionService.UpdateSessionAsync(sessionId, updateRequest, userId, isAdmin, ct);
+            return Ok(session);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound("Session not found.");
+        }
     }
 
     [HttpPost("agent/step/{sessionId}/rollback")]
@@ -107,31 +137,48 @@ public class AgentController : ControllerBase
         var session = _sessionManager.GetSession(sessionId);
         if (session == null) return NotFound("Session not found.");
 
-        var bible = await _projectScope.RunSessionAsync(session, () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct);
-        var run = bible.AgentRuns.FirstOrDefault(r => r.RunId == request.RunId);
-        if (run == null) return NotFound("Run not found.");
+        var userId = _currentUserService.GetUserId();
+        var projectId = session.ActiveProjectId;
 
-        // Find the target step and reset all steps after it
-        var stepIndex = run.Steps.FindIndex(s => s.Id == request.StepId);
-        if (stepIndex < 0) return NotFound("Step not found.");
+        if (string.IsNullOrEmpty(projectId))
+            return BadRequest("Session has no active project.");
 
-        // Reset steps from the target onwards
-        for (var i = stepIndex; i < run.Steps.Count; i++)
+        var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
+        try
         {
-            run.Steps[i].Status = i == stepIndex ? NovelAgentStepStatus.Pending : NovelAgentStepStatus.Pending;
+            var bible = await _projectScope.RunSessionAsync(session,
+                () => workspaceEntry.Workspace.Orchestrator.GetStoryBibleAsync(ct), ct);
+
+            var run = bible.AgentRuns.FirstOrDefault(r => r.RunId == request.RunId);
+            if (run == null) return NotFound("Run not found.");
+
+            // Find the target step and reset all steps after it
+            var stepIndex = run.Steps.FindIndex(s => s.Id == request.StepId);
+            if (stepIndex < 0) return NotFound("Step not found.");
+
+            // Reset steps from the target onwards
+            for (var i = stepIndex; i < run.Steps.Count; i++)
+            {
+                run.Steps[i].Status = i == stepIndex ? NovelAgentStepStatus.Pending : NovelAgentStepStatus.Pending;
+            }
+            run.Status = NovelAgentRunStatus.Planning;
+            session.ActiveRunId = run.RunId;
+
+            await _sessionManager.SendEventAsync(sessionId, new AgentSseEvent
+            {
+                Type = AgentSseEventType.RunUpdate,
+                RunId = run.RunId,
+                Message = $"已回退到步骤: {run.Steps[stepIndex].Name}",
+                Data = run,
+            }, ct);
+
+            return Ok(new { success = true, message = $"已回退到步骤: {run.Steps[stepIndex].Name}" });
         }
-        run.Status = NovelAgentRunStatus.Planning;
-        session.ActiveRunId = run.RunId;
-
-        await _sessionManager.SendEventAsync(sessionId, new AgentSseEvent
+        finally
         {
-            Type = AgentSseEventType.RunUpdate,
-            RunId = run.RunId,
-            Message = $"已回退到步骤: {run.Steps[stepIndex].Name}",
-            Data = run,
-        }, ct);
-
-        return Ok(new { success = true, message = $"已回退到步骤: {run.Steps[stepIndex].Name}" });
+            if (!string.IsNullOrEmpty(projectId))
+                _workspaceFactory.Release(userId, projectId);
+        }
     }
 
     private static AgentSessionSummary ToSummary(AgentSession session) => new(

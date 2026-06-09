@@ -1,6 +1,7 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getWorkspace } from '../../api';
+import { useAuthStore } from '../../stores/authStore';
 
 const navItems = [
   { path: '/', label: 'Agent 对话', num: '01' },
@@ -12,6 +13,13 @@ const navItems = [
 
 export default function Rail() {
   const { data: workspace } = useQuery({ queryKey: ['workspace'], queryFn: getWorkspace });
+  const { user, clearAuth } = useAuthStore();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    clearAuth();
+    navigate('/login');
+  };
 
   return (
     <aside className="rail">
@@ -42,6 +50,27 @@ export default function Rail() {
 
       <div className="rail-footer">
         <div>{workspace?.projectName ?? '加载中...'}</div>
+        {user && (
+          <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
+            {user.username}
+          </div>
+        )}
+        <button
+          onClick={handleLogout}
+          style={{
+            marginTop: '8px',
+            width: '100%',
+            padding: '6px',
+            fontSize: '12px',
+            background: 'transparent',
+            border: '1px solid rgba(255,255,255,0.2)',
+            color: 'inherit',
+            cursor: 'pointer',
+            borderRadius: '4px'
+          }}
+        >
+          退出登录
+        </button>
       </div>
     </aside>
   );

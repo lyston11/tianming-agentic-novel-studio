@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { deleteNovelProject, getNovelLibrary, updateNovelProject } from '../api';
 import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
+import { projectService } from '../services/projectService';
+import { useAuthStore } from '../stores/authStore';
 import Topbar from '../components/layout/Topbar';
 import '../styles/library.css';
 
@@ -43,10 +45,16 @@ function coverMark(title: string) {
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
   const { data: overviewLibrary, isLoading } = useQuery({
     queryKey: ['novelLibrary'],
     queryFn: () => getNovelLibrary(),
     refetchInterval: 10000,
+  });
+  const { data: userStats } = useQuery({
+    queryKey: ['userStats'],
+    queryFn: () => projectService.getUserStats(),
+    refetchInterval: 30000,
   });
   const [mode, setMode] = useState<LibraryMode>('store');
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
@@ -162,6 +170,19 @@ export default function LibraryPage() {
                 <span>Committed Library</span>
                 <h2>小说书城</h2>
                 <p>只展示确认入库的成稿；草稿和返工任务留在 Agent 工作台。</p>
+                {user && (
+                  <div className="user-info-stats">
+                    <strong>{user.username}</strong>
+                    <span> · </span>
+                    <span>{userStats?.projectCount ?? books.length} 个项目</span>
+                    {userStats && userStats.storageUsedMb > 0 && (
+                      <>
+                        <span> · </span>
+                        <span>{userStats.storageUsedMb.toFixed(2)} MB 已使用</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               <strong>{libraryBooks.length}<small>本成稿</small></strong>
             </header>
@@ -169,7 +190,12 @@ export default function LibraryPage() {
             {isLoading ? (
               <div className="empty shelf-empty">正在加载小说库...</div>
             ) : books.length === 0 ? (
-              <div className="empty shelf-empty">还没有小说项目。让 Agent 先开一本新小说。</div>
+              <div className="empty shelf-empty">
+                <div className="empty-state-icon">📚</div>
+                <h3>您还没有创建任何项目</h3>
+                <p>开始您的创作之旅，让 AI Agent 帮助您创作第一部小说。</p>
+                <p className="empty-hint">前往 Agent 对话页面，告诉 Agent 您的创意想法即可开始。</p>
+              </div>
             ) : libraryBooks.length === 0 ? (
               <div className="empty shelf-empty">还没有已入库成稿。生成并确认提交章节后会出现在这里。</div>
             ) : (

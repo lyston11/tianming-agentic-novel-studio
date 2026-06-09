@@ -18,12 +18,12 @@
       "title": "\u672A\u547D\u540D\u65B0\u4E66",
       "genre": "\u7384\u5E7B",
       "subGenre": "",
-      "coreHook": "\u4F60\u597D\uFF0C\u6211\u60F3\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4",
-      "readerPromise": "",
-      "status": "Drafting",
+      "coreHook": "\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002",
+      "readerPromise": "\u56F4\u7ED5\u201C\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4\uFF0C\u6BCF\u5377\u63ED\u7A7F\u4E00\u4E2A\u771F\u76F8\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u201D\u6301\u7EED\u5151\u73B0 \u7384\u5E7B \u8BFB\u8005\u671F\u5F85\uFF1A\u4EE5\u538B\u8FEB-\u53CD\u51FB-\u4EE3\u4EF7-\u5347\u7EA7\u4E3A\u4E3B\u5FAA\u73AF\uFF0C\u723D\u70B9\u5FC5\u987B\u6709\u94FA\u57AB\u548C\u4EE3\u4EF7\u3002",
+      "status": "Planning",
       "storageProjectName": "AgenticNovelStudio__novel__\u672A\u547D\u540D\u65B0\u4E66__2cfd632c",
       "createdAt": "2026-06-06T10:37:22.44946Z",
-      "updatedAt": "2026-06-07T07:08:48.727816Z"
+      "updatedAt": "2026-06-08T06:04:24.752149Z"
     },
     {
       "id": "default",
@@ -38,5 +38,5 @@
       "updatedAt": "2026-06-07T07:08:46.308117Z"
     }
   ],
-  "updatedAt": "2026-06-07T07:08:48.727817Z"
+  "updatedAt": "2026-06-08T06:04:24.752149Z"
 }

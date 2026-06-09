@@ -1,0 +1,156 @@
+<h2>完整方案汇总</h2>
+<p class="subtitle">从 SaaS 架构到数据库设计的所有决策点</p>
+
+<div style="background: rgba(184,137,63,0.08); padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+  <div style="font-size: 13px; color: #b8893f; font-weight: 600; margin-bottom: 8px;">📊 决策进度</div>
+  <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+    <strong style="color: #5fad56;">✓ 已决策：</strong>SaaS 架构模型、用户角色设计、记忆系统架构、设置页面设计<br>
+    <strong style="color: #b83b2f;">⏳ 待决策：</strong>数据库架构方案（最后一个关键决策）
+  </div>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color: #5fad56; margin-bottom: 12px;">✅ 第一决策：SaaS 架构模型</h3>
+  <div style="background: rgba(95,173,86,0.08); padding: 14px; border-left: 3px solid #5fad56; border-radius: 4px; margin-bottom: 12px;">
+    <div style="font-weight: 600; color: #5fad56; margin-bottom: 6px;">您的选择：方案C - 租户隔离型</div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+      每个用户都有自己的账号，完全独立的小说项目和数据空间。适合构建多用户创作平台。
+    </div>
+  </div>
+  <div style="font-size: 12px; color: #6b5d4f; line-height: 1.6;">
+    <strong>备选方案：</strong><br>
+    A. 单用户模式（不支持多账号）<br>
+    B. 多用户共享型（所有用户共用一个工作空间）<br>
+    D. 团队协作型（支持多人协作编辑同一部小说）
+  </div>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color: #5fad56; margin-bottom: 12px;">✅ 第二决策：用户角色设计</h3>
+  <div style="background: rgba(95,173,86,0.08); padding: 14px; border-left: 3px solid #5fad56; border-radius: 4px; margin-bottom: 12px;">
+    <div style="font-weight: 600; color: #5fad56; margin-bottom: 6px;">您的选择：方案A - 极简角色（Admin + Author）</div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+      只有两种角色：管理员（系统管理）和作者（创作小说）。简单清晰，满足基本需求。
+    </div>
+  </div>
+  <div style="font-size: 12px; color: #6b5d4f; line-height: 1.6;">
+    <strong>备选方案：</strong><br>
+    B. 三层角色（Admin + Author + Reader）<br>
+    C. 四层角色（Super Admin + Admin + Author + Collaborator）<br>
+    D. 细粒度权限（基于权限位的自定义角色系统）
+  </div>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color: #5fad56; margin-bottom: 12px;">✅ 第三决策：记忆系统架构</h3>
+  <div style="background: rgba(95,173,86,0.08); padding: 14px; border-left: 3px solid #5fad56; border-radius: 4px; margin-bottom: 12px;">
+    <div style="font-weight: 600; color: #5fad56; margin-bottom: 6px;">您的选择：方案B - 数据库 + 文件混合</div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+      元数据（用户ID、项目关联）存数据库，详细记忆内容仍存 JSON 文件。兼顾结构化查询和灵活性。
+    </div>
+  </div>
+  <div style="font-size: 12px; color: #6b5d4f; line-height: 1.6;">
+    <strong>备选方案：</strong><br>
+    A. 纯文件系统（保持现状，不引入数据库）<br>
+    C. 全数据库化（所有记忆内容都存数据库 JSON 字段）
+  </div>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color: #5fad56; margin-bottom: 12px;">✅ 第四决策：设置页面设计</h3>
+  <div style="background: rgba(95,173,86,0.08); padding: 14px; border-left: 3px solid #5fad56; border-radius: 4px; margin-bottom: 12px;">
+    <div style="font-weight: 600; color: #5fad56; margin-bottom: 6px;">您的选择：方案B - 分组折叠（4标签页 + 折叠面板）</div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+      将现有5个标签页重组为4个：账号管理、AI配置、创作设置、界面偏好。每个标签页内部用折叠面板分组。
+    </div>
+  </div>
+  <div style="font-size: 12px; color: #6b5d4f; line-height: 1.6;">
+    <strong>备选方案：</strong><br>
+    A. 垂直导航（单列式布局，类似移动App）<br>
+    C. 双栏导航（左侧边栏目录 + 右侧内容区，类似 VS Code 设置）
+  </div>
+  <div style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 12px; color: #8b7355;">
+    <strong style="color: #f4ecd9;">B vs C 详细对比：</strong><br>
+    • 方案B开发时间 2-3天，方案C需要 5-7天<br>
+    • 方案B移动端友好，方案C需要重新布局<br>
+    • 方案B学习成本低（熟悉的标签页模式）<br>
+    • 方案C适合设置项超过20个、层级超过3层的场景
+  </div>
+</div>
+
+<div style="margin-top: 32px; padding-top: 20px; border-top: 2px solid rgba(184,137,63,0.2);">
+  <h3 style="color: #b83b2f; margin-bottom: 12px;">⏳ 第五决策：数据库架构方案（待选择）</h3>
+
+  <div style="background: rgba(184,137,63,0.08); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+    <div style="font-size: 13px; color: #b8893f; font-weight: 600; margin-bottom: 8px;">🎯 核心发现</div>
+    <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+      ✓ 项目<strong>未使用任何数据库</strong>，纯文件系统存储（JSON + Markdown）<br>
+      ✓ 已实现<strong>自研向量索引</strong>（int8 量化，三层检索）<br>
+      ✓ 本地 Embedding（bge-small-zh-v1.5，512维）<br>
+      ✓ 最大痛点：<strong>数据完整性缺失</strong>（删除章节后伏笔引用仍存在）<br>
+      ✓ 性能瓶颈：Story Bible 单文件 52K+ tokens
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr; gap: 16px;">
+    <div style="padding: 14px; background: rgba(184,137,63,0.12); border: 2px solid #b8893f; border-radius: 8px;">
+      <div style="font-weight: 600; color: #b8893f; margin-bottom: 8px; font-size: 14px;">方案A：渐进式混合（推荐）</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.7;">
+        <strong style="color: #f4ecd9;">Phase 1:</strong> 元数据迁移 SQLite（users, projects, chapters, foreshadows, characters）<br>
+        <strong style="color: #f4ecd9;">Phase 2:</strong> 保留现有优势（章节内容 Markdown、向量索引文件存储）<br>
+        <br>
+        <span style="color: #5fad56;">✓</span> 解决引用完整性（外键约束）<br>
+        <span style="color: #5fad56;">✓</span> 支持结构化查询<br>
+        <span style="color: #5fad56;">✓</span> 零配置部署（SQLite 单文件）<br>
+        <span style="color: #5fad56;">✓</span> 开发周期：2-3周
+      </div>
+    </div>
+
+    <div style="padding: 14px; background: rgba(0,0,0,0.2); border: 1px solid rgba(244,236,217,0.12); border-radius: 8px;">
+      <div style="font-weight: 600; color: #f4ecd9; margin-bottom: 8px; font-size: 14px;">方案B：PostgreSQL + pgvector（一步到位）</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.7;">
+        <strong style="color: #f4ecd9;">全面升级：</strong>所有数据 → PostgreSQL，向量 → pgvector（HNSW 索引）<br>
+        <br>
+        <span style="color: #5fad56;">✓</span> 生产级性能、高并发支持<br>
+        <span style="color: #b83b2f;">✗</span> 需要部署 PostgreSQL 服务<br>
+        <span style="color: #b83b2f;">✗</span> 运维复杂度高<br>
+        <span style="color: #b83b2f;">✗</span> 开发周期：4-6周<br>
+        <br>
+        <strong style="color: #6b5d4f;">适用场景：</strong>章节数 >2000 或高并发需求
+      </div>
+    </div>
+
+    <div style="padding: 14px; background: rgba(0,0,0,0.2); border: 1px solid rgba(244,236,217,0.12); border-radius: 8px;">
+      <div style="font-weight: 600; color: #f4ecd9; margin-bottom: 8px; font-size: 14px;">方案C：SQLite + 外部向量数据库</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.7;">
+        <strong style="color: #f4ecd9;">混合架构：</strong>结构化数据 → SQLite，向量 → Qdrant/Milvus（Docker）<br>
+        <br>
+        <span style="color: #b8893f;">⚠️</span> 当前文件向量索引性能尚可（<100ms）<br>
+        <span style="color: #b8893f;">⚠️</span> 引入外部服务增加复杂度<br>
+        <br>
+        <strong style="color: #6b5d4f;">时机：</strong>向量检索延迟 >200ms 或章节数 >1000 时再考虑
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 16px; padding: 14px; background: rgba(184,59,47,0.08); border-left: 3px solid #b83b2f; border-radius: 4px;">
+    <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #b83b2f;">
+      <strong>请选择您的数据库架构方案（A/B/C），这是最后一个关键决策点。</strong>
+    </p>
+    <p style="margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: #8b7355;">
+      选定后，我将编写完整的设计文档并开始实施计划。
+    </p>
+  </div>
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: rgba(184,137,63,0.08); border-radius: 8px;">
+  <div style="font-size: 13px; color: #b8893f; font-weight: 600; margin-bottom: 8px;">📝 后续流程</div>
+  <div style="font-size: 12px; color: #8b7355; line-height: 1.8;">
+    1. 您选择数据库架构方案（A/B/C）<br>
+    2. 我编写完整设计文档（保存到 <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">docs/superpowers/specs/</code>）<br>
+    3. 文档内部审查（检查占位符、一致性、范围）<br>
+    4. 您审阅设计文档并确认<br>
+    5. 创建详细实施计划（调用 writing-plans 技能）<br>
+    6. 开始代码实施
+  </div>
+</div>

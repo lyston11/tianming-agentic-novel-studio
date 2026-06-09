@@ -1,8 +1,1113 @@
 [
   {
+    "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+    "title": "\u4F60\u597D",
+    "phase": "volume_committed",
+    "activeProjectId": "2cfd632c82ff4383a691c4a32cd68a35",
+    "activeRunId": "0ca2eef89ad84154a8ad010def277188",
+    "isArchived": false,
+    "runHistory": [
+      "f81aa4005cfa4fccb299c740743e82e0",
+      "0ca2eef89ad84154a8ad010def277188"
+    ],
+    "chatHistory": [
+      {
+        "role": "user",
+        "content": "\u4F60\u597D",
+        "createdAt": "2026-06-08T06:01:39.387263Z"
+      },
+      {
+        "role": "assistant",
+        "content": "\u4F60\u597D\uFF01\u6B22\u8FCE\u56DE\u6765 \uD83C\uDF89\n\n\u6211\u770B\u5230\u4F60\u4E4B\u524D\u6709\u4E00\u4E2A\u521B\u4F5C\u76EE\u6807\uFF1A**\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4**\u3002\u9879\u76EE\u76EE\u524D\u5904\u4E8E\u300C\u6545\u4E8B\u5730\u57FA\u300D\u9636\u6BB5\uFF0CStory Bible \u8FD8\u672A\u5EFA\u7ACB\u3002\n\n\u6211\u4EEC\u53EF\u4EE5\u9A6C\u4E0A\u5F00\u59CB\u5E2E\u4F60\u642D\u5EFA\u6545\u4E8B\u5730\u57FA\u2014\u2014\u5305\u62EC\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u8BBE\u5B9A\u3001\u6838\u5FC3\u51B2\u7A81\u548C\u5927\u6846\u67B6\u3002\u4F60\u60F3\u8981\u6211\u73B0\u5728\u5F00\u59CB\u89C4\u5212\u5417\uFF1F",
+        "createdAt": "2026-06-08T06:01:39.387267Z"
+      },
+      {
+        "role": "user",
+        "content": "\u53EF\u4EE5\uFF0C\u63A5\u7740\u5E72\u8FD9\u4E2A",
+        "createdAt": "2026-06-08T06:05:34.339444Z"
+      },
+      {
+        "role": "assistant",
+        "content": "\u5DE5\u5177 PlanChapter \u5931\u8D25\uFF1APlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002\u3002\u4E0D\u53EF\u6062\u590D\u7684\u5931\u8D25\uFF1APlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002",
+        "createdAt": "2026-06-08T06:05:34.339445Z"
+      }
+    ],
+    "workingMemory": {
+      "currentGoal": "",
+      "openQuestions": [],
+      "userPreferences": [],
+      "recentObservations": [
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:34:03.233114Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:34:18.443983Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:34:33.474627Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:34:48.507204Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:35:03.538122Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:35:18.582439Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:35:33.630971Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:35:48.674135Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:36:03.707021Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:36:18.737555Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:36:33.773054Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:36:48.841196Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:37:03.932051Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:37:19.031174Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:37:34.085299Z"
+        },
+        {
+          "stepIndex": 0,
+          "observationType": "tool_result",
+          "toolName": "SelectChapterCandidate",
+          "success": false,
+          "requiresConfirmation": false,
+          "risk": "Medium",
+          "message": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "runId": "0ca2eef89ad84154a8ad010def277188",
+          "phase": "volume_committed",
+          "isRepairable": false,
+          "recommendedToolName": "",
+          "recommendedArguments": {},
+          "missingPrerequisite": "",
+          "artifact": {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          },
+          "createdAt": "2026-06-09T09:37:49.205772Z"
+        }
+      ],
+      "pendingToolCall": null,
+      "pendingConfirmation": null,
+      "lastDecision": {
+        "mode": "execute_tool",
+        "intent": "native_tool_call",
+        "needsRag": false,
+        "ragQueries": [],
+        "toolCall": {
+          "name": "PlanChapter",
+          "arguments": {
+            "chapterId": "chapter-001",
+            "sourceTurnId": "8eb58569197b4bd98bb71ffe61196156"
+          }
+        },
+        "risk": "Low",
+        "requiresConfirmation": false,
+        "assistantBrief": "",
+        "directReply": "",
+        "suggestions": [],
+        "confidence": 0.85,
+        "source": "anthropic_tool_calling"
+      },
+      "mission": {
+        "currentGoal": "",
+        "creativePhase": "idle",
+        "readiness": "unknown",
+        "nextIntent": "",
+        "pendingUserDecision": "",
+        "foundationBrief": {},
+        "missingFoundationFields": [],
+        "pendingQuestion": "",
+        "missionPlan": null,
+        "updatedAt": "2026-06-08T06:00:09.478952Z"
+      },
+      "missionPlan": {
+        "missionId": "78618531f6694262b21348d0eb97e4a4",
+        "blackboardVersion": 2,
+        "dependencyVersion": 0,
+        "lastRecoveredAt": "2026-06-08T06:04:54.637648Z",
+        "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+        "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+        "status": "blocked",
+        "currentObjective": "\u4F60\u597D\uFF0C\u6211\u60F3\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4",
+        "activeChapterId": "chapter-001",
+        "currentRunId": "0ca2eef89ad84154a8ad010def277188",
+        "overallGoal": "\u4F60\u597D\uFF0C\u6211\u60F3\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4",
+        "currentNovelGoal": "\u4F60\u597D\uFF0C\u6211\u60F3\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4",
+        "stage": "volume_planning",
+        "milestones": [
+          "\u6545\u4E8B\u5730\u57FA",
+          "\u5377\u89C4\u5212",
+          "\u7AE0\u8282\u89C4\u5212",
+          "\u4E0A\u4E0B\u6587\u5305",
+          "\u8349\u7A3F\u751F\u6210",
+          "\u8D28\u91CF\u95E8\u7981",
+          "\u6210\u7A3F\u5165\u5E93"
+        ],
+        "todoQueue": [
+          "\u89C4\u5219\u53CD\u566C\u578B",
+          "\u771F\u76F8\u9012\u8FDB\u578B",
+          "\u5173\u7CFB\u4EE3\u4EF7\u578B",
+          "\u6839\u636E\u5DE5\u5177\u7ED3\u679C\u7EE7\u7EED\u63A8\u8FDB\u4E0B\u4E00\u6B65",
+          "\u89C4\u5212\u7B2C\u4E00\u5377",
+          "\u67E5\u770B\u5F53\u524D\u72B6\u6001",
+          "\u89C4\u5212\u7B2C\u4E00\u5377\uFF08Volume 1\uFF09\u7684\u6838\u5FC3\u7ED3\u6784\u4E0E\u8282\u594F",
+          "\u63D0\u4EA4\u5165\u5E93",
+          "\u8C03\u6574\u5377\u89C4\u5212",
+          "\u89C4\u5212\u7B2C\u4E00\u7AE0"
+        ],
+        "completedItems": [
+          "\u751F\u6210 3 \u4E2A\u6545\u4E8B\u5730\u57FA\u5019\u9009\u3002",
+          "PlanStoryFoundation \u5B8C\u6210",
+          "Story Bible \u5DF2\u63D0\u4EA4\u4FDD\u5B58\u3002",
+          "Story Bible \u5DF2\u786E\u8BA4\uFF08\u7384\u5E7B\u98CE\u683C\uFF0C\u6838\u5FC3\u94A9\u5B50\uFF1A\u6BCF\u5377\u63ED\u793A\u771F\u76F8\u4F46\u63A8\u7FFB\u65E7\u89E3\uFF1B\u4E3B\u51B2\u7A81\uFF1A\u4E3B\u89D2\u8D8A\u63A5\u8FD1\u771F\u76F8\uFF0C\u5BF9\u624B\u8D8A\u662F\u89C4\u5219\u672C\u8EAB\uFF09",
+          "\u5377\u89C4\u5212\u300C\u7B2C\u4E00\u5377\u300D\u5DF2\u751F\u6210\u3002",
+          "PlanVolumeArc \u5B8C\u6210",
+          "\u5377\u7EA7\u89C4\u5212\u5DF2\u63D0\u4EA4\u5230 Story Bible\u3002",
+          "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "CommitVolumeArc \u5B8C\u6210"
+        ],
+        "blockers": [
+          "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+          "\u5DE5\u5177 PlanChapter \u5931\u8D25\uFF1APlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002\u3002\u4E0D\u53EF\u6062\u590D\u7684\u5931\u8D25\uFF1APlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002",
+          "PlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002"
+        ],
+        "authorPreferences": [],
+        "confirmedDecisions": [],
+        "bookTaskTree": {
+          "bookId": "78618531f6694262b21348d0eb97e4a4",
+          "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+          "title": "\u672A\u547D\u540D\u65B0\u4E66",
+          "status": "blocked",
+          "currentFocus": "0ca2eef89ad84154a8ad010def277188",
+          "foundation": {
+            "status": "confirmed",
+            "confirmedAt": "2026-06-08T06:03:00.537212Z",
+            "blockers": [],
+            "decisions": [
+              "\u6838\u5FC3\u94A9\u5B50\uFF1A\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002",
+              "\u8BFB\u8005\u627F\u8BFA\uFF1A\u56F4\u7ED5\u201C\u5199\u4E00\u672C\u50CF\u6597\u7F57\u5927\u9646\u4E00\u6837\u98CE\u683C\u7684\u5C0F\u8BF4\uFF0C\u6BCF\u5377\u63ED\u7A7F\u4E00\u4E2A\u771F\u76F8\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u201D\u6301\u7EED\u5151\u73B0 \u7384\u5E7B \u8BFB\u8005\u671F\u5F85\uFF1A\u4EE5\u538B\u8FEB-\u53CD\u51FB-\u4EE3\u4EF7-\u5347\u7EA7\u4E3A\u4E3B\u5FAA\u73AF\uFF0C\u723D\u70B9\u5FC5\u987B\u6709\u94FA\u57AB\u548C\u4EE3\u4EF7\u3002"
+            ],
+            "updatedAt": "2026-06-09T09:37:49.205783Z"
+          },
+          "volumes": [
+            {
+              "volumeId": "vol-1",
+              "title": "\u7B2C\u4E00\u5377",
+              "goal": "\u7384\u5E7B\u98CE\u683C\uFF0C\u771F\u76F8\u9012\u8FDB\u578B\u3002\u6838\u5FC3\u94A9\u5B50\uFF1A\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002\u4E3B\u51B2\u7A81\uFF1A\u4E3B\u89D2\u8D8A\u63A5\u8FD1\u771F\u76F8\uFF0C\u5BF9\u624B\u8D8A\u4E0D\u518D\u662F\u5177\u4F53\u654C\u4EBA\uFF0C\u800C\u662F\u89C4\u5219\u672C\u8EAB\u3002\u8BFB\u8005\u671F\u5F85\uFF1A\u4EE5\u538B\u8FEB-\u53CD\u51FB-\u4EE3\u4EF7-\u5347\u7EA7\u4E3A\u4E3B\u5FAA\u73AF\uFF0C\u723D\u70B9\u5FC5\u987B\u6709\u94FA\u57AB\u548C\u4EE3\u4EF7\u3002\u53CD\u8F6C\u5FC5\u987B\u63D0\u524D\u6709\u8BC1\u636E\u3002",
+              "status": "active",
+              "startChapterId": "chapter-001",
+              "endChapterId": "chapter-006",
+              "chapters": [
+                {
+                  "chapterId": "chapter-001",
+                  "title": "chapter-001",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.753715Z"
+                },
+                {
+                  "chapterId": "chapter-002",
+                  "title": "chapter-002",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.753726Z"
+                },
+                {
+                  "chapterId": "chapter-003",
+                  "title": "chapter-003",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.753729Z"
+                },
+                {
+                  "chapterId": "chapter-004",
+                  "title": "chapter-004",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.75373Z"
+                },
+                {
+                  "chapterId": "chapter-005",
+                  "title": "chapter-005",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.75373Z"
+                },
+                {
+                  "chapterId": "chapter-006",
+                  "title": "chapter-006",
+                  "status": "planned",
+                  "candidateStatus": "unstarted",
+                  "contextStatus": "pending",
+                  "draftStatus": "none",
+                  "gateStatus": "pending",
+                  "qualityStatus": "not_reviewed",
+                  "qualityScores": {
+                    "pacing": 0,
+                    "characterMotivation": 0,
+                    "conflict": 0,
+                    "continuity": 0,
+                    "prose": 0,
+                    "readerPromise": 0
+                  },
+                  "repairAttemptCount": 0,
+                  "commitStatus": "pending",
+                  "dependencyStatus": "clean",
+                  "requiresContextRebuild": false,
+                  "requiresRevalidation": false,
+                  "runId": "",
+                  "gateIssueSummary": "",
+                  "qualityIssueSummary": "",
+                  "artifactStatus": "none",
+                  "draftArtifactId": "",
+                  "gateReportId": "",
+                  "qualityReportId": "",
+                  "commitConfirmationId": "",
+                  "userVisibleStatus": "\u5F85\u89C4\u5212",
+                  "nextAction": "SelectChapterCandidate",
+                  "allowedNextActions": [
+                    "SelectChapterCandidate"
+                  ],
+                  "lastArtifactIds": [],
+                  "lastTransitionReason": "",
+                  "updatedAt": "2026-06-08T06:04:24.753731Z"
+                }
+              ],
+              "blockers": [],
+              "updatedAt": "2026-06-09T09:37:49.205791Z"
+            }
+          ],
+          "updatedAt": "2026-06-09T09:37:49.205818Z"
+        },
+        "schedulerState": {
+          "tasks": [
+            {
+              "taskId": "chapter-001:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-001",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.753715Z"
+            },
+            {
+              "taskId": "chapter-002:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-002",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.753726Z"
+            },
+            {
+              "taskId": "chapter-003:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-003",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.753729Z"
+            },
+            {
+              "taskId": "chapter-004:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-004",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.75373Z"
+            },
+            {
+              "taskId": "chapter-005:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-005",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.75373Z"
+            },
+            {
+              "taskId": "chapter-006:plan",
+              "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
+              "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+              "projectTitle": "\u672A\u547D\u540D\u65B0\u4E66",
+              "chapterId": "chapter-006",
+              "runId": "",
+              "taskType": "SelectChapterCandidate",
+              "status": "queued",
+              "nextAction": "SelectChapterCandidate",
+              "blockedReason": "",
+              "risk": "Medium",
+              "requiresConfirmation": false,
+              "reason": "clean",
+              "updatedAt": "2026-06-08T06:04:24.753731Z"
+            }
+          ],
+          "activeTaskId": "chapter-001:plan",
+          "activeRunId": "",
+          "activeChapterId": "chapter-001",
+          "lastDecisionReason": "clean",
+          "leaseOwner": "web-hosted-service",
+          "leaseExpiresAt": "2026-06-09T09:38:34.200088Z",
+          "updatedAt": "2026-06-09T09:37:49.205818Z"
+        },
+        "dependencyImpacts": [],
+        "recoveryWarnings": [],
+        "turnIntent": {
+          "type": 6,
+          "label": "continue_mission",
+          "rawMessage": "\u540E\u53F0\u8C03\u5EA6\u7EE7\u7EED\u4EFB\u52A1",
+          "creativeBrief": "",
+          "referencedProjectId": "",
+          "referencedRunId": "",
+          "referencedChapterId": "",
+          "selectedOption": "",
+          "selectedOptionIndex": null,
+          "selectionKind": "",
+          "constraints": [],
+          "confidence": 0.7,
+          "source": "agent_scheduler_hosted_service"
+        },
+        "interactionState": {
+          "turnId": "9b993be565a141f99429c2b33be9ff7f",
+          "intent": {
+            "type": 6,
+            "label": "continue_mission",
+            "rawMessage": "\u540E\u53F0\u8C03\u5EA6\u7EE7\u7EED\u4EFB\u52A1",
+            "creativeBrief": "",
+            "referencedProjectId": "",
+            "referencedRunId": "",
+            "referencedChapterId": "",
+            "selectedOption": "",
+            "selectedOptionIndex": null,
+            "selectionKind": "",
+            "constraints": [],
+            "confidence": 0.7,
+            "source": "agent_scheduler_hosted_service"
+          },
+          "dialogueAct": 0,
+          "targetArtifact": "",
+          "referencedTask": "",
+          "confirmationDecision": "",
+          "creativeBrief": "",
+          "feedbackPatch": "",
+          "statusQueryScope": "",
+          "selectedOption": "",
+          "selectedOptionIndex": null,
+          "selectionKind": "",
+          "createdAt": "2026-06-08T06:05:03.375725Z"
+        },
+        "activeTurnId": "9b993be565a141f99429c2b33be9ff7f",
+        "activeToolTransactionId": "",
+        "artifactCursor": "0ca2eef89ad84154a8ad010def277188",
+        "activeArtifactCursor": "0ca2eef89ad84154a8ad010def277188",
+        "lastUserVisibleState": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A",
+        "lifecycleStatus": "volume_planning",
+        "lastRecoveredFrom": "StoryBible/runs/artifacts",
+        "recoveryConfidence": 0.86,
+        "schedulerLease": "web-hosted-service",
+        "reviewReports": [],
+        "qualityArbiterDecision": {
+          "status": "not_applicable",
+          "reason": "",
+          "requiresUserInput": false,
+          "blockingReviewers": []
+        },
+        "toolTransactions": [],
+        "allowedNextActions": [
+          "SelectChapterCandidate"
+        ],
+        "activeArtifacts": [
+          {
+            "artifactType": "chapter_candidate_selection",
+            "artifactId": "0ca2eef89ad84154a8ad010def277188",
+            "projectId": "2cfd632c82ff4383a691c4a32cd68a35",
+            "runId": "0ca2eef89ad84154a8ad010def277188",
+            "summary": "\u8BE5 Agent Run \u7F3A\u5C11\u7AE0\u8282\u521B\u610F\u7B80\u62A5\uFF0C\u65E0\u6CD5\u9009\u62E9\u5019\u9009\u3002",
+            "nextHints": [
+              "\u6362\u4E00\u4E2A\u5019\u9009",
+              "\u91CD\u65B0\u89C4\u5212\u8FD9\u4E00\u7AE0"
+            ],
+            "visibleInWorkflow": true,
+            "visibleInLibrary": false,
+            "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
+          }
+        ],
+        "blockedReason": "PlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002",
+        "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / chapter-001 / SelectChapterCandidate / queued",
+        "updatedAt": "2026-06-09T09:37:49.205831Z"
+      },
+      "sessionMemory": {
+        "chatSummary": "",
+        "shortTermPreferences": [],
+        "lastObservations": []
+      },
+      "projectMemory": {
+        "projectId": "default",
+        "longTermGoal": "\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002",
+        "readerPromise": "\u56F4\u7ED5\u201C\u4E00\u4E2A\u80FD\u542C\u89C1\u4E16\u754C\u89C4\u5219\u88C2\u7EB9\u7684\u5C11\u5E74\uFF0C\u88AB\u8FEB\u7528\u6210\u957F\u507F\u8FD8\u89C4\u5219\u503A\u52A1\u3002\u201D\u6301\u7EED\u5151\u73B0 \u7384\u5E7B \u8BFB\u8005\u671F\u5F85\uFF1A\u723D\u6587\u63A8\u8FDB \u002B \u89C4\u5219\u60AC\u7591 \u002B \u60C5\u7EEA\u4EE3\u4EF7",
+        "tone": "\u7384\u5E7B/\u5B66\u9662\u6D41",
+        "constraints": [
+          "\u7981\u6B62\u53EA\u9760\u4E34\u65F6\u65B0\u8BBE\u5B9A\u89E3\u51B3\u5371\u673A\u3002",
+          "\u7981\u6B62\u7AE0\u8282\u6CA1\u6709\u6545\u4E8B\u53D8\u91CF\u53D8\u5316\u3002",
+          "\u7981\u6B62\u89D2\u8272\u884C\u4E3A\u53EA\u670D\u52A1\u5267\u60C5\u65B9\u4FBF\u800C\u7F3A\u5C11\u52A8\u673A\u3002",
+          "\u907F\u514D\u53CD\u6D3E\u964D\u667A\u3001\u65E0\u4EE3\u4EF7\u5F00\u6302\u3001\u91CD\u590D\u6253\u8138\u3002",
+          "\u907F\u514D\u8C1C\u5E95\u9760\u4E34\u65F6\u65B0\u8BBE\u5B9A\u786C\u8865\uFF0C\u907F\u514D\u590D\u6742\u4F46\u4E0D\u7CBE\u5F69\u3002",
+          "\u907F\u514D\u5F3A\u884C\u8BEF\u4F1A\u548C\u5EC9\u4EF7\u727A\u7272\u3002"
+        ],
+        "unresolvedThreads": [
+          "\u88C2\u7EB9\u503A\u7C3F -\u003E chapter-006",
+          "\u4EE3\u4EF7\u8D26\u672C -\u003E chapter-011",
+          "\u5173\u7CFB\u88C2\u75D5 -\u003E chapter-010",
+          "\u89C4\u5219\u5F02\u5E38 -\u003E chapter-006"
+        ]
+      },
+      "authorMemory": {
+        "styleLikes": [],
+        "styleDislikes": [],
+        "confirmationTolerance": "key_checkpoints",
+        "genreHabits": []
+      },
+      "executionMemory": {
+        "toolFailurePatterns": [],
+        "repeatedBlockers": [],
+        "successfulRepairNotes": []
+      }
+    },
+    "createdAt": "2026-06-08T06:00:09.478955Z",
+    "updatedAt": "2026-06-08T06:01:50.551818Z"
+  },
+  {
     "sessionId": "46284c7221aa4cb99d9a18178a3a491d",
     "title": "\u4F60\u597D",
-    "phase": "awaiting_confirmation",
+    "phase": "idle",
     "activeProjectId": "8bfe3ee9b47648b0adfbc17e41d13601",
     "activeRunId": "6f6fab907b344b63963ecf3b1541a84c",
     "isArchived": false,
@@ -371,34 +1476,8 @@
           "createdAt": "2026-06-07T15:26:28.389016Z"
         }
       ],
-      "pendingToolCall": {
-        "name": "CommitStoryFoundation",
-        "arguments": {
-          "runId": "6f6fab907b344b63963ecf3b1541a84c",
-          "selectedMacroCandidateIndex": "0",
-          "selectedMacroCandidateTitle": "\u89C4\u5219\u53CD\u54FA\u578B"
-        }
-      },
-      "pendingConfirmation": {
-        "confirmationId": "6ddd0a2f834d40d4b361733075323a59",
-        "toolCall": {
-          "name": "CommitStoryFoundation",
-          "arguments": {
-            "runId": "6f6fab907b344b63963ecf3b1541a84c",
-            "selectedMacroCandidateIndex": "0",
-            "selectedMacroCandidateTitle": "\u89C4\u5219\u53CD\u54FA\u578B"
-          }
-        },
-        "risk": "High",
-        "impactSummary": "\u56FA\u5316 Story Bible \u524D\u5FC5\u987B\u786E\u8BA4\u3002",
-        "requiresUserInput": "\u8BF7\u56DE\u590D\u300C\u786E\u8BA4\u300D\u6267\u884C\uFF0C\u6216\u300C\u53D6\u6D88\u300D\u653E\u5F03\u3002",
-        "projectId": "8bfe3ee9b47648b0adfbc17e41d13601",
-        "runId": "6f6fab907b344b63963ecf3b1541a84c",
-        "candidateId": "",
-        "candidateIndex": 0,
-        "candidateTitle": "\u89C4\u5219\u53CD\u54FA\u578B",
-        "createdAt": "2026-06-07T15:26:20.688479Z"
-      },
+      "pendingToolCall": null,
+      "pendingConfirmation": null,
       "lastDecision": {
         "mode": "execute_tool",
         "intent": "native_tool_call",
@@ -429,6 +1508,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-07T06:55:14.630823Z"
       },
       "missionPlan": {
@@ -508,10 +1588,10 @@
             "confirmedAt": null,
             "blockers": [],
             "decisions": [],
-            "updatedAt": "2026-06-08T00:24:22.474753Z"
+            "updatedAt": "2026-06-09T09:37:49.208607Z"
           },
           "volumes": [],
-          "updatedAt": "2026-06-08T00:24:22.474934Z"
+          "updatedAt": "2026-06-09T09:37:49.208614Z"
         },
         "schedulerState": {
           "tasks": [],
@@ -520,8 +1600,8 @@
           "activeChapterId": "",
           "lastDecisionReason": "",
           "leaseOwner": "web-hosted-service",
-          "leaseExpiresAt": "2026-06-08T00:25:07.475082Z",
-          "updatedAt": "2026-06-08T00:24:22.474894Z"
+          "leaseExpiresAt": "2026-06-09T09:38:34.208629Z",
+          "updatedAt": "2026-06-09T09:37:49.208614Z"
         },
         "dependencyImpacts": [],
         "recoveryWarnings": [],
@@ -678,7 +1758,7 @@
         ],
         "blockedReason": "\u9700\u8981\u901A\u8FC7\u65B0\u5EFA Run \u7ED5\u8FC7\u7D22\u5F15\u95EE\u9898",
         "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / foundation / blocked_by_run_index",
-        "updatedAt": "2026-06-08T00:24:22.475081Z"
+        "updatedAt": "2026-06-09T09:37:49.208629Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -812,6 +1892,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-07T05:42:36.896029Z"
       },
       "missionPlan": {
@@ -1029,6 +2110,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-07T06:28:22.766206Z"
       },
       "missionPlan": {
@@ -1291,7 +2373,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:14:59.995723Z"
+          "createdAt": "2026-06-09T09:34:03.371043Z"
         },
         {
           "stepIndex": 0,
@@ -1321,7 +2403,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:30:51.79231Z"
+          "createdAt": "2026-06-09T09:34:18.456214Z"
         },
         {
           "stepIndex": 0,
@@ -1351,7 +2433,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:31:06.815874Z"
+          "createdAt": "2026-06-09T09:34:33.484784Z"
         },
         {
           "stepIndex": 0,
@@ -1381,7 +2463,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:31:21.840637Z"
+          "createdAt": "2026-06-09T09:34:48.517438Z"
         },
         {
           "stepIndex": 0,
@@ -1411,7 +2493,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:45:44.766266Z"
+          "createdAt": "2026-06-09T09:35:03.548574Z"
         },
         {
           "stepIndex": 0,
@@ -1441,7 +2523,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:45:59.790837Z"
+          "createdAt": "2026-06-09T09:35:18.607776Z"
         },
         {
           "stepIndex": 0,
@@ -1471,7 +2553,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:46:14.817395Z"
+          "createdAt": "2026-06-09T09:35:33.641583Z"
         },
         {
           "stepIndex": 0,
@@ -1501,7 +2583,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:51:26.977892Z"
+          "createdAt": "2026-06-09T09:35:48.684829Z"
         },
         {
           "stepIndex": 0,
@@ -1531,7 +2613,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:51:42.006601Z"
+          "createdAt": "2026-06-09T09:36:03.716713Z"
         },
         {
           "stepIndex": 0,
@@ -1561,7 +2643,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:51:57.028739Z"
+          "createdAt": "2026-06-09T09:36:18.747954Z"
         },
         {
           "stepIndex": 0,
@@ -1591,7 +2673,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:52:12.054424Z"
+          "createdAt": "2026-06-09T09:36:33.788819Z"
         },
         {
           "stepIndex": 0,
@@ -1621,7 +2703,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-07T23:52:27.085439Z"
+          "createdAt": "2026-06-09T09:36:48.863336Z"
         },
         {
           "stepIndex": 0,
@@ -1651,7 +2733,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-08T00:08:28.503942Z"
+          "createdAt": "2026-06-09T09:37:03.947366Z"
         },
         {
           "stepIndex": 0,
@@ -1681,7 +2763,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-08T00:08:43.53028Z"
+          "createdAt": "2026-06-09T09:37:19.044134Z"
         },
         {
           "stepIndex": 0,
@@ -1711,7 +2793,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-08T00:08:58.55362Z"
+          "createdAt": "2026-06-09T09:37:34.149729Z"
         },
         {
           "stepIndex": 0,
@@ -1741,7 +2823,7 @@
             "visibleInLibrary": false,
             "userVisibleStatus": "\u7AE0\u8282\u5019\u9009\u5DF2\u9009\u5B9A"
           },
-          "createdAt": "2026-06-08T00:24:22.484363Z"
+          "createdAt": "2026-06-09T09:37:49.215723Z"
         }
       ],
       "pendingToolCall": null,
@@ -1775,6 +2857,7 @@
         },
         "missingFoundationFields": [],
         "pendingQuestion": "\u8FD9\u672C\u65B0\u5C0F\u8BF4\u7684\u7C7B\u578B\u3001\u6838\u5FC3\u94A9\u5B50\u3001\u4E3B\u89D2\u5F15\u64CE\u3001\u9605\u8BFB\u5FEB\u611F\u548C\u7981\u533A\u5206\u522B\u662F\u4EC0\u4E48\uFF1F",
+        "missionPlan": null,
         "updatedAt": "2026-06-06T12:33:14.659351Z"
       },
       "missionPlan": {
@@ -1827,7 +2910,7 @@
               "\u6838\u5FC3\u94A9\u5B50\uFF1A\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002",
               "\u8BFB\u8005\u627F\u8BFA\uFF1A\u56F4\u7ED5\u201C\u4E00\u4E2A\u80FD\u542C\u89C1\u4E16\u754C\u89C4\u5219\u88C2\u7EB9\u7684\u5C11\u5E74\uFF0C\u88AB\u8FEB\u7528\u6210\u957F\u507F\u8FD8\u89C4\u5219\u503A\u52A1\u3002\u201D\u6301\u7EED\u5151\u73B0 \u7384\u5E7B \u8BFB\u8005\u671F\u5F85\uFF1A\u723D\u6587\u63A8\u8FDB \u002B \u89C4\u5219\u60AC\u7591 \u002B \u60C5\u7EEA\u4EE3\u4EF7"
             ],
-            "updatedAt": "2026-06-08T00:24:22.484378Z"
+            "updatedAt": "2026-06-09T09:37:49.21574Z"
           },
           "volumes": [
             {
@@ -2322,7 +3405,7 @@
               "updatedAt": "2026-06-06T10:36:52.42402Z"
             }
           ],
-          "updatedAt": "2026-06-08T00:24:22.484429Z"
+          "updatedAt": "2026-06-09T09:37:49.215792Z"
         },
         "schedulerState": {
           "tasks": [
@@ -2524,8 +3607,8 @@
           "activeChapterId": "chapter-001",
           "lastDecisionReason": "clean",
           "leaseOwner": "web-hosted-service",
-          "leaseExpiresAt": "2026-06-08T00:25:07.48009Z",
-          "updatedAt": "2026-06-08T00:24:22.484429Z"
+          "leaseExpiresAt": "2026-06-09T09:38:34.21053Z",
+          "updatedAt": "2026-06-09T09:37:49.215792Z"
         },
         "dependencyImpacts": [],
         "recoveryWarnings": [],
@@ -2610,8 +3693,8 @@
           }
         ],
         "blockedReason": "\u672A\u627E\u5230\u6307\u5B9A Agent Run\u3002",
-        "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / foundation / blocked",
-        "updatedAt": "2026-06-08T00:24:22.484464Z"
+        "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / chapter-001 / SelectChapterCandidate / queued",
+        "updatedAt": "2026-06-09T09:37:49.215813Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -2838,7 +3921,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:15:00.000908Z"
+          "createdAt": "2026-06-09T09:34:03.39595Z"
         },
         {
           "stepIndex": 0,
@@ -2855,7 +3938,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:30:51.799356Z"
+          "createdAt": "2026-06-09T09:34:18.462561Z"
         },
         {
           "stepIndex": 0,
@@ -2872,7 +3955,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:31:06.824546Z"
+          "createdAt": "2026-06-09T09:34:33.49054Z"
         },
         {
           "stepIndex": 0,
@@ -2889,7 +3972,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:31:21.847456Z"
+          "createdAt": "2026-06-09T09:34:48.523739Z"
         },
         {
           "stepIndex": 0,
@@ -2906,7 +3989,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:45:44.772585Z"
+          "createdAt": "2026-06-09T09:35:03.558961Z"
         },
         {
           "stepIndex": 0,
@@ -2923,7 +4006,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:45:59.800975Z"
+          "createdAt": "2026-06-09T09:35:18.614929Z"
         },
         {
           "stepIndex": 0,
@@ -2940,7 +4023,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:46:14.825345Z"
+          "createdAt": "2026-06-09T09:35:33.647663Z"
         },
         {
           "stepIndex": 0,
@@ -2957,7 +4040,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:51:26.990869Z"
+          "createdAt": "2026-06-09T09:35:48.69297Z"
         },
         {
           "stepIndex": 0,
@@ -2974,7 +4057,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:51:42.01261Z"
+          "createdAt": "2026-06-09T09:36:03.723151Z"
         },
         {
           "stepIndex": 0,
@@ -2991,7 +4074,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:51:57.038124Z"
+          "createdAt": "2026-06-09T09:36:18.755195Z"
         },
         {
           "stepIndex": 0,
@@ -3008,7 +4091,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:52:12.070047Z"
+          "createdAt": "2026-06-09T09:36:33.804784Z"
         },
         {
           "stepIndex": 0,
@@ -3025,7 +4108,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-07T23:52:27.09342Z"
+          "createdAt": "2026-06-09T09:36:48.871883Z"
         },
         {
           "stepIndex": 0,
@@ -3042,7 +4125,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-08T00:08:28.512435Z"
+          "createdAt": "2026-06-09T09:37:04.001396Z"
         },
         {
           "stepIndex": 0,
@@ -3059,7 +4142,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-08T00:08:43.538573Z"
+          "createdAt": "2026-06-09T09:37:19.054574Z"
         },
         {
           "stepIndex": 0,
@@ -3076,7 +4159,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-08T00:08:58.561401Z"
+          "createdAt": "2026-06-09T09:37:34.180498Z"
         },
         {
           "stepIndex": 0,
@@ -3093,7 +4176,7 @@
           "recommendedArguments": {},
           "missingPrerequisite": "",
           "artifact": null,
-          "createdAt": "2026-06-08T00:24:22.492972Z"
+          "createdAt": "2026-06-09T09:37:49.246735Z"
         }
       ],
       "pendingToolCall": null,
@@ -3127,6 +4210,7 @@
         },
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:21:12.327105Z"
       },
       "missionPlan": {
@@ -3470,7 +4554,7 @@
               "\u6838\u5FC3\u94A9\u5B50\uFF1A\u6BCF\u5377\u63ED\u5F00\u4E00\u4E2A\u771F\u76F8\uFF0C\u4F46\u65B0\u771F\u76F8\u4F1A\u63A8\u7FFB\u65E7\u89E3\u91CA\u3002",
               "\u8BFB\u8005\u627F\u8BFA\uFF1A\u56F4\u7ED5\u201C\u4E00\u4E2A\u80FD\u542C\u89C1\u4E16\u754C\u89C4\u5219\u88C2\u7EB9\u7684\u5C11\u5E74\uFF0C\u88AB\u8FEB\u7528\u6210\u957F\u507F\u8FD8\u89C4\u5219\u503A\u52A1\u3002\u201D\u6301\u7EED\u5151\u73B0 \u7384\u5E7B \u8BFB\u8005\u671F\u5F85\uFF1A\u723D\u6587\u63A8\u8FDB \u002B \u89C4\u5219\u60AC\u7591 \u002B \u60C5\u7EEA\u4EE3\u4EF7"
             ],
-            "updatedAt": "2026-06-08T00:24:22.49298Z"
+            "updatedAt": "2026-06-09T09:37:49.246742Z"
           },
           "volumes": [
             {
@@ -3557,7 +4641,7 @@
                   ],
                   "lastArtifactIds": [],
                   "lastTransitionReason": "run:PlanChapter/Planning",
-                  "updatedAt": "2026-06-08T00:24:22.493018Z"
+                  "updatedAt": "2026-06-09T09:37:49.246765Z"
                 },
                 {
                   "chapterId": "chapter-003",
@@ -3951,7 +5035,7 @@
                 }
               ],
               "blockers": [],
-              "updatedAt": "2026-06-08T00:24:22.493021Z"
+              "updatedAt": "2026-06-09T09:37:49.246767Z"
             },
             {
               "volumeId": "volume-002",
@@ -3962,10 +5046,10 @@
               "endChapterId": "chapter-018",
               "chapters": [],
               "blockers": [],
-              "updatedAt": "2026-06-08T00:24:22.49302Z"
+              "updatedAt": "2026-06-09T09:37:49.246766Z"
             }
           ],
-          "updatedAt": "2026-06-08T00:24:22.493065Z"
+          "updatedAt": "2026-06-09T09:37:49.246796Z"
         },
         "schedulerState": {
           "tasks": [
@@ -3999,7 +5083,7 @@
               "risk": "Medium",
               "requiresConfirmation": false,
               "reason": "run:PlanChapter/Planning",
-              "updatedAt": "2026-06-08T00:24:22.493018Z"
+              "updatedAt": "2026-06-09T09:37:49.246765Z"
             },
             {
               "taskId": "chapter-003:plan",
@@ -4167,8 +5251,8 @@
           "activeChapterId": "chapter-001",
           "lastDecisionReason": "reflect:not_applicable",
           "leaseOwner": "web-hosted-service",
-          "leaseExpiresAt": "2026-06-08T00:25:07.490121Z",
-          "updatedAt": "2026-06-08T00:24:22.493065Z"
+          "leaseExpiresAt": "2026-06-09T09:38:34.241896Z",
+          "updatedAt": "2026-06-09T09:37:49.246796Z"
         },
         "dependencyImpacts": [],
         "recoveryWarnings": [],
@@ -4220,7 +5304,7 @@
         "activeToolTransactionId": "",
         "artifactCursor": "88bc79f6cdf44f73ac4b8ff5b5c9f3ba",
         "activeArtifactCursor": "88bc79f6cdf44f73ac4b8ff5b5c9f3ba",
-        "lastUserVisibleState": "\u89C4\u5219\u503A\u52A1\u5B66\u9662 / chapter_planning / blocked",
+        "lastUserVisibleState": "chapter-001\uFF1A\u6392\u961F\u7B49\u5F85 PlanChapter",
         "lifecycleStatus": "chapter_planning",
         "lastRecoveredFrom": "",
         "recoveryConfidence": 0,
@@ -4240,8 +5324,8 @@
         ],
         "activeArtifacts": [],
         "blockedReason": "PlanChapter \u9700\u8981 creativeBrief\u3002Agent \u4E0D\u80FD\u628A\u7528\u6237\u539F\u8BDD\u76F4\u63A5\u585E\u8FDB\u7AE0\u8282\u5DE5\u5177\u3002",
-        "lastVerifiedState": "\u89C4\u5219\u503A\u52A1\u5B66\u9662 / chapter_planning / blocked",
-        "updatedAt": "2026-06-08T00:24:22.493074Z"
+        "lastVerifiedState": "\u89C4\u5219\u503A\u52A1\u5B66\u9662 / chapter-001 / PlanChapter / queued",
+        "updatedAt": "2026-06-09T09:37:49.246803Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -4309,6 +5393,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:23:57.258596Z"
       },
       "missionPlan": {
@@ -4350,10 +5435,10 @@
             "confirmedAt": null,
             "blockers": [],
             "decisions": [],
-            "updatedAt": "2026-06-08T00:24:22.495489Z"
+            "updatedAt": "2026-06-09T09:37:49.266661Z"
           },
           "volumes": [],
-          "updatedAt": "2026-06-08T00:24:22.495498Z"
+          "updatedAt": "2026-06-09T09:37:49.266676Z"
         },
         "schedulerState": {
           "tasks": [],
@@ -4362,8 +5447,8 @@
           "activeChapterId": "",
           "lastDecisionReason": "",
           "leaseOwner": "web-hosted-service",
-          "leaseExpiresAt": "2026-06-08T00:25:07.495507Z",
-          "updatedAt": "2026-06-08T00:24:22.495498Z"
+          "leaseExpiresAt": "2026-06-09T09:38:34.266701Z",
+          "updatedAt": "2026-06-09T09:37:49.266675Z"
         },
         "dependencyImpacts": [],
         "recoveryWarnings": [],
@@ -4392,7 +5477,7 @@
         "activeArtifacts": [],
         "blockedReason": "",
         "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / idle / idle",
-        "updatedAt": "2026-06-08T00:24:22.495507Z"
+        "updatedAt": "2026-06-09T09:37:49.266701Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -4447,30 +5532,8 @@
       "openQuestions": [],
       "userPreferences": [],
       "recentObservations": [],
-      "pendingToolCall": {
-        "name": "GenerateChapterWithChanges",
-        "arguments": {
-          "runId": "d5896b945eb5477eb93b27fbd21c4435"
-        }
-      },
-      "pendingConfirmation": {
-        "confirmationId": "19a7567d216d408c9a482497052dfa41",
-        "toolCall": {
-          "name": "GenerateChapterWithChanges",
-          "arguments": {
-            "runId": "d5896b945eb5477eb93b27fbd21c4435"
-          }
-        },
-        "risk": "High",
-        "impactSummary": "\u8FD9\u4E2A\u64CD\u4F5C\u4F1A\u751F\u6210\u7AE0\u8282\u8349\u7A3F\u548C CHANGES\uFF0C\u4F46\u8FD8\u4E0D\u4F1A\u8FDB\u5165\u4E66\u57CE\u3002\u786E\u8BA4\u540E\u6211\u518D\u6267\u884C\u3002",
-        "requiresUserInput": "\u8BF7\u660E\u786E\u56DE\u590D\u201C\u786E\u8BA4\u201D\u540E\u6267\u884C\u3002",
-        "projectId": "",
-        "runId": "d5896b945eb5477eb93b27fbd21c4435",
-        "candidateId": "",
-        "candidateIndex": 0,
-        "candidateTitle": "",
-        "createdAt": "2026-06-06T07:24:58.699251Z"
-      },
+      "pendingToolCall": null,
+      "pendingConfirmation": null,
       "lastDecision": {
         "mode": "execute_tool",
         "intent": "generate_chapter",
@@ -4505,6 +5568,7 @@
         },
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:21:44.309619Z"
       },
       "missionPlan": {
@@ -4671,6 +5735,7 @@
         },
         "missingFoundationFields": [],
         "pendingQuestion": "\u5F53\u524D\u9879\u76EE\u5DF2\u7ECF\u6709 Story Bible\u3002\u4F60\u662F\u60F3\u57FA\u4E8E\u5F53\u524D\u8FD9\u672C\u7EE7\u7EED\u63A8\u8FDB\uFF0C\u8FD8\u662F\u8981\u91CD\u5F00\u4E00\u672C\u65B0\u5C0F\u8BF4\u7684\u5730\u57FA\uFF1F",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:21:12.331676Z"
       },
       "missionPlan": {
@@ -4800,6 +5865,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:21:12.330574Z"
       },
       "missionPlan": {
@@ -4929,6 +5995,7 @@
         "foundationBrief": {},
         "missingFoundationFields": [],
         "pendingQuestion": "",
+        "missionPlan": null,
         "updatedAt": "2026-06-05T13:21:12.330588Z"
       },
       "missionPlan": {

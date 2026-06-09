@@ -1,0 +1,130 @@
+<h2>数据库架构设计</h2>
+<p class="subtitle">多用户系统的核心数据模型</p>
+
+<div class="section">
+  <h3 style="color: #b8893f; margin-bottom: 12px;">📦 数据库选择</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div style="padding: 12px; background: rgba(184,137,63,0.08); border: 1px solid #b8893f; border-radius: 6px;">
+      <div style="font-weight: 600; color: #b8893f; margin-bottom: 6px;">SQLite（推荐MVP）</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+        ✓ 无需安装数据库服务<br>
+        ✓ 单文件部署简单<br>
+        ✓ 适合中小规模（<10K用户）<br>
+        ✗ 并发写入有限制
+      </div>
+    </div>
+    <div style="padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(244,236,217,0.12); border-radius: 6px;">
+      <div style="font-weight: 600; color: #f4ecd9; margin-bottom: 6px;">PostgreSQL（长期）</div>
+      <div style="font-size: 12px; color: #8b7355; line-height: 1.6;">
+        ✓ 生产级性能<br>
+        ✓ 支持高并发<br>
+        ✓ 丰富的生态<br>
+        ✗ 需要额外维护数据库服务
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3 style="color: #b8893f; margin-bottom: 12px;">🗂️ 核心数据表设计</h3>
+
+  <div style="background: rgba(0,0,0,0.3); padding: 16px; border-radius: 8px; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.7;">
+    <div style="color: #b83b2f; font-weight: 600; margin-bottom: 12px;">-- 用户表（核心）</div>
+    <div style="color: #5fad56;">CREATE TABLE</div> <span style="color: #f4ecd9;">users</span> (
+    <div style="padding-left: 20px; color: #8b7355;">
+      id              <span style="color: #b8893f;">TEXT PRIMARY KEY</span>,  <span style="color: #6b5d4f;">-- UUID</span><br>
+      username        <span style="color: #b8893f;">TEXT UNIQUE NOT NULL</span>,<br>
+      email           <span style="color: #b8893f;">TEXT UNIQUE NOT NULL</span>,<br>
+      password_hash   <span style="color: #b8893f;">TEXT NOT NULL</span>,<br>
+      role            <span style="color: #b8893f;">TEXT NOT NULL</span>,  <span style="color: #6b5d4f;">-- 'admin' | 'author'</span><br>
+      created_at      <span style="color: #b8893f;">DATETIME DEFAULT CURRENT_TIMESTAMP</span>,<br>
+      last_login_at   <span style="color: #b8893f;">DATETIME</span>,<br>
+      is_active       <span style="color: #b8893f;">BOOLEAN DEFAULT 1</span>
+    </div>
+    );
+
+    <div style="margin-top: 16px; color: #b83b2f; font-weight: 600; margin-bottom: 12px;">-- 用户设置表（1对1）</div>
+    <div style="color: #5fad56;">CREATE TABLE</div> <span style="color: #f4ecd9;">user_settings</span> (
+    <div style="padding-left: 20px; color: #8b7355;">
+      user_id                      <span style="color: #b8893f;">TEXT PRIMARY KEY</span>,<br>
+      llm_provider                 <span style="color: #b8893f;">TEXT</span>,<br>
+      llm_api_key_encrypted        <span style="color: #b8893f;">TEXT</span>,  <span style="color: #6b5d4f;">-- 加密存储</span><br>
+      llm_base_url                 <span style="color: #b8893f;">TEXT</span>,<br>
+      llm_model                    <span style="color: #b8893f;">TEXT</span>,<br>
+      llm_temperature              <span style="color: #b8893f;">REAL DEFAULT 0.7</span>,<br>
+      llm_max_tokens               <span style="color: #b8893f;">INTEGER DEFAULT 4096</span>,<br>
+      <span style="color: #6b5d4f;">-- Embedding配置</span><br>
+      embedding_provider           <span style="color: #b8893f;">TEXT DEFAULT 'local'</span>,<br>
+      embedding_model              <span style="color: #b8893f;">TEXT</span>,<br>
+      <span style="color: #6b5d4f;">-- Agent配置</span><br>
+      agent_default_risk           <span style="color: #b8893f;">TEXT DEFAULT 'Medium'</span>,<br>
+      agent_auto_continue          <span style="color: #b8893f;">BOOLEAN DEFAULT 1</span>,<br>
+      agent_max_auto_steps         <span style="color: #b8893f;">INTEGER DEFAULT 12</span>,<br>
+      <span style="color: #6b5d4f;">-- 创作默认值</span><br>
+      default_genre                <span style="color: #b8893f;">TEXT DEFAULT '玄幻'</span>,<br>
+      default_chapter_word_count   <span style="color: #b8893f;">INTEGER DEFAULT 3000</span>,<br>
+      <span style="color: #6b5d4f;">-- 界面偏好</span><br>
+      theme                        <span style="color: #b8893f;">TEXT DEFAULT 'dark'</span>,<br>
+      language                     <span style="color: #b8893f;">TEXT DEFAULT 'zh-CN'</span>,<br>
+      <span style="color: #5fad56;">FOREIGN KEY</span> (user_id) <span style="color: #5fad56;">REFERENCES</span> users(id) <span style="color: #5fad56;">ON DELETE CASCADE</span>
+    </div>
+    );
+
+    <div style="margin-top: 16px; color: #b83b2f; font-weight: 600; margin-bottom: 12px;">-- 小说项目表</div>
+    <div style="color: #5fad56;">CREATE TABLE</div> <span style="color: #f4ecd9;">novel_projects</span> (
+    <div style="padding-left: 20px; color: #8b7355;">
+      id              <span style="color: #b8893f;">TEXT PRIMARY KEY</span>,<br>
+      user_id         <span style="color: #b8893f;">TEXT NOT NULL</span>,<br>
+      title           <span style="color: #b8893f;">TEXT NOT NULL</span>,<br>
+      genre           <span style="color: #b8893f;">TEXT</span>,<br>
+      core_hook       <span style="color: #b8893f;">TEXT</span>,<br>
+      created_at      <span style="color: #b8893f;">DATETIME DEFAULT CURRENT_TIMESTAMP</span>,<br>
+      updated_at      <span style="color: #b8893f;">DATETIME DEFAULT CURRENT_TIMESTAMP</span>,<br>
+      <span style="color: #5fad56;">FOREIGN KEY</span> (user_id) <span style="color: #5fad56;">REFERENCES</span> users(id) <span style="color: #5fad5f;">ON DELETE CASCADE</span>
+    </div>
+    );
+
+    <div style="margin-top: 16px; color: #b83b2f; font-weight: 600; margin-bottom: 12px;">-- 记忆数据表（JSON存储）</div>
+    <div style="color: #5fad56;">CREATE TABLE</div> <span style="color: #f4ecd9;">memories</span> (
+    <div style="padding-left: 20px; color: #8b7355;">
+      id              <span style="color: #b8893f;">TEXT PRIMARY KEY</span>,<br>
+      user_id         <span style="color: #b8893f;">TEXT NOT NULL</span>,<br>
+      project_id      <span style="color: #b8893f;">TEXT</span>,  <span style="color: #6b5d4f;">-- NULL表示全局记忆</span><br>
+      memory_type     <span style="color: #b8893f;">TEXT NOT NULL</span>,  <span style="color: #6b5d4f;">-- 'author' | 'project' | 'execution'</span><br>
+      content         <span style="color: #b8893f;">TEXT NOT NULL</span>,  <span style="color: #6b5d4f;">-- JSON格式</span><br>
+      updated_at      <span style="color: #b8893f;">DATETIME DEFAULT CURRENT_TIMESTAMP</span>,<br>
+      <span style="color: #5fad56;">FOREIGN KEY</span> (user_id) <span style="color: #5fad56;">REFERENCES</span> users(id) <span style="color: #5fad56;">ON DELETE CASCADE</span>
+    </div>
+    );
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3 style="color: #b8893f; margin-bottom: 12px;">🔐 关键设计决策</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+    <div style="padding: 12px; background: rgba(184,137,63,0.08); border-left: 3px solid #b8893f; border-radius: 4px;">
+      <div style="font-weight: 600; color: #b8893f; margin-bottom: 6px;">✓ 采用方案</div>
+      <div style="color: #8b7355; line-height: 1.7;">
+        • API Key <strong>加密存储</strong>（AES-256）<br>
+        • 密码使用 <strong>BCrypt hash</strong><br>
+        • 用户ID使用 <strong>UUID</strong><br>
+        • 记忆数据存 <strong>JSON字段</strong>（保持灵活性）
+      </div>
+    </div>
+    <div style="padding: 12px; background: rgba(184,59,47,0.08); border-left: 3px solid #b83b2f; border-radius: 4px;">
+      <div style="font-weight: 600; color: #b83b2f; margin-bottom: 6px;">✗ 不采用方案</div>
+      <div style="color: #8b7355; line-height: 1.7;">
+        • ❌ 明文存储API Key<br>
+        • ❌ 自增ID（不利于分布式）<br>
+        • ❌ 记忆数据拆分多表（过度设计）<br>
+        • ❌ 文件路径存数据库（维护困难）
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: rgba(184, 137, 63, 0.08); border-left: 3px solid #b8893f; border-radius: 4px;">
+  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #b8893f;">
+    <strong>建议：</strong>先用 SQLite 快速验证，数据库文件放在 <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">App_Data/Database/novelagent.db</code>。未来用户量增长时，可以无缝迁移到 PostgreSQL（.NET 的 EF Core 支持两者）。
+  </p>
+</div>

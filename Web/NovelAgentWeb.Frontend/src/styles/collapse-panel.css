@@ -1,0 +1,64 @@
+.collapse-panel {
+  background: rgba(14, 10, 7, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.collapse-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.collapse-header:hover {
+  background: rgba(244, 236, 217, 0.06);
+}
+
+.collapse-title {
+  flex: 1;
+}
+
+.collapse-icon {
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.collapse-icon.open {
+  transform: rotate(180deg);
+}
+
+.collapse-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.collapse-content.open {
+  max-height: 2000px;
+}
+
+.collapse-body {
+  padding: 0 16px 16px 16px;
+}
+
+.collapse-body .form-grid {
+  gap: 12px;
+}
+
+.collapse-body .form-field {
+  margin-bottom: 0;
+}
