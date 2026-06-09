@@ -180,7 +180,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     var context = await _guideContextService.BuildContentContextAsync(run.TargetChapterId, ct)
                         .ConfigureAwait(false);
-                    var snapshot = context?.FactSnapshot ?? new FactSnapshot();
+                    var snapshot = context?.FactSnapshot;
+                    if (snapshot == null)
+                        snapshot = new TM.Services.Modules.ProjectData.Models.Tracking.FactSnapshot();
                     var gate = await _generationGate.ValidateAsync(
                         run.TargetChapterId,
                         draft.DraftContent,
@@ -381,7 +383,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 if (_guideContextService != null)
                 {
-                    var summaryStore = TM.Framework.Common.Services.ServiceLocator.TryGet<ChapterSummaryStore>();
+                    var summaryStore = TM.Framework.Common.Services.ServiceLocator.TryGet<TM.Services.Modules.ProjectData.Implementations.ChapterSummaryStore>();
                     if (summaryStore != null)
                         await summaryStore.SetSummaryAsync(run.TargetChapterId, BuildChapterSummary(run, content)).ConfigureAwait(false);
                 }
@@ -410,7 +412,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 if (!string.IsNullOrWhiteSpace(draft.ChangesJson) &&
                     TryDeserializeChanges(draft.ChangesJson, out var changes))
                 {
-                    var keywordIndex = TM.Framework.Common.Services.ServiceLocator.TryGet<KeywordChapterIndexService>();
+                    var keywordIndex = TM.Framework.Common.Services.ServiceLocator.TryGet<TM.Services.Modules.ProjectData.Implementations.KeywordChapterIndexService>();
                     if (keywordIndex != null)
                         await keywordIndex.IndexChapterAsync(run.TargetChapterId, changes).ConfigureAwait(false);
                     var changesWal = TM.Framework.Common.Services.ServiceLocator.TryGet<ChapterChangesWalStore>();
@@ -455,14 +457,14 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             }
         }
 
-        private static GenerationGateReport MapGateResult(GateResult gate, ChapterContextPackageSummary contextPackage)
+        private static GenerationGateReport MapGateResult(TM.Services.Modules.ProjectData.Models.Tracking.GateResult gate, ChapterContextPackageSummary contextPackage)
         {
             var failures = gate.GetHumanReadableFailures(20);
             return new GenerationGateReport
             {
                 Status = gate.Success ? "validated" : "gate_failed",
                 ChangesDetected = gate.ParsedChanges != null || !string.IsNullOrWhiteSpace(gate.ContentWithoutChanges),
-                ProtocolPassed = gate.Failures.All(f => f.Type != FailureType.Protocol),
+                ProtocolPassed = gate.Failures.All(f => f.Type != TM.Services.Modules.ProjectData.Models.Tracking.FailureType.Protocol),
                 FactSnapshotPassed = true,
                 BlueprintPassed = contextPackage.ChapterBlueprints.Count > 0,
                 RagPassed = contextPackage.LongDistanceRecall.Count > 0 || contextPackage.PreviousSummaries.Count > 0,

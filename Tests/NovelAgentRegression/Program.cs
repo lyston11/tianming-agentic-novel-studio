@@ -7,6 +7,7 @@ using TM.Services.Modules.ProjectData.Implementations;
 using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.TaskContexts;
+using TM.Services.Modules.ProjectData.Models.Tracking;
 
 namespace TM.Tests.NovelAgentRegression;
 

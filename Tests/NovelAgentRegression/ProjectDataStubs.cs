@@ -2,6 +2,9 @@ using TM.Services.Framework.AI.Embedding;
 
 namespace TM.Services.Modules.ProjectData.Models.TaskContexts
 {
+    // Note: This stub ContentTaskContext uses FactSnapshot from Tracking namespace (via alias below)
+    // to match the real implementation
+    using FactSnapshot = TM.Services.Modules.ProjectData.Models.Tracking.FactSnapshot;
     public sealed class ContentTaskContext
     {
         public string ChapterId { get; set; } = string.Empty;
@@ -40,36 +43,8 @@ namespace TM.Services.Modules.ProjectData.Models.TaskContexts
         public string Summary { get; set; } = string.Empty;
     }
 
-    public sealed class FactSnapshot
-    {
-        public List<ConflictProgressSnapshot> ConflictProgress { get; set; } = new();
-        public List<ForeshadowingStatusSnapshot> ForeshadowingStatus { get; set; } = new();
-        public List<CharacterStateSnapshot> CharacterStates { get; set; } = new();
-    }
-
-    public sealed class ConflictProgressSnapshot
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Status { get; set; } = string.Empty;
-        public List<string> RecentProgress { get; set; } = new();
-    }
-
-    public sealed class ForeshadowingStatusSnapshot
-    {
-        public string Name { get; set; } = string.Empty;
-        public bool IsSetup { get; set; }
-        public bool IsResolved { get; set; }
-        public bool IsOverdue { get; set; }
-        public string? PayoffChapterId { get; set; }
-    }
-
-    public sealed class CharacterStateSnapshot
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Stage { get; set; } = string.Empty;
-        public string Abilities { get; set; } = string.Empty;
-        public string Relationships { get; set; } = string.Empty;
-    }
+    // Note: FactSnapshot and related snapshot classes are imported from Tracking namespace via alias
+    // They are not defined here to avoid conflicts with the real implementation
 
     public sealed class WorldRuleStub
     {
@@ -247,11 +222,15 @@ namespace TM.Services.Modules.ProjectData.Models.Guides
 
 namespace TM.Services.Modules.ProjectData.Models.Tracking
 {
+    // Commented out stub to avoid type conflicts with real implementation
+    // The test project references the actual ChapterChanges class from the main codebase
+    /*
     public sealed class ChapterChanges
     {
         public const string ChangesSeparator = "---CHANGES---";
         public static IReadOnlyList<string> TopLevelFieldNames { get; } = new[] { "characters", "conflicts", "foreshadowing", "worldRules" };
     }
+    */
 
     public sealed class DesignElementNames
     {
@@ -268,7 +247,14 @@ namespace TM.Services.Modules.ProjectData.Implementations.Generation
     using TM.Services.Modules.ProjectData.Models.Guides;
     using TM.Services.Modules.ProjectData.Models.TaskContexts;
     using TM.Services.Modules.ProjectData.Models.Tracking;
+    // Use types from Tracking namespace to match HardcoreWritingEngine expectations
+    using GateResult = TM.Services.Modules.ProjectData.Models.Tracking.GateResult;
+    using GateFailure = TM.Services.Modules.ProjectData.Models.Tracking.GateFailure;
+    using FailureType = TM.Services.Modules.ProjectData.Models.Tracking.FailureType;
 
+    // FailureType, GateFailure, and GateResult are aliased to Tracking namespace types above
+    // The stub definitions are commented out to avoid conflicts
+    /*
     public enum FailureType
     {
         Protocol,
@@ -292,6 +278,7 @@ namespace TM.Services.Modules.ProjectData.Implementations.Generation
         public List<string> GetHumanReadableFailures(int max) => Failures.Select(f => f.Message).Where(m => !string.IsNullOrWhiteSpace(m)).Take(max).ToList();
         public List<string> GetAllFailures() => GetHumanReadableFailures(100);
     }
+    */
 
     public sealed class GenerationGate
     {
@@ -301,7 +288,7 @@ namespace TM.Services.Modules.ProjectData.Implementations.Generation
         public Task<GateResult> ValidateAsync(
             string chapterId,
             string content,
-            FactSnapshot snapshot,
+            TM.Services.Modules.ProjectData.Models.Tracking.FactSnapshot snapshot,
             DesignElementNames design,
             ContextIdCollection contextIds)
         {
@@ -313,7 +300,7 @@ namespace TM.Services.Modules.ProjectData.Implementations.Generation
                 ContentWithoutChanges = content ?? string.Empty,
                 Failures = success ? new List<GateFailure>() : new List<GateFailure>
                 {
-                    new GateFailure { Type = FailureType.Protocol, Message = "缺少 CHANGES 区域。" }
+                    new GateFailure { Type = FailureType.Protocol, Errors = new List<string> { "缺少 CHANGES 区域。" } }
                 }
             });
         }
@@ -325,7 +312,14 @@ namespace TM.Services.Modules.ProjectData.Implementations
     using TM.Services.Modules.ProjectData.Models.Guides;
     using TM.Services.Modules.ProjectData.Models.TaskContexts;
     using TM.Services.Modules.ProjectData.Models.Tracking;
+    // Use types from Tracking namespace to match HardcoreWritingEngine expectations
+    using GateResult = TM.Services.Modules.ProjectData.Models.Tracking.GateResult;
+    using GateFailure = TM.Services.Modules.ProjectData.Models.Tracking.GateFailure;
+    using FailureType = TM.Services.Modules.ProjectData.Models.Tracking.FailureType;
 
+    // FailureType, GateFailure, and GateResult are aliased to Tracking namespace types above
+    // The stub definitions are commented out to avoid conflicts
+    /*
     public enum FailureType
     {
         Protocol,
@@ -349,6 +343,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         public List<string> GetHumanReadableFailures(int max) => Failures.Select(f => f.Message).Where(m => !string.IsNullOrWhiteSpace(m)).Take(max).ToList();
         public List<string> GetAllFailures() => GetHumanReadableFailures(100);
     }
+    */
 
     public sealed class GenerationGate
     {
@@ -358,7 +353,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         public Task<GateResult> ValidateAsync(
             string chapterId,
             string content,
-            FactSnapshot snapshot,
+            TM.Services.Modules.ProjectData.Models.Tracking.FactSnapshot snapshot,
             DesignElementNames design,
             ContextIdCollection contextIds)
         {
@@ -370,7 +365,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 ContentWithoutChanges = content ?? string.Empty,
                 Failures = success ? new List<GateFailure>() : new List<GateFailure>
                 {
-                    new GateFailure { Type = FailureType.Protocol, Message = "缺少 CHANGES 区域。" }
+                    new GateFailure { Type = FailureType.Protocol, Errors = new List<string> { "缺少 CHANGES 区域。" } }
                 }
             });
         }

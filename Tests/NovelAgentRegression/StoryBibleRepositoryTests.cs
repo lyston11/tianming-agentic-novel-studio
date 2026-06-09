@@ -204,8 +204,8 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             VolumeNumber = 1,
-            Title = "Volume 1",
-            Description = "First volume",
+            VolumeTitle = "Volume 1",
+            VolumeTheme = "First volume",
             Status = "planning"
         };
 
@@ -215,7 +215,7 @@ public class StoryBibleRepositoryTests : IDisposable
         // Assert
         var loaded = await _repository.LoadStoryBibleAsync(Project1Id);
         Assert.Single(loaded.VolumeArcs);
-        Assert.Equal("Volume 1", loaded.VolumeArcs[0].Title);
+        Assert.Equal("Volume 1", loaded.VolumeArcs[0].VolumeTitle);
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             VolumeNumber = 3,
-            Title = "Volume 3"
+            VolumeTitle = "Volume 3"
         });
 
         await _repository.SaveVolumeArcAsync(new VolumeArc
@@ -240,7 +240,7 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             VolumeNumber = 1,
-            Title = "Volume 1"
+            VolumeTitle = "Volume 1"
         });
 
         await _repository.SaveVolumeArcAsync(new VolumeArc
@@ -249,15 +249,15 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             VolumeNumber = 2,
-            Title = "Volume 2"
+            VolumeTitle = "Volume 2"
         });
 
         // Assert
         var loaded = await _repository.LoadStoryBibleAsync(Project1Id);
         Assert.Equal(3, loaded.VolumeArcs.Count);
-        Assert.Equal("Volume 1", loaded.VolumeArcs[0].Title);
-        Assert.Equal("Volume 2", loaded.VolumeArcs[1].Title);
-        Assert.Equal("Volume 3", loaded.VolumeArcs[2].Title);
+        Assert.Equal("Volume 1", loaded.VolumeArcs[0].VolumeTitle);
+        Assert.Equal("Volume 2", loaded.VolumeArcs[1].VolumeTitle);
+        Assert.Equal("Volume 3", loaded.VolumeArcs[2].VolumeTitle);
     }
 
     [Fact]
@@ -272,8 +272,8 @@ public class StoryBibleRepositoryTests : IDisposable
             UserId = User1Id,
             Name = "Test Character",
             Role = "protagonist",
-            Description = "Test description",
-            CurrentState = "active"
+            Personality = "Test description",
+            Status = "active"
         };
 
         // Act
@@ -297,18 +297,18 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             Name = "Test Character",
-            CurrentState = "active"
+            Status = "active"
         };
         await _repository.SaveCharacterAsync(character);
 
         // Act - Update
-        character.CurrentState = "inactive";
+        character.Status = "inactive";
         await _repository.SaveCharacterAsync(character);
 
         // Assert
         var loaded = await _repository.LoadStoryBibleAsync(Project1Id);
         Assert.Single(loaded.Characters);
-        Assert.Equal("inactive", loaded.Characters[0].CurrentState);
+        Assert.Equal("inactive", loaded.Characters[0].Status);
     }
 
     [Fact]
@@ -324,7 +324,8 @@ public class StoryBibleRepositoryTests : IDisposable
             Title = "Test Foreshadow",
             PlantedInChapter = "Chapter 1",
             PlantedContext = "Some context",
-            ExpectedPayoff = "Chapter 10"
+            Content = "Expected resolution in Chapter 10",
+            Category = "plot"
         };
 
         // Act
@@ -390,7 +391,7 @@ public class StoryBibleRepositoryTests : IDisposable
             Category = "magic_system",
             Title = "Elemental Magic",
             Content = "Fire, water, earth, air",
-            Scope = "global"
+            SubCategory = "global"
         };
 
         // Act
@@ -538,7 +539,7 @@ public class StoryBibleRepositoryTests : IDisposable
             ProjectId = Project1Id,
             UserId = User1Id,
             VolumeNumber = 1,
-            Title = "Volume 1"
+            VolumeTitle = "Volume 1"
         });
 
         await _repository.SaveCharacterAsync(new Character

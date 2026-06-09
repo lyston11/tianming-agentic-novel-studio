@@ -6,6 +6,21 @@ namespace TM.Web.NovelAgentWeb.Support;
 // Test-only definitions of the new three-tier memory architecture models
 // These mirror the definitions in AgentCore.cs for regression testing
 
+public enum TurnIntentType
+{
+    FreeChat,
+    StatusQuery,
+    Confirmation,
+    Cancel,
+    NewProjectSeed,
+    CreativeBrief,
+    ContinueMission,
+    RevisionRequest,
+    UserFeedback,
+    ProjectSwitch,
+    CandidateSelection,
+}
+
 public sealed class UserProfile
 {
     [System.Text.Json.Serialization.JsonPropertyName("userId")]
@@ -87,6 +102,37 @@ public sealed class AgentMissionPlan
     public string Status { get; set; } = "idle";
     public string CurrentObjective { get; set; } = string.Empty;
     public string Stage { get; set; } = "idle";
+    public AgentTaskSchedulerState? SchedulerState { get; set; }
+}
+
+public sealed class AgentTaskSchedulerState
+{
+    public List<AgentScheduledTask> Tasks { get; set; } = new();
+    public string ActiveTaskId { get; set; } = string.Empty;
+    public string ActiveRunId { get; set; } = string.Empty;
+    public string ActiveChapterId { get; set; } = string.Empty;
+    public string LastDecisionReason { get; set; } = string.Empty;
+    public string LeaseOwner { get; set; } = string.Empty;
+    public DateTime? LeaseExpiresAt { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class AgentScheduledTask
+{
+    public string TaskId { get; set; } = Guid.NewGuid().ToString("N");
+    public string SessionId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
+    public string ChapterId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string TaskType { get; set; } = string.Empty;
+    public string Status { get; set; } = "queued";
+    public string NextAction { get; set; } = string.Empty;
+    public string BlockedReason { get; set; } = string.Empty;
+    public string Risk { get; set; } = "Low";
+    public bool RequiresConfirmation { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class AgentToolCall
@@ -122,6 +168,8 @@ public sealed class AgentWorkingMemory
     public AgentAuthorMemory? AuthorMemory { get; set; }
     public AgentExecutionMemory? ExecutionMemory { get; set; }
     public List<string> UserPreferences { get; set; } = new();
+    public object? PendingToolCall { get; set; }
+    public AgentMissionPlan MissionPlan { get; set; } = new();
 }
 
 // Memory layer types for AgentMemoryService

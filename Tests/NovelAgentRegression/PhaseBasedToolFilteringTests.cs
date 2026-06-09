@@ -96,7 +96,7 @@ public sealed class PhaseBasedToolFilteringTests
             {
                 MissionPlan = new AgentMissionPlan
                 {
-                    SchedulerState = new AgentSchedulerState
+                    SchedulerState = new AgentTaskSchedulerState
                     {
                         Tasks = new List<AgentScheduledTask>()
                     }
