@@ -23,6 +23,7 @@ public class NovelAgentDbContext : DbContext
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
     public DbSet<AgentSession> AgentSessions { get; set; } = null!;
     public DbSet<StoryConstitution> StoryConstitutions { get; set; } = null!;
+    public DbSet<VolumeArc> VolumeArcs { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -359,6 +360,45 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne(e => e.Project)
                 .WithOne(p => p.StoryConstitution)
                 .HasForeignKey<StoryConstitution>(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // VolumeArc entity configuration
+        modelBuilder.Entity<VolumeArc>(entity =>
+        {
+            entity.ToTable("volume_arcs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.VolumeNumber).HasColumnName("volume_number").IsRequired();
+            entity.Property(e => e.VolumeTitle).HasColumnName("volume_title").IsRequired();
+            entity.Property(e => e.VolumeTheme).HasColumnName("volume_theme");
+            entity.Property(e => e.TargetChapters).HasColumnName("target_chapters");
+            entity.Property(e => e.CurrentChapters).HasColumnName("current_chapters").HasDefaultValue(0);
+            entity.Property(e => e.Act1Setup).HasColumnName("act1_setup");
+            entity.Property(e => e.Act2Confrontation).HasColumnName("act2_confrontation");
+            entity.Property(e => e.Act3Climax).HasColumnName("act3_climax");
+            entity.Property(e => e.Act4Resolution).HasColumnName("act4_resolution");
+            entity.Property(e => e.KeyEvents).HasColumnName("key_events");
+            entity.Property(e => e.MajorConflict).HasColumnName("major_conflict");
+            entity.Property(e => e.ConflictEscalation).HasColumnName("conflict_escalation");
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("planned");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+
+            entity.HasIndex(e => new { e.ProjectId, e.VolumeNumber }).IsUnique();
+            entity.HasIndex(e => e.UserId);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
