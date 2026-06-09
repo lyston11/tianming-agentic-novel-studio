@@ -217,6 +217,50 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         };
     }
 
+    public WorkspaceStatus GetWorkspaceStatus(string userId, string projectId)
+    {
+        var cacheKey = GetCacheKey(userId, projectId);
+
+        if (!_cache.TryGetValue(cacheKey, out var entry))
+        {
+            return WorkspaceStatus.NotFound;
+        }
+
+        // Check if being evicted (this is a simplification - true eviction tracking would need state field)
+        var idleTimeout = TimeSpan.FromMinutes(_options.IdleTimeoutMinutes);
+        if (entry.IsEvictable(idleTimeout))
+        {
+            return WorkspaceStatus.Evicting;
+        }
+
+        // Check reference count
+        if (entry.ReferenceCount > 0)
+        {
+            return WorkspaceStatus.Active;
+        }
+
+        return WorkspaceStatus.Idle;
+    }
+
+    public void ForceRelease(string userId, string projectId)
+    {
+        var cacheKey = GetCacheKey(userId, projectId);
+
+        if (_cache.TryRemove(cacheKey, out var entry))
+        {
+            // Force set reference count to 0 and dispose if needed
+            entry.ReferenceCount = 0;
+            Interlocked.Increment(ref _evictionCount);
+        }
+    }
+
+    public void ClearAll()
+    {
+        var count = _cache.Count;
+        _cache.Clear();
+        Interlocked.Add(ref _evictionCount, count);
+    }
+
     private static string GetCacheKey(string userId, string projectId)
     {
         return $"{userId}:{projectId}";

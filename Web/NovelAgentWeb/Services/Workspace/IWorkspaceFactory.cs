@@ -48,4 +48,21 @@ public interface IWorkspaceFactory
     /// Perform health diagnostics on the workspace factory.
     /// </summary>
     Task<WorkspaceFactoryHealthStatus> CheckHealthAsync();
+
+    /// <summary>
+    /// Get detailed status of a specific workspace (NotFound, Active, Idle, Evicting).
+    /// </summary>
+    WorkspaceStatus GetWorkspaceStatus(string userId, string projectId);
+
+    /// <summary>
+    /// Force release and evict a workspace from cache.
+    /// Used by administrators to clean up zombie resources.
+    /// </summary>
+    void ForceRelease(string userId, string projectId);
+
+    /// <summary>
+    /// Clear all workspaces from cache.
+    /// Used for emergency maintenance without restarting the service.
+    /// </summary>
+    void ClearAll();
 }
