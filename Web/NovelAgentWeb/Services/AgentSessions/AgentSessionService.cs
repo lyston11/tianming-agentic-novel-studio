@@ -185,7 +185,7 @@ public class AgentSessionService : IAgentSessionService
     {
         return new AgentSessionResponse
         {
-            Id = session.Id,
+            SessionId = session.Id,
             UserId = session.UserId,
             ProjectId = session.ProjectId,
             Title = session.Title,
