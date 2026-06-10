@@ -296,7 +296,10 @@ export default function AgentPage() {
 
   const submitMessage = async (message: string) => {
     const msg = message.trim();
-    if (!msg || isSending || !sessionId) return;
+    if (!msg || isSending || !sessionId) {
+      console.log('submitMessage blocked:', { msg: !!msg, isSending, sessionId });
+      return;
+    }
 
     setInput('');
     addUserMessage(sessionId, msg);
@@ -311,6 +314,7 @@ export default function AgentPage() {
       invalidateAgentState();
       addLog(`Agent: ${res.phase}`);
     } catch (err) {
+      console.error('sendChat error:', err);
       addAgentMessage(sessionId, `请求失败: ${err instanceof Error ? err.message : '未知错误'}`);
     } finally {
       setSending(false);
