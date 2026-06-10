@@ -4,17 +4,30 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class AgentToolRegistry
 {
-    private readonly NovelAgentWorkspace _workspace;
-    private readonly UserSettingsManager _settingsManager;
-    private readonly NovelProjectCatalog _catalog;
+    private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
+    private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
 
+    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
+    private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
+
+    private readonly UserSettingsManager _settingsManager;
     private readonly Dictionary<string, AgentToolEntry> _entries;
 
-    public AgentToolRegistry(NovelAgentWorkspace workspace, UserSettingsManager settingsManager, NovelProjectCatalog catalog)
+    internal static void SetWorkspace(NovelAgentWorkspace workspace, NovelProjectCatalog catalog)
     {
-        _workspace = workspace;
+        _currentWorkspace.Value = workspace;
+        _currentCatalog.Value = catalog;
+    }
+
+    internal static void ClearWorkspace()
+    {
+        _currentWorkspace.Value = null;
+        _currentCatalog.Value = null;
+    }
+
+    public AgentToolRegistry(UserSettingsManager settingsManager)
+    {
         _settingsManager = settingsManager;
-        _catalog = catalog;
         _entries = BuildEntries();
     }
 

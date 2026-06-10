@@ -223,7 +223,8 @@ builder.Services.AddScoped<IQdrantCollectionManager, QdrantCollectionManager>();
 builder.Services.AddScoped<IMaterialVectorizationService, MaterialVectorizationService>();
 builder.Services.AddScoped<SemanticSearchService>();
 
-builder.Services.AddHostedService<AgentSchedulerHostedService>();
+// TODO: AgentSchedulerHostedService needs refactoring for multi-user workspace isolation
+// builder.Services.AddHostedService<AgentSchedulerHostedService>();
 builder.Services.AddHostedService<QdrantHealthCheck>();
 
 var app = builder.Build();

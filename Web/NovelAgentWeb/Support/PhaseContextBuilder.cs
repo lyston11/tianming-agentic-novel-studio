@@ -4,13 +4,17 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class PhaseContextBuilder
 {
-    private readonly AgentMemoryService _memoryService;
-    private readonly NovelAgentWorkspace _workspace;
+    private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
+    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
 
-    public PhaseContextBuilder(AgentMemoryService memoryService, NovelAgentWorkspace workspace)
+    private readonly AgentMemoryService _memoryService;
+
+    internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
+    internal static void ClearWorkspace() => _currentWorkspace.Value = null;
+
+    public PhaseContextBuilder(AgentMemoryService memoryService)
     {
         _memoryService = memoryService;
-        _workspace = workspace;
     }
 
     public async Task<int> EstimateTokensForPhaseAsync(

@@ -92,9 +92,15 @@ public sealed class AgentRuntime
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct).ConfigureAwait(false);
         try
         {
-            // Set workspace context for this request
-            _currentWorkspace.Value = workspaceEntry.Workspace;
-            _currentCatalog.Value = new NovelProjectCatalog(workspaceEntry.Workspace);
+            // Set workspace context for this request across all services
+            var workspace = workspaceEntry.Workspace;
+            var catalog = new NovelProjectCatalog(workspace);
+
+            _currentWorkspace.Value = workspace;
+            _currentCatalog.Value = catalog;
+            AgentMemoryService.SetWorkspace(workspace);
+            AgentToolRegistry.SetWorkspace(workspace, catalog);
+            PhaseContextBuilder.SetWorkspace(workspace);
 
             return await RunWithWorkspaceAsync(session, userMessage, ct).ConfigureAwait(false);
         }
@@ -102,6 +108,9 @@ public sealed class AgentRuntime
         {
             _currentWorkspace.Value = null;
             _currentCatalog.Value = null;
+            AgentMemoryService.ClearWorkspace();
+            AgentToolRegistry.ClearWorkspace();
+            PhaseContextBuilder.ClearWorkspace();
             workspaceEntry.ReleaseLease();
         }
     }
