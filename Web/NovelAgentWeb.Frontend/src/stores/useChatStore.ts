@@ -63,10 +63,14 @@ export const useChatStore = create<ChatState>((set) => ({
 
   loadSessionMessages: (sessionId, turns, memory) =>
     set((state) => {
+      if (!turns || turns.length === 0) {
+        return {
+          messages: [welcomeMessage],
+          messagesBySession: { ...state.messagesBySession, [sessionId]: [welcomeMessage] },
+        };
+      }
       const lastAgentIndex = turns.reduce((last, turn, index) => turn.role === 'assistant' ? index : last, -1);
-      const messages = turns.length > 0
-        ? turns.map((turn, index) => mapTurn(turn, index, memory, index === lastAgentIndex))
-        : [welcomeMessage];
+      const messages = turns.map((turn, index) => mapTurn(turn, index, memory, index === lastAgentIndex));
       return {
         messages,
         messagesBySession: { ...state.messagesBySession, [sessionId]: messages },
