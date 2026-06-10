@@ -54,9 +54,11 @@ public sealed class AgentSessionManager
     private readonly object _fileLock = new();
     private readonly string _sessionsPath;
 
-    public AgentSessionManager(NovelAgentWorkspace workspace)
+    public AgentSessionManager(Microsoft.Extensions.Configuration.IConfiguration configuration, Microsoft.AspNetCore.Hosting.IWebHostEnvironment environment)
     {
-        var dir = Path.Combine(workspace.StorageRoot, "Projects", workspace.ProjectName, "Agent");
+        var storageRoot = configuration["NovelAgent:StorageRoot"] ?? Path.Combine(environment.ContentRootPath, "App_Data");
+        var projectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
+        var dir = Path.Combine(storageRoot, "Projects", projectName, "Agent");
         Directory.CreateDirectory(dir);
         _sessionsPath = Path.Combine(dir, "sessions.json");
         LoadFromDisk();

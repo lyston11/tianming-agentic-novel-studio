@@ -17,7 +17,7 @@
       "weight": 9,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662841+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401144+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684029+08:00"
     },
     {
       "id": "genre-suspense-evidence",
@@ -35,7 +35,7 @@
       "weight": 10,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662851+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401145+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684029+08:00"
     },
     {
       "id": "genre-ensemble-position",
@@ -53,7 +53,7 @@
       "weight": 8,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662852+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401146+08:00"
+      "updatedAt": "2026-06-10T13:43:33.68403+08:00"
     },
     {
       "id": "trope-sudden-rescue",
@@ -70,7 +70,7 @@
       "weight": 9,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662853+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401147+08:00"
+      "updatedAt": "2026-06-10T13:43:33.68403+08:00"
     },
     {
       "id": "trope-face-slapping",
@@ -88,7 +88,7 @@
       "weight": 8,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662854+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401148+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684031+08:00"
     },
     {
       "id": "anti-cost",
@@ -105,7 +105,7 @@
       "weight": 10,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662858+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401149+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684031+08:00"
     },
     {
       "id": "anti-perspective",
@@ -122,7 +122,7 @@
       "weight": 9,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.66286+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401149+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684032+08:00"
     },
     {
       "id": "depth-theme-choice",
@@ -140,7 +140,7 @@
       "weight": 8,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662861+08:00",
-      "updatedAt": "2026-06-10T13:42:33.40115+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684032+08:00"
     },
     {
       "id": "emotion-arc-trigger-externalize",
@@ -159,7 +159,7 @@
       "weight": 9,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662862+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401152+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684035+08:00"
     },
     {
       "id": "emotion-arc-pressure-memory",
@@ -177,7 +177,7 @@
       "weight": 8,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662863+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401153+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684036+08:00"
     },
     {
       "id": "relationship-dynamic-power",
@@ -196,7 +196,7 @@
       "weight": 10,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662864+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401154+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684037+08:00"
     },
     {
       "id": "relationship-dynamic-traceable",
@@ -215,7 +215,7 @@
       "weight": 9,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662865+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401155+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684037+08:00"
     },
     {
       "id": "reader-promise-payoff",
@@ -232,7 +232,7 @@
       "weight": 8,
       "source": "BuiltIn",
       "createdAt": "2026-06-06T20:33:14.662866+08:00",
-      "updatedAt": "2026-06-10T13:42:33.401156+08:00"
+      "updatedAt": "2026-06-10T13:43:33.684038+08:00"
     }
   ],
   "createdAt": "2026-06-06T20:33:14.662825+08:00",
