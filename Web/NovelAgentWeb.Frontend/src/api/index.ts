@@ -145,7 +145,8 @@ export const rollbackStep = (sessionId: string, runId: string, stepId: string) =
 
 export const createSseConnection = (sessionId: string): EventSource => {
   const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-  const token = localStorage.getItem('token');
+  const stored = localStorage.getItem('auth-storage');
+  const token = stored ? JSON.parse(stored).state?.token : null;
   const url = token
     ? `${BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
     : `${BASE_URL}/agent/sse/${sessionId}`;
