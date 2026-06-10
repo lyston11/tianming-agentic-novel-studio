@@ -310,7 +310,6 @@ export default function AgentPage() {
       const res: AgentChatResponse = await sendChat({ message: msg, sessionId });
       addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace);
       await reloadSessions();
-      await selectSession(sessionId);
       invalidateAgentState();
       addLog(`Agent: ${res.phase}`);
     } catch (err) {
