@@ -90,11 +90,12 @@ export const useChatStore = create<ChatState>((set) => ({
         content,
         timestamp: new Date(),
       };
+      const sessionMessages = state.messagesBySession[sessionId] ?? [];
       return {
         messages: [...state.messages, message],
         messagesBySession: {
           ...state.messagesBySession,
-          [sessionId]: [...(state.messagesBySession[sessionId] ?? state.messages), message],
+          [sessionId]: [...sessionMessages, message],
         },
       };
     }),
@@ -114,11 +115,12 @@ export const useChatStore = create<ChatState>((set) => ({
           runtimeTrace,
           timestamp: new Date(),
       };
+      const sessionMessages = state.messagesBySession[sessionId] ?? [];
       return {
         messages: [...state.messages, message],
         messagesBySession: {
           ...state.messagesBySession,
-          [sessionId]: [...(state.messagesBySession[sessionId] ?? state.messages), message],
+          [sessionId]: [...sessionMessages, message],
         },
       };
     }),
