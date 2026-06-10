@@ -33,7 +33,7 @@ public class CurrentUserService : ICurrentUserService
             throw new UnauthorizedAccessException("User is not authenticated");
         }
 
-        var username = httpContext.User.FindFirst(JwtRegisteredClaimNames.Name)?.Value;
+        var username = httpContext.User.FindFirst(ClaimTypes.Name)?.Value;
         if (string.IsNullOrEmpty(username))
         {
             throw new InvalidOperationException("Username claim not found in JWT");
@@ -50,7 +50,7 @@ public class CurrentUserService : ICurrentUserService
             throw new UnauthorizedAccessException("User is not authenticated");
         }
 
-        var email = httpContext.User.FindFirst(JwtRegisteredClaimNames.Email)?.Value;
+        var email = httpContext.User.FindFirst(ClaimTypes.Email)?.Value;
         if (string.IsNullOrEmpty(email))
         {
             throw new InvalidOperationException("Email claim not found in JWT");
@@ -108,7 +108,7 @@ public class CurrentUserService : ICurrentUserService
             return null;
         }
 
-        // JWT "sub" claim contains the user ID
-        return httpContext.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        // JWT "sub" claim is mapped to NameIdentifier by ASP.NET Core JWT middleware
+        return httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
     }
 }
