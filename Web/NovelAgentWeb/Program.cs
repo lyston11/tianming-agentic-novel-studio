@@ -171,8 +171,7 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod());
 });
 
-builder.Services.AddSingleton<NovelAgentWorkspace>();
-builder.Services.AddSingleton<NovelProjectCatalog>();
+// NovelAgentWorkspace and NovelProjectCatalog are now provided dynamically via WorkspaceFactory
 builder.Services.AddSingleton<ProjectScopedExecutor>();
 builder.Services.AddSingleton<IMaterialAnalysisService, StubMaterialAnalysisService>();
 builder.Services.AddSingleton<AgentSessionManager>();

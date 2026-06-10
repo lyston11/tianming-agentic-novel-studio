@@ -1,5 +1,7 @@
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Workspace;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -7,7 +9,15 @@ public sealed class AgentRuntime
 {
     private const int MaxRecentObservations = 16;
 
-    private readonly NovelAgentWorkspace _workspace;
+    // Thread-local workspace context for current request
+    private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
+    private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
+
+    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
+    private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
+
+    private readonly IWorkspaceFactory _workspaceFactory;
+    private readonly ICurrentUserService _currentUserService;
     private readonly AgentSessionManager _sessionManager;
     private readonly UserSettingsManager _settingsManager;
     private readonly AgentObservationBuilder _observationBuilder;
@@ -15,7 +25,6 @@ public sealed class AgentRuntime
     private readonly ToolPolicyEngine _toolPolicyEngine;
     private readonly ReflectionEngine _reflectionEngine;
     private readonly AgentToolRegistry _toolRegistry;
-    private readonly NovelProjectCatalog _catalog;
     private readonly AgentMemoryService _memoryService;
     private readonly AgentMissionTaskTreeService _taskTreeService;
     private readonly AgentTaskScheduler _taskScheduler;
@@ -23,13 +32,13 @@ public sealed class AgentRuntime
     private readonly AgentToolGuardrails _guardrails;
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
-    private readonly ProjectRouter _projectRouter;
     private readonly PhaseInference _phaseInference;
     private readonly PhaseContextBuilder _contextBuilder;
     private AgentAction? lastAction;
 
     public AgentRuntime(
-        NovelAgentWorkspace workspace,
+        IWorkspaceFactory workspaceFactory,
+        ICurrentUserService currentUserService,
         AgentSessionManager sessionManager,
         UserSettingsManager settingsManager,
         AgentObservationBuilder observationBuilder,
@@ -37,7 +46,6 @@ public sealed class AgentRuntime
         ToolPolicyEngine toolPolicyEngine,
         ReflectionEngine reflectionEngine,
         AgentToolRegistry toolRegistry,
-        NovelProjectCatalog catalog,
         AgentMemoryService memoryService,
         AgentMissionTaskTreeService taskTreeService,
         AgentTaskScheduler taskScheduler,
@@ -47,7 +55,8 @@ public sealed class AgentRuntime
         PhaseInference phaseInference,
         PhaseContextBuilder contextBuilder)
     {
-        _workspace = workspace;
+        _workspaceFactory = workspaceFactory;
+        _currentUserService = currentUserService;
         _sessionManager = sessionManager;
         _settingsManager = settingsManager;
         _observationBuilder = observationBuilder;
@@ -55,7 +64,6 @@ public sealed class AgentRuntime
         _toolPolicyEngine = toolPolicyEngine;
         _reflectionEngine = reflectionEngine;
         _toolRegistry = toolRegistry;
-        _catalog = catalog;
         _memoryService = memoryService;
         _taskTreeService = taskTreeService;
         _taskScheduler = taskScheduler;
@@ -63,7 +71,6 @@ public sealed class AgentRuntime
         _guardrails = guardrails;
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
-        _projectRouter = new ProjectRouter(catalog, workspace);
         _phaseInference = phaseInference;
         _contextBuilder = contextBuilder;
     }
@@ -75,8 +82,38 @@ public sealed class AgentRuntime
 
     public async Task<AgentChatResponse> RunAsync(string sessionId, string userMessage, CancellationToken ct)
     {
-        // ── Session setup ──
+        // ── Acquire user-specific workspace ──
+        var userId = _currentUserService.GetUserId();
         var session = _sessionManager.GetOrCreateSession(sessionId);
+
+        // For first turn, use temp projectId; will be replaced after project resolution
+        var projectId = session.ActiveProjectId ?? "temp-" + userId;
+
+        var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct).ConfigureAwait(false);
+        try
+        {
+            // Set workspace context for this request
+            _currentWorkspace.Value = workspaceEntry.Workspace;
+            _currentCatalog.Value = new NovelProjectCatalog(workspaceEntry.Workspace);
+
+            return await RunWithWorkspaceAsync(session, userMessage, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _currentWorkspace.Value = null;
+            _currentCatalog.Value = null;
+            workspaceEntry.ReleaseLease();
+        }
+    }
+
+    private async Task<AgentChatResponse> RunWithWorkspaceAsync(
+        AgentSession session,
+        string userMessage,
+        CancellationToken ct)
+    {
+        var projectRouter = new ProjectRouter(_catalog, _workspace);
+
+        // ── Session setup ──
         session.UpdatedAt = DateTime.UtcNow;
         if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
             session.Title = BuildSessionTitle(userMessage);
@@ -85,7 +122,7 @@ public sealed class AgentRuntime
         if (string.IsNullOrWhiteSpace(session.ActiveProjectId) || IsProjectSwitchIntent(userMessage))
         {
             var sessionContext = ToSessionContext(session);
-            var resolution = await _projectRouter.ResolveProjectAsync(userMessage, sessionContext, ct).ConfigureAwait(false);
+            var resolution = await projectRouter.ResolveProjectAsync(userMessage, sessionContext, ct).ConfigureAwait(false);
             if (resolution.NeedsClarification)
             {
                 return new AgentChatResponse(
