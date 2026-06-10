@@ -238,19 +238,6 @@ public sealed class ProjectRouter
             }
         }
 
-        // Fallback to active project
-        if (project == null)
-        {
-            try
-            {
-                project = await _catalog.GetActiveAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                // No active project available
-            }
-        }
-
         // No project found
         if (project == null)
         {

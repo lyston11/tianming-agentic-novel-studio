@@ -244,6 +244,7 @@ export default function AgentPage() {
   }, [sessionId, setCurrentSessionMessages]);
 
   const handleSseEvent = useCallback((evt: AgentSseEvent) => {
+    console.log('SSE event received:', { type: evt.type, messageLength: evt.message?.length, message: evt.message });
     switch (evt.type) {
       case 'mission_updated':
       case 'confirmation_required':
@@ -308,6 +309,7 @@ export default function AgentPage() {
 
     try {
       const res: AgentChatResponse = await sendChat({ message: msg, sessionId });
+      console.log('sendChat response:', { replyLength: res.reply.length, reply: res.reply });
       addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace);
       await reloadSessions();
       invalidateAgentState();

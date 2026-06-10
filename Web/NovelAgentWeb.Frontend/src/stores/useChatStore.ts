@@ -119,7 +119,7 @@ export const useChatStore = create<ChatState>((set) => ({
           timestamp: new Date(),
       };
       const sessionMessages = state.messagesBySession[sessionId] ?? [];
-      console.log('addAgentMessage:', { sessionId, content: content.substring(0, 50), currentMessages: sessionMessages.length });
+      console.log('addAgentMessage:', { sessionId, contentLength: content.length, fullContent: content, preview: content.substring(0, 50), currentMessages: sessionMessages.length });
       return {
         messages: [...state.messages, message],
         messagesBySession: {
