@@ -34,6 +34,18 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      version: 1,
+      migrate: (persistedState: any, version: number) => {
+        if (version === 0) {
+          // Clear old flat structure data
+          return {
+            user: null,
+            token: null,
+            isAuthenticated: false,
+          };
+        }
+        return persistedState;
+      },
       partialize: (state) => ({
         user: state.user,
         token: state.token,
