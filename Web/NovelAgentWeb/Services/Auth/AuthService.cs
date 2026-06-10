@@ -103,10 +103,13 @@ public class AuthService : IAuthService
             return new AuthResponse
             {
                 Token = token,
-                UserId = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                Role = user.Role,
+                User = new AuthUser
+                {
+                    Id = user.Id,
+                    Username = user.Username,
+                    Email = user.Email,
+                    Role = user.Role
+                },
                 ExpiresAt = expiresAt
             };
         }
@@ -150,10 +153,13 @@ public class AuthService : IAuthService
         return new AuthResponse
         {
             Token = token,
-            UserId = user.Id,
-            Username = user.Username,
-            Email = user.Email,
-            Role = user.Role,
+            User = new AuthUser
+            {
+                Id = user.Id,
+                Username = user.Username,
+                Email = user.Email,
+                Role = user.Role
+            },
             ExpiresAt = expiresAt
         };
     }

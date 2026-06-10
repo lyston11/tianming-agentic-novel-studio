@@ -36,7 +36,7 @@ public class AuthController : ControllerBase
             var response = await _authService.RegisterAsync(request);
             _logger.LogInformation("User {Username} registered successfully", request.Username);
 
-            return CreatedAtAction(nameof(Register), new { id = response.UserId }, response);
+            return CreatedAtAction(nameof(Register), new { id = response.User.Id }, response);
         }
         catch (InvalidOperationException ex)
         {

@@ -93,10 +93,20 @@ builder.Services.AddAuthentication(options =>
         },
         OnMessageReceived = context =>
         {
-            var token = context.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
-            if (!string.IsNullOrEmpty(token))
+            // EventSource cannot send custom headers, so accept token from query string for SSE endpoints
+            if (context.Request.Path.StartsWithSegments("/api/agent/sse"))
             {
-                Console.WriteLine($"JWT Token Received: {token.Substring(0, Math.Min(50, token.Length))}...");
+                var token = context.Request.Query["token"].FirstOrDefault();
+                if (!string.IsNullOrEmpty(token))
+                {
+                    context.Token = token;
+                }
+            }
+
+            var authToken = context.Token ?? context.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
+            if (!string.IsNullOrEmpty(authToken))
+            {
+                Console.WriteLine($"JWT Token Received: {authToken.Substring(0, Math.Min(50, authToken.Length))}...");
             }
             return Task.CompletedTask;
         }

@@ -48,21 +48,9 @@ public class AgentController : ControllerBase
     }
 
     [HttpGet("agent/sse/{sessionId}")]
-    [AllowAnonymous]
     public async Task StreamEvents(string sessionId, [FromQuery] string? token, CancellationToken ct)
     {
-        // EventSource doesn't support custom headers, so we accept token via query parameter
-        if (!string.IsNullOrEmpty(token))
-        {
-            Request.Headers.Authorization = $"Bearer {token}";
-        }
-
-        // Verify authentication
-        if (!User.Identity?.IsAuthenticated ?? true)
-        {
-            Response.StatusCode = 401;
-            return;
-        }
+        // Token is handled by OnMessageReceived in Program.cs JWT configuration
 
         Response.ContentType = "text/event-stream";
         Response.Headers.Append("Cache-Control", "no-cache");
