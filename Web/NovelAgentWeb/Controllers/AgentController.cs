@@ -48,8 +48,22 @@ public class AgentController : ControllerBase
     }
 
     [HttpGet("agent/sse/{sessionId}")]
-    public async Task StreamEvents(string sessionId, CancellationToken ct)
+    [AllowAnonymous]
+    public async Task StreamEvents(string sessionId, [FromQuery] string? token, CancellationToken ct)
     {
+        // EventSource doesn't support custom headers, so we accept token via query parameter
+        if (!string.IsNullOrEmpty(token))
+        {
+            Request.Headers.Authorization = $"Bearer {token}";
+        }
+
+        // Verify authentication
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            Response.StatusCode = 401;
+            return;
+        }
+
         Response.ContentType = "text/event-stream";
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");

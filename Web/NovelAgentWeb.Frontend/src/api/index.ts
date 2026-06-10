@@ -145,7 +145,11 @@ export const rollbackStep = (sessionId: string, runId: string, stepId: string) =
 
 export const createSseConnection = (sessionId: string): EventSource => {
   const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-  return new EventSource(`${BASE_URL}/agent/sse/${sessionId}`);
+  const token = localStorage.getItem('token');
+  const url = token
+    ? `${BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
+    : `${BASE_URL}/agent/sse/${sessionId}`;
+  return new EventSource(url);
 };
 
 // Novel Projects
