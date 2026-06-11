@@ -14,7 +14,7 @@ const navItems = [
 
 export default function Rail() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
-  const { data: projects } = useQuery({
+  const { data: projects, isLoading, isError } = useQuery({
     queryKey: ['projects'],
     queryFn: () => projectService.listProjects(),
     staleTime: 5 * 60 * 1000,
@@ -56,7 +56,12 @@ export default function Rail() {
       </nav>
 
       <div className="rail-footer">
-        <div>{currentProject?.title ?? '选择项目...'}</div>
+        <div>
+          {isLoading ? '加载中...' :
+           isError ? '加载项目失败' :
+           currentProjectId && !currentProject ? '项目不存在' :
+           currentProject?.title ?? '选择项目...'}
+        </div>
         {user && (
           <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             {user.username}
