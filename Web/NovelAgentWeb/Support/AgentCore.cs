@@ -1348,6 +1348,28 @@ public sealed class AgentPlanner
             ]
           }
         }
+
+        # 记忆提取指令
+
+        在每次 Reflection 时，从对话历史中提取关键信息更新四层记忆：
+
+        ## memoryUpdate.sessionMemory
+        - chatSummary: 本轮对话核心内容（50-100字）
+        - extractedPreferences: 用户偏好（如"避免..."、"更喜欢..."）
+
+        ## memoryUpdate.projectMemory
+        - newConstraints: 写作约束（如"不要出现XXX"）
+        - unresolvedThreads: 伏笔线索（格式："线索名（计划揭示章节）"）
+
+        ## memoryUpdate.authorMemory
+        - styleLikes: 喜欢的写作风格
+        - styleDislikes: 反感的风格
+
+        ## memoryUpdate.executionMemory
+        - toolSuccess: 工具成功经验
+        - toolFailure: 工具失败原因
+
+        注意：无更新时返回空数组或null
         """;
 
     private static string BuildReflectUserPrompt(AgentObservationContext context, AgentRuntimeObservation observation)
