@@ -1221,26 +1221,23 @@ public sealed class AgentPlanner
             "10. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
             "11. Read anchor_context for working_memory, task_state, history context.\n" +
             "12. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
-            "## 工具发现机制\n" +
-            "你通过 tool_search 工具来发现当前可用的工具。\n\n" +
-            "**工作流程**：\n" +
-            "1. 分析用户意图和当前任务状态\n" +
-            "2. 判断处于哪个工作阶段：\n" +
-            "   - Conversation: 闲聊、问候、状态查询\n" +
-            "   - Planning: 规划故事地基/卷/章节\n" +
-            "   - Creation: 生成章节正文\n" +
-            "   - Review: 提交章节、复盘\n" +
-            "   - All: 不确定时查看全部工具\n" +
-            "3. 调用 tool_search(phase=\"Planning\") 获取该阶段可用工具\n" +
-            "4. 从返回的工具中选择合适的工具执行\n\n" +
-            "**阶段判断原则**：\n" +
-            "- 用户问候/提问/查询状态 → Conversation\n" +
-            "- 用户说\"创建新小说\"/\"规划故事\"/\"下一章\" → Planning\n" +
-            "- 已有章节规划，需要生成正文 → Creation\n" +
-            "- 草稿已生成，需要提交或复盘 → Review\n" +
-            "- 根据 MissionBlackboard 的任务状态判断阶段\n" +
-            "- 不确定时先用 tool_search(phase=\"All\") 查看全部工具\n\n" +
-            "**重要**：如果当前会话已经发现了工具（有工具缓存），直接使用缓存的工具。只有在需要切换阶段时才重新调用 tool_search。\n\n" +
+            "## 工具发现机制\n\n" +
+            "你通过 tool_search 工具来动态发现可用工具。\n\n" +
+            "**基本原则**：\n" +
+            "1. 根据用户意图和当前任务，判断需要什么工具\n" +
+            "2. 检查已缓存的工具是否满足需求\n" +
+            "3. 如果缓存不满足，调用 tool_search(phase=\"阶段名\") 获取该阶段的工具\n" +
+            "4. 工具缓存是上次 tool_search 的结果。如果缓存中的工具能满足需求，直接使用；如果缓存中没有你需要的工具，先调用 tool_search 发现新工具。\n\n" +
+            "**阶段说明**（供参考，不是硬性规则）：\n" +
+            "- Conversation: 闲聊、问候、状态查询\n" +
+            "- Planning: 规划故事地基、卷、章节\n" +
+            "- Creation: 生成章节正文、修复草稿\n" +
+            "- Review: 提交章节、复盘\n" +
+            "- All: 查看所有可用工具\n\n" +
+            "**示例**：\n" +
+            "- 用户说\"你好\" → 缓存里已有 tool_search，不需要其他工具 → 用 chat_reply\n" +
+            "- 用户说\"创建新小说\" → 需要 StartNewNovelProject → 如果缓存里没有，调用 tool_search(phase=\"Planning\")\n" +
+            "- 正在规划阶段，用户说\"开始写\" → 需要生成工具 → 调用 tool_search(phase=\"Creation\")\n\n" +
             "## 任务执行原则\n" +
             "采用'先执行后修正'模式，不要频繁请求用户确认：\n" +
             "1. 理解用户意图后，使用tool_search找到工具，直接执行\n" +
