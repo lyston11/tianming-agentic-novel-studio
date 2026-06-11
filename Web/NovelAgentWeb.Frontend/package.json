@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "postbuild": "npm run sync-to-backend",
+    "sync-to-backend": "rm -rf ../NovelAgentWeb/wwwroot/* && cp -r dist/* ../NovelAgentWeb/wwwroot/",
     "lint": "eslint .",
     "preview": "vite preview"
   },
