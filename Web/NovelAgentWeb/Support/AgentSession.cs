@@ -136,7 +136,7 @@ public sealed class AgentSessionManager
                 Id = session.SessionId,
                 UserId = session.UserId,
                 Title = session.Title,
-                ProjectId = session.ActiveProjectId,
+                ProjectId = string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
                 IsArchived = session.IsArchived,
                 SessionData = SerializeSessionData(session),
                 CreatedAt = session.CreatedAt,
@@ -150,7 +150,7 @@ public sealed class AgentSessionManager
                 throw new UnauthorizedAccessException($"Session {session.SessionId} belongs to another user");
 
             entity.Title = session.Title;
-            entity.ProjectId = session.ActiveProjectId;
+            entity.ProjectId = string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId;
             entity.IsArchived = session.IsArchived;
             entity.SessionData = SerializeSessionData(session);
             entity.UpdatedAt = DateTime.UtcNow;
