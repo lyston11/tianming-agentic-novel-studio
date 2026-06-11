@@ -120,10 +120,18 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
 // Redis distributed cache
+var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
+var redisInstanceName = builder.Configuration["Redis:InstanceName"];
+
+if (string.IsNullOrEmpty(redisConnectionString))
+{
+    throw new InvalidOperationException("Redis:ConnectionString is not configured in appsettings.json");
+}
+
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = builder.Configuration["Redis:ConnectionString"];
-    options.InstanceName = builder.Configuration["Redis:InstanceName"];
+    options.Configuration = redisConnectionString;
+    options.InstanceName = redisInstanceName ?? "NovelAgent:";
 });
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 
