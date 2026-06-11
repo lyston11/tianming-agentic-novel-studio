@@ -14,6 +14,7 @@ using TM.Web.NovelAgentWeb.Services.Chapters;
 using TM.Web.NovelAgentWeb.Services.Embedding;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Materials;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Projects;
 using TM.Web.NovelAgentWeb.Services.Repositories;
 using TM.Web.NovelAgentWeb.Services.StoryBible;
@@ -134,6 +135,9 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.InstanceName = redisInstanceName ?? "NovelAgent:";
 });
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
+
+// Agent memory repository with three-tier caching
+builder.Services.AddScoped<IAgentMemoryRepository, AgentMemoryRepository>();
 
 // Register Authentication Services
 builder.Services.AddScoped<IAuthService, AuthService>();
