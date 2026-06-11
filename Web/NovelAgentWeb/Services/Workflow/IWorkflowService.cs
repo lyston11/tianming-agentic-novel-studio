@@ -31,4 +31,9 @@ public interface IWorkflowService
     /// Deletes a volume arc.
     /// </summary>
     Task DeleteVolumeArcAsync(string volumeArcId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets workspace overview with all user projects and statistics.
+    /// </summary>
+    Task<WorkspaceResponse> GetWorkspaceAsync(string userId, CancellationToken ct = default);
 }
