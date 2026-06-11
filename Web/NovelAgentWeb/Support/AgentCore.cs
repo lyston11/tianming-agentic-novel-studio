@@ -1187,14 +1187,15 @@ public sealed class AgentPlanner
             "1. Prioritize natural conversation. Use chat_reply for greetings, questions, status queries, and casual chat.\n" +
             "2. Use tool calls only when user explicitly requests an action (e.g., '开始写章节', '生成草稿', '提交章节').\n" +
             "3. For status queries like '进度如何' or '现在到哪了', use chat_reply with project context, NOT QueryProjectStatus tool.\n" +
-            "4. Use clarify when creative info is missing for an explicit action request.\n" +
-            "5. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
-            "6. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
-            "7. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
-            "8. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
-            "9. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
-            "10. Read anchor_context for working_memory, task_state, history context.\n" +
-            "11. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
+            "4. Project management: Call StartNewNovelProject when user wants to create a new novel. For casual greetings or questions, use chat_reply to explain you can help create novels.\n" +
+            "5. Use clarify when creative info is missing for an explicit action request.\n" +
+            "6. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
+            "7. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
+            "8. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
+            "9. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
+            "10. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
+            "11. Read anchor_context for working_memory, task_state, history context.\n" +
+            "12. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
             "## Output Format\n" +
             "You can respond in two ways:\n" +
             "1. Natural reply (for conversations): Set action_type='chat_reply' or 'final_reply', put your conversational response in 'reply' field. Be warm and helpful.\n" +

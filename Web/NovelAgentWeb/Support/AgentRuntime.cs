@@ -120,43 +120,16 @@ public sealed class AgentRuntime
         string userMessage,
         CancellationToken ct)
     {
-        var projectRouter = new ProjectRouter(_catalog, _workspace);
-
         // ── Session setup ──
         session.UpdatedAt = DateTime.UtcNow;
         if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
             session.Title = BuildSessionTitle(userMessage);
 
-        // ── Project routing (first turn or explicit switch) ──
-        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) || IsProjectSwitchIntent(userMessage))
+        // ── Ensure session has a project (use temp if none) ──
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
         {
-            var sessionContext = ToSessionContext(session);
-            var resolution = await projectRouter.ResolveProjectAsync(userMessage, sessionContext, ct).ConfigureAwait(false);
-
-            // Skip project routing for casual chat
-            if (resolution.IsNotProjectRelated)
-            {
-                session.ActiveProjectId = "temp-" + _currentUserService.GetUserId();
-            }
-            else if (resolution.NeedsClarification)
-            {
-                return new AgentChatResponse(
-                    resolution.ClarificationMessage ?? "请明确您的项目选择。",
-                    new[] { "创建新项目", "继续现有项目" },
-                    session.SessionId,
-                    session.ActiveRunId,
-                    session.Phase,
-                    null,
-                    null,
-                    AgentWorkingMemorySnapshot.From(session.WorkingMemory),
-                    Array.Empty<AgentRuntimeStep>(),
-                    session.WorkingMemory.MissionPlan,
-                    null);
-            }
-            else
-            {
-                session.ActiveProjectId = resolution.Project!.Id;
-            }
+            var userId = _currentUserService.GetUserId();
+            session.ActiveProjectId = "temp-" + userId;
         }
 
         // ── Phase inference: determine conversation phase and filter tools ──
