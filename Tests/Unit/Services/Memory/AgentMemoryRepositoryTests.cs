@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Data.Entities;
+using System.Text.Json;
 
 namespace Tests.Unit.Services.Memory;
 
@@ -104,5 +106,36 @@ public class AgentMemoryRepositoryTests
         Assert.Empty(result.ToolFailurePatterns);
         Assert.Empty(result.RepeatedBlockers);
         Assert.Empty(result.SuccessfulRepairNotes);
+    }
+
+    [Fact]
+    public async Task GetProjectMemoryAsync_DeserializesDataCorrectly_WhenDataExists()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+
+        _dbContext.AgentMemories.AddRange(
+            new AgentMemory { Id = Guid.NewGuid().ToString(), UserId = userId, ProjectId = projectId, MemoryType = "project.long_term_goal", Content = JsonSerializer.Serialize("Complete the trilogy") },
+            new AgentMemory { Id = Guid.NewGuid().ToString(), UserId = userId, ProjectId = projectId, MemoryType = "project.constraints", Content = JsonSerializer.Serialize(new List<string> { "No violence", "PG-13" }) }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+            It.IsAny<string>(),
+            It.IsAny<Func<Task<ProjectMemory>>>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, Func<Task<ProjectMemory>> f, TimeSpan t, CancellationToken c) => f().Result);
+
+        _mockRedisCache.Setup(x => x.GetAsync<ProjectMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProjectMemory?)null);
+
+        var result = await _repository.GetProjectMemoryAsync(userId, projectId);
+
+        Assert.NotNull(result);
+        Assert.Equal("Complete the trilogy", result.LongTermGoal);
+        Assert.Equal(2, result.Constraints.Count);
+        Assert.Contains("No violence", result.Constraints);
+        Assert.Contains("PG-13", result.Constraints);
     }
 }

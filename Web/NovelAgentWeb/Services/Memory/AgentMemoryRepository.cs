@@ -67,7 +67,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
     {
-        var cacheKey = $"memory:author:{userId}:";
+        var cacheKey = $"memory:author:{userId}";
 
         return await _memoryCache.GetOrSetAsync(
             cacheKey,
