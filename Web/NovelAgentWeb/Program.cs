@@ -138,6 +138,7 @@ builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 
 // Agent memory repository with three-tier caching
 builder.Services.AddScoped<IAgentMemoryRepository, AgentMemoryRepository>();
+builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
 builder.Services.AddScoped<IAuthService, AuthService>();

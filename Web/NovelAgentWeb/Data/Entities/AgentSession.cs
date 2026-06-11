@@ -1,3 +1,5 @@
+using TM.Web.NovelAgentWeb.Support;
+
 namespace TM.Web.NovelAgentWeb.Data.Entities;
 
 /// <summary>
@@ -13,6 +15,7 @@ public class AgentSession
     public string? SessionData { get; set; }  // JSON containing chat history, working memory, run history
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public LayeredChatHistory? LayeredHistory { get; set; }
 
     // Navigation properties
     public User User { get; set; } = null!;
