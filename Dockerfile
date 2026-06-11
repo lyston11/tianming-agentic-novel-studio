@@ -4,8 +4,9 @@ EXPOSE 5002
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY . .
-WORKDIR "/src/Web/NovelAgentWeb"
+COPY tianming-agentic-novel-studio/ tianming-agentic-novel-studio/
+COPY tianming-novel-ai-writer/Framework/Common/Helpers/ tianming-novel-ai-writer/Framework/Common/Helpers/
+WORKDIR "/src/tianming-agentic-novel-studio/Web/NovelAgentWeb"
 RUN dotnet restore
 RUN dotnet build -c Release -o /app/build
 

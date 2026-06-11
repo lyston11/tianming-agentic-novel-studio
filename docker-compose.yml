@@ -21,8 +21,8 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: tianming-agentic-novel-studio/Dockerfile
     container_name: novelagent-api
     ports:
       - "5002:5002"
