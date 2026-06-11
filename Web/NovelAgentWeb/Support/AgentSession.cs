@@ -74,7 +74,8 @@ public sealed class AgentSessionManager
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {
-            var session = new AgentSession { UserId = userId };
+            // New session: no projectId, LLM will decide later
+            var session = new AgentSession { UserId = userId, ActiveProjectId = string.Empty };
             NormalizeLegacyPending(session);
             return session;
         }
@@ -84,12 +85,22 @@ public sealed class AgentSessionManager
 
         if (entity == null)
         {
-            var session = new AgentSession { SessionId = sessionId, UserId = userId };
+            var session = new AgentSession { SessionId = sessionId, UserId = userId, ActiveProjectId = string.Empty };
             NormalizeLegacyPending(session);
             return session;
         }
 
         var result = DeserializeSession(entity);
+
+        // Clean stale projectId: if project no longer exists, clear it
+        if (!string.IsNullOrWhiteSpace(result.ActiveProjectId))
+        {
+            var projectExists = await _db.NovelProjects
+                .AnyAsync(p => p.Id == result.ActiveProjectId && p.UserId == userId, ct);
+            if (!projectExists)
+                result.ActiveProjectId = string.Empty;
+        }
+
         NormalizeLegacyPending(result);
         return result;
     }

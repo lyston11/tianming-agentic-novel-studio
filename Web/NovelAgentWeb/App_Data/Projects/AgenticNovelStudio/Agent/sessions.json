@@ -1,5 +1,138 @@
 [
   {
+    "sessionId": "58af47d0106748e2811558f7b942c072",
+    "title": "\u65B0\u4F1A\u8BDD",
+    "phase": "idle",
+    "activeProjectId": "",
+    "activeRunId": null,
+    "isArchived": false,
+    "runHistory": [],
+    "chatHistory": [],
+    "workingMemory": {
+      "currentGoal": "",
+      "openQuestions": [],
+      "userPreferences": [],
+      "recentObservations": [],
+      "pendingToolCall": null,
+      "pendingConfirmation": null,
+      "lastDecision": null,
+      "mission": {
+        "currentGoal": "",
+        "creativePhase": "idle",
+        "readiness": "unknown",
+        "nextIntent": "",
+        "pendingUserDecision": "",
+        "foundationBrief": {},
+        "missingFoundationFields": [],
+        "pendingQuestion": "",
+        "missionPlan": null,
+        "updatedAt": "2026-06-11T05:28:53.279538Z"
+      },
+      "missionPlan": {
+        "missionId": "71957225c9f0484d824e1d924b09b413",
+        "blackboardVersion": 2,
+        "dependencyVersion": 0,
+        "lastRecoveredAt": null,
+        "projectId": "",
+        "projectTitle": "",
+        "status": "idle",
+        "currentObjective": "",
+        "activeChapterId": "",
+        "currentRunId": "",
+        "overallGoal": "",
+        "currentNovelGoal": "",
+        "stage": "idle",
+        "milestones": [],
+        "todoQueue": [],
+        "completedItems": [],
+        "blockers": [],
+        "authorPreferences": [],
+        "confirmedDecisions": [],
+        "bookTaskTree": {
+          "bookId": "",
+          "projectId": "",
+          "title": "",
+          "status": "planning",
+          "currentFocus": "",
+          "foundation": {
+            "status": "unstarted",
+            "confirmedAt": null,
+            "blockers": [],
+            "decisions": [],
+            "updatedAt": "2026-06-11T05:28:53.279543Z"
+          },
+          "volumes": [],
+          "updatedAt": "2026-06-11T05:28:53.279546Z"
+        },
+        "schedulerState": {
+          "tasks": [],
+          "activeTaskId": "",
+          "activeRunId": "",
+          "activeChapterId": "",
+          "lastDecisionReason": "",
+          "leaseOwner": "",
+          "leaseExpiresAt": null,
+          "updatedAt": "2026-06-11T05:28:53.279551Z"
+        },
+        "dependencyImpacts": [],
+        "recoveryWarnings": [],
+        "turnIntent": null,
+        "interactionState": null,
+        "activeTurnId": "",
+        "activeToolTransactionId": "",
+        "artifactCursor": "",
+        "activeArtifactCursor": "",
+        "lastUserVisibleState": "",
+        "lifecycleStatus": "idle",
+        "lastRecoveredFrom": "",
+        "recoveryConfidence": 0,
+        "schedulerLease": "",
+        "reviewReports": [],
+        "qualityArbiterDecision": {
+          "status": "not_applicable",
+          "reason": "",
+          "requiresUserInput": false,
+          "blockingReviewers": []
+        },
+        "toolTransactions": [],
+        "allowedNextActions": [],
+        "activeArtifacts": [],
+        "blockedReason": "",
+        "lastVerifiedState": "",
+        "updatedAt": "2026-06-11T05:28:53.279565Z"
+      },
+      "sessionMemory": {
+        "chatSummary": "",
+        "shortTermPreferences": [],
+        "lastObservations": []
+      },
+      "projectMemory": {
+        "projectId": "",
+        "longTermGoal": "",
+        "readerPromise": "",
+        "tone": "",
+        "constraints": [],
+        "unresolvedThreads": []
+      },
+      "authorMemory": {
+        "styleLikes": [],
+        "styleDislikes": [],
+        "confirmationTolerance": "key_checkpoints",
+        "genreHabits": []
+      },
+      "executionMemory": {
+        "toolFailurePatterns": [],
+        "repeatedBlockers": [],
+        "successfulRepairNotes": []
+      }
+    },
+    "createdAt": "2026-06-11T05:28:53.279566Z",
+    "updatedAt": "2026-06-11T05:28:53.279566Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
+  },
+  {
     "sessionId": "798ecbe25d784548947bb6076859f05a",
     "title": "\u4F60\u597D",
     "phase": "conversation",
