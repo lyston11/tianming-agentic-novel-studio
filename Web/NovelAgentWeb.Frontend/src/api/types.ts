@@ -803,6 +803,11 @@ export interface NovelBookView {
   selectedChapter: NovelChapterView | null;
 }
 
+export interface WorkspaceResponse {
+  projects: NovelBookView[];
+  totalCount: number;
+}
+
 export interface NovelVolumeView {
   volumeId: string;
   title: string;
