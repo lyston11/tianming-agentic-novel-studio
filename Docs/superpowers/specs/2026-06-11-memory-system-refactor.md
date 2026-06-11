@@ -234,7 +234,200 @@ TTL: 5 分钟
 
 ---
 
-## 4. 核心组件设计
+## 4. 四层记忆关联机制
+
+### 4.1 记忆层级关系
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     ChatHistory（原始对话）                  │
+│  每轮完整的用户消息 + Agent 回复 + 工具调用记录              │
+└────────────┬────────────────────────────────────────────────┘
+             │ 自动提取（Reflection）
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│               SessionMemory（会话短期记忆）                  │
+│  • ChatSummary: 当前会话摘要（分层压缩）                     │
+│  • ShortTermPreferences: 本会话中提取的临时偏好（10-50条）    │
+│  • LastObservations: 最近的关键观察                          │
+│                                                              │
+│  生命周期: 单次会话，会话结束后持久化到数据库                 │
+│  更新频率: 每次响应（Lightweight）+ 每5轮（Standard）         │
+└────────────┬────────────────────────────────────────────────┘
+             │ 沉淀（重复3次以上）
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│            ProjectMemory（项目长期约束）                     │
+│  • LongTermGoal: 项目核心目标（语义向量化）                   │
+│  • ReaderPromise: 读者承诺（语义向量化）                      │
+│  • Constraints: 硬性约束（从 SessionMemory 沉淀）             │
+│  • UnresolvedThreads: 伏笔线索（从章节生成事件更新）           │
+│                                                              │
+│  生命周期: 项目生命周期，跨会话共享                           │
+│  更新频率: 会话结束时批量沉淀 + 章节生成时实时更新             │
+└────────────┬────────────────────────────────────────────────┘
+             │ 泛化（跨项目模式识别）
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│              AuthorMemory（作者风格画像）                    │
+│  • StyleLikes/Dislikes: 写作风格偏好（跨项目聚合）             │
+│  • ConfirmationTolerance: 确认容忍度（行为模式）               │
+│  • GenreHabits: 类型习惯（从多个项目总结）                     │
+│                                                              │
+│  生命周期: 永久，跨所有项目                                   │
+│  更新频率: 会话结束时批量更新 + 检测到强烈偏好时实时更新        │
+└────────────┬────────────────────────────────────────────────┘
+             │ 反馈（指导工具调用）
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│           ExecutionMemory（工具执行经验）                    │
+│  • ToolFailurePatterns: 失败模式（避免重复错误）               │
+│  • RepeatedBlockers: 重复阻塞（识别系统性问题）                │
+│  • SuccessfulRepairs: 成功修复经验（复用解决方案）             │
+│                                                              │
+│  生命周期: 项目生命周期                                       │
+│  更新频率: 每次工具调用后立即更新                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 信息流动路径
+
+#### **向下沉淀（提取 & 泛化）**
+
+**ChatHistory → SessionMemory（每轮响应）**
+```
+触发: Lightweight 提取
+逻辑: 
+  - 最近 5 轮对话 → ChatSummary 更新
+  - 用户明确表达偏好 → ShortTermPreferences 追加
+  - 工具调用结果 → LastObservations 记录
+
+示例:
+  用户: "不要用太多成语"
+  → SessionMemory.ShortTermPreferences += "避免过度使用成语"
+```
+
+**SessionMemory → ProjectMemory（会话结束/重复3次）**
+```
+触发: SessionEnd 或 沉淀规则
+逻辑:
+  - ShortTermPreferences 中出现 ≥3 次 → Constraints 沉淀
+  - 章节生成后提取的伏笔 → UnresolvedThreads 追加
+  - LongTermGoal/ReaderPromise 变更 → Qdrant 重新向量化
+
+示例:
+  会话 1: ShortTermPreferences = ["避免成语"]
+  会话 2: ShortTermPreferences = ["避免成语", "节奏要快"]
+  会话 3: ShortTermPreferences = ["避免成语"]
+  → ProjectMemory.Constraints += "避免过度使用成语"（沉淀）
+```
+
+**ProjectMemory → AuthorMemory（跨项目模式识别）**
+```
+触发: 项目完成 或 检测到跨项目重复模式
+逻辑:
+  - 多个项目的 Constraints 中出现相同模式 → StyleDislikes 泛化
+  - 用户在 3+ 个项目中表达相同偏好 → GenreHabits 归纳
+
+示例:
+  项目 A: Constraints = ["避免成语", "不要拖沓"]
+  项目 B: Constraints = ["避免成语", "快节奏"]
+  项目 C: Constraints = ["避免成语"]
+  → AuthorMemory.StyleDislikes += "过度使用成语"（泛化）
+```
+
+**工具调用 → ExecutionMemory（实时反馈）**
+```
+触发: 工具调用完成（成功/失败）
+逻辑:
+  - 失败 → ToolFailurePatterns 记录模式
+  - 重复失败 → RepeatedBlockers 标记
+  - 成功修复 → SuccessfulRepairs 记录方案
+
+示例:
+  WriteChapter 失败: "字数超限 5000 → 目标 3000"
+  → ExecutionMemory.RepeatedBlockers += "章节字数控制失败（需优化大纲）"
+  
+  下次调用前检查 ExecutionMemory:
+  → Agent 决策："根据历史经验，先压缩大纲再生成"
+```
+
+#### **向上加载（上下文注入）**
+
+**Agent 决策时的记忆加载顺序:**
+
+```python
+# 伪代码示意
+def BuildSystemPrompt(session, project):
+    context = []
+    
+    # 1. 加载 ExecutionMemory（最高优先级 - 避免重复错误）
+    execution = LoadExecutionMemory(project_id)
+    if execution.RepeatedBlockers:
+        context.append(f"注意：历史上该项目出现过以下问题：{execution.RepeatedBlockers}")
+    
+    # 2. 加载 AuthorMemory（用户整体风格）
+    author = LoadAuthorMemory(user_id)
+    context.append(f"用户写作偏好：{author.StyleLikes}")
+    context.append(f"用户反感：{author.StyleDislikes}")
+    
+    # 3. 加载 ProjectMemory（项目硬性约束）
+    project_mem = LoadProjectMemory(user_id, project_id)
+    context.append(f"项目目标：{project_mem.LongTermGoal}")
+    context.append(f"必须遵守：{project_mem.Constraints}")
+    context.append(f"待解决伏笔：{project_mem.UnresolvedThreads}")
+    
+    # 4. 加载 SessionMemory（当前会话上下文）
+    session_mem = session.WorkingMemory.SessionMemory
+    context.append(f"本次会话进展：{session_mem.ChatSummary}")
+    context.append(f"用户当前偏好：{session_mem.ShortTermPreferences}")
+    
+    return "\n\n".join(context)
+```
+
+### 4.3 冲突解决规则
+
+当不同层级的记忆产生冲突时，按以下优先级处理：
+
+**优先级（高→低）:**
+1. **SessionMemory.ShortTermPreferences**（用户当前明确指令）
+2. **ProjectMemory.Constraints**（项目硬性约束）
+3. **AuthorMemory.StyleDislikes**（用户整体反感）
+4. **ExecutionMemory.ToolFailurePatterns**（系统经验）
+5. **AuthorMemory.StyleLikes**（用户偏好）
+
+**示例冲突:**
+```
+AuthorMemory.StyleLikes = ["详细的环境描写"]  # 用户历史偏好
+ProjectMemory.Constraints = ["快节奏，少环境描写"]  # 当前项目约束
+SessionMemory.ShortTermPreferences = ["这一章可以多写点环境"]  # 本轮指令
+
+解析结果：
+  → 本章允许环境描写（SessionMemory 优先级最高）
+  → 但下一章恢复快节奏（ProjectMemory 约束仍然生效）
+```
+
+### 4.4 记忆衰减与版本控制
+
+**SessionMemory 衰减:**
+- ShortTermPreferences 在会话结束后清空
+- ChatSummary 通过分层压缩永久保留（MetaSummary）
+
+**ProjectMemory 衰减:**
+- Constraints 需要手动删除（或在项目完成后归档）
+- UnresolvedThreads 在伏笔揭示后自动标记为已解决
+
+**AuthorMemory 衰减:**
+- StyleDislikes 超过 32 条时，移除最早的条目
+- 如果用户在最近 5 个项目中未出现某偏好，降低权重
+
+**ExecutionMemory 衰减:**
+- RepeatedBlockers 超过 24 条时，移除已修复的问题
+- SuccessfulRepairs 保留最近 24 条（LRU）
+
+---
+
+## 5. 核心组件设计
 
 ### 4.1 IAgentMemoryRepository 接口
 
