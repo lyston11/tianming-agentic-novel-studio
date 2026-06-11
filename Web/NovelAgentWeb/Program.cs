@@ -181,7 +181,11 @@ builder.Services.AddSingleton<UserSettingsManager>(sp =>
     var env = sp.GetRequiredService<IWebHostEnvironment>();
     var storageRoot = config["NovelAgent:StorageRoot"] ?? Path.Combine(env.ContentRootPath, "App_Data");
     var projectName = config["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
-    return new UserSettingsManager(storageRoot, projectName);
+    return new UserSettingsManager(
+        storageRoot,
+        projectName,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<IHttpContextAccessor>());
 });
 builder.Services.AddSingleton<AgentToolRegistry>();
 builder.Services.AddSingleton<AgentToolGuardrails>();
@@ -201,7 +205,6 @@ builder.Services.AddSingleton<AgentPlanner>();
 builder.Services.AddSingleton<ToolPolicyEngine>();
 builder.Services.AddSingleton<AgentQualityReviewSuite>();
 builder.Services.AddSingleton<ReflectionEngine>();
-builder.Services.AddSingleton<PhaseInference>();
 builder.Services.AddSingleton<PhaseContextBuilder>();
 builder.Services.AddSingleton<AgentRuntime>();
 builder.Services.AddSingleton<AgentRouter>();
@@ -244,6 +247,7 @@ app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
