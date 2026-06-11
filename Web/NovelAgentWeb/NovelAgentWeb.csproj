@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\ChapterParserHelper.cs" Link="Legacy\Common\Helpers\ChapterParserHelper.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\EntityNameNormalizeHelper.cs" Link="Legacy\Common\Helpers\EntityNameNormalizeHelper.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\EntityNameResolver.cs" Link="Legacy\Common\Helpers\EntityNameResolver.cs" />
+    <Compile Include="..\..\..\tianming-novel-ai-writer\Framework\Common\Helpers\HairColorConstants.cs" Link="Legacy\Common\Helpers\HairColorConstants.cs" />
     <Compile Include="..\..\Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" Link="Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" />
     <Compile Include="..\..\Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs" Link="Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs" />
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Models\*.cs" Link="NovelAgent\Models\%(Filename)%(Extension)" />
