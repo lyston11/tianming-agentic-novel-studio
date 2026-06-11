@@ -1,4 +1,11 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: novelagent-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.8.0
     container_name: novelagent-qdrant
@@ -26,6 +33,8 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - Qdrant__Host=qdrant
       - Qdrant__Port=6334
+      - Redis__ConnectionString=redis:6379
     depends_on:
+      - redis
       - qdrant
     restart: unless-stopped
