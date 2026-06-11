@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { getSettings } from './api';
+import { useProjectStore } from './stores/useProjectStore';
 import Rail from './components/layout/Rail';
 import ProtectedRoute from './components/ProtectedRoute';
 import AgentPage from './pages/AgentPage';
@@ -23,6 +24,11 @@ const queryClient = new QueryClient({
 
 function AppLayout() {
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
+  const initializeFromStorage = useProjectStore((s) => s.initializeFromStorage);
+
+  useEffect(() => {
+    initializeFromStorage();
+  }, [initializeFromStorage]);
 
   useEffect(() => {
     if (!settings) return;
