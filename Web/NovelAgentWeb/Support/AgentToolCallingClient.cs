@@ -56,7 +56,8 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
         var payload = new
         {
             model = NormalizeModel(settings.LlmModel),
-            temperature = 0,
+            temperature = settings.LlmTemperature,
+            max_tokens = settings.LlmMaxTokens,
             messages = new object[]
             {
                 new { role = "system", content = systemPrompt },
@@ -83,8 +84,8 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
         {
             model = NormalizeModel(settings.LlmModel),
             system = systemPrompt,
-            max_tokens = 1200,
-            temperature = 0,
+            max_tokens = settings.LlmMaxTokens,
+            temperature = settings.LlmTemperature,
             tools = context.AvailableTools.Select(ToAnthropicTool).ToArray(),
             messages = new[]
             {

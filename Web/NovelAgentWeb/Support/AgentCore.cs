@@ -737,7 +737,9 @@ public static class AgentRunSelector
         if (actionable != null)
             return actionable;
 
+        // Only return non-terminal runs (exclude Completed, Failed, Cancelled)
         return bible.AgentRuns
+            .Where(run => run.Status is not (NovelAgentRunStatus.Completed or NovelAgentRunStatus.Failed or NovelAgentRunStatus.Cancelled))
             .Where(run => !IsStaleFoundationAwaitingRun(bible, run))
             .OrderByDescending(run => run.UpdatedAt)
             .FirstOrDefault();
@@ -780,19 +782,22 @@ public static class AgentProjectSummaryBuilder
 
 public sealed class AgentObservationBuilder
 {
+    private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
+    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
+
     private readonly AgentToolRegistry _toolRegistry;
-    private readonly NovelAgentWorkspace _workspace;
     private readonly AgentMemoryService _memoryService;
     private readonly AgentMissionTaskTreeService _taskTreeService;
 
+    internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
+    internal static void ClearWorkspace() => _currentWorkspace.Value = null;
+
     public AgentObservationBuilder(
         AgentToolRegistry toolRegistry,
-        NovelAgentWorkspace workspace,
         AgentMemoryService memoryService,
         AgentMissionTaskTreeService taskTreeService)
     {
         _toolRegistry = toolRegistry;
-        _workspace = workspace;
         _memoryService = memoryService;
         _taskTreeService = taskTreeService;
     }
@@ -1176,21 +1181,25 @@ public sealed class AgentPlanner
             $"- {t.Name}: {t.Description} [Risk={t.Risk}]"));
 
         return "# Stable Layer - Identity & Rules\n\n" +
-            "You are the Tianming Novel Agent runtime decision layer. Output JSON only, no Markdown.\n\n" +
+            "You are the Tianming Novel Agent, a helpful assistant for novel writing. Respond naturally and conversationally.\n\n" +
             $"## Available Tools ({tools.Count})\n{toolLines}\n\n" +
             "## Decision Principles\n" +
-            "1. Prefer tool calls over chat. User says 'write a novel' -> call PlanStoryFoundation.\n" +
-            "2. Use chat_reply only for casual conversation.\n" +
-            "3. Use clarify when creative info is missing.\n" +
-            "4. Status queries -> QueryProjectStatus or final_reply only.\n" +
-            "5. Autopilot mode: do not ask for confirmation. Call commit/generate/repair tools directly when prerequisites are satisfied. Surface options in suggestions, but keep executing the recommended path unless the user explicitly changes it.\n" +
-            "6. Chapter generation must be split: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
+            "1. Prioritize natural conversation. Use chat_reply for greetings, questions, status queries, and casual chat.\n" +
+            "2. Use tool calls only when user explicitly requests an action (e.g., '开始写章节', '生成草稿', '提交章节').\n" +
+            "3. For status queries like '进度如何' or '现在到哪了', use chat_reply with project context, NOT QueryProjectStatus tool.\n" +
+            "4. Use clarify when creative info is missing for an explicit action request.\n" +
+            "5. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
+            "6. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
             "7. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
             "8. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
             "9. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
             "10. Read anchor_context for working_memory, task_state, history context.\n" +
             "11. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
-            "## Output JSON Schema\n" +
+            "## Output Format\n" +
+            "You can respond in two ways:\n" +
+            "1. Natural reply (for conversations): Set action_type='chat_reply' or 'final_reply', put your conversational response in 'reply' field. Be warm and helpful.\n" +
+            "2. Tool call (for actions): Set action_type='tool_call', specify tool_call.name and arguments.\n\n" +
+            "## JSON Schema\n" +
             "{\"action_type\":\"chat_reply|clarify|retrieve|tool_call|final_reply\",\"intent\":\"\",\"reply\":\"\",\"brief\":\"\",\"tool_call\":{\"name\":\"\",\"arguments\":{}},\"rag_queries\":[],\"risk\":\"Low\",\"requires_confirmation\":false,\"suggestions\":[],\"confidence\":0.8}";
     }
 
@@ -1740,8 +1749,8 @@ public sealed class AgentPlanner
             {
                 model,
                 system,
-                max_tokens = 1200,
-                temperature = 0,
+                max_tokens = settings.LlmMaxTokens,
+                temperature = settings.LlmTemperature,
                 messages = new[]
                 {
                     new
@@ -1763,8 +1772,8 @@ public sealed class AgentPlanner
                 new { role = "system", content = system },
                 new { role = "user", content = user },
             },
-            max_tokens = 1200,
-            temperature = 0,
+            max_tokens = settings.LlmMaxTokens,
+            temperature = settings.LlmTemperature,
         };
         var openAiBody = await PostJsonOpenAiAsync(BuildChatCompletionsUrl(settings.LlmBaseUrl), settings.LlmApiKey, openAiPayload, ct).ConfigureAwait(false);
         return ParseOpenAiText(openAiBody);
