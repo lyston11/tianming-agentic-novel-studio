@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 
@@ -9,6 +10,7 @@ namespace TM.Web.NovelAgentWeb.Support;
 public sealed class AgentSession
 {
     public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
+    public string UserId { get; set; } = string.Empty;
     public string Title { get; set; } = "新会话";
     public string Phase { get; set; } = "idle";
     public string ActiveProjectId { get; set; } = string.Empty;
@@ -54,44 +56,96 @@ public sealed class AgentConversationTurn
 
 public sealed class AgentSessionManager
 {
-    private readonly ConcurrentDictionary<string, AgentSession> _sessions = new();
     private readonly ConcurrentDictionary<string, Channel<AgentSseEvent>> _channels = new();
-    private readonly object _fileLock = new();
-    private readonly string _sessionsPath;
+    private readonly TM.Web.NovelAgentWeb.Data.NovelAgentDbContext _db;
+    private readonly TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService _currentUser;
 
-    public AgentSessionManager(Microsoft.Extensions.Configuration.IConfiguration configuration, Microsoft.AspNetCore.Hosting.IWebHostEnvironment environment)
+    public AgentSessionManager(
+        TM.Web.NovelAgentWeb.Data.NovelAgentDbContext db,
+        TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService currentUser)
     {
-        var storageRoot = configuration["NovelAgent:StorageRoot"] ?? Path.Combine(environment.ContentRootPath, "App_Data");
-        var projectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
-        var dir = Path.Combine(storageRoot, "Projects", projectName, "Agent");
-        Directory.CreateDirectory(dir);
-        _sessionsPath = Path.Combine(dir, "sessions.json");
-        LoadFromDisk();
+        _db = db;
+        _currentUser = currentUser;
     }
 
-    public AgentSession GetOrCreateSession(string? sessionId = null)
+    public async Task<AgentSession> GetOrCreateSessionAsync(string? sessionId = null, CancellationToken ct = default)
     {
-        sessionId ??= Guid.NewGuid().ToString("N");
-        var session = _sessions.GetOrAdd(sessionId, id => new AgentSession { SessionId = id });
-        NormalizeLegacyPending(session);
-        PersistToDisk();
-        return session;
+        var userId = _currentUser.GetUserId();
+
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            var session = new AgentSession { UserId = userId };
+            NormalizeLegacyPending(session);
+            return session;
+        }
+
+        var entity = await _db.AgentSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+
+        if (entity == null)
+        {
+            var session = new AgentSession { SessionId = sessionId, UserId = userId };
+            NormalizeLegacyPending(session);
+            return session;
+        }
+
+        var result = DeserializeSession(entity);
+        NormalizeLegacyPending(result);
+        return result;
     }
 
-    public AgentSession? GetSession(string sessionId) =>
-        _sessions.TryGetValue(sessionId, out var session) ? session : null;
+    public async Task<AgentSession?> GetSessionAsync(string sessionId, CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetUserId();
+        var entity = await _db.AgentSessions
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+        return entity == null ? null : DeserializeSession(entity);
+    }
 
-    public IReadOnlyList<AgentSession> ListSessions() =>
-        _sessions.Values
-            .Where(session => !session.IsArchived)
-            .OrderByDescending(session => session.UpdatedAt)
-            .ToList();
+    public async Task<IReadOnlyList<AgentSession>> ListSessionsAsync(CancellationToken ct = default)
+    {
+        var userId = _currentUser.GetUserId();
+        var entities = await _db.AgentSessions
+            .Where(s => s.UserId == userId && !s.IsArchived)
+            .OrderByDescending(s => s.UpdatedAt)
+            .ToListAsync(ct);
+        return entities.Select(DeserializeSession).ToList();
+    }
 
-    public void SaveSession(AgentSession session)
+    public async Task SaveSessionAsync(AgentSession session, CancellationToken ct = default)
     {
         NormalizeLegacyPending(session);
-        _sessions[session.SessionId] = session;
-        PersistToDisk();
+
+        var entity = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == session.SessionId, ct);
+
+        if (entity == null)
+        {
+            entity = new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+            {
+                Id = session.SessionId,
+                UserId = session.UserId,
+                Title = session.Title,
+                ProjectId = session.ActiveProjectId,
+                IsArchived = session.IsArchived,
+                SessionData = SerializeSessionData(session),
+                CreatedAt = session.CreatedAt,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _db.AgentSessions.Add(entity);
+        }
+        else
+        {
+            if (entity.UserId != session.UserId)
+                throw new UnauthorizedAccessException($"Session {session.SessionId} belongs to another user");
+
+            entity.Title = session.Title;
+            entity.ProjectId = session.ActiveProjectId;
+            entity.IsArchived = session.IsArchived;
+            entity.SessionData = SerializeSessionData(session);
+            entity.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync(ct);
     }
 
     public Channel<AgentSseEvent> GetOrCreateChannel(string sessionId) =>
@@ -108,60 +162,87 @@ public sealed class AgentSessionManager
     public ChannelReader<AgentSseEvent> GetEventReader(string sessionId) =>
         GetOrCreateChannel(sessionId).Reader;
 
-    public void RemoveSession(string sessionId)
+    public async Task RemoveSessionAsync(string sessionId, CancellationToken ct = default)
     {
-        _sessions.TryRemove(sessionId, out _);
+        var userId = _currentUser.GetUserId();
+        var entity = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
+        if (entity != null)
+        {
+            _db.AgentSessions.Remove(entity);
+            await _db.SaveChangesAsync(ct);
+        }
         if (_channels.TryRemove(sessionId, out var channel))
             channel.Writer.TryComplete();
-        PersistToDisk();
     }
 
-    private void LoadFromDisk()
-    {
-        lock (_fileLock)
+    private static string SerializeSessionData(AgentSession session) =>
+        JsonSerializer.Serialize(new
         {
-            if (!File.Exists(_sessionsPath))
-                return;
-
-            try
+            phase = session.Phase,
+            activeRunId = session.ActiveRunId,
+            runHistory = session.RunHistory,
+            chatHistory = session.ChatHistory,
+            workingMemory = session.WorkingMemory,
+            toolSearchCache = new
             {
-                var json = File.ReadAllText(_sessionsPath);
-                var sessions = JsonSerializer.Deserialize<List<AgentSession>>(json, JsonOptions()) ?? new();
-                foreach (var session in sessions.Where(s => !string.IsNullOrWhiteSpace(s.SessionId)))
-                {
-                    NormalizeLegacyPending(session);
-                    _sessions[session.SessionId] = session;
-                }
+                discoveredPhase = session.DiscoveredPhase,
+                discoveredTools = session.DiscoveredTools,
+                lastToolSearchAt = session.LastToolSearchAt
             }
-            catch
-            {
-                // Corrupt session history should not prevent the app from starting.
-            }
-        }
-    }
+        }, JsonOptions());
 
-    private void PersistToDisk()
+    private static AgentSession DeserializeSession(TM.Web.NovelAgentWeb.Data.Entities.AgentSession entity)
     {
-        lock (_fileLock)
+        var data = string.IsNullOrWhiteSpace(entity.SessionData)
+            ? null
+            : JsonSerializer.Deserialize<SessionData>(entity.SessionData, JsonOptions());
+
+        return new AgentSession
         {
-            var sessions = _sessions.Values
-                .OrderByDescending(session => session.UpdatedAt)
-                .Take(100)
-                .ToList();
-            var json = JsonSerializer.Serialize(sessions, JsonOptions());
-            File.WriteAllText(_sessionsPath, json);
-        }
+            SessionId = entity.Id,
+            UserId = entity.UserId,
+            Title = entity.Title,
+            Phase = data?.Phase ?? "idle",
+            ActiveProjectId = entity.ProjectId ?? string.Empty,
+            ActiveRunId = data?.ActiveRunId,
+            IsArchived = entity.IsArchived,
+            RunHistory = data?.RunHistory ?? new(),
+            ChatHistory = data?.ChatHistory ?? new(),
+            WorkingMemory = data?.WorkingMemory ?? new(),
+            DiscoveredPhase = data?.ToolSearchCache?.DiscoveredPhase,
+            DiscoveredTools = data?.ToolSearchCache?.DiscoveredTools ?? new(),
+            LastToolSearchAt = data?.ToolSearchCache?.LastToolSearchAt,
+            CreatedAt = entity.CreatedAt,
+            UpdatedAt = entity.UpdatedAt
+        };
     }
 
     private static JsonSerializerOptions JsonOptions() => new()
     {
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
+        WriteIndented = false,
     };
 
     private static void NormalizeLegacyPending(AgentSession session)
     {
         session.NormalizeLegacyState();
+    }
+
+    private class SessionData
+    {
+        public string Phase { get; set; } = "idle";
+        public string? ActiveRunId { get; set; }
+        public List<string> RunHistory { get; set; } = new();
+        public List<AgentConversationTurn> ChatHistory { get; set; } = new();
+        public AgentWorkingMemory WorkingMemory { get; set; } = new();
+        public ToolSearchCache? ToolSearchCache { get; set; }
+    }
+
+    private class ToolSearchCache
+    {
+        public string? DiscoveredPhase { get; set; }
+        public List<ToolSchema> DiscoveredTools { get; set; } = new();
+        public DateTime? LastToolSearchAt { get; set; }
     }
 }

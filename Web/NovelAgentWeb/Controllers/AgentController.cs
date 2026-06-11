@@ -136,7 +136,7 @@ public class AgentController : ControllerBase
         [FromBody] RollbackStepRequest request,
         CancellationToken ct)
     {
-        var session = _sessionManager.GetSession(sessionId);
+        var session = await _sessionManager.GetSessionAsync(sessionId, ct);
         if (session == null) return NotFound("Session not found.");
 
         var userId = _currentUserService.GetUserId();

@@ -375,8 +375,15 @@ namespace TM.Web.NovelAgentWeb.Support
         public NovelAgentWorkspace(IWebHostEnvironment environment, IConfiguration configuration, UserSettingsManager settingsManager)
         {
             ProjectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
-            StorageRoot = configuration["NovelAgent:StorageRoot"]
+            var baseStorageRoot = configuration["NovelAgent:StorageRoot"]
                 ?? Path.Combine(environment.ContentRootPath, "App_Data");
+
+            // User-isolated storage paths
+            StorageRoot = !string.IsNullOrWhiteSpace(UserId) && UserId != "default"
+                ? Path.Combine(baseStorageRoot, "Users", UserId)
+                : Path.Combine(baseStorageRoot, "System");
+
+            Directory.CreateDirectory(StorageRoot);
 
             // Do NOT call StoragePathHelper.Configure() here — global state mutation.
             // Context is set per-request via SetRequestContext().

@@ -56,7 +56,8 @@ public sealed class AgentSchedulerHostedService : BackgroundService
 
     internal async Task TickAsync(CancellationToken ct)
     {
-        foreach (var session in _sessionManager.ListSessions().Where(s => !s.IsArchived))
+        var sessions = await _sessionManager.ListSessionsAsync(ct);
+        foreach (var session in sessions.Where(s => !s.IsArchived))
         {
             var project = await ResolveProjectAsync(session, ct).ConfigureAwait(false);
             StoryBibleDocument bible;
@@ -73,7 +74,7 @@ public sealed class AgentSchedulerHostedService : BackgroundService
             _taskTreeService.Sync(session, project, bible);
             NormalizeScheduler(session);
             await TryAdvanceOneSafeTaskAsync(session, project, bible, ct).ConfigureAwait(false);
-            _sessionManager.SaveSession(session);
+            await _sessionManager.SaveSessionAsync(session, ct);
         }
     }
 

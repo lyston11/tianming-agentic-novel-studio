@@ -3,7 +3,7 @@
     "sessionId": "798ecbe25d784548947bb6076859f05a",
     "title": "\u4F60\u597D",
     "phase": "conversation",
-    "activeProjectId": "",
+    "activeProjectId": "2cfd632c82ff4383a691c4a32cd68a35",
     "activeRunId": null,
     "isArchived": false,
     "runHistory": [],
@@ -1041,7 +1041,7 @@
           "source": "conversation_kernel"
         },
         "interactionState": {
-          "turnId": "e822d1045df94042a968145a047aa521",
+          "turnId": "cc3ac3b725af4a03bc27a3e0ec080f77",
           "intent": {
             "type": 0,
             "label": "free_chat",
@@ -1058,7 +1058,7 @@
             "source": "conversation_kernel"
           },
           "dialogueAct": 0,
-          "targetArtifact": "",
+          "targetArtifact": "0ca2eef89ad84154a8ad010def277188",
           "referencedTask": "chapter-001:plan",
           "confirmationDecision": "",
           "creativeBrief": "",
@@ -1067,9 +1067,9 @@
           "selectedOption": "",
           "selectedOptionIndex": null,
           "selectionKind": "",
-          "createdAt": "2026-06-10T07:34:53.566627Z"
+          "createdAt": "2026-06-11T05:01:36.602373Z"
         },
-        "activeTurnId": "e822d1045df94042a968145a047aa521",
+        "activeTurnId": "cc3ac3b725af4a03bc27a3e0ec080f77",
         "activeToolTransactionId": "",
         "artifactCursor": "",
         "activeArtifactCursor": "",
@@ -1107,7 +1107,7 @@
         ],
         "blockedReason": "\u672A\u627E\u5230\u6307\u5B9A Agent Run\u3002",
         "lastVerifiedState": "\u672A\u547D\u540D\u65B0\u4E66 / chapter-001 / SelectChapterCandidate / queued",
-        "updatedAt": "2026-06-10T07:34:53.695323Z"
+        "updatedAt": "2026-06-11T05:01:36.602869Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -1147,7 +1147,10 @@
       }
     },
     "createdAt": "2026-06-10T04:54:10.004235Z",
-    "updatedAt": "2026-06-11T02:25:32.39773Z"
+    "updatedAt": "2026-06-11T05:01:36.587772Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "f7bdd1332c974c47a9f2c92402fed231",
@@ -1718,7 +1721,10 @@
       }
     },
     "createdAt": "2026-06-10T14:00:57.325827Z",
-    "updatedAt": "2026-06-10T14:00:57.368038Z"
+    "updatedAt": "2026-06-10T14:00:57.368038Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "e30015594b71444796915361054650c4",
@@ -2455,7 +2461,10 @@
       }
     },
     "createdAt": "2026-06-10T13:37:06.981158Z",
-    "updatedAt": "2026-06-10T13:37:28.371924Z"
+    "updatedAt": "2026-06-10T13:37:28.371924Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "346a5675c0d34e048860752c23350638",
@@ -3056,7 +3065,10 @@
       }
     },
     "createdAt": "2026-06-10T13:34:07.355302Z",
-    "updatedAt": "2026-06-10T13:34:44.146003Z"
+    "updatedAt": "2026-06-10T13:34:44.146003Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "363d63ce0a6f43f9878b5e20e83f9916",
@@ -3647,7 +3659,10 @@
       }
     },
     "createdAt": "2026-06-10T13:30:22.262373Z",
-    "updatedAt": "2026-06-10T13:30:22.267838Z"
+    "updatedAt": "2026-06-10T13:30:22.267838Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "81230b89aa1b476999cc6506f4e15eee",
@@ -4238,7 +4253,10 @@
       }
     },
     "createdAt": "2026-06-10T13:28:45.77801Z",
-    "updatedAt": "2026-06-10T13:28:45.853264Z"
+    "updatedAt": "2026-06-10T13:28:45.853264Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "2c4ff58ea57c42078abe7fd68c5add1a",
@@ -4856,7 +4874,10 @@
       }
     },
     "createdAt": "2026-06-10T13:26:41.319196Z",
-    "updatedAt": "2026-06-10T13:26:41.738159Z"
+    "updatedAt": "2026-06-10T13:26:41.738159Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "fb5cc38380314c8dbab40a22f66fd9f3",
@@ -5447,7 +5468,10 @@
       }
     },
     "createdAt": "2026-06-10T11:52:39.591903Z",
-    "updatedAt": "2026-06-10T11:52:39.598944Z"
+    "updatedAt": "2026-06-10T11:52:39.598944Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "182bb561cecf4a1fb81cfbbe20b6f26f",
@@ -6048,7 +6072,10 @@
       }
     },
     "createdAt": "2026-06-10T11:34:33.218835Z",
-    "updatedAt": "2026-06-10T11:35:18.98728Z"
+    "updatedAt": "2026-06-10T11:35:18.98728Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "48eaec0ade374371869f1c7e5823b000",
@@ -6178,7 +6205,10 @@
       }
     },
     "createdAt": "2026-06-10T11:14:39.732512Z",
-    "updatedAt": "2026-06-10T11:14:39.732512Z"
+    "updatedAt": "2026-06-10T11:14:39.732512Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "65147dddf2184b1d9778c00a40febf72",
@@ -6769,7 +6799,10 @@
       }
     },
     "createdAt": "2026-06-10T11:14:15.607075Z",
-    "updatedAt": "2026-06-10T11:14:15.657765Z"
+    "updatedAt": "2026-06-10T11:14:15.657765Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "b7ed1211cc3c46cd89415d018f8dd8e2",
@@ -6899,7 +6932,10 @@
       }
     },
     "createdAt": "2026-06-10T11:08:28.650233Z",
-    "updatedAt": "2026-06-10T11:08:28.650233Z"
+    "updatedAt": "2026-06-10T11:08:28.650233Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "test-migrate-001",
@@ -7029,7 +7065,10 @@
       }
     },
     "createdAt": "2026-06-10T11:03:35.218557Z",
-    "updatedAt": "2026-06-10T11:07:18.496045Z"
+    "updatedAt": "2026-06-10T11:07:18.496045Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "test-audit-002",
@@ -7159,7 +7198,10 @@
       }
     },
     "createdAt": "2026-06-10T10:31:21.469949Z",
-    "updatedAt": "2026-06-10T10:31:21.469949Z"
+    "updatedAt": "2026-06-10T10:31:21.469949Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "test-audit-001",
@@ -7289,7 +7331,10 @@
       }
     },
     "createdAt": "2026-06-10T10:31:05.805003Z",
-    "updatedAt": "2026-06-10T10:31:05.835415Z"
+    "updatedAt": "2026-06-10T10:31:05.835415Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "test-session-1",
@@ -8330,7 +8375,10 @@
       }
     },
     "createdAt": "2026-06-10T04:55:56.028844Z",
-    "updatedAt": "2026-06-10T04:55:56.029966Z"
+    "updatedAt": "2026-06-10T04:55:56.029966Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "15c0274f9b954daba4056c3fd5b99ed6",
@@ -9435,7 +9483,10 @@
       }
     },
     "createdAt": "2026-06-08T06:00:09.478955Z",
-    "updatedAt": "2026-06-08T06:01:50.551818Z"
+    "updatedAt": "2026-06-08T06:01:50.551818Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "46284c7221aa4cb99d9a18178a3a491d",
@@ -10133,7 +10184,10 @@
       }
     },
     "createdAt": "2026-06-07T06:55:14.630834Z",
-    "updatedAt": "2026-06-07T15:26:28.382223Z"
+    "updatedAt": "2026-06-07T15:26:28.382223Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "102c4bd08eec4af5b1be43c85e85df5b",
@@ -10391,7 +10445,10 @@
       }
     },
     "createdAt": "2026-06-07T05:42:36.896051Z",
-    "updatedAt": "2026-06-07T07:08:25.432367Z"
+    "updatedAt": "2026-06-07T07:08:25.432367Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "810ff9089d4944289ef2d426ae9db767",
@@ -10609,7 +10666,10 @@
       }
     },
     "createdAt": "2026-06-07T06:28:22.766216Z",
-    "updatedAt": "2026-06-07T07:08:24.275123Z"
+    "updatedAt": "2026-06-07T07:08:24.275123Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "a9e2e3138d1b41dcb4e7885b9b11ec56",
@@ -12067,7 +12127,10 @@
       }
     },
     "createdAt": "2026-06-06T10:36:35.503704Z",
-    "updatedAt": "2026-06-07T05:18:53.640631Z"
+    "updatedAt": "2026-06-07T05:18:53.640631Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "c99334711c324d8287572e2e08461e75",
@@ -13698,7 +13761,10 @@
       }
     },
     "createdAt": "2026-06-05T12:15:33.819238Z",
-    "updatedAt": "2026-06-06T10:35:45.580876Z"
+    "updatedAt": "2026-06-06T10:35:45.580876Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "4208db6fa06342939e7c77c83f0e6368",
@@ -13838,7 +13904,10 @@
       }
     },
     "createdAt": "2026-06-05T13:23:57.258596Z",
-    "updatedAt": "2026-06-05T13:23:57.258596Z"
+    "updatedAt": "2026-06-05T13:23:57.258596Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "f4975233e959464795a848d2ab277f42",
@@ -14003,7 +14072,10 @@
       }
     },
     "createdAt": "2026-06-05T13:21:30.621051Z",
-    "updatedAt": "2026-06-05T13:23:05.704445Z"
+    "updatedAt": "2026-06-05T13:23:05.704445Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "d62331db3ebc47d4912ce49a0a79fc2a",
@@ -14170,7 +14242,10 @@
       }
     },
     "createdAt": "2026-06-05T13:21:12.331676Z",
-    "updatedAt": "2026-06-05T13:23:04.588483Z"
+    "updatedAt": "2026-06-05T13:23:04.588483Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "cdc8bed76f744a939483c38312e9a0e3",
@@ -14300,7 +14375,10 @@
       }
     },
     "createdAt": "2026-06-05T12:13:18.789839Z",
-    "updatedAt": "2026-06-05T12:49:52.788976Z"
+    "updatedAt": "2026-06-05T12:49:52.788976Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   },
   {
     "sessionId": "6d502b832f56422d80fefbf1c2d5d2e8",
@@ -14430,6 +14508,9 @@
       }
     },
     "createdAt": "2026-06-05T12:14:11.100737Z",
-    "updatedAt": "2026-06-05T12:49:51.369604Z"
+    "updatedAt": "2026-06-05T12:49:51.369604Z",
+    "discoveredPhase": null,
+    "discoveredTools": [],
+    "lastToolSearchAt": null
   }
 ]

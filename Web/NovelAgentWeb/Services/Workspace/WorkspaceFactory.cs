@@ -281,6 +281,7 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
             .Where(p => p.Id == projectId && p.UserId == userId)
             .FirstOrDefaultAsync(cancellationToken);
 
+        // Security check: if project exists but belongs to another user, deny access
         if (project == null && await db.NovelProjects.AnyAsync(p => p.Id == projectId, cancellationToken))
         {
             throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
@@ -294,6 +295,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         // Create Workspace instance
         var workspace = new NovelAgentWorkspace(env, config, settingsManager) { UserId = userId };
 
+        // If project doesn't exist and it's not a temp ID, try legacy hydration
+        // If still not found, treat as temp project instead of throwing
         if (project == null && !IsTemporaryProjectId(projectId))
         {
             project = await TryHydrateLegacyProjectAsync(
@@ -303,10 +306,7 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
                 projectId,
                 cancellationToken);
 
-            if (project == null)
-            {
-                throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
-            }
+            // Don't throw if project not found - workspace can work without project for casual chat
         }
 
         // Track load time

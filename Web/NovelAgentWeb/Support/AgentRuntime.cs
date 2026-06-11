@@ -81,7 +81,7 @@ public sealed class AgentRuntime
     {
         // ── Acquire user-specific workspace ──
         var userId = _currentUserService.GetUserId();
-        var session = _sessionManager.GetOrCreateSession(sessionId);
+        var session = await _sessionManager.GetOrCreateSessionAsync(sessionId, ct);
 
         // For first turn, use temp projectId; will be replaced after project resolution
         var projectId = session.ActiveProjectId ?? "temp-" + userId;
@@ -150,7 +150,7 @@ public sealed class AgentRuntime
         if (pendingAction != null)
         {
             if (pendingAction.Type == AgentActionType.FinalReply)
-                return FinishTextResponse(session, userMessage, pendingAction, null, trace, null);
+                return await FinishTextResponse(session, userMessage, pendingAction, null, trace, null, ct);
             // Pending confirmation resolved -> execute the tool
             return await ExecuteSingleActionAsync(session, userMessage, pendingAction, project, settings, trace, ct).ConfigureAwait(false);
         }
@@ -197,7 +197,7 @@ public sealed class AgentRuntime
             // First respect a valid user-facing text reply. IsNoTool means planner_failed_or_no_action,
             // not "this normal chat response did not need a tool".
             if (ShouldReturnUserFacingReply(action))
-                return FinishTextResponse(session, userMessage, action, lastContext, trace, lastReflection);
+                return await FinishTextResponse(session, userMessage, action, lastContext, trace, lastReflection, ct);
 
             // no_action sentinel — planner/provider failed to produce a usable action.
             if (action.IsNoTool || action.ToolCall == null)
@@ -211,14 +211,14 @@ public sealed class AgentRuntime
                 else
                 {
                     // Ask user what to do next
-                    return FinishTextResponse(session, userMessage, new AgentAction
+                    return await FinishTextResponse(session, userMessage, new AgentAction
                     {
                         Type = AgentActionType.FinalReply,
                         Intent = "no_tool_fallback",
                         Reply = BuildStatusSummary(session, bible),
                         Suggestions = new[] { "继续下一步", "查看当前状态" },
                         Source = "runtime_no_tool",
-                    }, lastContext, trace, lastReflection);
+                    }, lastContext, trace, lastReflection, ct);
                 }
             }
 
@@ -237,7 +237,7 @@ public sealed class AgentRuntime
             if (action.Type == AgentActionType.ConfirmRequest)
             {
                 if (action.ToolCall == null)
-                    return FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection);
+                    return await FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection, ct);
                 action.Type = AgentActionType.ToolCall;
                 action.RequiresConfirmation = false;
                 action.Source = FirstNonEmpty(action.Source, "autopilot_confirm_request");
@@ -245,7 +245,7 @@ public sealed class AgentRuntime
 
             // ── Tool execution pipeline ──
             if (action.ToolCall == null)
-                return FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection);
+                return await FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection, ct);
 
             NormalizeStoryFoundationCandidateSelection(action, lastContext, bible, session);
 
@@ -279,7 +279,7 @@ public sealed class AgentRuntime
                 action = policy.ReplacementAction;
                 lastAction = action;
                 if (action.ToolCall == null)
-                    return FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection);
+                    return await FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection, ct);
 
                 NormalizeStoryFoundationCandidateSelection(action, lastContext, bible, session);
                 confirmed = IsPendingConfirmationAction(action, session);
@@ -293,7 +293,7 @@ public sealed class AgentRuntime
                 action = policy.ReplacementAction;
                 lastAction = action;
                 if (action.ToolCall == null)
-                    return FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection);
+                    return await FinishTextResponse(session, userMessage, BuildFallbackReplyAction(action), lastContext, trace, lastReflection, ct);
             }
             else if (!policy.AllowsExecution)
             {
@@ -400,7 +400,7 @@ public sealed class AgentRuntime
                     ApplyReflection(session, failReflection);
                     await SyncMissionPlanAsync(session, project, result, action, failReflection, ct).ConfigureAwait(false);
                     trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "reflect", Action = action, Observation = failureObservation, Reflection = failReflection });
-                    return FinishReflectionResponse(session, userMessage, action, failReflectContext, trace, failReflection, result);
+                    return await FinishReflectionResponse(session, userMessage, action, failReflectContext, trace, failReflection, result, ct);
                 }
             }
 
@@ -431,7 +431,7 @@ public sealed class AgentRuntime
 
             // Loop termination checks
             if (!result.Success || reflection.RequiresUserInput || reflection.GoalSatisfied || !reflection.ShouldContinue)
-                return FinishReflectionResponse(session, userMessage, action, lastContext, trace, reflection, result);
+                return await FinishReflectionResponse(session, userMessage, action, lastContext, trace, reflection, result, ct);
 
             // Safety escalation at turn 7
             if (step >= 7)
@@ -444,21 +444,21 @@ public sealed class AgentRuntime
                     Suggestions = result.Suggestions ?? new[] { "继续推进", "查看当前状态" },
                     Source = "runtime_safety",
                 };
-                return FinishTextResponse(session, userMessage, safetyAction, lastContext, trace, reflection);
+                return await FinishTextResponse(session, userMessage, safetyAction, lastContext, trace, reflection, ct);
             }
 
             project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
         }
 
         // Max steps reached
-        return FinishTextResponse(session, userMessage, new AgentAction
+        return await FinishTextResponse(session, userMessage, new AgentAction
         {
             Type = AgentActionType.FinalReply,
             Intent = "max_steps",
             Reply = "已达到本轮自动执行步数上限。你可以告诉我下一步要推进什么。",
             Suggestions = lastResult?.Suggestions ?? new[] { "查看当前状态", "继续下一步" },
             Source = "runtime_guard",
-        }, lastContext, trace, lastReflection);
+        }, lastContext, trace, lastReflection, ct);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -663,7 +663,7 @@ public sealed class AgentRuntime
         var reflection = await _reflectionEngine.ReflectAsync(reflectContext, observation, ct).ConfigureAwait(false);
         ApplyReflection(session, reflection);
         await SyncMissionPlanAsync(session, project, result, action, reflection, ct).ConfigureAwait(false);
-        return FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result);
+        return await FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result, ct);
     }
 
     private async Task<NovelProjectInfo> ResolveSessionProjectAsync(AgentSession session, CancellationToken ct)
@@ -714,27 +714,28 @@ public sealed class AgentRuntime
         }
     }
 
-    private AgentChatResponse FinishTextResponse(
+    private async Task<AgentChatResponse> FinishTextResponse(
         AgentSession session, string userMessage, AgentAction action,
-        AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace, AgentReflection? reflection)
+        AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace, AgentReflection? reflection,
+        CancellationToken ct)
     {
         var reply = FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。");
         AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
         session.Phase = action.Type == AgentActionType.Clarify ? "awaiting_user_foundation" : session.Phase;
-        _sessionManager.SaveSession(session);
+        await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, action.Suggestions, action, context, trace);
     }
 
-    private AgentChatResponse FinishReflectionResponse(
+    private async Task<AgentChatResponse> FinishReflectionResponse(
         AgentSession session, string userMessage, AgentAction action,
         AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace,
-        AgentReflection reflection, AgentToolExecutionResult result)
+        AgentReflection reflection, AgentToolExecutionResult result, CancellationToken ct)
     {
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
         AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
-        _sessionManager.SaveSession(session);
+        await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, result.Suggestions, action, context, trace);
     }
 
@@ -758,12 +759,12 @@ public sealed class AgentRuntime
         ApplyReflection(session, reflection);
         await SyncMissionPlanAsync(session, project, result, action, reflection, ct).ConfigureAwait(false);
         trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "reflect", Action = action, Observation = observation, Reflection = reflection });
-        return FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result);
+        return await FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result, ct);
     }
 
-    private AgentChatResponse FinishConfirmationResponse(
+    private async Task<AgentChatResponse> FinishConfirmationResponse(
         AgentSession session, string userMessage, AgentAction action,
-        AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace, string? message = null)
+        AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace, string? message, CancellationToken ct)
     {
         var confirmationMessage = BuildUserVisibleConfirmationMessage(action, context, message);
         session.WorkingMemory.PendingToolCall = null;
@@ -776,7 +777,7 @@ public sealed class AgentRuntime
         var reply = confirmationMessage;
         AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
-        _sessionManager.SaveSession(session);
+        await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, new[] { "继续执行", "调整方案" }, action, context, trace);
     }
 

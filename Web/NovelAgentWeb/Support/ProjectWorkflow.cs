@@ -25,7 +25,7 @@ public static class ProjectWorkflow
             () => workspace.Orchestrator.GetStoryBibleAsync(ct),
             ct).ConfigureAwait(false);
 
-        var sessions = sessionManager.ListSessions()
+        var sessions = (await sessionManager.ListSessionsAsync(ct).ConfigureAwait(false))
             .Where(session => IsProjectSession(session, project.Id))
             .OrderByDescending(session => session.UpdatedAt)
             .ToList();
