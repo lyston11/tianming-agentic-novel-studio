@@ -32,7 +32,6 @@ public sealed class AgentRuntime
     private readonly AgentToolGuardrails _guardrails;
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
-    private readonly PhaseInference _phaseInference;
     private readonly PhaseContextBuilder _contextBuilder;
     private AgentAction? lastAction;
 
@@ -52,7 +51,6 @@ public sealed class AgentRuntime
         MissionBlackboardRecoveryService blackboardRecovery,
         AgentToolGuardrails guardrails,
         ConversationKernel conversationKernel,
-        PhaseInference phaseInference,
         PhaseContextBuilder contextBuilder)
     {
         _workspaceFactory = workspaceFactory;
@@ -71,7 +69,6 @@ public sealed class AgentRuntime
         _guardrails = guardrails;
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
-        _phaseInference = phaseInference;
         _contextBuilder = contextBuilder;
     }
 
@@ -131,10 +128,6 @@ public sealed class AgentRuntime
             var userId = _currentUserService.GetUserId();
             session.ActiveProjectId = "temp-" + userId;
         }
-
-        // ── Phase inference: determine conversation phase and filter tools ──
-        var phase = _phaseInference.InferPhase(userMessage, session);
-        session.Phase = phase.ToString().ToLowerInvariant();
 
         var project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
