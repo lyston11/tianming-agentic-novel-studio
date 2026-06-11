@@ -19,6 +19,7 @@ import type {
   WorkflowChapterArtifactSummary,
 } from '../api/types';
 import Topbar from '../components/layout/Topbar';
+import { useProjectStore } from '../stores/useProjectStore';
 import '../styles/workflow.css';
 
 type DraftChapter = NovelChapterView & {
@@ -274,13 +275,14 @@ function formatWorkbenchPrompt(args: {
 
 export default function WorkflowPage() {
   const queryClient = useQueryClient();
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
   const { data: agentSessions } = useQuery({
     queryKey: ['agentSessions'],
     queryFn: listAgentSessions,
     refetchInterval: 8000,
   });
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedWorkbenchAction, setSelectedWorkbenchAction] = useState(workbenchActions[0].key);
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
@@ -311,18 +313,17 @@ export default function WorkflowPage() {
       ?? missionOnlyCards[0]?.projectId
       ?? null;
   }, [activeBook?.projectId, agentSessions, books, missionOnlyCards]);
-  const effectiveProjectId = selectedProjectId ?? fallbackProjectId;
 
   // TODO: Restore workflow query when backend endpoints are available
   // const { data: workflow, isLoading: workflowLoading } = useQuery({
-  //   queryKey: ['projectWorkflow', effectiveProjectId],
-  //   queryFn: () => getProjectWorkflow(effectiveProjectId!),
-  //   enabled: !!effectiveProjectId,
+  //   queryKey: ['projectWorkflow', currentProjectId],
+  //   queryFn: () => getProjectWorkflow(currentProjectId!),
+  //   enabled: !!currentProjectId,
   //   refetchInterval: 5000,
   // });
   const workflowLoading = false;
 
-  const selectedBook = books.find((book) => book.projectId === effectiveProjectId) ?? activeBook;
+  const selectedBook = books.find((book) => book.projectId === currentProjectId) ?? activeBook;
   const volumes = useMemo(
     () => flattenVolumes([], [], []),
     [],
@@ -383,15 +384,15 @@ export default function WorkflowPage() {
   const diagnosticTaskCount = 0;
 
   useEffect(() => {
-    if (!selectedProjectId && fallbackProjectId) setSelectedProjectId(fallbackProjectId);
-  }, [fallbackProjectId, selectedProjectId]);
+    if (!currentProjectId && fallbackProjectId) setCurrentProject(fallbackProjectId);
+  }, [fallbackProjectId, currentProjectId, setCurrentProject]);
 
   useEffect(() => {
     setSelectedChapterId(null);
-  }, [effectiveProjectId]);
+  }, [currentProjectId]);
 
   const selectProject = (projectId: string) => {
-    setSelectedProjectId(projectId);
+    setCurrentProject(projectId);
     setSelectedChapterId(null);
   };
 
@@ -415,7 +416,7 @@ export default function WorkflowPage() {
   const removeProjectMutation = useMutation({
     mutationFn: (projectId: string) => deleteNovelProject(projectId),
     onSuccess: async () => {
-      setSelectedProjectId(null);
+      setCurrentProject(null);
       setSelectedChapterId(null);
       setWorkbenchNotice('空项目已移除。');
       await refreshAsync();
@@ -423,10 +424,10 @@ export default function WorkflowPage() {
   });
 
   const submitWorkbenchAction = async () => {
-    if (!effectiveProjectId || !activeWorkflowSessionId) return;
+    if (!currentProjectId || !activeWorkflowSessionId) return;
     const message = formatWorkbenchPrompt({
       action: selectedAction,
-      projectId: effectiveProjectId,
+      projectId: currentProjectId,
       sessionId: activeWorkflowSessionId,
       chapter: selectedChapter,
       runId: selectedRunId,
@@ -444,7 +445,7 @@ export default function WorkflowPage() {
   };
 
   const removeEmptyProject = async () => {
-    if (!effectiveProjectId || !selectedBook) return;
+    if (!currentProjectId || !selectedBook) return;
     if (selectedBook.isActive) {
       window.alert('当前项目是 active，删除会切换工作区。请先切换 active project，或后续使用安全删除接口。');
       return;
@@ -452,7 +453,7 @@ export default function WorkflowPage() {
     if (!canRemoveEmptyProject) return;
     const ok = window.confirm(`移除空项目「${selectedBook.title}」？该操作只用于清理没有章节和草稿的项目。`);
     if (!ok) return;
-    await removeProjectMutation.mutateAsync(effectiveProjectId);
+    await removeProjectMutation.mutateAsync(currentProjectId);
   };
 
   return (
@@ -496,7 +497,7 @@ export default function WorkflowPage() {
               {books.map((book) => (
                 <button
                   key={book.projectId}
-                  className={`ops-project-card ${book.projectId === effectiveProjectId ? 'selected' : ''} ${book.isActive ? 'active' : ''}`}
+                  className={`ops-project-card ${book.projectId === currentProjectId ? 'selected' : ''} ${book.isActive ? 'active' : ''}`}
                   onClick={() => selectProject(book.projectId)}
                 >
                   <span>{book.status || 'Drafting'} · {projectShortId(book.projectId)}</span>
@@ -509,7 +510,7 @@ export default function WorkflowPage() {
               {missionOnlyCards.map(({ session, plan, projectId }) => (
                 <button
                   key={session.sessionId}
-                  className={`ops-project-card mission ${projectId === effectiveProjectId ? 'selected' : ''}`}
+                  className={`ops-project-card mission ${projectId === currentProjectId ? 'selected' : ''}`}
                   onClick={() => selectProject(projectId)}
                 >
                   <span>{missionStageLabel(plan)}</span>
