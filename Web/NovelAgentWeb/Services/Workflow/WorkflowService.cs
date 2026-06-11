@@ -183,11 +183,7 @@ public class WorkflowService : IWorkflowService
 
         if (projects.Count == 0)
         {
-            return new WorkspaceResponse
-            {
-                Projects = new List<WorkspaceProjectView>(),
-                TotalCount = 0
-            };
+            return new WorkspaceResponse(new List<NovelBookView>(), 0);
         }
 
         var projectIds = projects.Select(p => p.Id).ToList();
@@ -219,30 +215,24 @@ public class WorkflowService : IWorkflowService
             var stats = chapterStats.GetValueOrDefault(p.Id);
             var constitution = constitutions.GetValueOrDefault(p.Id);
 
-            return new WorkspaceProjectView
-            {
-                ProjectId = p.Id,
-                Title = p.Title,
-                Genre = p.Genre ?? string.Empty,
-                SubGenre = p.SubGenre ?? string.Empty,
-                CoreHook = constitution?.CoreHook ?? string.Empty,
-                ReaderPromise = constitution?.ReaderPromise ?? string.Empty,
-                Status = p.Status,
-                IsActive = p.Status != "archived",
-                VolumeCount = volumeCounts.GetValueOrDefault(p.Id, 0),
-                GeneratedChapterCount = stats?.GeneratedCount ?? 0,
-                PlannedChapterCount = stats?.PlannedCount ?? 0,
-                NeedsRewriteCount = stats?.NeedsRewriteCount ?? 0,
-                UpdatedAt = p.UpdatedAt.ToString("o"),
-                SelectedChapter = null
-            };
+            return new NovelBookView(
+                p.Id,
+                p.Title,
+                p.Genre ?? string.Empty,
+                p.SubGenre ?? string.Empty,
+                constitution?.CoreHook ?? string.Empty,
+                constitution?.ReaderPromise ?? string.Empty,
+                p.Status,
+                p.Status != "archived",
+                volumeCounts.GetValueOrDefault(p.Id, 0),
+                stats?.GeneratedCount ?? 0,
+                stats?.PlannedCount ?? 0,
+                stats?.NeedsRewriteCount ?? 0,
+                p.UpdatedAt.ToString("o"),
+                null);
         }).ToList();
 
-        return new WorkspaceResponse
-        {
-            Projects = bookViews,
-            TotalCount = bookViews.Count
-        };
+        return new WorkspaceResponse(bookViews, bookViews.Count);
     }
 
     private static VolumeArcResponse MapToResponse(VolumeArc volumeArc)
