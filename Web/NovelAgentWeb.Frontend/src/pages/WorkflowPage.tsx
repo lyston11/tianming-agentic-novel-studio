@@ -287,9 +287,10 @@ export default function WorkflowPage() {
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
 
-  const { data: workspaceData } = useQuery({
+  const { data: workspaceData, isLoading: workspaceLoading } = useQuery({
     queryKey: ['workspace'],
-    queryFn: getWorkflowWorkspace
+    queryFn: getWorkflowWorkspace,
+    staleTime: 30_000,
   });
 
   const books = workspaceData?.projects ?? [];
@@ -494,6 +495,12 @@ export default function WorkflowPage() {
               <strong>{books.length + missionOnlyCards.length}</strong>
             </div>
             <div className="ops-project-list">
+              {workspaceLoading && (
+                <div className="workflow-loading">加载项目中...</div>
+              )}
+              {!workspaceLoading && books.length === 0 && missionOnlyCards.length === 0 && (
+                <div className="workflow-empty">暂无活跃项目</div>
+              )}
               {books.map((book) => (
                 <button
                   key={book.projectId}
