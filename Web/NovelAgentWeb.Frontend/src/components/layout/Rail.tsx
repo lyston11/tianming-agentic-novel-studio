@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { useProjectStore } from '../../stores/useProjectStore';
 import { projectService } from '../../services/projectService';
 import { useQuery } from '@tanstack/react-query';
 
@@ -12,11 +13,13 @@ const navItems = [
 ];
 
 export default function Rail() {
-  const { data: currentProject, isError } = useQuery({
-    queryKey: ['currentProject'],
-    queryFn: () => projectService.getCurrentProject(),
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const { data: projects } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => projectService.listProjects(),
     staleTime: 5 * 60 * 1000,
   });
+  const currentProject = projects?.find((p) => p.id === currentProjectId);
   const { user, clearAuth } = useAuthStore();
   const navigate = useNavigate();
 
@@ -53,7 +56,7 @@ export default function Rail() {
       </nav>
 
       <div className="rail-footer">
-        <div>{isError ? '加载项目失败' : (currentProject?.title ?? '选择项目...')}</div>
+        <div>{currentProject?.title ?? '选择项目...'}</div>
         {user && (
           <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
             {user.username}
