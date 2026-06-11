@@ -4,6 +4,7 @@ import { deleteNovelProject, updateNovelProject, getStoryBibleByProject, listVol
 import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
 import { projectService } from '../services/projectService';
 import { useAuthStore } from '../stores/authStore';
+import { useProjectStore } from '../stores/useProjectStore';
 import Topbar from '../components/layout/Topbar';
 import '../styles/library.css';
 
@@ -33,6 +34,8 @@ function coverMark(title: string) {
 export default function LibraryPage() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects'],
     queryFn: () => projectService.listProjects(),
@@ -45,22 +48,20 @@ export default function LibraryPage() {
   });
   const [mode, setMode] = useState<LibraryMode>('store');
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
   const projectsList = projects ?? [];
-  const effectiveProjectId = selectedProjectId ?? projectsList[0]?.id ?? null;
 
   const { data: storyBible, isLoading: bibleLoading } = useQuery({
-    queryKey: ['storyBible', effectiveProjectId],
-    queryFn: () => effectiveProjectId ? getStoryBibleByProject(effectiveProjectId) : Promise.resolve(null),
-    enabled: !!effectiveProjectId,
+    queryKey: ['storyBible', currentProjectId],
+    queryFn: () => currentProjectId ? getStoryBibleByProject(currentProjectId) : Promise.resolve(null),
+    enabled: !!currentProjectId,
     refetchInterval: 10000,
   });
 
   const { data: volumes, isLoading: volumesLoading } = useQuery({
-    queryKey: ['volumeArcs', effectiveProjectId],
-    queryFn: () => effectiveProjectId ? listVolumeArcs(effectiveProjectId) : Promise.resolve([]),
-    enabled: !!effectiveProjectId,
+    queryKey: ['volumeArcs', currentProjectId],
+    queryFn: () => currentProjectId ? listVolumeArcs(currentProjectId) : Promise.resolve([]),
+    enabled: !!currentProjectId,
     refetchInterval: 10000,
   });
 
@@ -93,7 +94,7 @@ export default function LibraryPage() {
 
   // Enhance the selected book with StoryBible and volume data
   const selectedBook = useMemo(() => {
-    const baseBook = books.find((book) => book.projectId === effectiveProjectId);
+    const baseBook = books.find((book) => book.projectId === currentProjectId);
     if (!baseBook) return null;
 
     const projectVolumes = volumes ?? [];
@@ -113,7 +114,7 @@ export default function LibraryPage() {
       generatedChapterCount,
       plannedChapterCount,
     };
-  }, [books, effectiveProjectId, storyBible, volumes]);
+  }, [books, currentProjectId, storyBible, volumes]);
 
   // Convert VolumeArcResponse[] to NovelVolumeView[] format
   const volumeViews: NovelVolumeView[] = useMemo(() => {
@@ -191,11 +192,11 @@ export default function LibraryPage() {
   const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
 
   useEffect(() => {
-    if (selectedProjectId && projectsList.some((project) => project.id === selectedProjectId)) return;
-    setSelectedProjectId(projectsList[0]?.id ?? null);
-    setSelectedChapterId(null);
+    if (!currentProjectId && projectsList.length > 0) {
+      setCurrentProject(projectsList[0].id);
+    }
     if (projectsList.length === 0 && mode !== 'store') setMode('store');
-  }, [projectsList, mode, selectedProjectId]);
+  }, [currentProjectId, projectsList, setCurrentProject, mode]);
 
   const deleteMutation = useMutation({
     mutationFn: (projectId: string) => deleteNovelProject(projectId),
@@ -205,7 +206,7 @@ export default function LibraryPage() {
         queryClient.invalidateQueries({ queryKey: ['storyBible'] }),
         queryClient.invalidateQueries({ queryKey: ['volumeArcs'] }),
       ]);
-      setSelectedProjectId(null);
+      setCurrentProject(null);
       setSelectedChapterId(null);
       setMode('store');
     },
@@ -220,13 +221,13 @@ export default function LibraryPage() {
   });
 
   const openBookDetail = (book: NovelBookView) => {
-    setSelectedProjectId(book.projectId);
+    setCurrentProject(book.projectId);
     setSelectedChapterId(null);
     setMode('detail');
   };
 
   const openBookReader = (book: NovelBookView) => {
-    setSelectedProjectId(book.projectId);
+    setCurrentProject(book.projectId);
     setSelectedChapterId(book.selectedChapter?.chapterId ?? null);
     setMode('reader');
   };
