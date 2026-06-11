@@ -15,7 +15,7 @@
 ### P1：Workflow 数据流断点
 - WorkflowPage.tsx (line 287) `books` 被写死为空数组
 - 注释说明完整 workflow API 迁移未完成
-- **状态：等待后端实现 workflow API，前端暂不处理**
+- **状态：需要实现完整的 Workflow API 和前端集成**
 
 ### P2：样式系统历史层叠
 - StudioShell.tsx 和 styles.css 是废弃的旧版布局（无任何引用）
@@ -247,6 +247,172 @@ a {
 
 ---
 
+### 2. Workflow 数据流接入（P1）
+
+**核心原则：分级加载 + 按需查询**
+
+#### API 设计
+
+**新增端点：GET /api/workflow/workspace**
+
+**响应格式：**
+```typescript
+{
+  projects: NovelBookView[],  // 精简版项目列表
+  totalCount: number
+}
+```
+
+**NovelBookView 字段（精简版）：**
+- 基础信息：`projectId`, `title`, `genre`, `subGenre`, `coreHook`, `status`, `isActive`
+- 统计信息：`volumeCount`, `generatedChapterCount`, `plannedChapterCount`, `needsRewriteCount`
+- 时间戳：`updatedAt`
+- **不包含**：`volumes[]`, `chapters[]`, `selectedChapter`（按需加载）
+
+**排序规则：**
+- 按项目最近活动时间降序（`Project.UpdatedAt` 或关联 `AgentSession` 的最新 `UpdatedAt`）
+- 仅返回活跃项目（`status != "archived"`）
+- 限制前 50 个（性能考虑）
+
+#### 后端实现
+
+**文件：`Web/NovelAgentWeb/Services/WorkflowService.cs`（新增）**
+
+**方法：`GetWorkspaceAsync()`**
+
+实现步骤：
+1. 查询用户所有活跃项目（`NovelProjects` 表，`Status != "archived"`，按 `UpdatedAt DESC`）
+2. 批量查询统计信息（使用 `GROUP BY` 避免 N+1）：
+   - `VolumeCount`：`COUNT(Volumes WHERE ProjectId IN ...)`
+   - `GeneratedChapterCount`：`COUNT(Chapters WHERE Status = "committed")`
+   - `PlannedChapterCount`：`COUNT(Chapters WHERE Status IN ("planned", "draft_generated", ...))`
+   - `NeedsRewriteCount`：`COUNT(Chapters WHERE NeedsRewrite = true)`
+3. 查询最近活动时间（可选优化）：每个项目关联的最新 `AgentSession.UpdatedAt`
+4. 映射到 `NovelBookView`：组装统计数据，**不加载导航属性**（`Volumes.Include`/`Chapters.Include`）
+
+**性能优化：**
+- 使用批量查询和 `GROUP BY` 聚合统计
+- 不加载 `Chapter.Content` 字段（大文本）
+- 限制返回前 50 个项目
+- 添加数据库索引：`Chapters(ProjectId, Status)`, `AgentSessions(ActiveProjectId, UpdatedAt)`
+
+**Controller 端点：`Web/NovelAgentWeb/Controllers/WorkflowController.cs`**
+
+```csharp
+[HttpGet("workspace")]
+[Authorize]
+public async Task<IActionResult> GetWorkspace(CancellationToken ct)
+{
+    var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (string.IsNullOrEmpty(userId))
+        return Unauthorized();
+
+    var workspace = await _workflowService.GetWorkspaceAsync(userId, ct);
+    return Ok(workspace);
+}
+```
+
+#### 前端集成
+
+**修改：`Web/NovelAgentWeb.Frontend/src/pages/WorkflowPage.tsx`**
+
+**删除硬编码：**
+```typescript
+// 删除：const books: NovelBookView[] = [];
+```
+
+**新增查询：**
+```typescript
+const { data: workspaceData } = useQuery({
+  queryKey: ['workspace'],
+  queryFn: () => getWorkspace(),
+  staleTime: 30_000,
+});
+const books = workspaceData?.projects ?? [];
+```
+
+**新增 API 函数：`src/api/index.ts`**
+
+```typescript
+export interface WorkspaceResponse {
+  projects: NovelBookView[];
+  totalCount: number;
+}
+
+export const getWorkspace = () => 
+  get<WorkspaceResponse>('/workflow/workspace');
+```
+
+**保持现有 UI 逻辑不变：**
+- 项目卡片展示基础信息 + 统计（`volumeCount`, `generatedChapterCount` 等）
+- 点击项目后，通过现有端点加载详情（如 `/api/chapters?projectId=xxx`）
+
+#### 数据流架构
+
+```
+用户打开 Workflow 页面
+  ↓
+GET /api/workflow/workspace
+  ↓
+返回 50 个项目 + 统计信息（轻量级）
+  ↓
+用户选择某个项目
+  ↓
+GET /api/chapters?projectId=xxx（现有端点）
+GET /api/runs?projectId=xxx（现有端点）
+  ↓
+加载该项目的完整 volumes/chapters/runs
+```
+
+#### Artifacts 数据来源
+
+**前端期望的 `WorkflowChapterArtifactSummary` 从哪里来？**
+
+根据代码分析（`ProjectWorkflow.cs` line 103-131），artifacts 是从 `AgentRun` 聚合而来：
+
+```csharp
+BuildChapterArtifacts(runs) {
+  foreach (var run in runs.Where(r => !string.IsNullOrEmpty(r.TargetChapterId))) {
+    yield return new WorkflowChapterArtifactSummary(
+      run.TargetChapterId,
+      run.RunId,
+      run.Intent,
+      run.Status,
+      run.DraftArtifact?.Status,           // 从 AgentRun.DraftArtifact
+      run.DraftArtifact?.DraftContent,     // 草稿内容（临时）
+      run.GateReport?.Status,              // 门禁报告
+      run.PostGenerationReview,            // 质量评审
+      run.ContextPackage?.Warnings         // 上下文警告
+    );
+  }
+}
+```
+
+**存储位置：**
+- **草稿阶段**：`AgentRun.DraftArtifact.DraftContent`（JSON 字段）
+- **提交阶段**：`AgentRun.DraftArtifact.CommittedContent` + 文件系统
+- **入库阶段**：`Chapter.ContentPath`（文件路径）
+
+**前端无需单独查询 artifacts 表**，通过 `AgentRun` 即可获取所有产物信息。
+
+#### 依赖关系
+
+- WorkflowPage 依赖 `/api/workflow/workspace` 返回项目列表
+- 详情加载依赖现有端点：
+  - `/api/chapters?projectId=xxx`
+  - `/api/runs?projectId=xxx`
+  - `/api/storybible?projectId=xxx`
+
+#### 测试验证
+
+1. **空状态测试**：新用户无项目，返回空数组
+2. **单项目测试**：返回项目基础信息 + 统计正确
+3. **多项目测试**：验证排序正确（最近活动在前）
+4. **性能测试**：50 个项目加载时间 < 500ms
+5. **点击项目测试**：验证详情加载正常
+
+---
+
 ### 3. Auth 页面改造（P3）
 
 **核心原则：设计语言一致 + 中文本地化**
@@ -359,11 +525,10 @@ dotnet publish -c Release
 ## 实现优先级
 
 1. **P0 项目上下文统一** - 最高优先级，影响所有页面
-2. **P2 样式系统收敛** - 提升代码可维护性
-3. **P3 Auth 页面改造** - 提升视觉一致性
-4. **P4 发布流程配置** - 部署必需
-
-**P1 Workflow 数据流** - 等待后端实现，暂不处理
+2. **P1 Workflow 数据流接入** - 前后端协同，核心功能
+3. **P2 样式系统收敛** - 提升代码可维护性
+4. **P3 Auth 页面改造** - 提升视觉一致性
+5. **P4 发布流程配置** - 部署必需
 
 ---
 
@@ -373,6 +538,8 @@ dotnet publish -c Release
 
 **新增：**
 - `src/stores/useProjectStore.ts`
+- `Web/NovelAgentWeb/Services/WorkflowService.cs`
+- `Web/NovelAgentWeb/Controllers/WorkflowController.cs`
 
 **修改：**
 - `src/App.tsx`
@@ -382,6 +549,7 @@ dotnet publish -c Release
 - `src/pages/LibraryPage.tsx`
 - `src/pages/LoginPage.tsx`
 - `src/pages/RegisterPage.tsx`
+- `src/api/index.ts`
 - `src/styles/variables.css`
 - `src/styles/global.css`
 - `src/styles/auth.css`
@@ -402,11 +570,17 @@ dotnet publish -c Release
    - 在 Materials 上传素材 → 验证上传到正确项目
    - 刷新页面 → 验证项目状态从 sessionStorage 恢复
 
-2. **样式一致性**
+2. **Workflow 数据加载**
+   - 打开 Workflow 页面 → 验证项目列表加载正确
+   - 验证统计信息准确（volumeCount、generatedChapterCount 等）
+   - 验证排序正确（最近活动的项目在前）
+   - 性能测试：50 个项目加载时间 < 500ms
+
+3. **样式一致性**
    - 验证所有页面背景、字体、颜色一致
    - 验证 Auth 页面设计语言与主应用匹配
 
-3. **发布流程**
+4. **发布流程**
    - 运行 `npm run build` → 验证 wwwroot 目录更新
    - 运行后端 `dotnet run` → 访问 http://localhost:5002 验证静态资源加载
 
@@ -414,6 +588,7 @@ dotnet publish -c Release
 - Agent 对话功能
 - Materials 上传/知识库浏览
 - Library 项目列表和章节阅读
+- Workflow 项目卡片和统计显示
 - Settings 用户设置保存
 
 ---
@@ -422,9 +597,11 @@ dotnet publish -c Release
 
 **高风险：**
 - 项目状态管理改造涉及多个页面，可能出现边界情况遗漏
+- Workflow API 新增端点，后端查询性能需验证
 
 **中风险：**
 - 样式文件合并可能引入覆盖冲突
+- Workflow 数据聚合逻辑复杂（统计查询、排序）
 
 **低风险：**
 - Auth 页面改造独立，不影响主流程
@@ -433,15 +610,19 @@ dotnet publish -c Release
 **缓解措施：**
 - 分阶段提交，每个 P 独立测试后再进行下一个
 - 保留 git 历史，出问题可快速回滚
-- 手动测试核心流程（项目切换、素材上传、页面导航）
+- 手动测试核心流程（项目切换、素材上传、Workflow 加载、页面导航）
+- 后端添加数据库索引优化查询性能
+- 使用批量查询和 GROUP BY 避免 N+1 问题
 
 ---
 
 ## 成功标准
 
 1. ✅ 用户在任意页面切换项目，所有页面状态同步更新
-2. ✅ 不存在废弃的未使用文件（StudioShell.tsx, styles.css）
-3. ✅ CSS 类名遵循统一命名规范
-4. ✅ Auth 页面使用中文文案和统一设计风格
-5. ✅ `npm run build` 后 `wwwroot/` 自动更新
-6. ✅ 所有原有功能正常工作
+2. ✅ Workflow 页面显示活跃项目列表，统计信息准确
+3. ✅ Workflow 项目列表加载时间 < 500ms（50 个项目）
+4. ✅ 不存在废弃的未使用文件（StudioShell.tsx, styles.css）
+5. ✅ CSS 类名遵循统一命名规范
+6. ✅ Auth 页面使用中文文案和统一设计风格
+7. ✅ `npm run build` 后 `wwwroot/` 自动更新
+8. ✅ 所有原有功能正常工作
