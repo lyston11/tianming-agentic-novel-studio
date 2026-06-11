@@ -8,9 +8,9 @@ import {
   createMaterialFromText,
 } from '../api';
 import type { MaterialResponse } from '../api/types';
-import { projectService } from '../services/projectService';
 import { useMaterialStore } from '../stores/useMaterialStore';
 import { useAppStore } from '../stores/useAppStore';
+import { useProjectStore } from '../stores/useProjectStore';
 import Topbar from '../components/layout/Topbar';
 import AnalysisProgress from '../components/materials/AnalysisProgress';
 import KnowledgeBaseBrowser from '../components/materials/KnowledgeBaseBrowser';
@@ -19,6 +19,7 @@ import '../styles/materials.css';
 export default function MaterialsPage() {
   const queryClient = useQueryClient();
   const addLog = useAppStore((s) => s.addLog);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteContent, setPasteContent] = useState('');
@@ -28,13 +29,6 @@ export default function MaterialsPage() {
   const [editTitle, setEditTitle] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editTags, setEditTags] = useState('');
-
-  const { data: currentProject } = useQuery({
-    queryKey: ['currentProject'],
-    queryFn: () => projectService.getCurrentProject(),
-    staleTime: 5 * 60 * 1000,
-  });
-  const currentProjectId = currentProject?.id ?? null;
 
   const { isAnalyzing, analysisStages, currentStage } = useMaterialStore();
 
