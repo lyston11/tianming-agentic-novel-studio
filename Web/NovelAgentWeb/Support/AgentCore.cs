@@ -823,11 +823,36 @@ public sealed class AgentObservationBuilder
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
-        // Parse phase and get phase-appropriate tools
-        var phase = Enum.TryParse<ConversationPhase>(session.Phase, true, out var parsedPhase)
-            ? parsedPhase
-            : ConversationPhase.Conversation;
-        var phaseTools = _toolRegistry.ListToolSchemasForPhase(phase);
+        // Check session cache for tools, otherwise expose only tool_search
+        IReadOnlyList<ToolSchema> availableTools;
+
+        if (!string.IsNullOrWhiteSpace(session.DiscoveredPhase) &&
+            session.DiscoveredTools.Count > 0)
+        {
+            // Has cache, expose previously discovered tools
+            availableTools = session.DiscoveredTools;
+        }
+        else
+        {
+            // No cache, expose only tool_search
+            var toolSearchEntry = _toolRegistry.Find("tool_search");
+            if (toolSearchEntry == null)
+            {
+                throw new InvalidOperationException("tool_search not found in registry");
+            }
+
+            availableTools = new List<ToolSchema>
+            {
+                new ToolSchema
+                {
+                    Name = "tool_search",
+                    Description = toolSearchEntry.Description,
+                    Risk = "Low",
+                    RequiresConfirmation = false,
+                    Parameters = new Dictionary<string, string> { { "phase", "string" } }
+                }
+            };
+        }
 
         return new AgentObservationContext
         {
@@ -852,7 +877,7 @@ public sealed class AgentObservationBuilder
             AuthorMemory = session.WorkingMemory.AuthorMemory,
             ExecutionMemory = session.WorkingMemory.ExecutionMemory,
             PendingConfirmation = null,
-            AvailableTools = phaseTools.Select(t => new AgentToolDefinition
+            AvailableTools = availableTools.Select(t => new AgentToolDefinition
             {
                 Name = t.Name,
                 Description = t.Description,
