@@ -11,7 +11,7 @@ using TM.Web.NovelAgentWeb.Data;
 namespace TM.Web.NovelAgentWeb.Migrations
 {
     [DbContext(typeof(NovelAgentDbContext))]
-    [Migration("20260611083250_AddWorkflowIndexes")]
+    [Migration("20260611085620_AddWorkflowIndexes")]
     partial class AddWorkflowIndexes
     {
         /// <inheritdoc />
