@@ -124,6 +124,9 @@ public sealed class AgentRuntime
         if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
             session.Title = BuildSessionTitle(userMessage);
 
+        // Add user message to chat history immediately so Agent can see it in context
+        AddChatTurn(session, "user", userMessage);
+
         // ── Load project if session has one ──
         NovelProjectInfo? project = null;
         if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
@@ -769,7 +772,6 @@ public sealed class AgentRuntime
         CancellationToken ct)
     {
         var reply = FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。");
-        AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
         session.Phase = action.Type == AgentActionType.Clarify ? "awaiting_user_foundation" : session.Phase;
         await _sessionManager.SaveSessionAsync(session, ct);
@@ -782,7 +784,6 @@ public sealed class AgentRuntime
         AgentReflection reflection, AgentToolExecutionResult result, CancellationToken ct)
     {
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
-        AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, result.Suggestions, action, context, trace);
@@ -842,7 +843,6 @@ public sealed class AgentRuntime
         plan.CurrentRunId = session.ActiveRunId ?? plan.CurrentRunId;
         plan.UpdatedAt = DateTime.UtcNow;
         var reply = confirmationMessage;
-        AddChatTurn(session, "user", userMessage);
         AddChatTurn(session, "assistant", reply);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, new[] { "继续执行", "调整方案" }, action, context, trace);
