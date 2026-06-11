@@ -287,10 +287,11 @@ export default function WorkflowPage() {
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
 
-  const { data: workspaceData, isLoading: workspaceLoading } = useQuery({
+  const { data: workspaceData, isLoading: workspaceLoading, isError } = useQuery({
     queryKey: ['workspace'],
     queryFn: getWorkflowWorkspace,
     staleTime: 30_000,
+    retry: 3,
   });
 
   const books = workspaceData?.projects ?? [];
@@ -498,7 +499,10 @@ export default function WorkflowPage() {
               {workspaceLoading && (
                 <div className="workflow-loading">加载项目中...</div>
               )}
-              {!workspaceLoading && books.length === 0 && missionOnlyCards.length === 0 && (
+              {isError && (
+                <div className="workflow-error">加载失败，请刷新重试</div>
+              )}
+              {!workspaceLoading && !isError && books.length === 0 && missionOnlyCards.length === 0 && (
                 <div className="workflow-empty">暂无活跃项目</div>
               )}
               {books.map((book) => (

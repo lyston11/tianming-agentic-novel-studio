@@ -1683,3 +1683,15 @@
     grid-template-columns: 1fr;
   }
 }
+
+.workflow-loading,
+.workflow-error,
+.workflow-empty {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+.workflow-error {
+  color: #d32f2f;
+}
