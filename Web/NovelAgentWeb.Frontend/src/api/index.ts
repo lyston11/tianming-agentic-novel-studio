@@ -21,6 +21,7 @@ import type {
   UserSettings,
   VolumeArcResponse,
   WorkspaceInfo,
+  WorkspaceResponse,
 } from './types';
 
 // Materials API (new multi-user endpoints)
@@ -193,3 +194,5 @@ export const testConnection = (settings: Partial<UserSettings>) =>
 
 // Workspace
 export const getWorkspace = () => get<WorkspaceInfo>('/workspace');
+
+export const getWorkflowWorkspace = () => get<WorkspaceResponse>('/workflow/workspace');
