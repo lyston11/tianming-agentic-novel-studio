@@ -1,192 +1,146 @@
-/* Authentication Pages */
-.auth-page {
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600&display=swap');
+
+.auth-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-}
-
-.auth-container {
-  width: 100%;
-  max-width: 420px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    radial-gradient(circle at 15% 10%, rgba(184, 59, 47, 0.18), transparent 26rem),
+    radial-gradient(circle at 92% 18%, rgba(47, 117, 100, 0.22), transparent 30rem),
+    #17110c;
+  background-size: 42px 42px, 42px 42px, auto, auto, auto;
 }
 
 .auth-card {
-  background: linear-gradient(135deg, rgba(244, 236, 217, 0.08), rgba(244, 236, 217, 0.03));
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 40px 32px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 420px;
+  padding: 48px 40px;
+  background: linear-gradient(135deg, rgba(244, 236, 217, 0.06) 0%, rgba(244, 236, 217, 0.03) 100%);
+  border: 1px solid rgba(184, 137, 63, 0.2);
+  border-radius: 8px;
+  position: relative;
 }
 
-.auth-card h1 {
-  margin: 0 0 8px 0;
-  font-size: 28px;
+.auth-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, rgba(184, 137, 63, 0.6), rgba(184, 137, 63, 0.2));
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: scaleY(0);
+  transform-origin: top;
+}
+
+.auth-card:hover::before {
+  transform: scaleY(1);
+}
+
+.auth-title {
+  font-family: 'Crimson Pro', serif;
+  font-size: 32px;
   font-weight: 600;
-  color: var(--paper-2);
-  text-align: center;
-}
-
-.auth-subtitle {
+  color: var(--paper);
   margin: 0 0 32px 0;
-  font-size: 14px;
-  color: var(--muted);
-  text-align: center;
+  line-height: 1.3;
 }
 
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
 }
 
-.auth-error {
-  padding: 12px 16px;
-  background: rgba(184, 59, 47, 0.15);
-  border: 1px solid var(--red-dark);
-  border-radius: 8px;
-  color: var(--red);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.form-group {
+.auth-input-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.form-group label {
-  font-size: 13px;
+.auth-label {
+  font-family: 'Crimson Pro', serif;
+  font-size: 14px;
   font-weight: 600;
   color: var(--paper-2);
+  line-height: 1.5;
 }
 
-.form-group input {
+.auth-input {
   width: 100%;
   padding: 12px 16px;
-  background: rgba(244, 236, 217, 0.04);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--paper-2);
-  font-size: 14px;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--gold);
-  background: rgba(244, 236, 217, 0.08);
-}
-
-.form-group input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.form-group-inline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.checkbox-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.checkbox-label span {
-  user-select: none;
-}
-
-.password-strength {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.strength-label {
-  color: var(--muted);
-}
-
-.strength-indicator {
-  font-weight: 600;
-  padding: 2px 8px;
+  font-family: 'Crimson Pro', serif;
+  font-size: 16px;
+  color: var(--paper);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(184, 137, 63, 0.2);
   border-radius: 4px;
+  outline: none;
+  transition: all 0.2s ease;
 }
 
-.strength-indicator.strength-red {
-  background: rgba(184, 59, 47, 0.2);
-  color: var(--red);
+.auth-input:focus {
+  border-color: rgba(184, 137, 63, 0.5);
+  background: rgba(0, 0, 0, 0.4);
 }
 
-.strength-indicator.strength-orange {
-  background: rgba(255, 140, 0, 0.2);
-  color: #ff8c00;
-}
-
-.strength-indicator.strength-yellow {
-  background: rgba(184, 137, 63, 0.2);
-  color: var(--gold);
-}
-
-.strength-indicator.strength-green {
-  background: rgba(47, 117, 100, 0.2);
-  color: var(--jade);
+.auth-input::placeholder {
+  color: rgba(244, 236, 217, 0.3);
 }
 
 .auth-button {
   width: 100%;
-  padding: 14px 20px;
-  background: var(--red);
-  color: var(--paper);
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
+  padding: 14px;
+  font-family: 'Crimson Pro', serif;
+  font-size: 16px;
   font-weight: 600;
+  color: var(--ink);
+  background: linear-gradient(135deg, var(--gold), #d4a957);
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(184, 59, 47, 0.25);
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .auth-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(184, 59, 47, 0.35);
+  box-shadow: 0 4px 12px rgba(184, 137, 63, 0.3);
 }
 
-.auth-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
+.auth-button:active {
+  transform: translateY(0);
 }
 
-.auth-footer {
-  margin-top: 24px;
+.auth-link {
   text-align: center;
-  font-size: 13px;
-  color: var(--muted);
+  margin-top: 24px;
+  font-family: 'Crimson Pro', serif;
+  font-size: 14px;
+  color: var(--paper-2);
+  line-height: 1.6;
 }
 
-.auth-footer a {
-  color: var(--red);
-  font-weight: 600;
-  text-decoration: none;
-  transition: color 0.15s;
-}
-
-.auth-footer a:hover {
+.auth-link a {
   color: var(--gold);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.auth-link a:hover {
+  color: #d4a957;
+}
+
+.auth-error {
+  padding: 12px 16px;
+  font-family: 'Crimson Pro', serif;
+  font-size: 14px;
+  color: var(--red);
+  background: rgba(184, 59, 47, 0.1);
+  border: 1px solid rgba(184, 59, 47, 0.3);
+  border-radius: 4px;
+  line-height: 1.5;
 }
