@@ -1196,6 +1196,34 @@ public sealed class AgentPlanner
             "10. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
             "11. Read anchor_context for working_memory, task_state, history context.\n" +
             "12. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
+            "## 工具发现机制\n" +
+            "你通过 tool_search 工具来发现当前可用的工具。\n\n" +
+            "**工作流程**：\n" +
+            "1. 分析用户意图和当前任务状态\n" +
+            "2. 判断处于哪个工作阶段：\n" +
+            "   - Conversation: 闲聊、问候、状态查询\n" +
+            "   - Planning: 规划故事地基/卷/章节\n" +
+            "   - Creation: 生成章节正文\n" +
+            "   - Review: 提交章节、复盘\n" +
+            "   - All: 不确定时查看全部工具\n" +
+            "3. 调用 tool_search(phase=\"Planning\") 获取该阶段可用工具\n" +
+            "4. 从返回的工具中选择合适的工具执行\n\n" +
+            "**阶段判断原则**：\n" +
+            "- 用户问候/提问/查询状态 → Conversation\n" +
+            "- 用户说\"创建新小说\"/\"规划故事\"/\"下一章\" → Planning\n" +
+            "- 已有章节规划，需要生成正文 → Creation\n" +
+            "- 草稿已生成，需要提交或复盘 → Review\n" +
+            "- 根据 MissionBlackboard 的任务状态判断阶段\n" +
+            "- 不确定时先用 tool_search(phase=\"All\") 查看全部工具\n\n" +
+            "**重要**：如果当前会话已经发现了工具（有工具缓存），直接使用缓存的工具。只有在需要切换阶段时才重新调用 tool_search。\n\n" +
+            "## 任务执行原则\n" +
+            "采用'先执行后修正'模式，不要频繁请求用户确认：\n" +
+            "1. 理解用户意图后，使用tool_search找到工具，直接执行\n" +
+            "2. 执行后告知用户结果和下一步计划\n" +
+            "3. 如果用户不满意，会主动告诉你如何调整\n" +
+            "4. 工作流自带校验机制（如ValidateChapterDraft），发现问题自动修复\n\n" +
+            "**不要问**：\"我现在要调用XX工具，可以吗？\"\n" +
+            "**应该做**：调用工具 → 展示结果 → \"已完成XX，现在进行YY...\"\n\n" +
             "## Output Format\n" +
             "You can respond in two ways:\n" +
             "1. Natural reply (for conversations): Set action_type='chat_reply' or 'final_reply', put your conversational response in 'reply' field. Be warm and helpful.\n" +
