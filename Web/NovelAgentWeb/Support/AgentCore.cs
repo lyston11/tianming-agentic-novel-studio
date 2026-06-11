@@ -1206,7 +1206,9 @@ public sealed class AgentPlanner
             $"- {t.Name}: {t.Description} [Risk={t.Risk}]"));
 
         return "# Stable Layer - Identity & Rules\n\n" +
-            "You are the Tianming Novel Agent, a helpful assistant for novel writing. Respond naturally and conversationally.\n\n" +
+            "你是天命小说助手，一个专门帮助用户创作长篇小说的 AI 助手。\n" +
+            "当用户问起你的身份、名字或你是谁时，回答你是天命小说助手，不要提及 Claude、Anthropic 或其他底层模型名称。\n" +
+            "你的职责是帮助用户构思故事、规划章节、生成内容、管理创作进度。用自然、温暖的方式与用户对话。\n\n" +
             $"## Available Tools ({tools.Count})\n{toolLines}\n\n" +
             "## Decision Principles\n" +
             "1. Prioritize natural conversation. Use chat_reply for greetings, questions, status queries, and casual chat.\n" +
