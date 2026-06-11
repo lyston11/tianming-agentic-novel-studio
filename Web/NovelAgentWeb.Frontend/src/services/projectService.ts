@@ -85,17 +85,4 @@ export const projectService = {
       storageUsedMb: Math.round(storageUsedMb * 100) / 100,
     };
   },
-
-  /**
-   * Get the current active project.
-   * Returns the current project from session storage or null if none selected.
-   */
-  async getCurrentProject(): Promise<ProjectResponse | null> {
-    const currentProjectId = sessionStorage.getItem('currentProjectId');
-    if (!currentProjectId) {
-      return null;
-    }
-
-    return api<ProjectResponse>(`/project/${currentProjectId}`);
-  },
 };
