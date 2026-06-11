@@ -321,53 +321,9 @@ public class ProjectService : IProjectService
 
     private async Task EnsureLegacyProjectsForUserAsync(string userId, CancellationToken cancellationToken)
     {
-        if (await _context.NovelProjects.AnyAsync(p => p.UserId == userId, cancellationToken))
-        {
-            return;
-        }
-
-        var legacyCatalog = LoadLegacyCatalog();
-        if (legacyCatalog.Projects.Count == 0)
-        {
-            return;
-        }
-
-        var existingProjectIds = await _context.NovelProjects
-            .Select(p => p.Id)
-            .ToListAsync(cancellationToken);
-        var existing = new HashSet<string>(existingProjectIds, StringComparer.OrdinalIgnoreCase);
-        var imported = 0;
-
-        foreach (var legacyProject in legacyCatalog.Projects)
-        {
-            if (string.IsNullOrWhiteSpace(legacyProject.Id) || existing.Contains(legacyProject.Id))
-            {
-                continue;
-            }
-
-            _context.NovelProjects.Add(new NovelProject
-            {
-                Id = legacyProject.Id,
-                UserId = userId,
-                Title = string.IsNullOrWhiteSpace(legacyProject.Title) ? "未命名小说" : legacyProject.Title,
-                Genre = EmptyToNull(legacyProject.Genre),
-                SubGenre = EmptyToNull(legacyProject.SubGenre),
-                CoreHook = EmptyToNull(legacyProject.CoreHook),
-                Status = string.IsNullOrWhiteSpace(legacyProject.Status) ? "draft" : legacyProject.Status,
-                WordCount = 0,
-                StorageProjectName = EmptyToNull(legacyProject.StorageProjectName),
-                CreatedAt = legacyProject.CreatedAt == default ? DateTime.UtcNow : legacyProject.CreatedAt,
-                UpdatedAt = legacyProject.UpdatedAt == default ? DateTime.UtcNow : legacyProject.UpdatedAt
-            });
-            existing.Add(legacyProject.Id);
-            imported++;
-        }
-
-        if (imported > 0)
-        {
-            await _context.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("Hydrated {Count} legacy JSON projects into SQLite for user {UserId}", imported, userId);
-        }
+        // Legacy migration disabled: do not import old JSON projects for new users
+        // This prevents cross-user data leakage
+        await Task.CompletedTask;
     }
 
     private NovelProjectCatalogDocument LoadLegacyCatalog()
