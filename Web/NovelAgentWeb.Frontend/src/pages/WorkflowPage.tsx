@@ -4,6 +4,7 @@ import {
   deleteNovelProject,
   listAgentSessions,
   sendChat,
+  getWorkflowWorkspace,
 } from '../api';
 import type {
   AgentChapterTask,
@@ -284,10 +285,12 @@ export default function WorkflowPage() {
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
 
-  // TODO: Full workflow API migration pending backend endpoints
-  // Missing: getProjectWorkflow, NovelLibrary APIs for books/runs/artifacts
-  // Temporary empty state to prevent runtime errors until backend is ready
-  const books: NovelBookView[] = [];
+  const { data: workspaceData, isLoading: workspaceLoading } = useQuery({
+    queryKey: ['workspace'],
+    queryFn: getWorkflowWorkspace
+  });
+
+  const books = workspaceData?.projects ?? [];
   const activeBook = books.find((book) => book.isActive) ?? books[0] ?? null;
   const missionOnlyCards = buildMissionOnlyCards(agentSessions ?? [], books);
   const fallbackProjectId = useMemo(() => {
