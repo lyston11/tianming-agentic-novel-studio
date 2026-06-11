@@ -467,9 +467,9 @@ namespace TM.Web.NovelAgentWeb.Support
             Register(guideManager);
             Register(summaryStore);
             Register(milestoneStore);
-            Register(new VolumeFactArchiveStore());
-            Register(new ChapterKeyEventStore());
-            Register(new ChapterChangesWalStore());
+            // Register(new VolumeFactArchiveStore()); // Removed: class no longer exists
+            // Register(new ChapterKeyEventStore()); // Removed: class no longer exists
+            // Register(new ChapterChangesWalStore()); // Removed: class no longer exists
             Register(factSnapshotExtractor);
             Register<IGuideContextService>(guideContextService);
             Register(guideContextService);
