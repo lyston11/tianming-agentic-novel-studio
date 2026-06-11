@@ -903,6 +903,22 @@ public sealed class AgentToolRegistry
             ? $"阶段「{phaseArg}」没有可用工具。"
             : $"阶段「{phaseArg}」可用工具（{toolList.Count}个）：\n{string.Join("\n", toolList)}";
 
+        // 缓存到Session
+        session.DiscoveredPhase = phaseArg;
+        session.DiscoveredTools = toolNames
+            .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
+            .Where(def => def != null)
+            .Select(def => new ToolSchema
+            {
+                Name = def!.Name,
+                Description = def.Description,
+                Risk = def.Risk,
+                RequiresConfirmation = def.RequiresConfirmation,
+                Parameters = def.Arguments?.ToDictionary(p => p, _ => "string") ?? new Dictionary<string, string>()
+            })
+            .ToList();
+        session.LastToolSearchAt = DateTime.UtcNow;
+
         return Task.FromResult(new AgentToolExecutionResult
         {
             Success = true,
