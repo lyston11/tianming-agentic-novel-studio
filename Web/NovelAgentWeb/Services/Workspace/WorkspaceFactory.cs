@@ -52,7 +52,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
     public async Task<WorkspaceEntry> AcquireAsync(string userId, string projectId, CancellationToken cancellationToken = default)
     {
-        var cacheKey = GetCacheKey(userId, projectId);
+        // Workspace is per-user, not per-project. Projects are managed by LLM during conversation.
+        var cacheKey = GetCacheKey(userId, "_workspace");
 
         // Fast path: cache hit
         if (_cache.TryGetValue(cacheKey, out var entry))
@@ -81,13 +82,13 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
                 await EvictOldestIdleWorkspaceAsync();
             }
 
-            // Create new Workspace instance
-            var workspace = await CreateWorkspaceAsync(userId, projectId, cancellationToken);
+            // Create new Workspace instance (no project binding at this level)
+            var workspace = await CreateWorkspaceAsync(userId, "_workspace", cancellationToken);
 
             entry = new WorkspaceEntry
             {
                 UserId = userId,
-                ProjectId = projectId,
+                ProjectId = "_workspace",
                 Workspace = workspace
             };
 
@@ -275,39 +276,13 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
 
-        // Load project to verify it exists and belongs to user when it is already in EF.
-        // Legacy JSON projects are hydrated after the workspace is available.
-        var project = await db.NovelProjects
-            .Where(p => p.Id == projectId && p.UserId == userId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        // Security check: if project exists but belongs to another user, deny access
-        if (project == null)
-        {
-            var existsForOtherUser = await db.NovelProjects.AnyAsync(p => p.Id == projectId && p.UserId != userId, cancellationToken);
-            if (existsForOtherUser)
-                throw new UnauthorizedAccessException($"Project {projectId} belongs to another user");
-        }
-
         // Get required services
         var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var env = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
         var settingsManager = scope.ServiceProvider.GetRequiredService<UserSettingsManager>();
 
-        // Create Workspace instance
+        // Create Workspace instance (no project binding)
         var workspace = new NovelAgentWorkspace(env, config, settingsManager) { UserId = userId };
-
-        // If project doesn't exist and it's not a temp ID, try legacy hydration
-        // If still not found, workspace can work without project for casual chat
-        if (project == null && !IsTemporaryProjectId(projectId))
-        {
-            project = await TryHydrateLegacyProjectAsync(
-                db,
-                workspace,
-                userId,
-                projectId,
-                cancellationToken);
-        }
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
@@ -316,47 +291,6 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
         return workspace;
     }
-
-    private static bool IsTemporaryProjectId(string projectId) =>
-        string.IsNullOrWhiteSpace(projectId) ||
-        projectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase);
-
-    private static async Task<NovelProject?> TryHydrateLegacyProjectAsync(
-        NovelAgentDbContext db,
-        NovelAgentWorkspace workspace,
-        string userId,
-        string projectId,
-        CancellationToken cancellationToken)
-    {
-        var catalog = new NovelProjectCatalog(workspace);
-        var legacyProject = await catalog.FindAsync(projectId, cancellationToken).ConfigureAwait(false);
-        if (legacyProject == null)
-        {
-            return null;
-        }
-
-        var project = new NovelProject
-        {
-            Id = legacyProject.Id,
-            UserId = userId,
-            Title = string.IsNullOrWhiteSpace(legacyProject.Title) ? "未命名小说" : legacyProject.Title,
-            Genre = EmptyToNull(legacyProject.Genre),
-            SubGenre = EmptyToNull(legacyProject.SubGenre),
-            CoreHook = EmptyToNull(legacyProject.CoreHook),
-            Status = string.IsNullOrWhiteSpace(legacyProject.Status) ? "draft" : legacyProject.Status,
-            StorageProjectName = EmptyToNull(legacyProject.StorageProjectName),
-            WordCount = 0,
-            CreatedAt = legacyProject.CreatedAt == default ? DateTime.UtcNow : legacyProject.CreatedAt,
-            UpdatedAt = legacyProject.UpdatedAt == default ? DateTime.UtcNow : legacyProject.UpdatedAt
-        };
-
-        db.NovelProjects.Add(project);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return project;
-    }
-
-    private static string? EmptyToNull(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task EvictOldestIdleWorkspaceAsync()
     {

@@ -84,7 +84,9 @@ public sealed class AgentRuntime
         var session = await _sessionManager.GetOrCreateSessionAsync(sessionId, ct);
 
         // For first turn, use temp projectId; will be replaced after project resolution
-        var projectId = session.ActiveProjectId ?? "temp-" + userId;
+        var projectId = string.IsNullOrWhiteSpace(session.ActiveProjectId)
+            ? "temp-" + userId
+            : session.ActiveProjectId;
 
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct).ConfigureAwait(false);
         try

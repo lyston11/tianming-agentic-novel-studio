@@ -1,9 +1,9 @@
 [
   {
     "sessionId": "66198dfcb63f4036ba24efb2ad2b03b3",
-    "title": "\u65B0\u4F1A\u8BDD",
+    "title": "\u4F60\u597D",
     "phase": "idle",
-    "activeProjectId": "",
+    "activeProjectId": "2cfd632c82ff4383a691c4a32cd68a35",
     "activeRunId": null,
     "isArchived": false,
     "runHistory": [],
@@ -76,9 +76,51 @@
         },
         "dependencyImpacts": [],
         "recoveryWarnings": [],
-        "turnIntent": null,
-        "interactionState": null,
-        "activeTurnId": "",
+        "turnIntent": {
+          "type": 0,
+          "label": "free_chat",
+          "rawMessage": "\u4F60\u597D",
+          "creativeBrief": "",
+          "referencedProjectId": "",
+          "referencedRunId": "",
+          "referencedChapterId": "",
+          "selectedOption": "",
+          "selectedOptionIndex": null,
+          "selectionKind": "",
+          "constraints": [],
+          "confidence": 0.65,
+          "source": "conversation_kernel"
+        },
+        "interactionState": {
+          "turnId": "7d6ffc4b0d2c4970af0be4c683eb381d",
+          "intent": {
+            "type": 0,
+            "label": "free_chat",
+            "rawMessage": "\u4F60\u597D",
+            "creativeBrief": "",
+            "referencedProjectId": "",
+            "referencedRunId": "",
+            "referencedChapterId": "",
+            "selectedOption": "",
+            "selectedOptionIndex": null,
+            "selectionKind": "",
+            "constraints": [],
+            "confidence": 0.65,
+            "source": "conversation_kernel"
+          },
+          "dialogueAct": 0,
+          "targetArtifact": "",
+          "referencedTask": "",
+          "confirmationDecision": "",
+          "creativeBrief": "",
+          "feedbackPatch": "",
+          "statusQueryScope": "general",
+          "selectedOption": "",
+          "selectedOptionIndex": null,
+          "selectionKind": "",
+          "createdAt": "2026-06-11T06:22:21.161336Z"
+        },
+        "activeTurnId": "7d6ffc4b0d2c4970af0be4c683eb381d",
         "activeToolTransactionId": "",
         "artifactCursor": "",
         "activeArtifactCursor": "",
@@ -99,7 +141,7 @@
         "activeArtifacts": [],
         "blockedReason": "",
         "lastVerifiedState": "",
-        "updatedAt": "2026-06-11T06:22:21.125156Z"
+        "updatedAt": "2026-06-11T06:22:21.16134Z"
       },
       "sessionMemory": {
         "chatSummary": "",
@@ -127,7 +169,7 @@
       }
     },
     "createdAt": "2026-06-11T06:22:21.125157Z",
-    "updatedAt": "2026-06-11T06:22:21.125157Z",
+    "updatedAt": "2026-06-11T06:22:21.158873Z",
     "discoveredPhase": null,
     "discoveredTools": [],
     "lastToolSearchAt": null

@@ -4,7 +4,7 @@ import {
   deleteNovelProject,
   listAgentSessions,
   sendChat,
-  getWorkflowWorkspace,
+  getWorkspace,
 } from '../api';
 import type {
   AgentChapterTask,
@@ -289,7 +289,7 @@ export default function WorkflowPage() {
 
   const { data: workspaceData, isLoading: workspaceLoading, isError } = useQuery({
     queryKey: ['workspace'],
-    queryFn: getWorkflowWorkspace,
+    queryFn: getWorkspace,
     staleTime: 30_000,
     retry: 3,
   });
