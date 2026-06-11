@@ -56,10 +56,83 @@ public sealed class AgentMemoryService
         await Task.CompletedTask;
     }
 
-    private Task ApplyMemoryUpdateAsync(string userId, string projectId, AgentMemoryUpdate update, CancellationToken ct)
+    /// <summary>
+    /// Applies memory updates from Reflection phase to repository.
+    /// Note: SessionMemory sedimentation (preferences → constraints) requires access to AgentSession,
+    /// which is not available here. This should be implemented in AgentRuntime.
+    /// </summary>
+    private async Task ApplyMemoryUpdateAsync(string userId, string projectId, AgentMemoryUpdate update, CancellationToken ct)
     {
-        // Will be implemented in Task 10
-        return Task.CompletedTask;
+        var updates = new Dictionary<string, object>();
+
+        // SessionMemory: Updates are applied to in-memory session object
+        // Sedimentation rule: Check if preferences repeated ≥3 times → sink to Constraints
+        if (update.SessionMemory != null && update.SessionMemory.ExtractedPreferences.Count > 0)
+        {
+            // Note: SessionMemory sedimentation would require access to current AgentSession
+            // This is complex because AgentMemoryService doesn't have direct access to session
+            // For now, skip sedimentation logic - it can be handled in AgentRuntime where session is available
+            // Just log the extracted preferences for Task 10
+            _logger.LogDebug("Extracted {Count} preferences from session", update.SessionMemory.ExtractedPreferences.Count);
+        }
+
+        // ProjectMemory: Append new constraints and threads
+        if (update.ProjectMemory != null)
+        {
+            if (update.ProjectMemory.NewConstraints.Count > 0)
+            {
+                var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+                var merged = existing.Constraints.Concat(update.ProjectMemory.NewConstraints).Distinct().ToList();
+                updates["project.constraints"] = merged;
+            }
+            if (update.ProjectMemory.UnresolvedThreads.Count > 0)
+            {
+                var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+                var merged = existing.UnresolvedThreads.Concat(update.ProjectMemory.UnresolvedThreads).ToList();
+                updates["project.unresolved_threads"] = merged;
+            }
+        }
+
+        // AuthorMemory: Append style preferences (cross-project)
+        if (update.AuthorMemory != null)
+        {
+            if (update.AuthorMemory.StyleLikes.Count > 0)
+            {
+                var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
+                var merged = existing.StyleLikes.Concat(update.AuthorMemory.StyleLikes).Distinct().ToList();
+                updates["author.style_likes"] = merged;
+            }
+            if (update.AuthorMemory.StyleDislikes.Count > 0)
+            {
+                var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
+                var merged = existing.StyleDislikes.Concat(update.AuthorMemory.StyleDislikes).Distinct().ToList();
+                updates["author.style_dislikes"] = merged;
+            }
+        }
+
+        // ExecutionMemory: Append tool execution records
+        if (update.ExecutionMemory != null)
+        {
+            if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolSuccess))
+            {
+                var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
+                var merged = existing.SuccessfulRepairNotes.Append(update.ExecutionMemory.ToolSuccess).ToList();
+                updates["execution.successful_repairs"] = merged;
+            }
+            if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolFailure))
+            {
+                var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
+                var merged = existing.RepeatedBlockers.Append(update.ExecutionMemory.ToolFailure).ToList();
+                updates["execution.repeated_blockers"] = merged;
+            }
+        }
+
+        // Batch update all changes
+        if (updates.Count > 0)
+        {
+            await _repository.UpdateMemoryAsync(userId, projectId, updates, ct);
+            _logger.LogInformation("Applied {Count} memory updates for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
+        }
     }
 
     public Task<AgentRuntimeContext> LoadRuntimeContextAsync(
