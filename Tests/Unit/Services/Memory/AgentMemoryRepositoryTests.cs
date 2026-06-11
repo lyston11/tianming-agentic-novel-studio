@@ -81,4 +81,28 @@ public class AgentMemoryRepositoryTests
         Assert.Null(result.ConfirmationTolerance);
         Assert.Empty(result.GenreHabits);
     }
+
+    [Fact]
+    public async Task GetExecutionMemoryAsync_ReturnsEmptyMemory_WhenNoDataExists()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+            It.IsAny<string>(),
+            It.IsAny<Func<Task<ExecutionMemory>>>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, Func<Task<ExecutionMemory>> f, TimeSpan t, CancellationToken c) => f().Result);
+
+        _mockRedisCache.Setup(x => x.GetAsync<ExecutionMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExecutionMemory?)null);
+
+        var result = await _repository.GetExecutionMemoryAsync(userId, projectId);
+
+        Assert.NotNull(result);
+        Assert.Empty(result.ToolFailurePatterns);
+        Assert.Empty(result.RepeatedBlockers);
+        Assert.Empty(result.SuccessfulRepairNotes);
+    }
 }

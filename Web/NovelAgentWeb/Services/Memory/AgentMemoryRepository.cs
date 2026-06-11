@@ -67,7 +67,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
     {
-        var cacheKey = $"memory:author:{userId}";
+        var cacheKey = $"memory:author:{userId}:";
 
         return await _memoryCache.GetOrSetAsync(
             cacheKey,
@@ -148,12 +148,12 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         throw new NotImplementedException("Will be implemented in Task 7");
     }
 
-    private static T? GetField<T>(List<AgentMemory> rows, string memoryType) where T : class
+    private static T? GetField<T>(List<AgentMemory> rows, string memoryType)
     {
         var row = rows.FirstOrDefault(r => r.MemoryType == memoryType);
         if (row == null || string.IsNullOrEmpty(row.Content))
         {
-            return null;
+            return default;
         }
 
         return JsonSerializer.Deserialize<T>(row.Content);
