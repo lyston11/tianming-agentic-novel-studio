@@ -222,7 +222,63 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: 实现 AgentMemoryRepository（第1部分 - 基础结构）
+### Task 5: 配置 Redis 分布式缓存
+
+**Files:**
+- Modify: `Web/NovelAgentWeb/appsettings.json`
+- Modify: `Web/NovelAgentWeb/Program.cs`
+
+- [ ] **Step 1: 添加 Redis 配置**
+
+在 appsettings.json 添加：
+
+```json
+"Redis": {
+  "ConnectionString": "localhost:6379",
+  "InstanceName": "NovelAgent:"
+}
+```
+
+- [ ] **Step 2: 安装 StackExchange.Redis 包**
+
+```bash
+cd /Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb
+dotnet add package StackExchange.Redis
+dotnet add package Microsoft.Extensions.Caching.StackExchangeRedis
+```
+
+- [ ] **Step 3: 注册 Redis 到 DI**
+
+在 Program.cs 的 `builder.Services` 区域添加：
+
+```csharp
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration["Redis:ConnectionString"];
+    options.InstanceName = builder.Configuration["Redis:InstanceName"];
+});
+```
+
+- [ ] **Step 4: 验证编译**
+
+```bash
+dotnet build
+```
+
+预期：编译成功
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add Web/NovelAgentWeb/appsettings.json Web/NovelAgentWeb/Program.cs Web/NovelAgentWeb/NovelAgentWeb.csproj
+git commit -m "feat(cache): add Redis distributed cache configuration
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: 实现 AgentMemoryRepository（第1部分 - 基础结构）
 
 **Files:**
 - Create: `Web/NovelAgentWeb/Services/AgentMemory/AgentMemoryRepository.cs`
@@ -232,6 +288,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 ```csharp
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Support;
@@ -241,17 +298,21 @@ namespace TM.Web.NovelAgentWeb.Services.AgentMemory;
 public class AgentMemoryRepository : IAgentMemoryRepository
 {
     private readonly NovelAgentDbContext _db;
-    private readonly IMemoryCacheService _cache;
+    private readonly IMemoryCacheService _memoryCache;
+    private readonly IDistributedCache _redisCache;
     private readonly ILogger<AgentMemoryRepository> _logger;
-    private static readonly TimeSpan CacheTTL = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RedisTTL = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MemoryCacheTTL = TimeSpan.FromMinutes(1);
 
     public AgentMemoryRepository(
         NovelAgentDbContext db,
-        IMemoryCacheService cache,
+        IMemoryCacheService memoryCache,
+        IDistributedCache redisCache,
         ILogger<AgentMemoryRepository> logger)
     {
         _db = db;
-        _cache = cache;
+        _memoryCache = memoryCache;
+        _redisCache = redisCache;
         _logger = logger;
     }
 
@@ -284,7 +345,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 **Files:**
 - Modify: `Web/NovelAgentWeb/Services/AgentMemory/AgentMemoryRepository.cs`
 
-- [ ] **Step 1: 实现 GetAuthorMemoryAsync**
+- [ ] **Step 1: 实现 GetAuthorMemoryAsync（Redis + IMemoryCache 二级缓存）**
 
 在类末尾添加：
 
@@ -292,20 +353,39 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 public async Task<AgentAuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
 {
     var cacheKey = $"memory:author:{userId}";
-    return await _cache.GetOrSetAsync(cacheKey, async () =>
+    
+    // Level 1: IMemoryCache (1分钟)
+    var cached = await _memoryCache.GetOrSetAsync(cacheKey, async () =>
     {
+        // Level 2: Redis (10分钟)
+        var redisKey = $"redis:{cacheKey}";
+        var redisData = await _redisCache.GetStringAsync(redisKey, ct);
+        if (!string.IsNullOrEmpty(redisData))
+        {
+            return JsonSerializer.Deserialize<AgentAuthorMemory>(redisData)!;
+        }
+        
+        // Level 3: Database
         var rows = await _db.AgentMemories
             .Where(m => m.UserId == userId && m.ProjectId == null && m.MemoryType.StartsWith("author."))
             .ToListAsync(ct);
 
-        return new AgentAuthorMemory
+        var memory = new AgentAuthorMemory
         {
             StyleLikes = GetField<List<string>>(rows, "author.style_likes") ?? new(),
             StyleDislikes = GetField<List<string>>(rows, "author.style_dislikes") ?? new(),
             ConfirmationTolerance = GetField<string>(rows, "author.confirmation_tolerance") ?? "key_checkpoints",
             GenreHabits = GetField<List<string>>(rows, "author.genre_habits") ?? new()
         };
-    }, CacheTTL, ct);
+        
+        // Cache in Redis for 10 minutes
+        await _redisCache.SetStringAsync(redisKey, JsonSerializer.Serialize(memory), 
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = RedisTTL }, ct);
+        
+        return memory;
+    }, MemoryCacheTTL, ct);
+    
+    return cached;
 }
 
 private T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
@@ -316,19 +396,27 @@ private T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
 }
 ```
 
-- [ ] **Step 2: 实现 GetProjectMemoryAsync**
+- [ ] **Step 2: 实现 GetProjectMemoryAsync（Redis + IMemoryCache 二级缓存）**
 
 ```csharp
 public async Task<AgentProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
 {
     var cacheKey = $"memory:project:{userId}:{projectId}";
-    return await _cache.GetOrSetAsync(cacheKey, async () =>
+    
+    return await _memoryCache.GetOrSetAsync(cacheKey, async () =>
     {
+        var redisKey = $"redis:{cacheKey}";
+        var redisData = await _redisCache.GetStringAsync(redisKey, ct);
+        if (!string.IsNullOrEmpty(redisData))
+        {
+            return JsonSerializer.Deserialize<AgentProjectMemory>(redisData)!;
+        }
+        
         var rows = await _db.AgentMemories
             .Where(m => m.UserId == userId && m.ProjectId == projectId && m.MemoryType.StartsWith("project."))
             .ToListAsync(ct);
 
-        return new AgentProjectMemory
+        var memory = new AgentProjectMemory
         {
             ProjectId = projectId,
             LongTermGoal = GetField<string>(rows, "project.long_term_goal") ?? string.Empty,
@@ -337,7 +425,12 @@ public async Task<AgentProjectMemory> GetProjectMemoryAsync(string userId, strin
             Constraints = GetField<List<string>>(rows, "project.constraints") ?? new(),
             UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new()
         };
-    }, CacheTTL, ct);
+        
+        await _redisCache.SetStringAsync(redisKey, JsonSerializer.Serialize(memory),
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = RedisTTL }, ct);
+        
+        return memory;
+    }, MemoryCacheTTL, ct);
 }
 ```
 
@@ -366,25 +459,38 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 **Files:**
 - Modify: `Web/NovelAgentWeb/Services/AgentMemory/AgentMemoryRepository.cs`
 
-- [ ] **Step 1: 实现 GetExecutionMemoryAsync**
+- [ ] **Step 1: 实现 GetExecutionMemoryAsync（Redis + IMemoryCache 二级缓存）**
 
 ```csharp
 public async Task<AgentExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default)
 {
     var cacheKey = $"memory:execution:{userId}:{projectId}";
-    return await _cache.GetOrSetAsync(cacheKey, async () =>
+    
+    return await _memoryCache.GetOrSetAsync(cacheKey, async () =>
     {
+        var redisKey = $"redis:{cacheKey}";
+        var redisData = await _redisCache.GetStringAsync(redisKey, ct);
+        if (!string.IsNullOrEmpty(redisData))
+        {
+            return JsonSerializer.Deserialize<AgentExecutionMemory>(redisData)!;
+        }
+        
         var rows = await _db.AgentMemories
             .Where(m => m.UserId == userId && m.ProjectId == projectId && m.MemoryType.StartsWith("execution."))
             .ToListAsync(ct);
 
-        return new AgentExecutionMemory
+        var memory = new AgentExecutionMemory
         {
             ToolFailurePatterns = GetField<List<string>>(rows, "execution.tool_failures") ?? new(),
             RepeatedBlockers = GetField<List<string>>(rows, "execution.repeated_blockers") ?? new(),
             SuccessfulRepairNotes = GetField<List<string>>(rows, "execution.successful_repairs") ?? new()
         };
-    }, CacheTTL, ct);
+        
+        await _redisCache.SetStringAsync(redisKey, JsonSerializer.Serialize(memory),
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = RedisTTL }, ct);
+        
+        return memory;
+    }, MemoryCacheTTL, ct);
 }
 ```
 
@@ -421,15 +527,30 @@ public async Task UpdateFieldAsync(string userId, string? projectId, string memo
 }
 ```
 
-- [ ] **Step 3: 实现 UpdateMemoryAsync 和辅助方法**
+- [ ] **Step 3: 实现 UpdateMemoryAsync 和辅助方法（增加衰减逻辑）**
 
 ```csharp
 public async Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default)
 {
     foreach (var (memoryType, value) in updates)
     {
-        await UpdateFieldAsync(userId, projectId, memoryType, value, ct);
+        // Apply decay rules before saving
+        var processedValue = ApplyDecayRules(memoryType, value);
+        await UpdateFieldAsync(userId, projectId, memoryType, processedValue, ct);
     }
+}
+
+private object ApplyDecayRules(string memoryType, object value)
+{
+    if (value is not List<string> list) return value;
+    
+    return memoryType switch
+    {
+        "author.style_dislikes" => list.TakeLast(32).ToList(),  // Max 32 items
+        "execution.repeated_blockers" => list.TakeLast(24).ToList(),  // Max 24 items
+        "execution.successful_repairs" => list.TakeLast(24).ToList(),  // Max 24 items
+        _ => value
+    };
 }
 
 private void InvalidateCache(string userId, string? projectId, string memoryType)
@@ -438,7 +559,10 @@ private void InvalidateCache(string userId, string? projectId, string memoryType
     var cacheKey = projectId == null
         ? $"memory:{scope}:{userId}"
         : $"memory:{scope}:{userId}:{projectId}";
-    _cache.Remove(cacheKey);
+    
+    // Invalidate both IMemoryCache and Redis
+    _memoryCache.Remove(cacheKey);
+    _redisCache.Remove($"redis:{cacheKey}");
 }
 ```
 
@@ -576,7 +700,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 **Files:**
 - Modify: `Web/NovelAgentWeb/Support/AgentMemoryService.cs`
 
-- [ ] **Step 1: 添加 ApplyMemoryUpdateAsync**
+- [ ] **Step 1: 添加 ApplyMemoryUpdateAsync（包含沉淀规则）**
 
 在类末尾添加：
 
@@ -585,39 +709,111 @@ private async Task ApplyMemoryUpdateAsync(string userId, string projectId, Agent
 {
     var updates = new Dictionary<string, object>();
 
+    // SessionMemory: 追加到 ShortTermPreferences，检查沉淀规则
     if (update.SessionMemory != null)
     {
-        // SessionMemory 更新到 AgentSession.SessionData，不走 Repository
+        var session = GetCurrentSession(); // 从当前上下文获取
+        if (session != null && session.WorkingMemory.SessionMemory != null)
+        {
+            // 更新 ChatSummary
+            session.WorkingMemory.SessionMemory.ChatSummary = update.SessionMemory.ChatSummary;
+            
+            // 追加 Preferences
+            foreach (var pref in update.SessionMemory.ExtractedPreferences)
+            {
+                if (!session.WorkingMemory.SessionMemory.ShortTermPreferences.Contains(pref))
+                {
+                    session.WorkingMemory.SessionMemory.ShortTermPreferences.Add(pref);
+                }
+            }
+            
+            // 沉淀规则：检查是否有 Preferences 重复 3 次
+            var prefCounts = session.WorkingMemory.SessionMemory.ShortTermPreferences
+                .GroupBy(p => p)
+                .Where(g => g.Count() >= 3)
+                .Select(g => g.Key)
+                .ToList();
+            
+            if (prefCounts.Count > 0)
+            {
+                // 沉淀到 ProjectMemory.Constraints
+                var existingConstraints = session.WorkingMemory.ProjectMemory?.Constraints ?? new();
+                var newConstraints = prefCounts.Where(p => !existingConstraints.Contains(p)).ToList();
+                
+                if (newConstraints.Count > 0)
+                {
+                    updates["project.constraints"] = existingConstraints.Concat(newConstraints).ToList();
+                    _logger.LogInformation("Sediment {Count} preferences to Constraints", newConstraints.Count);
+                    
+                    // 从 ShortTermPreferences 移除已沉淀的
+                    session.WorkingMemory.SessionMemory.ShortTermPreferences.RemoveAll(p => prefCounts.Contains(p));
+                }
+            }
+        }
     }
 
+    // ProjectMemory: 追加新约束和伏笔
     if (update.ProjectMemory != null)
     {
         if (update.ProjectMemory.NewConstraints.Count > 0)
-            updates["project.constraints"] = update.ProjectMemory.NewConstraints;
+        {
+            var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+            var merged = existing.Constraints.Concat(update.ProjectMemory.NewConstraints).Distinct().ToList();
+            updates["project.constraints"] = merged;
+        }
         if (update.ProjectMemory.UnresolvedThreads.Count > 0)
-            updates["project.unresolved_threads"] = update.ProjectMemory.UnresolvedThreads;
+        {
+            var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+            var merged = existing.UnresolvedThreads.Concat(update.ProjectMemory.UnresolvedThreads).ToList();
+            updates["project.unresolved_threads"] = merged;
+        }
     }
 
+    // AuthorMemory: 追加风格偏好（跨项目）
     if (update.AuthorMemory != null)
     {
         if (update.AuthorMemory.StyleLikes.Count > 0)
-            updates["author.style_likes"] = update.AuthorMemory.StyleLikes;
+        {
+            var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
+            var merged = existing.StyleLikes.Concat(update.AuthorMemory.StyleLikes).Distinct().ToList();
+            updates["author.style_likes"] = merged;
+        }
         if (update.AuthorMemory.StyleDislikes.Count > 0)
-            updates["author.style_dislikes"] = update.AuthorMemory.StyleDislikes;
+        {
+            var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
+            var merged = existing.StyleDislikes.Concat(update.AuthorMemory.StyleDislikes).Distinct().ToList();
+            updates["author.style_dislikes"] = merged;
+        }
     }
 
+    // ExecutionMemory: 追加工具执行记录
     if (update.ExecutionMemory != null)
     {
         if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolSuccess))
-            updates["execution.successful_repairs"] = new List<string> { update.ExecutionMemory.ToolSuccess };
+        {
+            var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
+            existing.SuccessfulRepairNotes.Add(update.ExecutionMemory.ToolSuccess);
+            updates["execution.successful_repairs"] = existing.SuccessfulRepairNotes;
+        }
         if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolFailure))
-            updates["execution.repeated_blockers"] = new List<string> { update.ExecutionMemory.ToolFailure };
+        {
+            var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
+            existing.RepeatedBlockers.Add(update.ExecutionMemory.ToolFailure);
+            updates["execution.repeated_blockers"] = existing.RepeatedBlockers;
+        }
     }
 
     if (updates.Count > 0)
     {
         await _repository.UpdateMemoryAsync(userId, projectId, updates, ct);
     }
+}
+
+private AgentSession? GetCurrentSession()
+{
+    // 从 AsyncLocal Workspace 获取当前会话
+    // 实际实现需要注入 WorkspaceFactory 或直接访问 NovelAgentWorkspace.Current
+    return null; // 占位符，实际需要实现
 }
 ```
 
