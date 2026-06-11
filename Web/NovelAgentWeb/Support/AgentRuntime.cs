@@ -122,14 +122,13 @@ public sealed class AgentRuntime
         if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
             session.Title = BuildSessionTitle(userMessage);
 
-        // ── Ensure session has a project (use temp if none) ──
-        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+        // ── Load project if session has one ──
+        NovelProjectInfo? project = null;
+        if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
         {
-            var userId = _currentUserService.GetUserId();
-            session.ActiveProjectId = "temp-" + userId;
+            project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
         }
 
-        var project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
         var maxSteps = settings.AgentAutoContinue ? Math.Clamp(settings.AgentMaxAutoSteps, 5, 20) : 3;
         var trace = new List<AgentRuntimeStep>();
@@ -138,6 +137,13 @@ public sealed class AgentRuntime
         AgentReflection? lastReflection = null;
         AgentToolExecutionResult? lastResult = null;
         var userTurn = _conversationKernel.BuildEnvelope(session, userMessage);
+
+        StoryBibleDocument? bible = null;
+        if (project != null)
+        {
+            bible = await _catalog.WithProjectAsync(project,
+                () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+        }
         trace.Add(new AgentRuntimeStep
         {
             StepIndex = 0,
@@ -162,14 +168,26 @@ public sealed class AgentRuntime
         {
             ct.ThrowIfCancellationRequested();
 
-            // Observe
-            var bible = await WithSessionProjectAsync(session, () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
-            _blackboardRecovery.Recover(session, project, bible);
-            lastContext = await WithSessionProjectAsync(session,
-                () => _observationBuilder.BuildAsync(session, project, bible, userMessage, userTurn.Intent, ct), ct).ConfigureAwait(false);
-
-            // Inject anchor prompt into context for the LLM
-            lastContext.AnchorPrompt = BuildAnchorPrompt(session, project, bible, step, maxSteps, userMessage);
+            // Observe - only if we have a project
+            if (project != null && bible != null)
+            {
+                _blackboardRecovery.Recover(session, project, bible);
+                lastContext = await _catalog.WithProjectAsync(project,
+                    () => _observationBuilder.BuildAsync(session, project, bible, userMessage, userTurn.Intent, ct), ct).ConfigureAwait(false);
+                lastContext.AnchorPrompt = BuildAnchorPrompt(session, project, bible, step, maxSteps, userMessage);
+            }
+            else
+            {
+                // No project - build minimal context for casual chat
+                lastContext = new AgentObservationContext
+                {
+                    UserMessage = userMessage,
+                    TurnIntent = userTurn.Intent,
+                    UserTurn = userTurn,
+                    MissionPlan = session.WorkingMemory.MissionPlan ?? new AgentMissionPlan(),
+                    AnchorPrompt = $"Step {step}/{maxSteps}. No active project. User can ask to create a new novel or switch to existing project.",
+                };
+            }
 
             trace.Add(new AgentRuntimeStep
             {
@@ -179,7 +197,7 @@ public sealed class AgentRuntime
                 {
                     Type = AgentActionType.FinalReply,
                     Intent = "observe",
-                    Brief = lastContext.MissionPlan.LastVerifiedState,
+                    Brief = lastContext.MissionPlan?.LastVerifiedState ?? "casual_chat",
                     Source = "observation",
                 },
             });
@@ -407,8 +425,21 @@ public sealed class AgentRuntime
             lastResult = result;
             _guardrails.RecordSuccess(action.ToolCall.Name);
             if (!string.IsNullOrWhiteSpace(result.Phase)) session.Phase = result.Phase;
-            project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
-            await SyncMissionPlanAsync(session, project, result, action, null, ct).ConfigureAwait(false);
+
+            // Refresh project if tool execution set ActiveProjectId
+            if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
+            {
+                project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+                if (project != null)
+                {
+                    bible = await _catalog.WithProjectAsync(project,
+                        () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+                }
+            }
+
+            if (project != null)
+                await SyncMissionPlanAsync(session, project, result, action, null, ct).ConfigureAwait(false);
+
             await PublishToolResultAsync(session, result, ct).ConfigureAwait(false);
 
             var observation = AddRuntimeObservation(session, step, action.ToolCall.Name, result);
@@ -447,7 +478,16 @@ public sealed class AgentRuntime
                 return await FinishTextResponse(session, userMessage, safetyAction, lastContext, trace, reflection, ct);
             }
 
-            project = await ResolveSessionProjectAsync(session, ct).ConfigureAwait(false);
+            // Refresh project/bible for next iteration
+            if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
+            {
+                project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+                if (project != null)
+                {
+                    bible = await _catalog.WithProjectAsync(project,
+                        () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+                }
+            }
         }
 
         // Max steps reached
@@ -466,8 +506,11 @@ public sealed class AgentRuntime
     //  Inspired by GenericAgent's _get_anchor_prompt
     // ═══════════════════════════════════════════════════════════════
 
-    private string BuildAnchorPrompt(AgentSession session, NovelProjectInfo project, StoryBibleDocument bible, int step, int maxSteps, string userMessage)
+    private string BuildAnchorPrompt(AgentSession session, NovelProjectInfo? project, StoryBibleDocument? bible, int step, int maxSteps, string userMessage)
     {
+        if (project == null || bible == null)
+            return $"Step {step}/{maxSteps}. 无项目。用户可以要求创建新小说或切换到现有项目。";
+
         var parts = new List<string>();
         var mission = session.WorkingMemory.Mission;
         var plan = session.WorkingMemory.MissionPlan;
@@ -671,8 +714,11 @@ public sealed class AgentRuntime
         NovelProjectInfo? project = null;
         if (!string.IsNullOrWhiteSpace(session.ActiveProjectId))
             project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
-        project ??= await _catalog.GetActiveAsync(ct).ConfigureAwait(false);
-        session.ActiveProjectId = project.Id;
+
+        // Don't auto-bind to last active project - let LLM decide via tool calls
+        if (project == null)
+            throw new InvalidOperationException("No active project. LLM should use CommitStoryFoundation to create one or switch to existing project.");
+
         return project;
     }
 
@@ -683,20 +729,21 @@ public sealed class AgentRuntime
             return await _catalog.FindAsync(pendingProjectId, ct).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(session.ActiveProjectId))
-        {
-            var sessionProject = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
-            if (sessionProject != null) return sessionProject;
-        }
+            return await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
 
-        return await _catalog.GetActiveAsync(ct).ConfigureAwait(false);
+        // No auto-fallback - return null if no project
+        return null;
     }
 
     private async Task<T> WithSessionProjectAsync<T>(AgentSession session, Func<Task<T>> operation, CancellationToken ct)
     {
-        var project = !string.IsNullOrWhiteSpace(session.ActiveProjectId)
-            ? await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false)
-            : null;
-        project ??= await _catalog.GetActiveAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+            throw new InvalidOperationException("No active project in session");
+
+        var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+        if (project == null)
+            throw new InvalidOperationException($"Project {session.ActiveProjectId} not found");
+
         return await _catalog.WithProjectAsync(project, operation, ct).ConfigureAwait(false);
     }
 
@@ -743,18 +790,36 @@ public sealed class AgentRuntime
         AgentSession session, string userMessage, AgentAction action,
         AgentObservationContext? context, List<AgentRuntimeStep> trace,
         int step, string toolName, AgentToolExecutionResult result,
-        string observationType, NovelProjectInfo project, CancellationToken ct)
+        string observationType, NovelProjectInfo? project, CancellationToken ct)
     {
         var observation = AddRuntimeObservation(session, step, toolName, result, observationType);
         trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = observationType, Action = action, Observation = observation });
 
         await EmitAsync(session, AgentSseEventType.AgentReflecting, "正在根据观察重新判断...", ct).ConfigureAwait(false);
-        var reflectContext = context ?? await WithSessionProjectAsync(session,
-            async () =>
+
+        AgentObservationContext reflectContext;
+        if (context != null)
+        {
+            reflectContext = context;
+        }
+        else if (project != null)
+        {
+            reflectContext = await _catalog.WithProjectAsync(project, async () =>
             {
                 var bible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
                 return await _observationBuilder.BuildAsync(session, project, bible, userMessage, GetCurrentTurnIntent(session, userMessage), ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            reflectContext = new AgentObservationContext
+            {
+                UserMessage = userMessage,
+                TurnIntent = GetCurrentTurnIntent(session, userMessage),
+                MissionPlan = session.WorkingMemory.MissionPlan ?? new AgentMissionPlan(),
+            };
+        }
+
         var reflection = await _reflectionEngine.ReflectAsync(reflectContext, observation, ct).ConfigureAwait(false);
         ApplyReflection(session, reflection);
         await SyncMissionPlanAsync(session, project, result, action, reflection, ct).ConfigureAwait(false);
@@ -879,8 +944,10 @@ public sealed class AgentRuntime
         plan.UpdatedAt = DateTime.UtcNow;
     }
 
-    private static void SyncMissionPlan(AgentSession session, NovelProjectInfo project, AgentToolExecutionResult? result, AgentAction? action)
+    private static void SyncMissionPlan(AgentSession session, NovelProjectInfo? project, AgentToolExecutionResult? result, AgentAction? action)
     {
+        if (project == null) return;
+
         var plan = session.WorkingMemory.MissionPlan ??= new AgentMissionPlan();
         if (string.IsNullOrWhiteSpace(plan.MissionId)) plan.MissionId = Guid.NewGuid().ToString("N");
         plan.ProjectId = project.Id;
@@ -894,10 +961,12 @@ public sealed class AgentRuntime
         plan.UpdatedAt = DateTime.UtcNow;
     }
 
-    private async Task SyncMissionPlanAsync(AgentSession session, NovelProjectInfo project, AgentToolExecutionResult? result, AgentAction? action, AgentReflection? reflection, CancellationToken ct)
+    private async Task SyncMissionPlanAsync(AgentSession session, NovelProjectInfo? project, AgentToolExecutionResult? result, AgentAction? action, AgentReflection? reflection, CancellationToken ct)
     {
+        if (project == null) return;
+
         SyncMissionPlan(session, project, result, action);
-        var bible = await WithSessionProjectAsync(session, () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+        var bible = await _catalog.WithProjectAsync(project, () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
         _taskTreeService.Sync(session, project, bible, result, action, reflection);
         await _memoryService.PersistAsync(session, project, bible, reflection, ct).ConfigureAwait(false);
     }
