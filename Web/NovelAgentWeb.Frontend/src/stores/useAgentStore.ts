@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { AgentSseEvent, NovelAgentRun, NovelAgentPlanStep } from '../api/types';
 
 interface AgentState {
@@ -17,14 +18,16 @@ interface AgentState {
   clearEvents: () => void;
 }
 
-export const useAgentStore = create<AgentState>((set) => ({
-  sessionId: '',
-  activeRun: null,
-  selectedStep: null,
-  sseEvents: [],
-  isConnected: false,
+export const useAgentStore = create<AgentState>()(
+  persist(
+    (set) => ({
+      sessionId: '',
+      activeRun: null,
+      selectedStep: null,
+      sseEvents: [],
+      isConnected: false,
 
-  setSessionId: (id) => set({ sessionId: id }),
+      setSessionId: (id) => set({ sessionId: id }),
   setActiveRun: (run) => set({ activeRun: run }),
   setSelectedStep: (step) => set({ selectedStep: step }),
   addSseEvent: (evt) =>
@@ -41,4 +44,10 @@ export const useAgentStore = create<AgentState>((set) => ({
       return { activeRun: { ...state.activeRun, steps } };
     }),
   clearEvents: () => set({ sseEvents: [] }),
-}));
+    }),
+    {
+      name: 'agent-storage',
+      partialize: (state) => ({ sessionId: state.sessionId }),
+    }
+  )
+);

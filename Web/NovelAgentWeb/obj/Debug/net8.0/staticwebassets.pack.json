@@ -1,0 +1,41 @@
+{
+  "Files": [
+    {
+      "Id": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/wwwroot/assets/index-C8nbuO8t.css",
+      "PackagePath": "staticwebassets/assets/index-C8nbuO8t.css"
+    },
+    {
+      "Id": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/wwwroot/assets/index-CspFIueW.js",
+      "PackagePath": "staticwebassets/assets/index-CspFIueW.js"
+    },
+    {
+      "Id": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/wwwroot/favicon.svg",
+      "PackagePath": "staticwebassets/favicon.svg"
+    },
+    {
+      "Id": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/wwwroot/icons.svg",
+      "PackagePath": "staticwebassets/icons.svg"
+    },
+    {
+      "Id": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/wwwroot/index.html",
+      "PackagePath": "staticwebassets/index.html"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.NovelAgentWeb.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.build.NovelAgentWeb.props",
+      "PackagePath": "build\\NovelAgentWeb.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildMultiTargeting.NovelAgentWeb.props",
+      "PackagePath": "buildMultiTargeting\\NovelAgentWeb.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildTransitive.NovelAgentWeb.props",
+      "PackagePath": "buildTransitive\\NovelAgentWeb.props"
+    }
+  ],
+  "ElementsToRemove": []
+}

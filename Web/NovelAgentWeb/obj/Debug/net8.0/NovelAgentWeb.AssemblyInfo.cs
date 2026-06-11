@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("NovelAgentWeb")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5a63600d1e1f9b1d9ab5e2f17f5a5d5028cbff84")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1fb530a68b8fd341517f2f8f12fb59305bd63ae0")]
 [assembly: System.Reflection.AssemblyProductAttribute("NovelAgentWeb")]
 [assembly: System.Reflection.AssemblyTitleAttribute("NovelAgentWeb")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
