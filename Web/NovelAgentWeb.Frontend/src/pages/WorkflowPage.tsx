@@ -285,7 +285,7 @@ export default function WorkflowPage() {
   const [workbenchFeedback, setWorkbenchFeedback] = useState('');
   const [workbenchNotice, setWorkbenchNotice] = useState('');
 
-  const { data: workspaceData, isLoading: workspaceLoading } = useQuery({
+  const { data: workspaceData } = useQuery({
     queryKey: ['workspace'],
     queryFn: getWorkflowWorkspace
   });
