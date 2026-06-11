@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
@@ -33,6 +34,7 @@ public sealed class AgentRuntime
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
     private readonly PhaseContextBuilder _contextBuilder;
+    private readonly ILogger<AgentRuntime> _logger;
     private AgentAction? lastAction;
 
     public AgentRuntime(
@@ -51,7 +53,8 @@ public sealed class AgentRuntime
         MissionBlackboardRecoveryService blackboardRecovery,
         AgentToolGuardrails guardrails,
         ConversationKernel conversationKernel,
-        PhaseContextBuilder contextBuilder)
+        PhaseContextBuilder contextBuilder,
+        ILogger<AgentRuntime> logger)
     {
         _workspaceFactory = workspaceFactory;
         _currentUserService = currentUserService;
@@ -70,6 +73,7 @@ public sealed class AgentRuntime
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
         _contextBuilder = contextBuilder;
+        _logger = logger;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -778,11 +782,27 @@ public sealed class AgentRuntime
         return BuildResponse(session, reply, action.Suggestions, action, context, trace);
     }
 
+    private MemoryUpdateTrigger DetermineUpdateTrigger(AgentSession session)
+    {
+        var turnCount = session.ChatHistory.Count / 2;
+        var lastDecision = session.WorkingMemory.LastDecision;
+        var hasToolCall = lastDecision?.Mode == "tool_calling";
+        var toolName = session.WorkingMemory.PendingToolCall?.Name;
+
+        if (hasToolCall && toolName == "WriteChapter") return MemoryUpdateTrigger.ChapterWrite;
+        if (hasToolCall) return MemoryUpdateTrigger.ToolCall;
+        if (turnCount % 5 == 0 && turnCount > 0) return MemoryUpdateTrigger.Standard;
+        return MemoryUpdateTrigger.Lightweight;
+    }
+
     private async Task<AgentChatResponse> FinishReflectionResponse(
         AgentSession session, string userMessage, AgentAction action,
         AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace,
         AgentReflection reflection, AgentToolExecutionResult result, CancellationToken ct)
     {
+        var trigger = DetermineUpdateTrigger(session);
+        _logger.LogInformation("Memory update trigger: {Trigger} for session {SessionId}", trigger, session.SessionId);
+
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
         AddChatTurn(session, "assistant", reply);
         await _sessionManager.SaveSessionAsync(session, ct);
