@@ -132,7 +132,13 @@ public sealed class AgentRuntime
         {
             var sessionContext = ToSessionContext(session);
             var resolution = await projectRouter.ResolveProjectAsync(userMessage, sessionContext, ct).ConfigureAwait(false);
-            if (resolution.NeedsClarification)
+
+            // Skip project routing for casual chat
+            if (resolution.IsNotProjectRelated)
+            {
+                session.ActiveProjectId = "temp-" + _currentUserService.GetUserId();
+            }
+            else if (resolution.NeedsClarification)
             {
                 return new AgentChatResponse(
                     resolution.ClarificationMessage ?? "请明确您的项目选择。",
@@ -147,8 +153,10 @@ public sealed class AgentRuntime
                     session.WorkingMemory.MissionPlan,
                     null);
             }
-
-            session.ActiveProjectId = resolution.Project!.Id;
+            else
+            {
+                session.ActiveProjectId = resolution.Project!.Id;
+            }
         }
 
         // ── Phase inference: determine conversation phase and filter tools ──

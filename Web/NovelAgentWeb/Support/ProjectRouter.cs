@@ -19,6 +19,9 @@ public enum UserProjectIntent
 
     /// <summary>Intent is unclear; need to ask user for clarification.</summary>
     Unresolved = 2,
+
+    /// <summary>Message is not project-related (casual chat, questions, greetings).</summary>
+    NotProjectRelated = 3,
 }
 
 /// <summary>
@@ -31,6 +34,9 @@ public sealed class ProjectResolutionResult
 
     /// <summary>True if the router needs to ask the user for clarification.</summary>
     public required bool NeedsClarification { get; init; }
+
+    /// <summary>True if the user message is not project-related (casual chat).</summary>
+    public bool IsNotProjectRelated { get; init; }
 
     /// <summary>Message to display to the user when clarification is needed.</summary>
     public string? ClarificationMessage { get; init; }
@@ -45,8 +51,8 @@ public sealed class ProjectResolutionResult
 /// </summary>
 public sealed class ProjectRouter
 {
-    private readonly dynamic? _catalog;
-    private readonly dynamic? _workspace;
+    private readonly NovelProjectCatalog? _catalog;
+    private readonly NovelAgentWorkspace? _workspace;
 
     // Keywords that indicate user wants to create a new project
     private static readonly HashSet<string> NewProjectKeywords = new(StringComparer.OrdinalIgnoreCase)
@@ -71,7 +77,7 @@ public sealed class ProjectRouter
         "继续写",
     };
 
-    public ProjectRouter(dynamic? catalog, dynamic? workspace)
+    public ProjectRouter(NovelProjectCatalog? catalog, NovelAgentWorkspace? workspace)
     {
         _catalog = catalog;
         _workspace = workspace;
@@ -92,6 +98,13 @@ public sealed class ProjectRouter
         if (string.IsNullOrWhiteSpace(userMessage))
         {
             return UserProjectIntent.Unresolved;
+        }
+
+        // Fast path: detect casual chat (greetings, identity questions, help)
+        var casualPatterns = new[] { "你好", "您好", "hi", "hello", "你是谁", "你是什么", "介绍", "帮助", "help", "怎么用", "干什么的" };
+        if (casualPatterns.Any(p => userMessage.Contains(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            return UserProjectIntent.NotProjectRelated;
         }
 
         // Fast path: check for new project keywords
@@ -146,8 +159,14 @@ public sealed class ProjectRouter
 
         return intent switch
         {
-            UserProjectIntent.CreateNew => await CreateNewProjectAsync(session, cancellationToken).ConfigureAwait(false),
+            UserProjectIntent.CreateNew => await CreateNewProjectAsync(userMessage, session, cancellationToken).ConfigureAwait(false),
             UserProjectIntent.ContinueExisting => await LoadExistingProjectAsync(userMessage, session, cancellationToken).ConfigureAwait(false),
+            UserProjectIntent.NotProjectRelated => new ProjectResolutionResult
+            {
+                Success = false,
+                NeedsClarification = false,
+                IsNotProjectRelated = true,
+            },
             UserProjectIntent.Unresolved => new ProjectResolutionResult
             {
                 Success = false,
@@ -165,6 +184,7 @@ public sealed class ProjectRouter
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Project resolution result with the newly created project.</returns>
     private async Task<ProjectResolutionResult> CreateNewProjectAsync(
+        string userMessage,
         SessionContext session,
         CancellationToken cancellationToken)
     {
@@ -178,21 +198,11 @@ public sealed class ProjectRouter
             };
         }
 
-        var projectId = Guid.NewGuid().ToString("N");
-        var now = DateTime.Now;
-        var project = new NovelProjectInfo
-        {
-            Id = projectId,
-            Title = $"新小说 {now:yyyy-MM-dd HH:mm}",
-            Genre = "未分类",
-            StorageProjectName = projectId,
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-
-        await _catalog!.AddAsync(project, cancellationToken).ConfigureAwait(false);
-        await _catalog!.ActivateAsync(projectId, cancellationToken).ConfigureAwait(false);
-        session.ActiveProjectId = projectId;
+        var project = await _catalog.CreateAsync(new NovelProjectCreateRequest(
+            Title: null,
+            Genre: "未分类",
+            Seed: userMessage), cancellationToken).ConfigureAwait(false);
+        session.ActiveProjectId = project.Id;
 
         return new ProjectResolutionResult
         {
@@ -237,6 +247,15 @@ public sealed class ProjectRouter
                 break;
             }
         }
+
+        if (project == null && !string.IsNullOrWhiteSpace(session.ActiveProjectId))
+        {
+            project = catalog.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, session.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        project ??= catalog.Projects.FirstOrDefault(p =>
+            string.Equals(p.Id, catalog.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
 
         // No project found
         if (project == null)
