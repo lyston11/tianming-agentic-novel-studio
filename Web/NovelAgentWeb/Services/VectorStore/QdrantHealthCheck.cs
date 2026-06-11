@@ -25,7 +25,9 @@ public class QdrantHealthCheck : BackgroundService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
 
-        var qdrantBaseUrl = configuration["Qdrant:BaseUrl"] ?? "http://localhost:6333";
+        var qdrantHost = configuration["Qdrant:Host"] ?? "localhost";
+        var qdrantPort = configuration.GetValue<int>("Qdrant:Port", 6333);
+        var qdrantBaseUrl = $"http://{qdrantHost}:{qdrantPort}";
         _qdrantHealthUrl = $"{qdrantBaseUrl}/healthz";
 
         var intervalSeconds = configuration.GetValue<int>("Qdrant:HealthCheckIntervalSeconds", 60);
