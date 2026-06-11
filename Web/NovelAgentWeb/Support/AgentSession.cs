@@ -20,6 +20,11 @@ public sealed class AgentSession
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    // Tool Search缓存
+    public string? DiscoveredPhase { get; set; }
+    public List<ToolSchema> DiscoveredTools { get; set; } = new();
+    public DateTime? LastToolSearchAt { get; set; }
+
     public void NormalizeLegacyState()
     {
         if (IsRemovedLegacyTool(WorkingMemory.PendingToolCall))
