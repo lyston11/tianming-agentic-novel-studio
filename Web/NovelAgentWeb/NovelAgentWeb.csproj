@@ -14,7 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="Legacy\Common\Helpers\*.cs" />
     <Compile Include="..\..\Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" Link="Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" />
     <Compile Include="..\..\Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs" Link="Services\Framework\AI\SemanticKernel\GenerationProgressHub.cs" />
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Models\*.cs" Link="NovelAgent\Models\%(Filename)%(Extension)" />

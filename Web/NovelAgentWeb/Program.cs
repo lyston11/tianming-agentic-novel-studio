@@ -198,7 +198,7 @@ builder.Services.AddCors(options =>
 // NovelAgentWorkspace and NovelProjectCatalog are now provided dynamically via WorkspaceFactory
 builder.Services.AddSingleton<ProjectScopedExecutor>();
 builder.Services.AddSingleton<IMaterialAnalysisService, StubMaterialAnalysisService>();
-builder.Services.AddSingleton<AgentSessionManager>();
+builder.Services.AddScoped<AgentSessionManager>();
 builder.Services.AddSingleton<UserSettingsManager>(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -219,19 +219,19 @@ builder.Services.AddSingleton<HttpClient>(sp =>
     return http;
 });
 builder.Services.AddSingleton<ILlmToolCallingClient, ProviderToolCallingClient>();
-builder.Services.AddSingleton<AgentMemoryService>();
+builder.Services.AddScoped<AgentMemoryService>();
 builder.Services.AddSingleton<AgentMissionTaskTreeService>();
 builder.Services.AddSingleton<AgentTaskScheduler>();
 builder.Services.AddSingleton<MissionBlackboardRecoveryService>();
 builder.Services.AddSingleton<ConversationKernel>();
-builder.Services.AddSingleton<AgentObservationBuilder>();
+builder.Services.AddScoped<AgentObservationBuilder>();
 builder.Services.AddSingleton<AgentPlanner>();
 builder.Services.AddSingleton<ToolPolicyEngine>();
 builder.Services.AddSingleton<AgentQualityReviewSuite>();
 builder.Services.AddSingleton<ReflectionEngine>();
-builder.Services.AddSingleton<PhaseContextBuilder>();
-builder.Services.AddSingleton<AgentRuntime>();
-builder.Services.AddSingleton<AgentRouter>();
+builder.Services.AddScoped<PhaseContextBuilder>();
+builder.Services.AddScoped<AgentRuntime>();
+builder.Services.AddScoped<AgentRouter>();
 builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 builder.Services.AddSingleton<QdrantSearchService>(); // Vector search service with user isolation
 
@@ -255,6 +255,13 @@ builder.Services.AddScoped<SemanticSearchService>();
 builder.Services.AddHostedService<QdrantHealthCheck>();
 
 var app = builder.Build();
+
+// Handle CLI commands
+if (args.Contains("--migrate-memory"))
+{
+    await TM.Web.NovelAgentWeb.Scripts.MigrateMemoryToSqlite.RunAsync(app.Services);
+    return;
+}
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
