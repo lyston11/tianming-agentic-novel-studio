@@ -145,6 +145,9 @@ builder.Services.AddScoped<IStoryBibleService, StoryBibleService>();
 // Register Workflow Service
 builder.Services.AddScoped<IWorkflowService, WorkflowService>();
 
+// Register Workspace Service
+builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
+
 // Register Agent Session Service
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
 
