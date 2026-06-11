@@ -414,6 +414,56 @@ dotnet run
 
 ---
 
+## 前端构建和部署
+
+### 开发环境
+
+```bash
+# 启动后端
+cd Web/NovelAgentWeb
+ASPNETCORE_URLS=http://+:5002 dotnet run
+
+# 启动前端（另一个终端）
+cd Web/NovelAgentWeb.Frontend
+npm run dev
+```
+
+访问 http://localhost:3002
+
+### 生产构建
+
+```bash
+# 构建前端（自动同步到 wwwroot）
+cd Web/NovelAgentWeb.Frontend
+npm run build
+
+# 发布后端
+cd ../NovelAgentWeb
+dotnet publish -c Release -o ../../publish
+```
+
+### 验证部署
+
+启动发布的应用：
+
+```bash
+cd publish
+ASPNETCORE_URLS=http://+:5002 ./NovelAgentWeb
+```
+
+访问 http://localhost:5002 验证前端加载正常。
+
+## 端口配置
+
+**固定端口（永远不要改）：**
+- 后端 API: `5002`
+- 前端开发: `3002`
+- Qdrant: `6333` (HTTP), `6334` (gRPC)
+
+**重要：** 后端必须设置 `ASPNETCORE_URLS=http://+:5002`，否则会监听默认端口 5000！
+
+---
+
 ## 部署
 
 ### 开发环境
