@@ -72,7 +72,7 @@ public sealed class AgentToolRegistry
         Name = e.Definition.Name,
         Description = e.Definition.Description,
         Risk = e.Definition.Risk,
-        RequiresConfirmation = false,
+        RequiresConfirmation = e.Definition.RequiresConfirmation,
         Parameters = e.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
     }).ToList();
 
@@ -98,7 +98,7 @@ public sealed class AgentToolRegistry
                 Name = e.Value.Definition.Name,
                 Description = e.Value.Definition.Description,
                 Risk = e.Value.Definition.Risk,
-                RequiresConfirmation = false,
+                RequiresConfirmation = e.Value.Definition.RequiresConfirmation,
                 Parameters = e.Value.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
             })
             .ToList();
@@ -134,20 +134,21 @@ public sealed class AgentToolRegistry
     {
         var entries = new[]
         {
+            Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
             Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
             Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", (call, _, _, _, ct) => SearchCreativeKnowledgeAsync(call, ct)),
             Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
-            Entry("CommitStoryFoundation", "commit", "High", false, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
+            Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
             Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId" }, "规划卷级弧线，不直接固化。", (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
-            Entry("CommitVolumeArc", "commit", "High", false, new[] { "runId" }, "把卷规划提交到 Story Bible。", (call, session, _, confirmed, ct) => CommitVolumeArcAsync(call, session, confirmed, ct)),
+            Entry("CommitVolumeArc", "commit", "High", true, new[] { "runId" }, "把卷规划提交到 Story Bible。", (call, session, _, confirmed, ct) => CommitVolumeArcAsync(call, session, confirmed, ct)),
             Entry("PlanChapter", "planning", "Medium", false, new[] { "creativeBrief", "chapterId", "sourceTurnId" }, "检索项目状态和知识库，生成章节候选。", (call, session, bible, _, ct) => PlanChapterAsync(call, session, bible, ct)),
             Entry("SelectChapterCandidate", "planning", "Medium", false, new[] { "runId", "candidateTitles" }, "选择章节候选，决定后续正文生成方向。", (call, session, _, confirmed, ct) => SelectChapterCandidateAsync(call, session, confirmed, ct)),
             Entry("BuildChapterContextPackage", "writing", "Low", false, new[] { "runId" }, "构建章节上下文包，汇总事实快照、蓝图、摘要链和长距离 RAG。", (call, session, _, _, ct) => BuildChapterContextPackageAsync(call, session, ct)),
-            Entry("GenerateChapterWithChanges", "writing", "High", false, new[] { "runId" }, "生成章节正文和 CHANGES，硬门禁通过后才提交成稿。", (call, session, _, confirmed, ct) => GenerateChapterWithChangesAsync(call, session, confirmed, ct)),
+            Entry("GenerateChapterWithChanges", "writing", "High", true, new[] { "runId" }, "生成章节正文和 CHANGES，硬门禁通过后才提交成稿。", (call, session, _, confirmed, ct) => GenerateChapterWithChangesAsync(call, session, confirmed, ct)),
             Entry("ValidateChapterDraft", "gate", "Medium", false, new[] { "runId" }, "校验章节草稿的 CHANGES、事实快照、蓝图和 RAG 连续性。", (call, session, _, _, ct) => ValidateChapterDraftAsync(call, session, ct)),
-            Entry("RepairChapterDraft", "writing", "High", false, new[] { "runId" }, "根据门禁失败项修复章节草稿和 CHANGES。", (call, session, _, confirmed, ct) => RepairChapterDraftAsync(call, session, confirmed, ct)),
-            Entry("CommitValidatedChapter", "commit", "High", false, new[] { "runId" }, "提交已通过门禁的章节成稿，刷新索引并进入书城。", (call, session, _, confirmed, ct) => CommitValidatedChapterAsync(call, session, confirmed, ct)),
+            Entry("RepairChapterDraft", "writing", "High", true, new[] { "runId" }, "根据门禁失败项修复章节草稿和 CHANGES。", (call, session, _, confirmed, ct) => RepairChapterDraftAsync(call, session, confirmed, ct)),
+            Entry("CommitValidatedChapter", "commit", "High", true, new[] { "runId" }, "提交已通过门禁的章节成稿，刷新索引并进入书城。", (call, session, _, confirmed, ct) => CommitValidatedChapterAsync(call, session, confirmed, ct)),
             Entry("RefreshProjectIndexes", "maintenance", "Medium", false, new[] { "runId" }, "刷新章节摘要、事实快照、长距离 RAG 和索引标记。", (call, session, _, _, ct) => RefreshProjectIndexesAsync(call, session, ct)),
             Entry("AnalyzeDependencyImpact", "maintenance", "Low", false, new[] { "runId" }, "分析结构化设定改动对卷、章节、蓝图和校验摘要的影响。", (call, session, _, _, ct) => AnalyzeDependencyImpactAsync(call, session, ct)),
             Entry("ReviewChapter", "review", "Medium", false, new[] { "runId" }, "复盘已生成章节并提出账本沉淀。", (call, session, _, _, ct) => ReviewChapterAsync(call, session, ct)),
@@ -869,5 +870,47 @@ public sealed class AgentToolRegistry
         if (message.Contains("言情")) return "言情";
         if (message.Contains("恐怖")) return "恐怖";
         return string.IsNullOrWhiteSpace(fallback) ? "玄幻" : fallback;
+    }
+
+    private Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
+    {
+        var phaseArg = Arg(call, "phase", "Conversation");
+
+        IReadOnlyList<string> toolNames;
+        if (string.Equals(phaseArg, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            toolNames = _entries.Keys.Where(k => k != "tool_search").ToArray();
+        }
+        else
+        {
+            var phase = phaseArg switch
+            {
+                "Planning" => ConversationPhase.Planning,
+                "Creation" => ConversationPhase.Creation,
+                "Review" => ConversationPhase.Review,
+                _ => ConversationPhase.Conversation,
+            };
+            toolNames = GetToolNamesForPhase(phase);
+        }
+
+        var toolList = toolNames
+            .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
+            .Where(def => def != null)
+            .Select(def => $"• {def!.Name}（{def.Description}）")
+            .ToList();
+
+        var message = toolList.Count == 0
+            ? $"阶段「{phaseArg}」没有可用工具。"
+            : $"阶段「{phaseArg}」可用工具（{toolList.Count}个）：\n{string.Join("\n", toolList)}";
+
+        return Task.FromResult(new AgentToolExecutionResult
+        {
+            Success = true,
+            Message = message,
+            Phase = session.Phase,
+            Data = new { Phase = phaseArg, Tools = toolNames },
+            Artifact = BuildArtifact("tool_search_result", phaseArg, session.ActiveProjectId ?? string.Empty, string.Empty, $"检索到 {toolList.Count} 个工具。", Array.Empty<string>()),
+            Suggestions = Array.Empty<string>(),
+        });
     }
 }
