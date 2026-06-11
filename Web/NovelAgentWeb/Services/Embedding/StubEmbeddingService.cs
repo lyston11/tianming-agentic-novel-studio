@@ -4,38 +4,39 @@ namespace TM.Web.NovelAgentWeb.Services.Embedding;
 
 /// <summary>
 /// Stub implementation of IMicroEmbeddingService for development/testing.
-/// Returns random vectors until a proper embedding service is configured.
+/// Returns deterministic hash-based vectors (same text = same vector) for basic testing.
+/// Replace with BgeSmallZhEmbeddingService for production.
 /// </summary>
 public class StubEmbeddingService : IMicroEmbeddingService
 {
     private readonly ILogger<StubEmbeddingService> _logger;
-    private const int VectorDimension = 1536; // Match QdrantCollectionManager dimension
-    private readonly Random _random = new Random(42); // Fixed seed for consistency
+    private const int VectorDimension = 512; // Match BGE-Small-ZH dimension
 
     public StubEmbeddingService(ILogger<StubEmbeddingService> logger)
     {
         _logger = logger;
-        _logger.LogWarning("Using StubEmbeddingService - vectors will be random. Configure BgeSmallZhEmbeddingService for production.");
+        _logger.LogWarning("Using StubEmbeddingService - vectors are hash-based. Configure BgeSmallZhEmbeddingService for production.");
     }
 
     public int Dimension => VectorDimension;
 
     public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default)
     {
+        // Deterministic: same text always produces same vector
+        var seed = string.IsNullOrEmpty(text) ? 0 : text.GetHashCode();
+        var rng = new Random(seed);
         var vector = new float[VectorDimension];
         for (int i = 0; i < VectorDimension; i++)
         {
-            vector[i] = (float)_random.NextDouble() * 2 - 1; // Range [-1, 1]
+            vector[i] = (float)rng.NextDouble() * 2 - 1;
         }
 
-        // Normalize
+        // L2 normalize
         var norm = Math.Sqrt(vector.Sum(v => v * v));
         if (norm > 0)
         {
             for (int i = 0; i < VectorDimension; i++)
-            {
                 vector[i] /= (float)norm;
-            }
         }
 
         return Task.FromResult(vector);

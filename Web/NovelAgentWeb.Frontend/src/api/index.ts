@@ -24,8 +24,10 @@ import type {
 } from './types';
 
 // Materials API (new multi-user endpoints)
-export const listMaterials = (projectId: string) =>
-  get<MaterialListResponse>(`/materials?projectId=${encodeURIComponent(projectId)}`);
+export const listMaterials = async (projectId: string): Promise<MaterialListResponse> => {
+  const materials = await get<MaterialResponse[]>(`/materials?projectId=${encodeURIComponent(projectId)}`);
+  return { materials, totalCount: materials.length };
+};
 
 export const getMaterialById = (id: string) =>
   get<MaterialResponse>(`/materials/${id}`);
@@ -37,6 +39,7 @@ export const uploadMaterial = async (projectId: string, file: File, category: st
   const formData = new FormData();
   formData.append('File', file);
   formData.append('ProjectId', projectId);
+  formData.append('Title', file.name);
   formData.append('Category', category);
   if (tags) formData.append('Tags', tags);
 
@@ -155,16 +158,24 @@ export const createSseConnection = (sessionId: string): EventSource => {
 
 // Novel Projects
 export const createNovelProject = (req: NovelProjectCreateRequest) =>
-  post<NovelProjectInfo>('/novel-projects', req);
-export const activateNovelProject = (projectId: string) =>
-  post<NovelProjectInfo>(`/novel-projects/${projectId}/activate`);
+  post<NovelProjectInfo>('/project', {
+    title: req.title || '未命名新书',
+    genre: req.genre,
+    coreHook: req.seed,
+  });
+export const activateNovelProject = async (projectId: string) => {
+  sessionStorage.setItem('currentProjectId', projectId);
+  return get<NovelProjectInfo>(`/project/${projectId}`);
+};
 export const updateNovelProject = (projectId: string, req: NovelProjectUpdateRequest) =>
-  api<NovelProjectInfo>(`/novel-projects/${projectId}`, {
-    method: 'PATCH',
+  api<NovelProjectInfo>(`/project/${projectId}`, {
+    method: 'PUT',
     body: JSON.stringify(req),
   });
-export const deleteNovelProject = (projectId: string) =>
-  api<NovelProjectDeleteResult>(`/novel-projects/${projectId}`, { method: 'DELETE' });
+export const deleteNovelProject = async (projectId: string): Promise<NovelProjectDeleteResult> => {
+  await api<void>(`/project/${projectId}`, { method: 'DELETE' });
+  return { success: true, message: '项目已删除。', activeProjectId: '' };
+};
 
 // Settings
 export const getSettings = () => get<UserSettings>('/settings');

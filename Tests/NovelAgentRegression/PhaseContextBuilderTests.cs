@@ -9,13 +9,10 @@ public sealed class PhaseContextBuilderTests
     private PhaseContextBuilder CreateBuilder()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "test-phase-context-" + Guid.NewGuid().ToString("N"));
-        var workspace = new NovelAgentWorkspace
-        {
-            StorageRoot = tempDir,
-            Orchestrator = null!
-        };
-        var memoryService = new AgentMemoryService(workspace);
-        return new PhaseContextBuilder(memoryService, workspace);
+        var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
+        TestNovelAgentWorkspaceFactory.BindWorkspace(workspace);
+        var memoryService = new AgentMemoryService();
+        return new PhaseContextBuilder(memoryService);
     }
 
     [Fact]

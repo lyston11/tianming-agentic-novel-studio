@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Support;
 using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
@@ -274,12 +275,13 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
 
-        // Load project to verify it exists and belongs to user
+        // Load project to verify it exists and belongs to user when it is already in EF.
+        // Legacy JSON projects are hydrated after the workspace is available.
         var project = await db.NovelProjects
             .Where(p => p.Id == projectId && p.UserId == userId)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (project == null)
+        if (project == null && await db.NovelProjects.AnyAsync(p => p.Id == projectId, cancellationToken))
         {
             throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
         }
@@ -290,7 +292,22 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         var settingsManager = scope.ServiceProvider.GetRequiredService<UserSettingsManager>();
 
         // Create Workspace instance
-        var workspace = new NovelAgentWorkspace(env, config, settingsManager);
+        var workspace = new NovelAgentWorkspace(env, config, settingsManager) { UserId = userId };
+
+        if (project == null && !IsTemporaryProjectId(projectId))
+        {
+            project = await TryHydrateLegacyProjectAsync(
+                db,
+                workspace,
+                userId,
+                projectId,
+                cancellationToken);
+
+            if (project == null)
+            {
+                throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
+            }
+        }
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
@@ -299,6 +316,47 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
         return workspace;
     }
+
+    private static bool IsTemporaryProjectId(string projectId) =>
+        string.IsNullOrWhiteSpace(projectId) ||
+        projectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<NovelProject?> TryHydrateLegacyProjectAsync(
+        NovelAgentDbContext db,
+        NovelAgentWorkspace workspace,
+        string userId,
+        string projectId,
+        CancellationToken cancellationToken)
+    {
+        var catalog = new NovelProjectCatalog(workspace);
+        var legacyProject = await catalog.FindAsync(projectId, cancellationToken).ConfigureAwait(false);
+        if (legacyProject == null)
+        {
+            return null;
+        }
+
+        var project = new NovelProject
+        {
+            Id = legacyProject.Id,
+            UserId = userId,
+            Title = string.IsNullOrWhiteSpace(legacyProject.Title) ? "未命名小说" : legacyProject.Title,
+            Genre = EmptyToNull(legacyProject.Genre),
+            SubGenre = EmptyToNull(legacyProject.SubGenre),
+            CoreHook = EmptyToNull(legacyProject.CoreHook),
+            Status = string.IsNullOrWhiteSpace(legacyProject.Status) ? "draft" : legacyProject.Status,
+            StorageProjectName = EmptyToNull(legacyProject.StorageProjectName),
+            WordCount = 0,
+            CreatedAt = legacyProject.CreatedAt == default ? DateTime.UtcNow : legacyProject.CreatedAt,
+            UpdatedAt = legacyProject.UpdatedAt == default ? DateTime.UtcNow : legacyProject.UpdatedAt
+        };
+
+        db.NovelProjects.Add(project);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return project;
+    }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task EvictOldestIdleWorkspaceAsync()
     {

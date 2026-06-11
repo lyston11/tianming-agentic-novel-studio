@@ -1,5 +1,8 @@
+using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
+using TM.Web.NovelAgentWeb.Data;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -60,35 +63,49 @@ public sealed class LlmPreset
 public sealed class UserSettingsManager
 {
     private readonly string _settingsPath;
-    private UserSettings? _cached;
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
+    private UserSettings? _legacyCached;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public UserSettingsManager(string storageRoot, string projectName)
+    public UserSettingsManager(
+        string storageRoot,
+        string projectName,
+        IServiceScopeFactory? scopeFactory = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         var dir = Path.Combine(storageRoot, "Projects", projectName, "Settings");
         Directory.CreateDirectory(dir);
         _settingsPath = Path.Combine(dir, "user_settings.json");
+        _scopeFactory = scopeFactory;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<UserSettings> LoadAsync(CancellationToken ct = default)
     {
-        if (_cached != null) return _cached;
+        var databaseSettings = await TryLoadDatabaseSettingsAsync(ct).ConfigureAwait(false);
+        if (databaseSettings != null)
+        {
+            return databaseSettings;
+        }
+
+        if (_legacyCached != null) return _legacyCached;
         await _lock.WaitAsync(ct);
         try
         {
-            if (_cached != null) return _cached;
+            if (_legacyCached != null) return _legacyCached;
             if (!File.Exists(_settingsPath))
             {
-                _cached = new UserSettings();
-                return _cached;
+                _legacyCached = new UserSettings();
+                return _legacyCached;
             }
             var json = await File.ReadAllTextAsync(_settingsPath, ct);
-            _cached = JsonSerializer.Deserialize<UserSettings>(json, new JsonSerializerOptions
+            _legacyCached = JsonSerializer.Deserialize<UserSettings>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
             }) ?? new UserSettings();
-            Normalize(_cached);
-            return _cached;
+            Normalize(_legacyCached);
+            return _legacyCached;
         }
         finally { _lock.Release(); }
     }
@@ -105,7 +122,7 @@ public sealed class UserSettingsManager
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             });
             await File.WriteAllTextAsync(_settingsPath, json, ct);
-            _cached = settings;
+            _legacyCached = settings;
             return settings;
         }
         finally { _lock.Release(); }
@@ -114,7 +131,62 @@ public sealed class UserSettingsManager
     public Task<UserSettings> ResetAsync(CancellationToken ct = default) =>
         SaveAsync(new UserSettings(), ct);
 
-    public void InvalidateCache() => _cached = null;
+    public void InvalidateCache() => _legacyCached = null;
+
+    private async Task<UserSettings?> TryLoadDatabaseSettingsAsync(CancellationToken ct)
+    {
+        var userId = TryGetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(userId) || _scopeFactory == null)
+        {
+            return null;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var entity = await db.UserSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == userId, ct)
+            .ConfigureAwait(false);
+
+        if (entity == null)
+        {
+            return null;
+        }
+
+        var settings = new UserSettings
+        {
+            LlmProvider = entity.LlmProvider ?? string.Empty,
+            LlmApiKey = entity.LlmApiKeyEncrypted ?? string.Empty,
+            LlmBaseUrl = entity.LlmBaseUrl ?? string.Empty,
+            LlmModel = entity.LlmModel ?? string.Empty,
+            LlmTemperature = entity.LlmTemperature,
+            LlmMaxTokens = entity.LlmMaxTokens,
+            EmbeddingProvider = entity.EmbeddingProvider,
+            EmbeddingModel = entity.EmbeddingModel,
+            AgentDefaultRisk = entity.AgentDefaultRisk,
+            AgentAutoContinue = entity.AgentAutoContinue,
+            AgentMaxAutoSteps = entity.AgentMaxAutoSteps,
+            DefaultGenre = entity.DefaultGenre,
+            DefaultChapterWordCount = entity.DefaultChapterWordCount,
+            Theme = entity.Theme,
+            Language = entity.Language
+        };
+
+        Normalize(settings);
+        return settings;
+    }
+
+    private string? TryGetCurrentUserId()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        if (user?.Identity?.IsAuthenticated != true)
+        {
+            return null;
+        }
+
+        return user.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? user.FindFirst("sub")?.Value;
+    }
 
     private static void Normalize(UserSettings settings)
     {

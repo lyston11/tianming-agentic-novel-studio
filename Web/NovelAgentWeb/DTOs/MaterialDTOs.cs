@@ -47,6 +47,8 @@ public class CreateMaterialRequest
 /// </summary>
 public class UpdateMaterialRequest
 {
+    public string? Title { get; set; }
+
     public string? Category { get; set; }
 
     public string? Tags { get; set; }

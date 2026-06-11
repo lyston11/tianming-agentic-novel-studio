@@ -21,6 +21,27 @@ public class StoryBibleController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetStoryBibleByProject(
+        [FromQuery] string projectId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var storyBible = await _storyBibleService.GetStoryBibleByProjectAsync(projectId, ct);
+            return Ok(storyBible);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get story bible for project {ProjectId}", projectId);
+            return StatusCode(500, new { error = "Failed to get story bible" });
+        }
+    }
+
     // Story Constitution endpoints
 
     [HttpPost("constitution")]

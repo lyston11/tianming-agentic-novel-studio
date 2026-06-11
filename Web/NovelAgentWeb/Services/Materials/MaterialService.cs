@@ -3,6 +3,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Vectorization;
 
 namespace TM.Web.NovelAgentWeb.Services.Materials;
 
@@ -14,17 +15,20 @@ public class MaterialService : IMaterialService
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
     private readonly IConfiguration _configuration;
+    private readonly IMaterialVectorizationService _vectorization;
     private readonly ILogger<MaterialService> _logger;
 
     public MaterialService(
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         IConfiguration configuration,
+        IMaterialVectorizationService vectorization,
         ILogger<MaterialService> logger)
     {
         _db = db;
         _currentUserService = currentUserService;
         _configuration = configuration;
+        _vectorization = vectorization;
         _logger = logger;
     }
 
@@ -69,8 +73,14 @@ public class MaterialService : IMaterialService
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Uploaded material {MaterialId} to project {ProjectId}", material.Id, request.ProjectId);
+        // Vectorize to Qdrant (fire-and-forget, don't block material creation)
+        _ = Task.Run(async () =>
+        {
+            try { await _vectorization.VectorizeMaterialAsync(material.Id, userId, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize material {Id}", material.Id); }
+        }, ct);
 
+        _logger.LogInformation("Uploaded material {MaterialId} to project {ProjectId}", material.Id, request.ProjectId);
         return MapToResponse(material);
     }
 
@@ -100,6 +110,13 @@ public class MaterialService : IMaterialService
 
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
+
+        // Vectorize to Qdrant
+        _ = Task.Run(async () =>
+        {
+            try { await _vectorization.VectorizeMaterialAsync(material.Id, userId, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize material {Id}", material.Id); }
+        }, ct);
 
         _logger.LogInformation("Created material {MaterialId} in project {ProjectId}", material.Id, request.ProjectId);
 
@@ -171,6 +188,9 @@ public class MaterialService : IMaterialService
 
         if (material == null)
             throw new KeyNotFoundException($"Material {materialId} not found");
+
+        if (request.Title != null)
+            material.Title = request.Title;
 
         if (request.Category != null)
             material.Category = request.Category;

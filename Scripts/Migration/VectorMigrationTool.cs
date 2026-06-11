@@ -52,7 +52,7 @@ class VectorMigrationTool
                 var firstProjectId = result.ProjectStats.Keys.FirstOrDefault();
                 if (firstProjectId != null)
                 {
-                    var testVector = GenerateRandomVector(512);
+                    var testVector = GenerateRandomVector(1536);
                     var searchSuccess = await migrationService.TestSimilaritySearchAsync(firstProjectId, testVector);
                     Console.WriteLine($"Similarity search test: {(searchSuccess ? "PASSED" : "FAILED")}");
                 }
@@ -89,8 +89,9 @@ class VectorMigrationTool
         });
 
         // Database context
+        var projectRoot = ResolveProjectRoot();
         var connectionString = configuration.GetConnectionString("NovelAgentDb")
-            ?? "Data Source=../Web/NovelAgentWeb/App_Data/Database/novelagent.db";
+            ?? $"Data Source={Path.Combine(projectRoot, "Web/NovelAgentWeb/App_Data/Database/novelagent.db")}";
 
         services.AddDbContext<NovelAgentDbContext>(optionsBuilder =>
         {
@@ -102,9 +103,9 @@ class VectorMigrationTool
 
         // Migration service
         var appDataPath = options.AppDataPath
-            ?? Path.GetFullPath("../Web/NovelAgentWeb/App_Data");
+            ?? Path.Combine(projectRoot, "Web/NovelAgentWeb/App_Data");
 
-        var vectorDimension = configuration.GetValue<int>("Qdrant:VectorDimension", 512);
+        var vectorDimension = configuration.GetValue<int>("Qdrant:VectorDimension", 1536);
         var batchSize = configuration.GetValue<int>("Qdrant:BatchSize", 100);
 
         services.AddSingleton(sp => new VectorMigrationService(
@@ -166,6 +167,23 @@ class VectorMigrationTool
         }
 
         return options;
+    }
+
+    private static string ResolveProjectRoot()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "docker-compose.yml")) &&
+                Directory.Exists(Path.Combine(dir.FullName, "Web", "NovelAgentWeb")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", ".."));
     }
 
     private static void ShowHelp()

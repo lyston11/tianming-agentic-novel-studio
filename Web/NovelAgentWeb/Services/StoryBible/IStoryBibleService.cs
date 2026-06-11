@@ -7,6 +7,8 @@ namespace TM.Web.NovelAgentWeb.Services.StoryBible;
 /// </summary>
 public interface IStoryBibleService
 {
+    Task<StoryBibleResponse> GetStoryBibleByProjectAsync(string projectId, CancellationToken ct = default);
+
     // Story Constitution operations
     Task<StoryConstitutionResponse> CreateConstitutionAsync(CreateStoryConstitutionRequest request, CancellationToken ct = default);
     Task<StoryConstitutionResponse?> GetConstitutionByProjectAsync(string projectId, CancellationToken ct = default);

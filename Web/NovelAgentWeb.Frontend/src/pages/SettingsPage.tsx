@@ -169,7 +169,7 @@ export default function SettingsPage() {
   const canTestConnection = (() => {
     if (!form.llmBaseUrl || !form.llmModel) return false;
     const needsApiKey = form.llmProvider && form.llmProvider !== 'ollama';
-    if (needsApiKey && (!form.llmApiKey || form.llmApiKey.includes('****'))) return false;
+    if (needsApiKey && !form.llmApiKey) return false;
     return true;
   })();
 

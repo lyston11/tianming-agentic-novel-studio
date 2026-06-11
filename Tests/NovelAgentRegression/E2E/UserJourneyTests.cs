@@ -49,21 +49,21 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
 
         var authResponse = await registerResponse.Content.ReadFromJsonAsync<AuthResponse>();
         Assert.NotNull(authResponse);
-        Assert.Equal("journey1user", authResponse.Username);
+        Assert.Equal("journey1user", authResponse.User.Username);
         Assert.NotEmpty(authResponse.Token);
-        Assert.NotEmpty(authResponse.UserId);
+        Assert.NotEmpty(authResponse.User.Id);
 
         // Verify user and user settings were created in database
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-            var user = await db.Users.FindAsync(authResponse.UserId);
+            var user = await db.Users.FindAsync(authResponse.User.Id);
             Assert.NotNull(user);
             Assert.Equal("journey1user", user.Username);
             Assert.Equal("journey1@test.com", user.Email);
             Assert.Equal("User", user.Role);
 
-            var userSettings = await db.UserSettings.FindAsync(authResponse.UserId);
+            var userSettings = await db.UserSettings.FindAsync(authResponse.User.Id);
             Assert.NotNull(userSettings);
             Assert.Equal(0.7f, userSettings.LlmTemperature);
         }
@@ -81,7 +81,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         var loginAuthResponse = await loginResponse.Content.ReadFromJsonAsync<AuthResponse>();
         Assert.NotNull(loginAuthResponse);
         Assert.NotEmpty(loginAuthResponse.Token);
-        Assert.Equal(authResponse.UserId, loginAuthResponse.UserId);
+        Assert.Equal(authResponse.User.Id, loginAuthResponse.User.Id);
 
         var token = loginAuthResponse.Token;
 
@@ -111,7 +111,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
             var project = await db.NovelProjects.FindAsync(projectResponse.Id);
             Assert.NotNull(project);
-            Assert.Equal(authResponse.UserId, project.UserId);
+            Assert.Equal(authResponse.User.Id, project.UserId);
             Assert.Equal("Journey 1 Novel", project.Title);
             Assert.NotEmpty(project.StorageProjectName);
         }
@@ -358,7 +358,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
 
         var adminAuth = await adminLoginResponse.Content.ReadFromJsonAsync<AuthResponse>();
         Assert.NotNull(adminAuth);
-        Assert.Equal("Admin", adminAuth.Role);
+        Assert.Equal("Admin", adminAuth.User.Role);
         adminToken = adminAuth.Token;
 
         var adminClient = _factory.CreateClient();

@@ -1,0 +1,9 @@
+**/.git
+**/node_modules
+**/bin
+**/obj
+**/App_Data/Qdrant
+**/.claude
+**/Tests
+**/*.md
+**/Web/NovelAgentWeb.Frontend

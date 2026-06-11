@@ -1435,13 +1435,21 @@ internal static class Program
             .Build();
         var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
         var catalog = new NovelProjectCatalog(workspace);
-        var registry = new AgentToolRegistry(workspace, settings, catalog);
-        var schemas = registry.ListToolSchemas();
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        try
+        {
+            var registry = new AgentToolRegistry(settings);
+            var schemas = registry.ListToolSchemas();
 
-        Check.True(schemas.Any(s => s.Name == "BuildChapterContextPackage"),
-            "Registry should expose tool schemas for provider adapters.");
-        Check.True(schemas.Any(s => s.Name == "GenerateChapterWithChanges" && s.RequiresConfirmation),
-            "High-risk writing tools should preserve confirmation metadata in schemas.");
+            Check.True(schemas.Any(s => s.Name == "BuildChapterContextPackage"),
+                "Registry should expose tool schemas for provider adapters.");
+            Check.True(schemas.Any(s => s.Name == "GenerateChapterWithChanges" && s.RequiresConfirmation),
+                "High-risk writing tools should preserve confirmation metadata in schemas.");
+        }
+        finally
+        {
+            AgentToolRegistry.ClearWorkspace();
+        }
         return Task.CompletedTask;
     }
 
@@ -1458,7 +1466,6 @@ internal static class Program
             .Build();
         var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
         var catalog = new NovelProjectCatalog(workspace);
-        var registry = new AgentToolRegistry(workspace, settings, catalog);
         var session = new AgentSession { SessionId = "session-idempotent" };
         var call = new AgentToolCall
         {
@@ -1470,17 +1477,26 @@ internal static class Program
             }
         };
 
-        var first = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
-        var countAfterFirst = (await catalog.GetAsync()).Projects.Count;
-        var second = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
-        var countAfterSecond = (await catalog.GetAsync()).Projects.Count;
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        try
+        {
+            var registry = new AgentToolRegistry(settings);
+            var first = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+            var countAfterFirst = (await catalog.GetAsync()).Projects.Count;
+            var second = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+            var countAfterSecond = (await catalog.GetAsync()).Projects.Count;
 
-        Check.True(first.Success, "First StartNewNovelProject call should create the project.");
-        Check.True(second.Success, "Idempotent StartNewNovelProject call should return existing project state.");
-        Check.Equal(countAfterFirst, countAfterSecond,
-            "Second StartNewNovelProject call while awaiting foundation must not create another project.");
-        Check.Equal("existing_novel_project", second.Artifact?.ArtifactType ?? string.Empty,
-            "Second call should return an existing-project artifact.");
+            Check.True(first.Success, "First StartNewNovelProject call should create the project.");
+            Check.True(second.Success, "Idempotent StartNewNovelProject call should return existing project state.");
+            Check.Equal(countAfterFirst, countAfterSecond,
+                "Second StartNewNovelProject call while awaiting foundation must not create another project.");
+            Check.Equal("existing_novel_project", second.Artifact?.ArtifactType ?? string.Empty,
+                "Second call should return an existing-project artifact.");
+        }
+        finally
+        {
+            AgentToolRegistry.ClearWorkspace();
+        }
     }
 
     private static AgentMissionPlan BuildPlanWithChapter(string runId, Action<AgentChapterTask> configure)

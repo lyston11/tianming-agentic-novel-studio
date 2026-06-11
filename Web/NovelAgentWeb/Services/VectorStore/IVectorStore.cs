@@ -2,59 +2,53 @@ namespace TM.Web.NovelAgentWeb.Services.VectorStore;
 
 /// <summary>
 /// Vector store interface for managing embeddings and similarity search.
+/// Collections are named novel_agent_{userId} for multi-tenant isolation.
+/// Project-level filtering is done via payload filters.
 /// </summary>
 public interface IVectorStore
 {
     /// <summary>
-    /// Initialize a collection for a specific project with HNSW index configuration.
-    /// Collection name follows pattern: project_{projectId}
-    /// Vector dimension: 512 (bge-small-zh-v1.5 model)
-    /// Distance metric: Cosine
+    /// Initialize a collection for a user. Collection name: novel_agent_{userId}
     /// </summary>
-    Task InitializeProjectCollectionAsync(string projectId, CancellationToken cancellationToken = default);
+    Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default);
 
     /// <summary>
-    /// Upsert chapter vectors with metadata payload.
-    /// Batch size: 100 vectors per operation.
+    /// Upsert vectors with metadata payload. Collection is derived from vector.UserId.
     /// </summary>
-    Task UpsertVectorsAsync(
-        string projectId,
-        List<VectorData> vectors,
-        CancellationToken cancellationToken = default);
+    Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default);
 
     /// <summary>
-    /// Search for similar vectors with filtering by user_id and project_id.
-    /// Returns top-K most similar results.
+    /// Search for similar vectors with filtering by user_id and optional project_id.
     /// </summary>
     Task<List<SearchResult>> SearchSimilarAsync(
-        string projectId,
+        string userId,
         float[] queryVector,
         int topK = 10,
         Dictionary<string, object>? filters = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken ct = default);
 
     /// <summary>
-    /// Delete a project collection and all its vectors.
+    /// Delete a user's collection and all its vectors.
     /// </summary>
-    Task DeleteCollectionAsync(string projectId, CancellationToken cancellationToken = default);
+    Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default);
 
     /// <summary>
-    /// Check if a collection exists for a project.
+    /// Check if a collection exists for a user.
     /// </summary>
-    Task<bool> CollectionExistsAsync(string projectId, CancellationToken cancellationToken = default);
+    Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default);
 
     /// <summary>
-    /// Get collection statistics (vector count, size, etc.).
+    /// Get collection statistics.
     /// </summary>
-    Task<CollectionInfo?> GetCollectionInfoAsync(string projectId, CancellationToken cancellationToken = default);
+    Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default);
 
     /// <summary>
-    /// Delete vectors by filter (e.g., delete all vectors for a specific chapter).
+    /// Delete vectors by filter within a user's collection.
     /// </summary>
     Task DeleteVectorsByFilterAsync(
-        string projectId,
+        string userId,
         Dictionary<string, object> filters,
-        CancellationToken cancellationToken = default);
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -62,54 +56,15 @@ public interface IVectorStore
 /// </summary>
 public class VectorData
 {
-    /// <summary>
-    /// Unique identifier for the vector (chapter_uuid or chunk_uuid).
-    /// </summary>
     public required string Id { get; set; }
-
-    /// <summary>
-    /// 512-dimensional vector from bge-small-zh-v1.5 model.
-    /// </summary>
     public required float[] Vector { get; set; }
-
-    /// <summary>
-    /// User ID for tenant isolation (required for filtering).
-    /// </summary>
     public required string UserId { get; set; }
-
-    /// <summary>
-    /// Project ID (required for filtering).
-    /// </summary>
     public required string ProjectId { get; set; }
-
-    /// <summary>
-    /// Source type: chapter, chunk, or character.
-    /// </summary>
     public required string SourceType { get; set; }
-
-    /// <summary>
-    /// Source entity ID (chapter ID, character ID, etc.).
-    /// </summary>
     public required string SourceId { get; set; }
-
-    /// <summary>
-    /// Chapter ID for chapter or chunk vectors.
-    /// </summary>
     public string? ChapterId { get; set; }
-
-    /// <summary>
-    /// Chunk index for chunk vectors (0-based).
-    /// </summary>
     public int? ChunkIndex { get; set; }
-
-    /// <summary>
-    /// Original content text.
-    /// </summary>
     public string? Content { get; set; }
-
-    /// <summary>
-    /// Additional metadata (JSON object).
-    /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
 }
 
@@ -118,54 +73,15 @@ public class VectorData
 /// </summary>
 public class SearchResult
 {
-    /// <summary>
-    /// Vector ID.
-    /// </summary>
     public required string Id { get; set; }
-
-    /// <summary>
-    /// Similarity score (cosine distance).
-    /// </summary>
     public required float Score { get; set; }
-
-    /// <summary>
-    /// User ID from payload.
-    /// </summary>
     public string? UserId { get; set; }
-
-    /// <summary>
-    /// Project ID from payload.
-    /// </summary>
     public string? ProjectId { get; set; }
-
-    /// <summary>
-    /// Source type from payload.
-    /// </summary>
     public string? SourceType { get; set; }
-
-    /// <summary>
-    /// Source ID from payload.
-    /// </summary>
     public string? SourceId { get; set; }
-
-    /// <summary>
-    /// Chapter ID from payload.
-    /// </summary>
     public string? ChapterId { get; set; }
-
-    /// <summary>
-    /// Chunk index from payload.
-    /// </summary>
     public int? ChunkIndex { get; set; }
-
-    /// <summary>
-    /// Content from payload.
-    /// </summary>
     public string? Content { get; set; }
-
-    /// <summary>
-    /// Additional metadata from payload.
-    /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
 }
 
@@ -174,28 +90,9 @@ public class SearchResult
 /// </summary>
 public class CollectionInfo
 {
-    /// <summary>
-    /// Collection name.
-    /// </summary>
     public required string Name { get; set; }
-
-    /// <summary>
-    /// Number of vectors in the collection.
-    /// </summary>
     public required long VectorCount { get; set; }
-
-    /// <summary>
-    /// Vector dimension.
-    /// </summary>
     public required int VectorDimension { get; set; }
-
-    /// <summary>
-    /// Distance metric (Cosine, Euclidean, etc.).
-    /// </summary>
     public required string DistanceMetric { get; set; }
-
-    /// <summary>
-    /// Index type (HNSW, etc.).
-    /// </summary>
     public string? IndexType { get; set; }
 }

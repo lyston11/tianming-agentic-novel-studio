@@ -26,6 +26,9 @@ class Program
             return 0;
         }
 
+        options.AppDataPath ??= ResolveDefaultAppDataPath();
+        options.DatabasePath ??= Path.Combine(options.AppDataPath, "Database", "novelagent.db");
+
         try
         {
             // Setup services
@@ -163,8 +166,9 @@ class Program
         services.AddSingleton<IConfiguration>(configuration);
 
         // Database context
+        var appDataPath = options.AppDataPath ?? ResolveDefaultAppDataPath();
         var databasePath = options.DatabasePath ??
-            Path.Combine(options.AppDataPath, "novel_agent.db");
+            Path.Combine(appDataPath, "Database", "novelagent.db");
 
         services.AddDbContext<NovelAgentDbContext>(optionsBuilder =>
         {
@@ -176,10 +180,33 @@ class Program
         {
             var dbContext = sp.GetRequiredService<NovelAgentDbContext>();
             var logger = sp.GetRequiredService<ILogger<DataMigrationService>>();
-            return new DataMigrationService(dbContext, logger, options.AppDataPath);
+            return new DataMigrationService(dbContext, logger, appDataPath);
         });
 
         return services;
+    }
+
+    private static string ResolveDefaultAppDataPath()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "Web", "NovelAgentWeb", "App_Data");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "..",
+            "..",
+            "Web",
+            "NovelAgentWeb",
+            "App_Data"));
     }
 
     private static void ShowHelp()
@@ -188,7 +215,7 @@ class Program
         Console.WriteLine();
         Console.WriteLine("Options:");
         Console.WriteLine("  -h, --help              Show this help message");
-        Console.WriteLine("  -d, --database <path>   Database file path (default: App_Data/novel_agent.db)");
+        Console.WriteLine("  -d, --database <path>   Database file path (default: Web/NovelAgentWeb/App_Data/Database/novelagent.db)");
         Console.WriteLine("  -a, --appdata <path>    App_Data directory path (default: Web/NovelAgentWeb/App_Data)");
         Console.WriteLine("  --no-backup             Skip creating backup before migration");
         Console.WriteLine("  --force                 Force migration even if database already has data");
@@ -203,8 +230,7 @@ class Program
 
 internal class MigrationOptions
 {
-    public string AppDataPath { get; set; } =
-        Path.Combine(Directory.GetCurrentDirectory(), "Web/NovelAgentWeb/App_Data");
+    public string? AppDataPath { get; set; }
 
     public string? DatabasePath { get; set; }
     public bool NoBackup { get; set; }

@@ -25,7 +25,7 @@ public class VectorMigrationService
         IVectorStore vectorStore,
         ILogger<VectorMigrationService> logger,
         string appDataPath,
-        int vectorDimension = 512,
+        int vectorDimension = 1536,
         int batchSize = 100)
     {
         _dbContext = dbContext;

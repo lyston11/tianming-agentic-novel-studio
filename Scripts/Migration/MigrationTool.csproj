@@ -8,6 +8,7 @@
     <RootNamespace>TM.Scripts.Migration</RootNamespace>
     <AssemblyName>MigrationTool</AssemblyName>
     <StartupObject>TM.Scripts.Migration.Program</StartupObject>
+    <BaseIntermediateOutputPath>obj/MigrationTool/</BaseIntermediateOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,6 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="obj/**" />
+    <EmbeddedResource Remove="obj/**" />
+    <None Remove="obj/**" />
     <Compile Remove="VerificationTool.cs" />
     <None Include="VerificationTool.cs" />
   </ItemGroup>

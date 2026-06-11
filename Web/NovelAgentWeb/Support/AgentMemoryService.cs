@@ -88,7 +88,8 @@ public sealed class AgentMemoryService
     private string GetUserProfilePath()
     {
         var root = StoragePathHelper.GetStorageRoot();
-        var userDir = Path.Combine(root, "Users", "default");
+        var userId = _workspace.UserId;
+        var userDir = Path.Combine(root, "Users", userId);
         Directory.CreateDirectory(userDir);
         return Path.Combine(userDir, "profile.json");
     }

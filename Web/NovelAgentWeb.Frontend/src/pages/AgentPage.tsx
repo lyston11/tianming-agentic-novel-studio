@@ -262,11 +262,9 @@ export default function AgentPage() {
       case 'step_fail':
         invalidateAgentState();
         break;
-      case 'agent_reply':
-        if (evt.message) addAgentMessage(evt.sessionId || sessionId, evt.message);
-        break;
+      // agent_reply 事件已移除：后端不发送此事件，消息由 HTTP 响应返回
     }
-  }, [addAgentMessage, invalidateAgentState, sessionId, setActiveRun]);
+  }, [invalidateAgentState, setActiveRun]);
 
   useEffect(() => {
     if (!sessionId) return;

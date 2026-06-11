@@ -140,16 +140,26 @@ public sealed class MemoryArchitectureTests
     [Fact]
     public async Task ResolveProjectAsync_CreateNewIntent_CreatesNewProject()
     {
-        var catalog = new MockNovelProjectCatalog();
-        var workspace = new MockNovelAgentWorkspace();
+        var tempDir = Path.Combine(Path.GetTempPath(), "test-router-" + Guid.NewGuid().ToString("N"));
+        var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
+        TestNovelAgentWorkspaceFactory.SeedCatalog(workspace);
+        var catalog = new NovelProjectCatalog(workspace);
         var router = new ProjectRouter(catalog, workspace);
         var session = new SessionContext { SessionId = "s1" };
 
-        var result = await router.ResolveProjectAsync("我要写一本新书", session, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var result = await router.ResolveProjectAsync("我要写一本新书", session, CancellationToken.None).ConfigureAwait(false);
 
-        Assert.True(result.Success);
-        Assert.NotNull(result.Project);
-        Assert.Equal(result.Project.Id, session.ActiveProjectId);
+            Assert.True(result.Success);
+            Assert.NotNull(result.Project);
+            Assert.Equal(result.Project.Id, session.ActiveProjectId);
+        }
+        finally
+        {
+            workspace.ProjectContextLock.Dispose();
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
     }
 
     [Fact]
@@ -165,8 +175,10 @@ public sealed class MemoryArchitectureTests
         // 2. After resolution, session.ActiveProjectId is set to the resolved project
         // 3. The integration logic (AgentRuntime lines 75-97) correctly uses this behavior
 
-        var catalog = new MockNovelProjectCatalog();
-        var workspace = new MockNovelAgentWorkspace();
+        var tempDir = Path.Combine(Path.GetTempPath(), "test-runtime-router-" + Guid.NewGuid().ToString("N"));
+        var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
+        TestNovelAgentWorkspaceFactory.SeedCatalog(workspace);
+        var catalog = new NovelProjectCatalog(workspace);
         var router = new ProjectRouter(catalog, workspace);
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = null };
 
@@ -175,26 +187,31 @@ public sealed class MemoryArchitectureTests
         var needsRouting = string.IsNullOrWhiteSpace(session.ActiveProjectId);
         Assert.True(needsRouting, "Session should need routing when ActiveProjectId is null");
 
-        // Call ProjectRouter as AgentRuntime does
-        var resolution = await router.ResolveProjectAsync("我要写一本科幻小说", session, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            // Call ProjectRouter as AgentRuntime does
+            var resolution = await router.ResolveProjectAsync("我要写一本科幻小说", session, CancellationToken.None).ConfigureAwait(false);
 
-        // Verify the integration contract: after resolution, ActiveProjectId must be set
-        Assert.True(resolution.Success);
-        Assert.NotNull(resolution.Project);
-        Assert.Equal(resolution.Project.Id, session.ActiveProjectId);
-        Assert.NotNull(session.ActiveProjectId);
+            // Verify the integration contract: after resolution, ActiveProjectId must be set
+            Assert.True(resolution.Success);
+            Assert.NotNull(resolution.Project);
+            Assert.Equal(resolution.Project.Id, session.ActiveProjectId);
+            Assert.NotNull(session.ActiveProjectId);
+        }
+        finally
+        {
+            workspace.ProjectContextLock.Dispose();
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
     }
 
     [Fact]
     public async Task LoadRuntimeContextAsync_LoadsThreeTiers()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "test-memory-" + Guid.NewGuid().ToString("N"));
-        var workspace = new NovelAgentWorkspace
-        {
-            StorageRoot = tempDir,
-            Orchestrator = null!  // Not needed for this test
-        };
-        var service = new AgentMemoryService(workspace);
+        var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
+        TestNovelAgentWorkspaceFactory.BindWorkspace(workspace);
+        var service = new AgentMemoryService();
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "proj1" };
         var project = new NovelProjectInfo { Id = "proj1", Title = "测试小说", StorageProjectName = "test-novel" };
 
@@ -211,6 +228,7 @@ public sealed class MemoryArchitectureTests
         }
         finally
         {
+            TestNovelAgentWorkspaceFactory.ClearWorkspace();
             // Dispose SemaphoreSlim to prevent resource leak
             workspace.ProjectContextLock.Dispose();
 

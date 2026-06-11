@@ -48,7 +48,6 @@
     <Compile Include="..\..\Web\NovelAgentWeb\Support\ProjectRouter.cs" Link="NovelAgentWeb\Support\ProjectRouter.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\NovelProjectCatalog.cs" Link="NovelAgentWeb\Support\NovelProjectCatalog.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\PhaseContextBuilder.cs" Link="NovelAgentWeb\Support\PhaseContextBuilder.cs" />
-    <Compile Include="..\..\Web\NovelAgentWeb\Support\PhaseInference.cs" Link="NovelAgentWeb\Support\PhaseInference.cs" />
   </ItemGroup>
 
   <ItemGroup>

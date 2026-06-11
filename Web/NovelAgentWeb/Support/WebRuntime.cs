@@ -125,34 +125,71 @@ namespace TM.Framework.Common.Helpers.Storage
 {
     public static class StoragePathHelper
     {
-        private static string _currentProjectName = "AgenticNovelStudio";
+        // AsyncLocal for per-request workspace isolation
+        private static readonly AsyncLocal<string?> _asyncStorageRoot = new();
+        private static readonly AsyncLocal<string?> _asyncProjectName = new();
+
+        // Fallback static values (for non-request contexts like startup)
+        private static string _fallbackProjectName = "AgenticNovelStudio";
+        private static string _fallbackStorageRoot = Path.Combine(AppContext.BaseDirectory, "App_Data");
 
         public static event Action<string, string>? CurrentProjectChanged;
 
-        public static string WebStorageRoot { get; set; } =
-            Path.Combine(AppContext.BaseDirectory, "App_Data");
+        public static string WebStorageRoot
+        {
+            get => _asyncStorageRoot.Value ?? _fallbackStorageRoot;
+            set
+            {
+                _fallbackStorageRoot = value;
+                Directory.CreateDirectory(value);
+            }
+        }
 
         public static string CurrentProjectName
         {
-            get => _currentProjectName;
+            get => _asyncProjectName.Value ?? _fallbackProjectName;
             set
             {
-                if (string.IsNullOrWhiteSpace(value) || string.Equals(_currentProjectName, value, StringComparison.Ordinal))
+                var trimmed = value?.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed) || string.Equals(CurrentProjectName, trimmed, StringComparison.Ordinal))
                     return;
 
-                var old = _currentProjectName;
-                _currentProjectName = value.Trim();
+                var old = CurrentProjectName;
+                if (_asyncProjectName.Value != null)
+                    _asyncProjectName.Value = trimmed;
+                else
+                    _fallbackProjectName = trimmed;
                 EnsureProjectDirectories();
-                CurrentProjectChanged?.Invoke(old, _currentProjectName);
+                CurrentProjectChanged?.Invoke(old, trimmed);
             }
         }
 
         public static void Configure(string storageRoot, string projectName)
         {
-            WebStorageRoot = storageRoot;
-            Directory.CreateDirectory(WebStorageRoot);
+            _fallbackStorageRoot = storageRoot;
+            Directory.CreateDirectory(storageRoot);
             CurrentProjectName = projectName;
             EnsureProjectDirectories();
+        }
+
+        /// <summary>
+        /// Set per-request storage context (called by AgentRuntime after acquiring workspace).
+        /// </summary>
+        internal static void SetRequestContext(string storageRoot, string projectName)
+        {
+            _asyncStorageRoot.Value = storageRoot;
+            _asyncProjectName.Value = projectName;
+            Directory.CreateDirectory(storageRoot);
+            EnsureProjectDirectories();
+        }
+
+        /// <summary>
+        /// Clear per-request storage context (called by AgentRuntime in finally block).
+        /// </summary>
+        internal static void ClearRequestContext()
+        {
+            _asyncStorageRoot.Value = null;
+            _asyncProjectName.Value = null;
         }
 
         public static string GetStorageRoot()
@@ -228,7 +265,14 @@ namespace TM.Framework.Common.Services
 {
     public static class ServiceLocator
     {
-        private static readonly ConcurrentDictionary<Type, object> Services = new();
+        // AsyncLocal for per-request service isolation
+        private static readonly AsyncLocal<ConcurrentDictionary<Type, object>?> _asyncServices = new();
+
+        // Fallback static dictionary (for non-request contexts)
+        private static readonly ConcurrentDictionary<Type, object> _fallbackServices = new();
+
+        private static ConcurrentDictionary<Type, object> Services =>
+            _asyncServices.Value ?? _fallbackServices;
 
         public static bool IsInitialized => !Services.IsEmpty;
 
@@ -251,6 +295,22 @@ namespace TM.Framework.Common.Services
 
         public static object? GetOrDefault(Type type) =>
             Services.TryGetValue(type, out var service) ? service : null;
+
+        /// <summary>
+        /// Create a new per-request service container (called by AgentRuntime after acquiring workspace).
+        /// </summary>
+        internal static void SetRequestContext()
+        {
+            _asyncServices.Value = new ConcurrentDictionary<Type, object>();
+        }
+
+        /// <summary>
+        /// Clear per-request service container (called by AgentRuntime in finally block).
+        /// </summary>
+        internal static void ClearRequestContext()
+        {
+            _asyncServices.Value = null;
+        }
     }
 }
 
@@ -301,6 +361,7 @@ namespace TM.Web.NovelAgentWeb.Support
 
     public sealed class NovelAgentWorkspace
     {
+        public string UserId { get; internal set; } = "default";
         public string ProjectName { get; }
         public string StorageRoot { get; }
         public SemaphoreSlim ProjectContextLock { get; } = new(1, 1);
@@ -308,13 +369,17 @@ namespace TM.Web.NovelAgentWeb.Support
         public CreativeKnowledgeBaseService CreativeKnowledgeBaseService { get; }
         public NovelAgentOrchestrator Orchestrator { get; }
 
+        // Per-workspace service registrations (populated in constructor, applied per-request)
+        private readonly List<(Type type, object instance)> _serviceRegistrations = new();
+
         public NovelAgentWorkspace(IWebHostEnvironment environment, IConfiguration configuration, UserSettingsManager settingsManager)
         {
             ProjectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
             StorageRoot = configuration["NovelAgent:StorageRoot"]
                 ?? Path.Combine(environment.ContentRootPath, "App_Data");
 
-            StoragePathHelper.Configure(StorageRoot, ProjectName);
+            // Do NOT call StoragePathHelper.Configure() here — global state mutation.
+            // Context is set per-request via SetRequestContext().
 
             StoryBibleService = new StoryBibleService();
             CreativeKnowledgeBaseService = new CreativeKnowledgeBaseService();
@@ -384,7 +449,7 @@ namespace TM.Web.NovelAgentWeb.Support
                 hardcoreEngine);
         }
 
-        private static void RegisterProjectDataServices(
+        private void RegisterProjectDataServices(
             GuideManager guideManager,
             ChapterSummaryStore summaryStore,
             ChapterMilestoneStore milestoneStore,
@@ -398,39 +463,70 @@ namespace TM.Web.NovelAgentWeb.Support
             GeneratedContentService generatedContentService,
             WebVersionTrackingService versionTracking)
         {
-            ServiceLocator.Clear();
-            ServiceLocator.Register(guideManager);
-            ServiceLocator.Register(summaryStore);
-            ServiceLocator.Register(milestoneStore);
-            ServiceLocator.Register(new VolumeFactArchiveStore());
-            ServiceLocator.Register(new ChapterKeyEventStore());
-            ServiceLocator.Register(new ChapterChangesWalStore());
-            ServiceLocator.Register(factSnapshotExtractor);
-            ServiceLocator.Register<IGuideContextService>(guideContextService);
-            ServiceLocator.Register(guideContextService);
-            ServiceLocator.Register(contentChunkSearch);
-            ServiceLocator.Register(chapterEmbeddingIndex);
-            ServiceLocator.Register(chunkEmbeddingIndex);
-            ServiceLocator.Register<IChunkEmbeddingIndex>(chunkEmbeddingIndex);
-            ServiceLocator.Register(embeddingService);
-            ServiceLocator.Register(generationGate);
-            ServiceLocator.Register(generatedContentService);
-            ServiceLocator.Register(new KeywordChapterIndexService());
-            ServiceLocator.Register(versionTracking);
-            ServiceLocator.Register(new CharacterStateService(guideManager));
-            ServiceLocator.Register(new ConflictProgressService(guideManager));
-            ServiceLocator.Register(new ForeshadowingStatusService(guideManager));
-            ServiceLocator.Register(new LocationStateService(guideManager));
-            ServiceLocator.Register(new FactionStateService(guideManager));
-            ServiceLocator.Register(new TimelineService(guideManager));
-            ServiceLocator.Register(new ItemStateService(guideManager));
-            ServiceLocator.Register(new SecretRevealService(guideManager));
-            ServiceLocator.Register(new PledgeConstraintService(guideManager));
-            ServiceLocator.Register(new DeadlineConstraintService(guideManager));
-            ServiceLocator.Register(new RelationStrengthService());
-            ServiceLocator.Register(new PlotPointsIndexService());
-            ServiceLocator.Register(new EntityFirstChapterIndex(embeddingService, chunkEmbeddingIndex));
-            ServiceLocator.Register(new LedgerTrimService(guideManager));
+            // Register on the workspace's own list (applied per-request via SetRequestContext)
+            Register(guideManager);
+            Register(summaryStore);
+            Register(milestoneStore);
+            Register(new VolumeFactArchiveStore());
+            Register(new ChapterKeyEventStore());
+            Register(new ChapterChangesWalStore());
+            Register(factSnapshotExtractor);
+            Register<IGuideContextService>(guideContextService);
+            Register(guideContextService);
+            Register(contentChunkSearch);
+            Register(chapterEmbeddingIndex);
+            Register(chunkEmbeddingIndex);
+            Register<IChunkEmbeddingIndex>(chunkEmbeddingIndex);
+            Register(embeddingService);
+            Register(generationGate);
+            Register(generatedContentService);
+            Register(new KeywordChapterIndexService());
+            Register(versionTracking);
+            Register(new CharacterStateService(guideManager));
+            Register(new ConflictProgressService(guideManager));
+            Register(new ForeshadowingStatusService(guideManager));
+            Register(new LocationStateService(guideManager));
+            Register(new FactionStateService(guideManager));
+            Register(new TimelineService(guideManager));
+            Register(new ItemStateService(guideManager));
+            Register(new SecretRevealService(guideManager));
+            Register(new PledgeConstraintService(guideManager));
+            Register(new DeadlineConstraintService(guideManager));
+            Register(new RelationStrengthService());
+            Register(new PlotPointsIndexService());
+            Register(new EntityFirstChapterIndex(embeddingService, chunkEmbeddingIndex));
+            Register(new LedgerTrimService(guideManager));
+        }
+
+        private void Register<T>(T instance) where T : class
+        {
+            _serviceRegistrations.Add((typeof(T), instance));
+        }
+
+        private void Register(Type type, object instance)
+        {
+            _serviceRegistrations.Add((type, instance));
+        }
+
+        /// <summary>
+        /// Set per-request context: StoragePathHelper + ServiceLocator for this workspace.
+        /// Called by AgentRuntime after acquiring workspace.
+        /// </summary>
+        internal void SetRequestContext()
+        {
+            StoragePathHelper.SetRequestContext(StorageRoot, ProjectName);
+            ServiceLocator.SetRequestContext();
+            foreach (var (type, instance) in _serviceRegistrations)
+                ServiceLocator.Register(type, instance);
+        }
+
+        /// <summary>
+        /// Clear per-request context. Called by AgentRuntime in finally block.
+        /// </summary>
+        internal void ClearRequestContext()
+        {
+            StoragePathHelper.ClearRequestContext();
+            ServiceLocator.ClearRequestContext();
         }
     }
 

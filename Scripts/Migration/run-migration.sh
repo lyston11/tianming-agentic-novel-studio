@@ -83,9 +83,9 @@ function run_verification() {
     fi
 
     # Run verification (pass database path if provided)
-    DB_PATH="${1:-$PROJECT_ROOT/Web/NovelAgentWeb/App_Data/novel_agent.db}"
+    DB_PATH="${1:-$PROJECT_ROOT/Web/NovelAgentWeb/App_Data/Database/novelagent.db}"
 
-    dotnet run --project VerificationTool.cs --no-build -c Release -- "$DB_PATH"
+    dotnet run --project VerificationTool.csproj --no-build -c Release -- "$DB_PATH"
 
     return $?
 }

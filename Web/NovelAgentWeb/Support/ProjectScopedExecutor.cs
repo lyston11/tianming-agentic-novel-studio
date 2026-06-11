@@ -2,9 +2,13 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class ProjectScopedExecutor
 {
-    private readonly NovelProjectCatalog _catalog;
+    private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
+    private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
 
-    public ProjectScopedExecutor(NovelProjectCatalog catalog) => _catalog = catalog;
+    internal static void SetCatalog(NovelProjectCatalog catalog) => _currentCatalog.Value = catalog;
+    internal static void ClearCatalog() => _currentCatalog.Value = null;
+
+    public ProjectScopedExecutor() { }
 
     public async Task<T> RunActiveAsync<T>(Func<Task<T>> operation, CancellationToken ct = default)
     {

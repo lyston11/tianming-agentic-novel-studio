@@ -25,6 +25,17 @@ public class StoryBibleService : IStoryBibleService
         _logger = logger;
     }
 
+    public async Task<StoryBibleResponse> GetStoryBibleByProjectAsync(string projectId, CancellationToken ct = default)
+    {
+        var constitution = await GetConstitutionByProjectAsync(projectId, ct);
+        var characters = await ListCharactersAsync(projectId, ct);
+        return new StoryBibleResponse
+        {
+            Constitution = constitution,
+            Characters = characters
+        };
+    }
+
     // Story Constitution operations
 
     public async Task<StoryConstitutionResponse> CreateConstitutionAsync(

@@ -1,5 +1,6 @@
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
+using Microsoft.Extensions.Configuration;
 
 namespace TM.Web.NovelAgentWeb.Services.VectorStore;
 
@@ -11,17 +12,18 @@ public class QdrantCollectionManager : IQdrantCollectionManager
 {
     private readonly QdrantClient _client;
     private readonly ILogger<QdrantCollectionManager> _logger;
+    private readonly int _vectorDimension;
 
-    // Vector configuration
-    private const int VectorDimension = 1536; // OpenAI text-embedding-ada-002
     private const Distance DistanceMetric = Distance.Cosine;
 
     public QdrantCollectionManager(
         QdrantClient client,
+        IConfiguration configuration,
         ILogger<QdrantCollectionManager> logger)
     {
         _client = client;
         _logger = logger;
+        _vectorDimension = configuration.GetValue<int>("Qdrant:VectorDimension", 512);
     }
 
     /// <summary>
@@ -49,7 +51,7 @@ public class QdrantCollectionManager : IQdrantCollectionManager
             collectionName: collectionName,
             vectorsConfig: new VectorParams
             {
-                Size = VectorDimension,
+                Size = (ulong)_vectorDimension,
                 Distance = DistanceMetric
             },
             cancellationToken: ct
@@ -108,41 +110,21 @@ public class QdrantCollectionManager : IQdrantCollectionManager
     /// <summary>
     /// Gets the collection name for a user.
     /// </summary>
-    private static string GetCollectionName(string userId)
+    public static string GetCollectionName(string userId)
     {
         return $"novel_agent_{userId}";
     }
 
     /// <summary>
-    /// Creates payload indexes for efficient filtering on project_id, entity_type, and category.
+    /// Creates payload indexes for efficient filtering.
     /// </summary>
     private async Task CreatePayloadIndexesAsync(string collectionName, CancellationToken ct)
     {
         try
         {
-            // Index for project_id (critical for multi-project filtering)
-            await _client.CreatePayloadIndexAsync(
-                collectionName: collectionName,
-                fieldName: "project_id",
-                schemaType: PayloadSchemaType.Keyword,
-                cancellationToken: ct
-            );
-
-            // Index for entity_type (e.g., character, location, event)
-            await _client.CreatePayloadIndexAsync(
-                collectionName: collectionName,
-                fieldName: "entity_type",
-                schemaType: PayloadSchemaType.Keyword,
-                cancellationToken: ct
-            );
-
-            // Index for category (semantic categorization)
-            await _client.CreatePayloadIndexAsync(
-                collectionName: collectionName,
-                fieldName: "category",
-                schemaType: PayloadSchemaType.Keyword,
-                cancellationToken: ct
-            );
+            await _client.CreatePayloadIndexAsync(collectionName, "project_id", PayloadSchemaType.Keyword, cancellationToken: ct);
+            await _client.CreatePayloadIndexAsync(collectionName, "user_id", PayloadSchemaType.Keyword, cancellationToken: ct);
+            await _client.CreatePayloadIndexAsync(collectionName, "source_type", PayloadSchemaType.Keyword, cancellationToken: ct);
 
             _logger.LogDebug("Payload indexes created for collection {CollectionName}", collectionName);
         }

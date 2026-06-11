@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
@@ -15,17 +16,23 @@ public class KnowledgeService : IKnowledgeService
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
     private readonly SemanticSearchService _searchService;
+    private readonly IVectorStore _vectorStore;
+    private readonly IMicroEmbeddingService _embedding;
     private readonly ILogger<KnowledgeService> _logger;
 
     public KnowledgeService(
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         SemanticSearchService searchService,
+        IVectorStore vectorStore,
+        IMicroEmbeddingService embedding,
         ILogger<KnowledgeService> logger)
     {
         _db = db;
         _currentUserService = currentUserService;
         _searchService = searchService;
+        _vectorStore = vectorStore;
+        _embedding = embedding;
         _logger = logger;
     }
 
@@ -53,6 +60,29 @@ public class KnowledgeService : IKnowledgeService
 
         _db.KnowledgeBases.Add(knowledge);
         await _db.SaveChangesAsync(ct);
+
+        // Vectorize to Qdrant
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var vector = await _embedding.EncodeAsync($"{knowledge.Title} {knowledge.Content}", EmbeddingMode.Passage, ct);
+                await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData>
+                {
+                    new()
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Vector = vector,
+                        UserId = userId,
+                        ProjectId = knowledge.ProjectId,
+                        SourceType = "knowledge",
+                        SourceId = knowledge.Id,
+                        Content = knowledge.Content,
+                    }
+                }, ct);
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize knowledge {Id}", knowledge.Id); }
+        }, ct);
 
         _logger.LogInformation("Created knowledge entry {KnowledgeId} in project {ProjectId}", knowledge.Id, request.ProjectId);
 
@@ -169,12 +199,12 @@ public class KnowledgeService : IKnowledgeService
         // Filter by entry type if specified
         var results = searchResults
             .Where(r => r.EntityType == "knowledge")
-            .Where(r => string.IsNullOrEmpty(request.EntryType) || r.Payload.ContainsKey("entry_type") && r.Payload["entry_type"].ToString() == request.EntryType)
+            .Where(r => string.IsNullOrEmpty(request.EntryType) || r.EntityType == request.EntryType)
             .Select(r => new KnowledgeSearchResult
             {
                 Id = r.EntityId,
-                EntryType = r.Payload.ContainsKey("entry_type") ? r.Payload["entry_type"].ToString() ?? "" : "",
-                Title = r.Payload.ContainsKey("title") ? r.Payload["title"].ToString() ?? "" : "",
+                EntryType = r.EntityType,
+                Title = r.ChunkId,
                 Content = r.Content,
                 Score = r.Score
             })

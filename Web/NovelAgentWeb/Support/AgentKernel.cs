@@ -689,7 +689,7 @@ public sealed class ToolPolicyEngine
         if (chapter != null && !string.IsNullOrWhiteSpace(chapter.QualityIssueSummary))
             return ToolPolicyResult.Block("质量门禁仍有问题，不能提交成稿。");
 
-        return AllowAutopilot("High", "提交已校验章节进书城。");
+        return RequireConfirmation(confirmed, "提交已校验章节进书城。");
     }
 
     private static ToolPolicyResult PolicyRunExists(AgentToolCall call, AgentSession session, StoryBibleDocument bible, string message) =>
@@ -723,7 +723,9 @@ public sealed class ToolPolicyEngine
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
 
     private static ToolPolicyResult RequireConfirmation(bool confirmed, string message) =>
-        AllowAutopilot("High", message);
+        confirmed
+            ? ToolPolicyResult.Allow("High", requiresConfirmation: false, message)
+            : ToolPolicyResult.Allow("High", requiresConfirmation: true, message);
 
     private static ToolPolicyResult AllowAutopilot(string risk, string message = "") =>
         ToolPolicyResult.Allow(risk, requiresConfirmation: false, message);

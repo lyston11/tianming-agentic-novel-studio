@@ -6,9 +6,14 @@ namespace TM.Web.NovelAgentWeb.Services;
 
 public sealed class StubMaterialAnalysisService : IMaterialAnalysisService
 {
-    private readonly NovelAgentWorkspace _workspace;
+    private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
+    private NovelAgentWorkspace _workspace => _currentWorkspace.Value
+        ?? throw new InvalidOperationException("Workspace not set for current request");
 
-    public StubMaterialAnalysisService(NovelAgentWorkspace workspace) => _workspace = workspace;
+    internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
+    internal static void ClearWorkspace() => _currentWorkspace.Value = null;
+
+    public StubMaterialAnalysisService() { }
 
     public async Task<MaterialAnalysisResult> AnalyzeAsync(
         string rawText,

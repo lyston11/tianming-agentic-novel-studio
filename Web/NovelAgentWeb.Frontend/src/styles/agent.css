@@ -706,23 +706,32 @@
 .session-item span,
 .session-item small {
   min-width: 0;
+}
+
+.session-item strong {
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-item strong {
-  font-size: 12px;
-}
-
 .session-item span {
   color: var(--muted);
   font-size: 11px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  max-height: 2.8em;
 }
 
 .session-item small {
   color: var(--gold);
   font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-context-menu {

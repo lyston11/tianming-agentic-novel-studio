@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>TM.Scripts.Migration</RootNamespace>
     <AssemblyName>VerificationTool</AssemblyName>
+    <BaseIntermediateOutputPath>obj/VerificationTool/</BaseIntermediateOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +24,8 @@
 
   <ItemGroup>
     <Compile Remove="**/*.cs" />
+    <EmbeddedResource Remove="obj/**" />
+    <None Remove="obj/**" />
     <Compile Include="VerificationTool.cs" />
   </ItemGroup>
 

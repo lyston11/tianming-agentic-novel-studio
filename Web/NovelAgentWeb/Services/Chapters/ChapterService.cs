@@ -352,10 +352,10 @@ public class ChapterService : IChapterService
         CancellationToken cancellationToken)
     {
         // Ensure Qdrant collection exists
-        var collectionExists = await _vectorStore.CollectionExistsAsync(chapter.ProjectId, cancellationToken);
+        var collectionExists = await _vectorStore.CollectionExistsAsync(userId, cancellationToken);
         if (!collectionExists)
         {
-            await _vectorStore.InitializeProjectCollectionAsync(chapter.ProjectId, cancellationToken);
+            await _vectorStore.InitializeUserCollectionAsync(userId, cancellationToken);
         }
 
         // Split content into chunks for embedding

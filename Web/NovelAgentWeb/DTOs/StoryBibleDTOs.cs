@@ -137,3 +137,9 @@ public class CharacterResponse
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
+
+public class StoryBibleResponse
+{
+    public StoryConstitutionResponse? Constitution { get; set; }
+    public List<CharacterResponse> Characters { get; set; } = new();
+}

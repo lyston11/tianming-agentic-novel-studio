@@ -18,7 +18,7 @@ class VerificationTool
 
         var databasePath = args.Length > 0
             ? args[0]
-            : Path.Combine(Directory.GetCurrentDirectory(), "../../Web/NovelAgentWeb/App_Data/novel_agent.db");
+            : Path.Combine(ResolveProjectRoot(), "Web/NovelAgentWeb/App_Data/Database/novelagent.db");
 
         if (!File.Exists(databasePath))
         {
@@ -171,5 +171,22 @@ class VerificationTool
         });
 
         return services;
+    }
+
+    private static string ResolveProjectRoot()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "docker-compose.yml")) &&
+                Directory.Exists(Path.Combine(dir.FullName, "Web", "NovelAgentWeb")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", ".."));
     }
 }

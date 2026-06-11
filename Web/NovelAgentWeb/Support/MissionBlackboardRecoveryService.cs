@@ -36,9 +36,21 @@ public sealed class MissionBlackboardRecoveryService
     {
         if (!string.IsNullOrWhiteSpace(session.ActiveRunId) && session.Phase != "idle")
             return;
-        var awaiting = AgentRunSelector.SelectCurrentRun(bible);
-        if (awaiting == null || !AgentRunSelector.IsActionableAwaitingRun(bible, awaiting))
+
+        // Only restore runs that are genuinely awaiting confirmation (not completed/failed/cancelled)
+        var awaiting = bible.AgentRuns
+            .Where(r => r.Status == NovelAgentRunStatus.AwaitingConfirmation)
+            .Where(r => AgentRunSelector.IsActionableAwaitingRun(bible, r))
+            .OrderByDescending(r => r.UpdatedAt)
+            .FirstOrDefault();
+
+        if (awaiting == null)
             return;
+
+        // Skip stale runs: if the run has been awaiting confirmation for more than 7 days, treat as stale
+        if (awaiting.UpdatedAt < DateTime.UtcNow.AddDays(-7))
+            return;
+
         session.ActiveRunId = awaiting.RunId;
         session.WorkingMemory.CurrentGoal = string.IsNullOrWhiteSpace(session.WorkingMemory.CurrentGoal)
             ? awaiting.UserGoal
