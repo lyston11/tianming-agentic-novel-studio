@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
@@ -138,14 +139,107 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             ct);
     }
 
-    public Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
+    public async Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
     {
-        throw new NotImplementedException("Will be implemented in Task 7");
+        var json = JsonSerializer.Serialize(value);
+
+        var existing = await _context.AgentMemories
+            .FirstOrDefaultAsync(m =>
+                m.UserId == userId &&
+                m.ProjectId == projectId &&
+                m.MemoryType == memoryType, ct);
+
+        if (existing != null)
+        {
+            existing.Content = json;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            _context.AgentMemories.Add(new AgentMemory
+            {
+                Id = Guid.NewGuid().ToString(),
+                UserId = userId,
+                ProjectId = projectId,
+                MemoryType = memoryType,
+                Content = json,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+
+        await _context.SaveChangesAsync(ct);
+        await InvalidateCacheAsync(userId, projectId, memoryType);
+
+        _logger.LogDebug("Updated memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
     }
 
-    public Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default)
+    public async Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default)
     {
-        throw new NotImplementedException("Will be implemented in Task 7");
+        var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
+        IDbContextTransaction? transaction = null;
+
+        if (!isInMemory)
+        {
+            transaction = await _context.Database.BeginTransactionAsync(ct);
+        }
+
+        try
+        {
+            foreach (var (memoryType, value) in updates)
+            {
+                var json = JsonSerializer.Serialize(value);
+
+                var existing = await _context.AgentMemories
+                    .FirstOrDefaultAsync(m =>
+                        m.UserId == userId &&
+                        m.ProjectId == projectId &&
+                        m.MemoryType == memoryType, ct);
+
+                if (existing != null)
+                {
+                    existing.Content = json;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _context.AgentMemories.Add(new AgentMemory
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        UserId = userId,
+                        ProjectId = projectId,
+                        MemoryType = memoryType,
+                        Content = json,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+
+            if (transaction != null)
+            {
+                await transaction.CommitAsync(ct);
+            }
+
+            foreach (var memoryType in updates.Keys)
+            {
+                await InvalidateCacheAsync(userId, projectId, memoryType);
+            }
+
+            _logger.LogDebug("Batch updated {Count} memory fields for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
+        }
+        catch
+        {
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            throw;
+        }
+        finally
+        {
+            transaction?.Dispose();
+        }
     }
 
     private static T? GetField<T>(List<AgentMemory> rows, string memoryType)
@@ -157,5 +251,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
 
         return JsonSerializer.Deserialize<T>(row.Content);
+    }
+
+    private async Task InvalidateCacheAsync(string userId, string? projectId, string memoryType)
+    {
+        var scope = memoryType.Split('.')[0];
+
+        var cacheKey = scope switch
+        {
+            "project" => $"memory:project:{userId}:{projectId}",
+            "author" => $"memory:author:{userId}",
+            "execution" => $"memory:execution:{userId}:{projectId}",
+            _ => throw new ArgumentException($"Unknown memory type: {memoryType}")
+        };
+
+        _memoryCache.Remove(cacheKey);
+        await _redisCache.RemoveAsync(cacheKey);
+
+        _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
     }
 }

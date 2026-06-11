@@ -138,4 +138,52 @@ public class AgentMemoryRepositoryTests
         Assert.Contains("No violence", result.Constraints);
         Assert.Contains("PG-13", result.Constraints);
     }
+
+    [Fact]
+    public async Task UpdateFieldAsync_InsertsNewField_WhenNotExists()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+        var memoryType = "project.long_term_goal";
+        var value = "构建修仙世界";
+
+        await _repository.UpdateFieldAsync(userId, projectId, memoryType, value);
+
+        var saved = await _dbContext.AgentMemories.FirstOrDefaultAsync(m =>
+            m.UserId == userId && m.ProjectId == projectId && m.MemoryType == memoryType);
+
+        Assert.NotNull(saved);
+        Assert.Equal(userId, saved.UserId);
+        Assert.Equal(projectId, saved.ProjectId);
+        Assert.Equal(memoryType, saved.MemoryType);
+        Assert.Equal(JsonSerializer.Serialize(value), saved.Content);
+
+        _mockMemoryCache.Verify(x => x.Remove(It.IsAny<string>()), Times.Once);
+        _mockRedisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateMemoryAsync_UpdatesMultipleFields_InTransaction()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+        var updates = new Dictionary<string, object>
+        {
+            ["project.long_term_goal"] = "新目标",
+            ["project.constraints"] = new List<string> { "约束1", "约束2" }
+        };
+
+        await _repository.UpdateMemoryAsync(userId, projectId, updates);
+
+        var saved = await _dbContext.AgentMemories
+            .Where(m => m.UserId == userId && m.ProjectId == projectId)
+            .ToListAsync();
+
+        Assert.Equal(2, saved.Count);
+        Assert.Contains(saved, m => m.MemoryType == "project.long_term_goal");
+        Assert.Contains(saved, m => m.MemoryType == "project.constraints");
+
+        _mockMemoryCache.Verify(x => x.Remove(It.IsAny<string>()), Times.Exactly(2));
+        _mockRedisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
 }
