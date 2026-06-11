@@ -21,6 +21,25 @@ public class WorkflowController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet("workspace")]
+    public async Task<IActionResult> GetWorkspace(CancellationToken ct)
+    {
+        try
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized();
+
+            var workspace = await _workflowService.GetWorkspaceAsync(userId, ct);
+            return Ok(workspace);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get workspace for user");
+            return StatusCode(500, new { error = "Failed to get workspace" });
+        }
+    }
+
     [HttpPost("volumes")]
     public async Task<IActionResult> CreateVolumeArc(
         [FromBody] CreateVolumeArcRequest request,
