@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Workspace;
-using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
 
@@ -11,42 +10,33 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 [Authorize]
 public sealed class WorkspaceController : ControllerBase
 {
-    private readonly IWorkspaceFactory _workspaceFactory;
+    private readonly IWorkspaceService _workspaceService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ILogger<WorkspaceController> _logger;
 
     public WorkspaceController(
-        IWorkspaceFactory workspaceFactory,
-        ICurrentUserService currentUserService)
+        IWorkspaceService workspaceService,
+        ICurrentUserService currentUserService,
+        ILogger<WorkspaceController> logger)
     {
-        _workspaceFactory = workspaceFactory;
+        _workspaceService = workspaceService;
         _currentUserService = currentUserService;
+        _logger = logger;
     }
 
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
-        var userId = _currentUserService.GetUserId();
-        var tempProjectId = $"temp-{userId}";
-        var entry = await _workspaceFactory.AcquireAsync(userId, tempProjectId, ct);
         try
         {
-            var catalog = new NovelProjectCatalog(entry.Workspace);
-            var document = await catalog.GetAsync(ct);
-            var activeProject = document.Projects.FirstOrDefault(p =>
-                string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase))
-                ?? document.Projects.FirstOrDefault();
-
-            return Ok(new
-            {
-                projectName = activeProject?.Title ?? entry.Workspace.ProjectName,
-                activeProjectId = activeProject?.Id ?? string.Empty,
-                storageProjectName = activeProject?.StorageProjectName ?? entry.Workspace.ProjectName,
-                projectCount = document.Projects.Count
-            });
+            var userId = _currentUserService.GetUserId();
+            var workspace = await _workspaceService.GetWorkspaceAsync(userId, ct);
+            return Ok(workspace);
         }
-        finally
+        catch (Exception ex)
         {
-            entry.ReleaseLease();
+            _logger.LogError(ex, "Failed to get workspace");
+            return StatusCode(500, new { error = "Failed to get workspace" });
         }
     }
 }
