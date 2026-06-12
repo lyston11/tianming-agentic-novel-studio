@@ -10,6 +10,9 @@ using TM.Services.Modules.ProjectData.Implementations.Guides;
 using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Implementations.Tracking.Rules;
 using TM.Services.Modules.ProjectData.Interfaces;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM
 {
@@ -372,7 +375,14 @@ namespace TM.Web.NovelAgentWeb.Support
         // Per-workspace service registrations (populated in constructor, applied per-request)
         private readonly List<(Type type, object instance)> _serviceRegistrations = new();
 
-        public NovelAgentWorkspace(IWebHostEnvironment environment, IConfiguration configuration, UserSettingsManager settingsManager)
+        public NovelAgentWorkspace(
+            IWebHostEnvironment environment,
+            IConfiguration configuration,
+            UserSettingsManager settingsManager,
+            IVectorStore? vectorStore = null,
+            IMicroEmbeddingService? embeddingService = null,
+            ICurrentUserService? currentUserService = null,
+            IAgentMemoryRepository? memoryRepository = null)
         {
             ProjectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
             var baseStorageRoot = configuration["NovelAgent:StorageRoot"]
@@ -389,7 +399,11 @@ namespace TM.Web.NovelAgentWeb.Support
             // Context is set per-request via SetRequestContext().
 
             StoryBibleService = new StoryBibleService();
-            CreativeKnowledgeBaseService = new CreativeKnowledgeBaseService();
+            CreativeKnowledgeBaseService = new CreativeKnowledgeBaseService(
+                vectorStore,
+                embeddingService,
+                currentUserService,
+                memoryRepository);
 
             var guideManager = new GuideManager();
             var summaryStore = new ChapterSummaryStore();
@@ -399,7 +413,7 @@ namespace TM.Web.NovelAgentWeb.Support
             var contentChunkSearch = new ContentChunkSearchService();
             var chapterEmbeddingIndex = new ChapterEmbeddingIndex();
             var chunkEmbeddingIndex = new ChunkEmbeddingIndex();
-            var embeddingService = new WebEmbeddingService();
+            var webEmbeddingService = new WebEmbeddingService();
             var generationGate = new GenerationGate(
                 new LedgerConsistencyChecker(),
                 new LedgerRuleSetProvider(),
@@ -416,7 +430,7 @@ namespace TM.Web.NovelAgentWeb.Support
                 contentChunkSearch,
                 chapterEmbeddingIndex,
                 chunkEmbeddingIndex,
-                embeddingService,
+                webEmbeddingService,
                 generationGate,
                 generatedContentService,
                 versionTracking);
@@ -427,7 +441,7 @@ namespace TM.Web.NovelAgentWeb.Support
                 StoryBibleService,
                 chapterEmbeddingIndex,
                 chunkEmbeddingIndex,
-                embeddingService);
+                webEmbeddingService);
 
             var hardcoreEngine = new HardcoreWritingEngine(
                 storyStateSnapshotService,
@@ -437,7 +451,7 @@ namespace TM.Web.NovelAgentWeb.Support
                 contentChunkSearch,
                 chapterEmbeddingIndex,
                 chunkEmbeddingIndex,
-                embeddingService,
+                webEmbeddingService,
                 versionTracking,
                 settingsManager);
 

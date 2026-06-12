@@ -8,10 +8,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Support;
 using TM.Web.NovelAgentWeb.Services.Workspace.Models;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -281,8 +285,21 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         var env = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
         var settingsManager = scope.ServiceProvider.GetRequiredService<UserSettingsManager>();
 
+        // Get optional services for CreativeKnowledgeBaseService
+        var vectorStore = scope.ServiceProvider.GetService<IVectorStore>();
+        var embeddingService = scope.ServiceProvider.GetService<IMicroEmbeddingService>();
+        var currentUserService = scope.ServiceProvider.GetService<ICurrentUserService>();
+        var memoryRepository = scope.ServiceProvider.GetService<IAgentMemoryRepository>();
+
         // Create Workspace instance (no project binding)
-        var workspace = new NovelAgentWorkspace(env, config, settingsManager) { UserId = userId };
+        var workspace = new NovelAgentWorkspace(
+            env,
+            config,
+            settingsManager,
+            vectorStore,
+            embeddingService,
+            currentUserService,
+            memoryRepository) { UserId = userId };
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;

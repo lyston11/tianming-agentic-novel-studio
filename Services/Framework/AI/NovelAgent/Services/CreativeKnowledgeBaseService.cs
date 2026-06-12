@@ -6,6 +6,10 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Services.Framework.AI.Embedding;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Services.Framework.AI.NovelAgent.Services
 {
@@ -17,9 +21,22 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
         private readonly SemaphoreSlim _ioLock = new(1, 1);
         private CreativeKnowledgeBaseDocument? _cache;
+        private readonly IVectorStore? _vectorStore;
+        private readonly IMicroEmbeddingService? _embeddingService;
+        private readonly ICurrentUserService? _currentUserService;
+        private readonly IAgentMemoryRepository? _memoryRepository;
 
-        public CreativeKnowledgeBaseService()
+        public CreativeKnowledgeBaseService(
+            IVectorStore? vectorStore = null,
+            IMicroEmbeddingService? embeddingService = null,
+            ICurrentUserService? currentUserService = null,
+            IAgentMemoryRepository? memoryRepository = null)
         {
+            _vectorStore = vectorStore;
+            _embeddingService = embeddingService;
+            _currentUserService = currentUserService;
+            _memoryRepository = memoryRepository;
+
             try
             {
                 StoragePathHelper.CurrentProjectChanged += (_, _) =>
@@ -83,8 +100,131 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             int topK = 8,
             CancellationToken ct = default)
         {
-            var document = await LoadAsync(ct).ConfigureAwait(false);
             var normalizedQuery = BuildQuery(query, constitution, usedPlotPatterns);
+
+            // Fall back to token matching if vector services are not available
+            if (_vectorStore == null || _embeddingService == null || _currentUserService == null)
+            {
+                return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
+                    .ConfigureAwait(false);
+            }
+
+            try
+            {
+                // Get current user context
+                var userId = _currentUserService.GetUserId();
+                var projectId = StoragePathHelper.CurrentProjectName;
+
+                if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(projectId))
+                {
+                    return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
+                        .ConfigureAwait(false);
+                }
+
+                // Generate query vector
+                var queryVector = await _embeddingService.EncodeAsync(normalizedQuery, EmbeddingMode.Query, ct)
+                    .ConfigureAwait(false);
+
+                // Search Qdrant with filter for knowledge entries
+                var filters = new Dictionary<string, object>
+                {
+                    { "source_type", "knowledge" }
+                };
+
+                var searchResults = await _vectorStore.SearchSimilarAsync(
+                    userId,
+                    queryVector,
+                    topK * 2, // Get more candidates for reranking
+                    filters,
+                    ct).ConfigureAwait(false);
+
+                // Load memories for boosting (if available)
+                ProjectMemory? projectMemory = null;
+                AuthorMemory? authorMemory = null;
+
+                if (_memoryRepository != null)
+                {
+                    try
+                    {
+                        projectMemory = await _memoryRepository.GetProjectMemoryAsync(userId, projectId, ct)
+                            .ConfigureAwait(false);
+                        authorMemory = await _memoryRepository.GetAuthorMemoryAsync(userId, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        TM.App.Log($"[CreativeKnowledgeBaseService] 加载记忆失败，跳过增强: {ex.Message}");
+                    }
+                }
+
+                // Load knowledge document to get full entries
+                var document = await LoadAsync(ct).ConfigureAwait(false);
+                var entryMap = document.Entries.ToDictionary(e => e.Id, e => e, StringComparer.OrdinalIgnoreCase);
+
+                // Rerank and score
+                var scoredResults = searchResults
+                    .Where(r => !string.IsNullOrWhiteSpace(r.SourceId) && entryMap.ContainsKey(r.SourceId))
+                    .Select(r => new
+                    {
+                        Result = r,
+                        Entry = entryMap[r.SourceId!],
+                        Score = CalculateScore(r, entryMap[r.SourceId!], constitution, projectMemory, authorMemory)
+                    })
+                    .OrderByDescending(x => x.Score)
+                    .ToList();
+
+                // Filter used tropes if we have project memory
+                var usedPatterns = (usedPlotPatterns ?? Array.Empty<string>())
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(p => p.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var filteredResults = scoredResults
+                    .Where(x => x.Entry.Category != CreativeKnowledgeCategory.TropePattern ||
+                               !usedPatterns.Any(p => HasTokenOverlap(x.Entry.Content, p)))
+                    .Take(Math.Clamp(topK, 1, MaxHits))
+                    .ToList();
+
+                // Build result
+                var hits = filteredResults
+                    .Select(x => BuildVectorResult(x.Entry, x.Score, x.Result))
+                    .ToList();
+
+                var result = new CreativeKnowledgeRetrievalResult
+                {
+                    Success = true,
+                    Query = normalizedQuery,
+                    Message = hits.Count == 0
+                        ? "创意知识库暂无命中，已返回空结果。"
+                        : $"创意知识库命中 {hits.Count} 条（向量检索）。"
+                };
+
+                result.Hits.AddRange(hits);
+                result.GenrePrinciples.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.GenrePrinciple, 4));
+                result.TropeWarnings.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.TropePattern, 4));
+                result.AntiTropeStrategies.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.AntiTropeStrategy, 5));
+                result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.EmotionArc, 4));
+                result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.RelationshipDynamic, 4));
+                result.ProjectMemory.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.ProjectUsedPattern, 5));
+                return result;
+            }
+            catch (Exception ex)
+            {
+                TM.App.Log($"[CreativeKnowledgeBaseService] 向量检索失败，回退到文本匹配: {ex.Message}");
+                return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        private async Task<CreativeKnowledgeRetrievalResult> RetrieveWithTokenMatchingAsync(
+            string normalizedQuery,
+            StoryCreativeConstitution? constitution,
+            IEnumerable<string>? usedPlotPatterns,
+            int topK,
+            CancellationToken ct)
+        {
+            var document = await LoadAsync(ct).ConfigureAwait(false);
             var queryTokens = Tokenize(normalizedQuery);
             var usedPatterns = (usedPlotPatterns ?? Array.Empty<string>())
                 .Where(p => !string.IsNullOrWhiteSpace(p))
@@ -322,6 +462,75 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
             File.Move(tmp, path, overwrite: true);
             _cache = Clone(document);
+        }
+
+        private double CalculateScore(
+            SearchResult vectorResult,
+            CreativeKnowledgeEntry entry,
+            StoryCreativeConstitution? constitution,
+            ProjectMemory? projectMemory,
+            AuthorMemory? authorMemory)
+        {
+            var score = (double)vectorResult.Score; // Base vector similarity score
+            var reasons = new List<string> { $"向量相似度 {vectorResult.Score:F2}" };
+
+            // Boost: Project referenced knowledge (if field exists in future)
+            // Note: ReferencedKnowledgeIds field not yet available in ProjectMemory
+            // Will be enabled when Task 12-13 adds this field
+
+            // Boost: Author favorite knowledge (if field exists in future)
+            // Note: FavoriteKnowledgeIds field not yet available in AuthorMemory
+            // Will be enabled when Task 12-13 adds this field
+
+            // Boost: Genre match
+            if (constitution != null)
+            {
+                if (!string.IsNullOrWhiteSpace(constitution.Genre)
+                    && Matches(entry, constitution.Genre))
+                {
+                    score += 3.0;
+                    reasons.Add("匹配题材");
+                }
+
+                if (!string.IsNullOrWhiteSpace(constitution.SubGenre)
+                    && Matches(entry, constitution.SubGenre))
+                {
+                    score += 2.0;
+                    reasons.Add("匹配子类型");
+                }
+
+                if (entry.Category == CreativeKnowledgeCategory.ThemeDepth
+                    && (constitution.GenreProfile?.DepthStrength ?? 0) >= 7)
+                {
+                    score += 2.0;
+                    reasons.Add("匹配主题深度需求");
+                }
+
+                if (entry.Category is CreativeKnowledgeCategory.EmotionArc or CreativeKnowledgeCategory.RelationshipDynamic
+                    && (constitution.GenreProfile?.EmotionStrength ?? 0) >= 7)
+                {
+                    score += 2.0;
+                    reasons.Add("匹配情绪线需求");
+                }
+            }
+
+            // Boost: Entry weight
+            score += Math.Clamp(entry.Weight, 1, 10) * 0.3;
+
+            return Math.Round(score, 2);
+        }
+
+        private CreativeKnowledgeHit BuildVectorResult(
+            CreativeKnowledgeEntry entry,
+            double score,
+            SearchResult vectorResult)
+        {
+            return new CreativeKnowledgeHit
+            {
+                Entry = Clone(entry),
+                Score = score,
+                Reason = $"向量相似度 {vectorResult.Score:F2}，最终得分 {score:F2}"
+            };
         }
 
         private static CreativeKnowledgeHit ScoreEntry(
