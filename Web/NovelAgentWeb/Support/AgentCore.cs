@@ -253,6 +253,7 @@ public sealed class AgentMissionPatch
     public string Stage { get; set; } = string.Empty;
     public string CurrentFocus { get; set; } = string.Empty;
     public List<AgentChapterTaskPatch> ChapterPatches { get; set; } = new();
+    public AgentMemoryUpdate? MemoryUpdate { get; set; }
 }
 
 public sealed class AgentMissionPlan
