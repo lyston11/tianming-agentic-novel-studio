@@ -6,6 +6,8 @@ public class AgentMemoryUpdate
     public ProjectMemoryUpdate ProjectMemory { get; set; } = new();
     public AuthorMemoryUpdate AuthorMemory { get; set; } = new();
     public ExecutionMemoryUpdate ExecutionMemory { get; set; } = new();
+    public List<string> UsedKnowledgeIds { get; set; } = new();
+    public List<string> UsedTropePatterns { get; set; } = new();
 }
 
 public class SessionMemoryUpdate
