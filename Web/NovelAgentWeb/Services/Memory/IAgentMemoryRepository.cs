@@ -54,6 +54,8 @@ public class ProjectMemory
     public string? ReaderPromise { get; set; }
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
+    public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> UsedTropePatterns { get; set; } = new();
 }
 
 /// <summary>
@@ -65,6 +67,7 @@ public class AuthorMemory
     public List<string> StyleDislikes { get; set; } = new();
     public string? ConfirmationTolerance { get; set; }
     public List<string> GenreHabits { get; set; } = new();
+    public List<string> FavoriteKnowledgeIds { get; set; } = new();
 }
 
 /// <summary>

@@ -133,6 +133,56 @@ public sealed class AgentMemoryService
             await _repository.UpdateMemoryAsync(userId, projectId, updates, ct);
             _logger.LogInformation("Applied {Count} memory updates for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
         }
+
+        // 关联使用的知识条目
+        if (update.UsedKnowledgeIds?.Any() == true)
+        {
+            var projectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+
+            var newRefs = update.UsedKnowledgeIds
+                .Except(projectMemory.ReferencedKnowledgeIds ?? new List<string>())
+                .ToList();
+
+            if (newRefs.Any())
+            {
+                var updated = projectMemory.ReferencedKnowledgeIds ?? new List<string>();
+                updated.AddRange(newRefs);
+
+                await _repository.UpdateFieldAsync(
+                    userId,
+                    projectId,
+                    "project.referenced_knowledge_ids",
+                    updated,
+                    ct);
+
+                _logger.LogDebug("Added {Count} knowledge references to ProjectMemory", newRefs.Count);
+            }
+        }
+
+        // 记录使用的套路模式
+        if (update.UsedTropePatterns?.Any() == true)
+        {
+            var projectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
+
+            var newTropes = update.UsedTropePatterns
+                .Except(projectMemory.UsedTropePatterns ?? new List<string>())
+                .ToList();
+
+            if (newTropes.Any())
+            {
+                var updated = projectMemory.UsedTropePatterns ?? new List<string>();
+                updated.AddRange(newTropes);
+
+                await _repository.UpdateFieldAsync(
+                    userId,
+                    projectId,
+                    "project.used_trope_patterns",
+                    updated,
+                    ct);
+
+                _logger.LogDebug("Added {Count} trope patterns to ProjectMemory", newTropes.Count);
+            }
+        }
     }
 
     public Task<AgentRuntimeContext> LoadRuntimeContextAsync(
@@ -229,7 +279,9 @@ public sealed class AgentMemoryService
         ReaderPromise = source.ReaderPromise ?? string.Empty,
         Tone = string.Empty,
         Constraints = new List<string>(source.Constraints),
-        UnresolvedThreads = new List<string>(source.UnresolvedThreads)
+        UnresolvedThreads = new List<string>(source.UnresolvedThreads),
+        ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
+        UsedTropePatterns = new List<string>(source.UsedTropePatterns)
     };
 
     private static AgentAuthorMemory MapToAgentAuthorMemory(AuthorMemory source) => new()
@@ -237,7 +289,8 @@ public sealed class AgentMemoryService
         StyleLikes = new List<string>(source.StyleLikes),
         StyleDislikes = new List<string>(source.StyleDislikes),
         ConfirmationTolerance = source.ConfirmationTolerance ?? "key_checkpoints",
-        GenreHabits = new List<string>(source.GenreHabits)
+        GenreHabits = new List<string>(source.GenreHabits),
+        FavoriteKnowledgeIds = new List<string>(source.FavoriteKnowledgeIds)
     };
 
     private static AgentExecutionMemory MapToAgentExecutionMemory(ExecutionMemory source) => new()

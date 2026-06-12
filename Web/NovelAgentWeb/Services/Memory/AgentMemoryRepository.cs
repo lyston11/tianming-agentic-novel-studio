@@ -62,7 +62,9 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     LongTermGoal = GetField<string>(rows, "project.long_term_goal"),
                     ReaderPromise = GetField<string>(rows, "project.reader_promise"),
                     Constraints = GetField<List<string>>(rows, "project.constraints") ?? new(),
-                    UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new()
+                    UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new(),
+                    ReferencedKnowledgeIds = GetField<List<string>>(rows, "project.referenced_knowledge_ids") ?? new(),
+                    UsedTropePatterns = GetField<List<string>>(rows, "project.used_trope_patterns") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
@@ -99,7 +101,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     StyleLikes = GetField<List<string>>(rows, "author.style_likes") ?? new(),
                     StyleDislikes = GetField<List<string>>(rows, "author.style_dislikes") ?? new(),
                     ConfirmationTolerance = GetField<string>(rows, "author.confirmation_tolerance"),
-                    GenreHabits = GetField<List<string>>(rows, "author.genre_habits") ?? new()
+                    GenreHabits = GetField<List<string>>(rows, "author.genre_habits") ?? new(),
+                    FavoriteKnowledgeIds = GetField<List<string>>(rows, "author.favorite_knowledge_ids") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
