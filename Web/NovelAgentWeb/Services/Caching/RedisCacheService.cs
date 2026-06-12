@@ -43,7 +43,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis cache GET failed for key {Key}, treating as cache miss", key);
+            _logger.LogWarning(ex, "Distributed cache GET failed for key {Key}, treating as cache miss", key);
             return null;
         }
     }
@@ -62,7 +62,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis cache SET failed for key {Key}, continuing without cache", key);
+            _logger.LogWarning(ex, "Distributed cache SET failed for key {Key}, continuing without cache", key);
         }
     }
 
@@ -74,7 +74,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis cache REMOVE failed for key {Key}", key);
+            _logger.LogWarning(ex, "Distributed cache REMOVE failed for key {Key}", key);
         }
     }
 
@@ -87,7 +87,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis cache EXISTS check failed for key {Key}, returning false", key);
+            _logger.LogWarning(ex, "Distributed cache EXISTS check failed for key {Key}, returning false", key);
             return false;
         }
     }

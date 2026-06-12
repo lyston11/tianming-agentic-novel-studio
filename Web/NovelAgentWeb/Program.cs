@@ -120,20 +120,24 @@ builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
-// Redis distributed cache
+// Distributed cache: Redis is opt-in; local/dev falls back to in-process distributed memory.
+var redisEnabled = builder.Configuration.GetValue("Redis:Enabled", false);
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
 var redisInstanceName = builder.Configuration["Redis:InstanceName"];
 
-if (string.IsNullOrEmpty(redisConnectionString))
+if (redisEnabled && !string.IsNullOrWhiteSpace(redisConnectionString))
 {
-    throw new InvalidOperationException("Redis:ConnectionString is not configured in appsettings.json");
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString;
+        options.InstanceName = redisInstanceName ?? "NovelAgent:";
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
 }
 
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = redisConnectionString;
-    options.InstanceName = redisInstanceName ?? "NovelAgent:";
-});
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 
 // Agent memory repository with three-tier caching

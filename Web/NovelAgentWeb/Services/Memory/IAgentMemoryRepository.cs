@@ -2,7 +2,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
 
 /// <summary>
 /// Repository for fine-grained agent memory storage.
-/// Abstracts SQLite persistence + Redis + IMemoryCache three-tier caching.
+/// Abstracts SQLite persistence + distributed cache + IMemoryCache three-tier caching.
 /// </summary>
 public interface IAgentMemoryRepository
 {

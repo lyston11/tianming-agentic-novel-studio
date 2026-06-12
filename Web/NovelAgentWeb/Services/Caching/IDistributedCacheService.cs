@@ -1,8 +1,8 @@
 namespace TM.Web.NovelAgentWeb.Services.Caching;
 
 /// <summary>
-/// Distributed cache service interface (Redis-backed).
-/// Second tier in the three-tier caching strategy (SQLite -> Redis -> IMemoryCache).
+/// Distributed cache service interface (Redis-backed or local fallback).
+/// Second tier in the three-tier caching strategy (SQLite -> distributed cache -> IMemoryCache).
 /// </summary>
 public interface IDistributedCacheService
 {
