@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Tests.AgentKernelRegression;
@@ -38,6 +41,7 @@ internal static class Program
         ("Provider tool calling diagnostics parse mock responses", ProviderToolCallingDiagnosticsParseMockResponses),
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
+        ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
         ("StartNewNovelProject is idempotent while awaiting foundation", StartNewNovelProjectIsIdempotentWhileAwaitingFoundation),
     };
 
@@ -1456,6 +1460,69 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static async Task SearchCreativeKnowledgeReturnsDbKnowledge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-db-knowledge-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        var knowledgeService = new FixedKnowledgeService(new KnowledgeSearchResult
+        {
+            Id = "db-knowledge-001",
+            EntryType = nameof(CreativeKnowledgeCategory.ReaderPromise),
+            Title = "数据库知识条目",
+            Content = "上传知识要求主角每次胜利都付出清晰代价。",
+            Score = 3.5f
+        });
+        var registry = new AgentToolRegistry(
+            settings,
+            new FixedServiceProvider(knowledgeService),
+            NullLogger<AgentToolRegistry>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-db-knowledge",
+            ActiveProjectId = "project-db-knowledge"
+        };
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var result = await registry.ExecuteAsync(
+                new AgentToolCall
+                {
+                    Name = "SearchCreativeKnowledge",
+                    Arguments = { ["query"] = "主角胜利代价" }
+                },
+                session,
+                new StoryBibleDocument(),
+                confirmed: false,
+                CancellationToken.None);
+
+            Check.True(result.Success, "SearchCreativeKnowledge should succeed when DB knowledge service is available.");
+            Check.Contains("数据库知识条目", result.Message, "Agent tool message should include DB-created knowledge title.");
+            Check.Contains("清晰代价", result.Message, "Agent tool message should include DB-created knowledge content.");
+
+            var data = result.Data as CreativeKnowledgeRetrievalResult;
+            Check.True(data?.Hits.Any(h => h.Entry.Id == "db-knowledge-001" && h.Entry.Source == "DBKnowledge") == true,
+                "Agent tool data should merge DB knowledge into creative knowledge hits.");
+            Check.Equal("project-db-knowledge", knowledgeService.LastRequest?.ProjectId ?? string.Empty,
+                "DB knowledge search should use the active session project id.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+    }
+
     private static async Task StartNewNovelProjectIsIdempotentWhileAwaitingFoundation()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-start-project-" + Guid.NewGuid().ToString("N"));
@@ -1547,6 +1614,55 @@ internal sealed class EmptyServiceProvider : IServiceProvider
     }
 
     public object? GetService(Type serviceType) => null;
+}
+
+internal sealed class FixedServiceProvider : IServiceProvider
+{
+    private readonly object _service;
+
+    public FixedServiceProvider(object service)
+    {
+        _service = service;
+    }
+
+    public object? GetService(Type serviceType) =>
+        serviceType.IsInstanceOfType(_service) ? _service : null;
+}
+
+internal sealed class FixedKnowledgeService : IKnowledgeService
+{
+    private readonly KnowledgeSearchResult _result;
+
+    public FixedKnowledgeService(KnowledgeSearchResult result)
+    {
+        _result = result;
+    }
+
+    public SearchKnowledgeRequest? LastRequest { get; private set; }
+
+    public Task<KnowledgeResponse> CreateKnowledgeAsync(CreateKnowledgeRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<KnowledgeResponse> GetKnowledgeAsync(string knowledgeId, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<KnowledgeResponse> UpdateKnowledgeAsync(string knowledgeId, UpdateKnowledgeRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task DeleteKnowledgeAsync(string knowledgeId, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<List<KnowledgeSearchResult>> SearchKnowledgeAsync(SearchKnowledgeRequest request, CancellationToken ct = default)
+    {
+        LastRequest = request;
+        return Task.FromResult(new List<KnowledgeSearchResult> { _result });
+    }
+
+    public Task IncrementUsageAsync(string knowledgeId, CancellationToken ct = default) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

@@ -197,27 +197,61 @@ public class KnowledgeService : IKnowledgeService
         if (project == null)
             throw new KeyNotFoundException($"Project {request.ProjectId} not found");
 
-        // Perform semantic search
+        var topK = Math.Clamp(request.TopK <= 0 ? 10 : request.TopK, 1, 50);
+
+        // Perform semantic search first, then fill gaps from the authoritative DB rows.
         var searchResults = await _searchService.SearchInProjectAsync(
             userId,
             request.ProjectId,
             request.Query,
-            request.TopK,
+            topK,
             ct);
 
-        // Filter by entry type if specified
+        var knowledgeById = await _db.KnowledgeBases
+            .AsNoTracking()
+            .Where(k => k.ProjectId == request.ProjectId)
+            .Where(k => string.IsNullOrEmpty(request.EntryType) || k.EntryType == request.EntryType)
+            .ToDictionaryAsync(k => k.Id, ct);
+
         var results = searchResults
             .Where(r => r.EntityType == "knowledge")
-            .Where(r => string.IsNullOrEmpty(request.EntryType) || r.EntityType == request.EntryType)
+            .Where(r => !string.IsNullOrWhiteSpace(r.EntityId) && knowledgeById.ContainsKey(r.EntityId))
             .Select(r => new KnowledgeSearchResult
             {
                 Id = r.EntityId,
-                EntryType = r.EntityType,
-                Title = r.ChunkId,
-                Content = r.Content,
+                EntryType = knowledgeById[r.EntityId].EntryType,
+                Title = knowledgeById[r.EntityId].Title,
+                Content = string.IsNullOrWhiteSpace(r.Content) ? knowledgeById[r.EntityId].Content : r.Content,
                 Score = r.Score
             })
             .ToList();
+
+        if (results.Count < topK)
+        {
+            var existingIds = results.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var textMatches = knowledgeById.Values
+                .Where(k => !existingIds.Contains(k.Id))
+                .Select(k => new
+                {
+                    Knowledge = k,
+                    Score = ScoreTextMatch(k, request.Query)
+                })
+                .Where(x => x.Score > 0)
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Knowledge.Weight)
+                .ThenByDescending(x => x.Knowledge.CreatedAt)
+                .Take(topK - results.Count)
+                .Select(x => new KnowledgeSearchResult
+                {
+                    Id = x.Knowledge.Id,
+                    EntryType = x.Knowledge.EntryType,
+                    Title = x.Knowledge.Title,
+                    Content = x.Knowledge.Content,
+                    Score = x.Score
+                });
+
+            results.AddRange(textMatches);
+        }
 
         _logger.LogInformation("Knowledge search in project {ProjectId} returned {ResultCount} results", request.ProjectId, results.Count);
 
@@ -258,5 +292,34 @@ public class KnowledgeService : IKnowledgeService
             CreatedAt = knowledge.CreatedAt,
             VectorId = knowledge.VectorId
         };
+    }
+
+    private static float ScoreTextMatch(KnowledgeBase knowledge, string query)
+    {
+        var tokens = query
+            .Split(new[] { ' ', '\t', '\r', '\n', ',', '，', '.', '。', ';', '；', ':', '：' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (tokens.Count == 0)
+            tokens.Add(query.Trim());
+
+        var haystack = $"{knowledge.Title}\n{knowledge.Content}\n{knowledge.Tags}".ToLowerInvariant();
+        var score = tokens.Count(t => haystack.Contains(t.ToLowerInvariant(), StringComparison.Ordinal));
+
+        var normalizedQuery = query.Trim().ToLowerInvariant();
+        if (score == 0 && haystack.Contains(normalizedQuery, StringComparison.Ordinal))
+            score = 1;
+        if (score == 0 && normalizedQuery.Length >= 2)
+        {
+            score = Enumerable.Range(0, normalizedQuery.Length - 1)
+                .Select(i => normalizedQuery.Substring(i, 2))
+                .Distinct(StringComparer.Ordinal)
+                .Count(fragment => haystack.Contains(fragment, StringComparison.Ordinal));
+        }
+
+        return score == 0 ? 0 : score + Math.Clamp(knowledge.Weight, 1, 10) / 100f;
     }
 }

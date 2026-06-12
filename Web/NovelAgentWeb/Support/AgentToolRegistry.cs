@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -150,7 +151,7 @@ public sealed class AgentToolRegistry
             Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
             Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
-            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", (call, _, _, _, ct) => SearchCreativeKnowledgeAsync(call, ct)),
+            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
             Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
             Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
             Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId" }, "规划卷级弧线，不直接固化。", (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
@@ -380,10 +381,24 @@ public sealed class AgentToolRegistry
         };
     }
 
-    private async Task<AgentToolExecutionResult> SearchCreativeKnowledgeAsync(AgentToolCall call, CancellationToken ct)
+    private async Task<AgentToolExecutionResult> SearchCreativeKnowledgeAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
         var query = Arg(call, "query");
         var result = await _workspace.Orchestrator.RetrieveCreativeKnowledgeAsync(query, ct).ConfigureAwait(false);
+        var dbHits = await SearchDatabaseKnowledgeAsync(query, session, ct).ConfigureAwait(false);
+
+        if (dbHits.Count > 0)
+        {
+            var seen = result.Hits.Select(h => h.Entry.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var hit in dbHits)
+            {
+                if (seen.Add(hit.Entry.Id))
+                    result.Hits.Insert(0, hit);
+            }
+
+            result.Message = $"创意知识库命中 {result.Hits.Count} 条（DB知识优先，legacy JSON 作为回退）。";
+        }
+
         var lines = result.Hits.Count == 0
             ? new List<string> { "创意知识库里没有检索到强相关条目。" }
             : result.Hits.Take(8).Select(h => $"【{h.Entry.Category}】{h.Entry.Title}\n{h.Entry.Content}").ToList();
@@ -398,6 +413,63 @@ public sealed class AgentToolRegistry
             Suggestions = new[] { "基于这些知识继续构思", "规划下一章" },
         };
     }
+
+    private async Task<List<CreativeKnowledgeHit>> SearchDatabaseKnowledgeAsync(string query, AgentSession session, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+        {
+            _logger.LogDebug("Skipping DB knowledge search because session {SessionId} has no active project", session.SessionId);
+            return new List<CreativeKnowledgeHit>();
+        }
+
+        var knowledgeService = _serviceProvider.GetService<IKnowledgeService>();
+        if (knowledgeService == null)
+        {
+            _logger.LogDebug("Skipping DB knowledge search because IKnowledgeService is unavailable");
+            return new List<CreativeKnowledgeHit>();
+        }
+
+        try
+        {
+            var results = await knowledgeService.SearchKnowledgeAsync(new SearchKnowledgeRequest
+            {
+                ProjectId = session.ActiveProjectId,
+                Query = query,
+                TopK = 8
+            }, ct).ConfigureAwait(false);
+
+            return results
+                .Select(MapKnowledgeSearchResult)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.LogWarning(ex, "DB knowledge search unavailable for project {ProjectId}; using legacy creative knowledge fallback", session.ActiveProjectId);
+            return new List<CreativeKnowledgeHit>();
+        }
+    }
+
+    private static CreativeKnowledgeHit MapKnowledgeSearchResult(KnowledgeSearchResult result)
+    {
+        return new CreativeKnowledgeHit
+        {
+            Entry = new CreativeKnowledgeEntry
+            {
+                Id = result.Id,
+                Category = ParseKnowledgeCategory(result.EntryType),
+                Title = result.Title,
+                Content = result.Content,
+                Source = "DBKnowledge"
+            },
+            Score = result.Score,
+            Reason = "DB knowledge search"
+        };
+    }
+
+    private static CreativeKnowledgeCategory ParseKnowledgeCategory(string value) =>
+        Enum.TryParse<CreativeKnowledgeCategory>(value, ignoreCase: true, out var category)
+            ? category
+            : CreativeKnowledgeCategory.ProjectUsedPattern;
 
     private async Task<AgentToolExecutionResult> PlanStoryFoundationAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
