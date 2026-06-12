@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
@@ -11,13 +14,19 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 public class KnowledgeController : ControllerBase
 {
     private readonly IKnowledgeService _knowledgeService;
+    private readonly NovelAgentDbContext _db;
+    private readonly ICurrentUserService _currentUserService;
     private readonly ILogger<KnowledgeController> _logger;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
+        NovelAgentDbContext db,
+        ICurrentUserService currentUserService,
         ILogger<KnowledgeController> logger)
     {
         _knowledgeService = knowledgeService;
+        _db = db;
+        _currentUserService = currentUserService;
         _logger = logger;
     }
 
@@ -176,6 +185,110 @@ public class KnowledgeController : ControllerBase
         {
             _logger.LogError(ex, "Failed to increment usage for knowledge {KnowledgeId}", id);
             return StatusCode(500, new { error = "Failed to increment usage" });
+        }
+    }
+
+    [HttpPost("upload")]
+    public async Task<IActionResult> UploadFile(
+        [FromForm] IFormFile file,
+        [FromForm] string? projectId,
+        [FromForm] string? title)
+    {
+        try
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest(new { error = "No file provided" });
+
+            var userId = _currentUserService.GetUserId();
+            var uploadDir = Path.Combine("App_Data", "KnowledgeUploads", userId);
+            Directory.CreateDirectory(uploadDir);
+
+            var fileName = Path.GetFileName(file.FileName);
+            var filePath = Path.Combine(uploadDir, Guid.NewGuid().ToString("N") + "_" + fileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
+
+            var task = new Data.Entities.KnowledgeProcessingTask
+            {
+                Id = Guid.NewGuid().ToString(),
+                UserId = userId,
+                ProjectId = projectId,
+                FileName = title ?? fileName,
+                FilePath = filePath,
+                FileSize = file.Length,
+                Status = "pending",
+                Strategy = "single_pass",
+                Progress = 0,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _db.KnowledgeProcessingTasks.Add(task);
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
+                task.FileName, task.FileSize, userId, task.Id);
+
+            return Ok(new
+            {
+                taskId = task.Id,
+                fileName = task.FileName,
+                fileSize = task.FileSize,
+                status = task.Status,
+                message = "文件已上传，等待处理"
+            });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized(new { error = "User not authenticated" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload file");
+            return StatusCode(500, new { error = "Failed to upload file" });
+        }
+    }
+
+    [HttpGet("tasks/{taskId}")]
+    public async Task<IActionResult> GetTaskStatus(string taskId)
+    {
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var task = await _db.KnowledgeProcessingTasks
+                .Where(t => t.Id == taskId && t.UserId == userId)
+                .FirstOrDefaultAsync();
+
+            if (task == null)
+                return NotFound(new { error = "Task not found" });
+
+            return Ok(new KnowledgeProcessingTaskDto
+            {
+                Id = task.Id,
+                FileName = task.FileName,
+                FileSize = task.FileSize,
+                Status = task.Status,
+                Strategy = task.Strategy,
+                Progress = task.Progress,
+                TotalChunks = task.TotalChunks,
+                ProcessedChunks = task.ProcessedChunks,
+                ExtractedEntriesCount = task.ExtractedEntriesCount,
+                ErrorMessage = task.ErrorMessage,
+                StartedAt = task.StartedAt,
+                CompletedAt = task.CompletedAt,
+                CreatedAt = task.CreatedAt
+            });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized(new { error = "User not authenticated" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get task status for {TaskId}", taskId);
+            return StatusCode(500, new { error = "Failed to get task status" });
         }
     }
 }

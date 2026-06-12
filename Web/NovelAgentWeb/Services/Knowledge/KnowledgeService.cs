@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
@@ -59,7 +60,11 @@ public class KnowledgeService : IKnowledgeService
             SourceType = request.SourceType ?? "manual",
             SourceFileId = request.SourceFileId,
             ChunkIndex = request.ChunkIndex,
-            ExtractionContext = request.ExtractionContext
+            ExtractionContext = request.ExtractionContext,
+            Tags = request.Tags != null && request.Tags.Count > 0
+                ? JsonSerializer.Serialize(request.Tags)
+                : null,
+            Weight = request.Weight ?? 5
         };
 
         _db.KnowledgeBases.Add(knowledge);

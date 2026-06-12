@@ -32,6 +32,13 @@ public class KnowledgeBase
     [Column("extraction_context")]
     public string? ExtractionContext { get; set; }
 
+    // Metadata fields for extracted knowledge
+    [Column("tags")]
+    public string? Tags { get; set; }
+
+    [Column("weight")]
+    public int Weight { get; set; } = 5;
+
     // Navigation property
     public NovelProject Project { get; set; } = null!;
 }
