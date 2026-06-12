@@ -17,6 +17,21 @@ public class KnowledgeBase
     [StringLength(100)]
     public string? VectorId { get; set; }
 
+    // Source tracking fields for knowledge extraction
+    [Column("source_type")]
+    [StringLength(50)]
+    public string SourceType { get; set; } = "manual";
+
+    [Column("source_file_id")]
+    [StringLength(100)]
+    public string? SourceFileId { get; set; }
+
+    [Column("chunk_index")]
+    public int? ChunkIndex { get; set; }
+
+    [Column("extraction_context")]
+    public string? ExtractionContext { get; set; }
+
     // Navigation property
     public NovelProject Project { get; set; } = null!;
 }
