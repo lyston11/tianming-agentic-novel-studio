@@ -1,8 +1,10 @@
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
 
@@ -19,17 +21,23 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly NovelAgentDbContext _db;
     private readonly IKnowledgeService _knowledgeService;
     private readonly IMicroEmbeddingService _embedding;
+    private readonly UserSettingsManager _settingsManager;
+    private readonly HttpClient _httpClient;
     private readonly ILogger<KnowledgeProcessingService> _logger;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
         IKnowledgeService knowledgeService,
         IMicroEmbeddingService embedding,
+        UserSettingsManager settingsManager,
+        HttpClient httpClient,
         ILogger<KnowledgeProcessingService> logger)
     {
         _db = db;
         _knowledgeService = knowledgeService;
         _embedding = embedding;
+        _settingsManager = settingsManager;
+        _httpClient = httpClient;
         _logger = logger;
     }
 
@@ -139,21 +147,211 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     }
 
     /// <summary>
-    /// Calls the LLM with the given prompt.
-    /// Implementation will be added in Task 5.
+    /// Calls the LLM with the given prompt using user settings.
     /// </summary>
     private async Task<string> CallLLMAsync(string prompt, CancellationToken ct)
     {
-        throw new NotImplementedException("LLM calling will be implemented in Task 5");
+        var settings = await _settingsManager.LoadAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(settings.LlmBaseUrl) ||
+            string.IsNullOrWhiteSpace(settings.LlmModel) ||
+            string.IsNullOrWhiteSpace(settings.LlmApiKey))
+        {
+            throw new InvalidOperationException("LLM settings are not configured");
+        }
+
+        var provider = settings.LlmProvider.Trim().ToLowerInvariant();
+
+        // Use Anthropic-style API for Anthropic and Mimo providers
+        if (provider.Contains("anthropic", StringComparison.OrdinalIgnoreCase) ||
+            provider.Contains("mimo", StringComparison.OrdinalIgnoreCase) ||
+            provider.Contains("xiaomi", StringComparison.OrdinalIgnoreCase))
+        {
+            return await CallAnthropicCompletionAsync(settings, prompt, ct);
+        }
+
+        // Default to OpenAI-compatible API for all other providers
+        return await CallOpenAiCompletionAsync(settings, prompt, ct);
+    }
+
+    /// <summary>
+    /// Calls OpenAI-compatible completion API.
+    /// </summary>
+    private async Task<string> CallOpenAiCompletionAsync(UserSettings settings, string prompt, CancellationToken ct)
+    {
+        var url = BuildOpenAiChatCompletionsUrl(settings.LlmBaseUrl);
+        var payload = new
+        {
+            model = NormalizeModel(settings.LlmModel),
+            temperature = settings.LlmTemperature,
+            max_tokens = settings.LlmMaxTokens,
+            messages = new[]
+            {
+                new { role = "user", content = prompt }
+            }
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.LlmApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"LLM API returned {(int)response.StatusCode}: {body}");
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Invalid OpenAI API response format");
+        }
+
+        var firstChoice = choices.EnumerateArray().FirstOrDefault();
+        if (firstChoice.ValueKind == JsonValueKind.Undefined ||
+            !firstChoice.TryGetProperty("message", out var message) ||
+            !message.TryGetProperty("content", out var content))
+        {
+            throw new InvalidOperationException("No content in OpenAI API response");
+        }
+
+        return content.GetString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Calls Anthropic-compatible completion API.
+    /// </summary>
+    private async Task<string> CallAnthropicCompletionAsync(UserSettings settings, string prompt, CancellationToken ct)
+    {
+        var url = BuildAnthropicMessagesUrl(settings.LlmBaseUrl);
+        var payload = new
+        {
+            model = NormalizeModel(settings.LlmModel),
+            max_tokens = settings.LlmMaxTokens,
+            temperature = settings.LlmTemperature,
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new[] { new { type = "text", text = prompt } }
+                }
+            }
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Add("x-api-key", settings.LlmApiKey);
+        request.Headers.Add("anthropic-version", "2023-06-01");
+        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Anthropic API returned {(int)response.StatusCode}: {body}");
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Invalid Anthropic API response format");
+        }
+
+        var textParts = content.EnumerateArray()
+            .Where(item => item.TryGetProperty("type", out var type) &&
+                          type.ValueKind == JsonValueKind.String &&
+                          type.GetString() == "text")
+            .Select(item => item.TryGetProperty("text", out var text) ? text.GetString() : null)
+            .Where(text => !string.IsNullOrWhiteSpace(text));
+
+        return string.Join("\n", textParts);
     }
 
     /// <summary>
     /// Parses JSON response from LLM into a list of knowledge entries.
-    /// Implementation will be added in Task 5.
+    /// Handles markdown code fences and returns empty list on parse failure.
     /// </summary>
-    private List<ExtractedKnowledgeEntryDto> ParseEntriesFromJson(string json)
+    private List<ExtractedKnowledgeEntryDto> ParseEntriesFromJson(string jsonResponse)
     {
-        throw new NotImplementedException("JSON parsing will be implemented in Task 5");
+        try
+        {
+            // Clean up markdown code fences
+            var cleaned = jsonResponse.Trim();
+            if (cleaned.StartsWith("```json"))
+            {
+                cleaned = cleaned.Substring(7);
+            }
+            if (cleaned.StartsWith("```"))
+            {
+                cleaned = cleaned.Substring(3);
+            }
+            if (cleaned.EndsWith("```"))
+            {
+                cleaned = cleaned.Substring(0, cleaned.Length - 3);
+            }
+            cleaned = cleaned.Trim();
+
+            // Parse JSON array
+            var entries = JsonSerializer.Deserialize<List<ExtractedKnowledgeEntryDto>>(
+                cleaned,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return entries ?? new List<ExtractedKnowledgeEntryDto>();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse LLM JSON response: {Response}", jsonResponse);
+            return new List<ExtractedKnowledgeEntryDto>();
+        }
+    }
+
+    /// <summary>
+    /// Builds OpenAI-compatible chat completions URL.
+    /// </summary>
+    private static string BuildOpenAiChatCompletionsUrl(string baseUrl)
+    {
+        var url = baseUrl.Trim().TrimEnd('/');
+        return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)
+            ? url
+            : $"{url}/chat/completions";
+    }
+
+    /// <summary>
+    /// Builds Anthropic messages API URL.
+    /// </summary>
+    private static string BuildAnthropicMessagesUrl(string baseUrl)
+    {
+        var url = baseUrl.Trim().TrimEnd('/');
+        if (url.EndsWith("/v1/messages", StringComparison.OrdinalIgnoreCase) ||
+            url.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+        {
+            return url;
+        }
+        if (url.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{url}/messages";
+        }
+        return $"{url}/v1/messages";
+    }
+
+    /// <summary>
+    /// Normalizes model name by removing suffixes.
+    /// </summary>
+    private static string NormalizeModel(string model)
+    {
+        var value = model.Trim();
+        if (value.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase))
+        {
+            value = value[..^4].Trim();
+        }
+        if (value.EndsWith(":extended", StringComparison.OrdinalIgnoreCase))
+        {
+            value = value[..^9].Trim();
+        }
+        return value;
     }
 
     /// <summary>
