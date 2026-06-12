@@ -85,6 +85,26 @@ docker-compose up -d
 }
 ```
 
+### 知识库自动处理（已完成）
+
+**文件处理流程：**
+1. POST /api/knowledge/upload - 创建处理任务
+2. Agent 调用 ProcessKnowledgeFile 工具（Idle/Planning/Reflection 阶段可用）
+3. 短文件(<6K tokens)单次分析，长文件分块+聚合
+4. 提取的知识条目自动向量化到 Qdrant
+5. Reflection 阶段自动关联到 ProjectMemory
+
+**向量检索：**
+- CreativeKnowledgeBaseService.RetrieveAsync 使用 Qdrant 向量检索
+- 融合 ProjectMemory 和 AuthorMemory 进行 Boost（引用过的知识+2.0，收藏的知识+1.5）
+- 过滤已用套路模式（ProjectMemory.UsedTropePatterns）
+- 题材匹配增强（GenrePrinciple + constitution.Genre）
+
+**记忆关联字段：**
+- ProjectMemory: ReferencedKnowledgeIds, UsedTropePatterns
+- AuthorMemory: FavoriteKnowledgeIds
+- AgentMemoryUpdate: UsedKnowledgeIds, UsedTropePatterns（Reflection 阶段自动提取）
+
 ## 提交规范
 
 **Commit 消息格式：**
