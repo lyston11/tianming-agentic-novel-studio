@@ -1,0 +1,53 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.sw?
+
+# Local assistant and mission state
+.claude/
+.mission/
+
+# .NET build output
+bin/
+obj/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+coverage/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data and generated stores
+App_Data/Qdrant/
+**/App_Data/Qdrant/
+**/App_Data/Database/*.db
+**/App_Data/Database/*.db-shm
+**/App_Data/Database/*.db-wal
+**/App_Data/KnowledgeUploads/
+**/App_Data/Projects/
+**/App_Data/Backup/
+
+# Logs, temp files, and local environment
+logs/
+*.log
+*.tmp
+*.temp
+.env
+.env.*
