@@ -1,4 +1,5 @@
 using Xunit;
+using System.Reflection;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace Tests.Unit.Support;
@@ -99,5 +100,84 @@ public class AgentMemoryUpdateTests
         Assert.Single(update.ProjectMemory.NewConstraints);
         Assert.Single(update.AuthorMemory.StyleLikes);
         Assert.Equal("成功信息", update.ExecutionMemory.ToolSuccess);
+    }
+
+    [Fact]
+    public void ReflectionParser_ReadsTopLevelCamelCaseMemoryUpdate()
+    {
+        var reflection = ParseReflection("""
+        {
+          "summary": "ok",
+          "memoryUpdate": {
+            "sessionMemory": {
+              "chatSummary": "用户确认偏好",
+              "extractedPreferences": ["保持节奏紧凑"]
+            },
+            "projectMemory": {
+              "newConstraints": ["不要出现现代科技元素"],
+              "unresolvedThreads": ["主角身世之谜（第15章揭示）"]
+            },
+            "authorMemory": {
+              "styleLikes": ["细腻心理描写"],
+              "styleDislikes": ["重复情绪渲染"]
+            },
+            "executionMemory": {
+              "toolSuccess": "WriteChapter 成功",
+              "toolFailure": null
+            },
+            "usedKnowledgeIds": ["kb-1"],
+            "usedTropePatterns": ["反套路-误导线索"]
+          }
+        }
+        """);
+
+        var update = reflection.MissionPatch.MemoryUpdate;
+        Assert.NotNull(update);
+        Assert.Equal("用户确认偏好", update.SessionMemory.ChatSummary);
+        Assert.Contains("保持节奏紧凑", update.SessionMemory.ExtractedPreferences);
+        Assert.Contains("不要出现现代科技元素", update.ProjectMemory.NewConstraints);
+        Assert.Contains("细腻心理描写", update.AuthorMemory.StyleLikes);
+        Assert.Equal("WriteChapter 成功", update.ExecutionMemory.ToolSuccess);
+        Assert.Contains("kb-1", update.UsedKnowledgeIds);
+        Assert.Contains("反套路-误导线索", update.UsedTropePatterns);
+    }
+
+    [Fact]
+    public void ReflectionParser_ReadsMissionPatchSnakeCaseMemoryUpdate()
+    {
+        var reflection = ParseReflection("""
+        {
+          "summary": "ok",
+          "mission_patch": {
+            "memory_update": {
+              "session_memory": {
+                "chat_summary": "蛇形命名摘要",
+                "extracted_preferences": ["避免长段说明"]
+              },
+              "project_memory": {
+                "new_constraints": ["只使用近未来科技"],
+                "unresolved_threads": []
+              },
+              "used_knowledge_ids": ["kb-2"],
+              "used_trope_patterns": ["套路A"]
+            }
+          }
+        }
+        """);
+
+        var update = reflection.MissionPatch.MemoryUpdate;
+        Assert.NotNull(update);
+        Assert.Equal("蛇形命名摘要", update.SessionMemory.ChatSummary);
+        Assert.Contains("避免长段说明", update.SessionMemory.ExtractedPreferences);
+        Assert.Contains("只使用近未来科技", update.ProjectMemory.NewConstraints);
+        Assert.Contains("kb-2", update.UsedKnowledgeIds);
+        Assert.Contains("套路A", update.UsedTropePatterns);
+    }
+
+    private static AgentReflection ParseReflection(string json)
+    {
+        var method = typeof(AgentPlanner).GetMethod("ParseReflection", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(nameof(AgentPlanner), "ParseReflection");
+        return Assert.IsType<AgentReflection>(method.Invoke(null, new object[] { json }));
     }
 }

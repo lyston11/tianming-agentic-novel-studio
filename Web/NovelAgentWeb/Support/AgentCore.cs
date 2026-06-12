@@ -1459,8 +1459,10 @@ public sealed class AgentPlanner
         };
         if (root.TryGetProperty("quality_gate", out var quality) && quality.ValueKind == JsonValueKind.Object)
             reflection.QualityGate = ParseQualityGate(quality);
-        if (root.TryGetProperty("mission_patch", out var patch) && patch.ValueKind == JsonValueKind.Object)
+        if (TryGetObject(root, out var patch, "mission_patch", "missionPatch"))
             reflection.MissionPatch = ParseMissionPatch(patch);
+        if (TryGetObject(root, out var memoryUpdate, "memory_update", "memoryUpdate"))
+            reflection.MissionPatch.MemoryUpdate = ParseMemoryUpdate(memoryUpdate);
         return reflection;
     }
 
@@ -1497,7 +1499,7 @@ public sealed class AgentPlanner
             Stage = ReadString(root, "stage", string.Empty),
             CurrentFocus = ReadString(root, "current_focus", string.Empty),
         };
-        if (root.TryGetProperty("chapter_patches", out var chapters) && chapters.ValueKind == JsonValueKind.Array)
+        if (TryGetProperty(root, out var chapters, "chapter_patches", "chapterPatches") && chapters.ValueKind == JsonValueKind.Array)
         {
             patch.ChapterPatches = chapters.EnumerateArray()
                 .Where(item => item.ValueKind == JsonValueKind.Object)
@@ -1512,7 +1514,56 @@ public sealed class AgentPlanner
                 .Where(item => !string.IsNullOrWhiteSpace(item.ChapterId))
                 .ToList();
         }
+        if (TryGetObject(root, out var memoryUpdate, "memory_update", "memoryUpdate"))
+            patch.MemoryUpdate = ParseMemoryUpdate(memoryUpdate);
         return patch;
+    }
+
+    private static AgentMemoryUpdate ParseMemoryUpdate(JsonElement root)
+    {
+        var update = new AgentMemoryUpdate
+        {
+            UsedKnowledgeIds = ReadStringArray(root, "used_knowledge_ids", "usedKnowledgeIds"),
+            UsedTropePatterns = ReadStringArray(root, "used_trope_patterns", "usedTropePatterns"),
+        };
+
+        if (TryGetObject(root, out var session, "session_memory", "sessionMemory"))
+        {
+            update.SessionMemory = new SessionMemoryUpdate
+            {
+                ChatSummary = ReadOptionalString(session, string.Empty, "chat_summary", "chatSummary"),
+                ExtractedPreferences = ReadStringArray(session, "extracted_preferences", "extractedPreferences")
+            };
+        }
+
+        if (TryGetObject(root, out var project, "project_memory", "projectMemory"))
+        {
+            update.ProjectMemory = new ProjectMemoryUpdate
+            {
+                NewConstraints = ReadStringArray(project, "new_constraints", "newConstraints"),
+                UnresolvedThreads = ReadStringArray(project, "unresolved_threads", "unresolvedThreads")
+            };
+        }
+
+        if (TryGetObject(root, out var author, "author_memory", "authorMemory"))
+        {
+            update.AuthorMemory = new AuthorMemoryUpdate
+            {
+                StyleLikes = ReadStringArray(author, "style_likes", "styleLikes"),
+                StyleDislikes = ReadStringArray(author, "style_dislikes", "styleDislikes")
+            };
+        }
+
+        if (TryGetObject(root, out var execution, "execution_memory", "executionMemory"))
+        {
+            update.ExecutionMemory = new ExecutionMemoryUpdate
+            {
+                ToolSuccess = ReadOptionalString(execution, null, "tool_success", "toolSuccess"),
+                ToolFailure = ReadOptionalString(execution, null, "tool_failure", "toolFailure")
+            };
+        }
+
+        return update;
     }
 
     private static AgentToolCall? ParseToolCall(JsonElement tool)
@@ -1943,7 +1994,10 @@ public sealed class AgentPlanner
     }
 
     private static string ReadString(JsonElement root, string name, string fallback) =>
-        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? fallback : fallback;
+        ReadOptionalString(root, fallback, name) ?? fallback;
+
+    private static string? ReadOptionalString(JsonElement root, string? fallback, params string[] names) =>
+        TryGetProperty(root, out var value, names) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? fallback : fallback;
 
     private static bool ReadBool(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False && value.GetBoolean();
@@ -1954,14 +2008,29 @@ public sealed class AgentPlanner
     private static int ReadInt(JsonElement root, string name, int fallback = 0) =>
         root.TryGetProperty(name, out var value) && value.TryGetInt32(out var i) ? i : fallback;
 
-    private static List<string> ReadStringArray(JsonElement root, string name)
+    private static List<string> ReadStringArray(JsonElement root, params string[] names)
     {
-        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+        if (!TryGetProperty(root, out var value, names) || value.ValueKind != JsonValueKind.Array)
             return new List<string>();
         return value.EnumerateArray()
             .Select(item => item.GetString() ?? string.Empty)
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .ToList();
+    }
+
+    private static bool TryGetObject(JsonElement root, out JsonElement value, params string[] names) =>
+        TryGetProperty(root, out value, names) && value.ValueKind == JsonValueKind.Object;
+
+    private static bool TryGetProperty(JsonElement root, out JsonElement value, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (root.TryGetProperty(name, out value))
+                return true;
+        }
+
+        value = default;
+        return false;
     }
 
     private static bool IsExplicitConfirmation(string msg) =>

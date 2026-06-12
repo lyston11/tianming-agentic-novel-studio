@@ -16,6 +16,7 @@ public sealed class AgentMemoryService
     private const int MaxRepeatedBlockers = 24;
     private const int MaxSuccessfulRepairNotes = 24;
     private const int MaxStyleDislikes = 32;
+    private const int PreferenceSedimentationThreshold = 3;
 
     public AgentMemoryService(IAgentMemoryRepository repository, ILogger<AgentMemoryService> logger)
     {
@@ -52,137 +53,114 @@ public sealed class AgentMemoryService
 
         ApplyReflection(session, reflection);
 
-        // Memory persistence will be implemented in Task 10 via ApplyMemoryUpdateAsync
-        await Task.CompletedTask;
+        if (reflection?.MissionPatch.MemoryUpdate == null)
+            return;
+
+        await ApplyMemoryUpdateAsync(session, project.Id, reflection.MissionPatch.MemoryUpdate, ct);
     }
 
     /// <summary>
     /// Applies memory updates from Reflection phase to repository.
-    /// Note: SessionMemory sedimentation (preferences → constraints) requires access to AgentSession,
-    /// which is not available here. This should be implemented in AgentRuntime.
     /// </summary>
-    private async Task ApplyMemoryUpdateAsync(string userId, string projectId, AgentMemoryUpdate update, CancellationToken ct)
+    private async Task ApplyMemoryUpdateAsync(AgentSession session, string projectId, AgentMemoryUpdate update, CancellationToken ct)
     {
-        var updates = new Dictionary<string, object>();
+        var userId = session.UserId;
+        var working = session.WorkingMemory;
+        working.SessionMemory ??= new AgentSessionMemory();
+        working.ProjectMemory ??= new AgentProjectMemory { ProjectId = projectId };
+        working.AuthorMemory ??= new AgentAuthorMemory();
+        working.ExecutionMemory ??= new AgentExecutionMemory();
 
-        // SessionMemory: Updates are applied to in-memory session object
-        // Sedimentation rule: Check if preferences repeated ≥3 times → sink to Constraints
-        if (update.SessionMemory != null && update.SessionMemory.ExtractedPreferences.Count > 0)
+        var updates = new Dictionary<string, object>();
+        var authorUpdates = new Dictionary<string, object>();
+
+        if (update.SessionMemory != null)
         {
-            // Note: SessionMemory sedimentation would require access to current AgentSession
-            // This is complex because AgentMemoryService doesn't have direct access to session
-            // For now, skip sedimentation logic - it can be handled in AgentRuntime where session is available
-            // Just log the extracted preferences for Task 10
-            _logger.LogDebug("Extracted {Count} preferences from session", update.SessionMemory.ExtractedPreferences.Count);
+            if (!string.IsNullOrWhiteSpace(update.SessionMemory.ChatSummary))
+                working.SessionMemory.ChatSummary = update.SessionMemory.ChatSummary.Trim();
+
+            foreach (var preference in Clean(update.SessionMemory.ExtractedPreferences))
+                working.SessionMemory.ShortTermPreferences.Add(preference);
+
+            Trim(working.SessionMemory.ShortTermPreferences, MaxShortTermPreferences);
+            var sedimented = working.SessionMemory.ShortTermPreferences
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .GroupBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() >= PreferenceSedimentationThreshold)
+                .Select(g => g.Key)
+                .ToList();
+
+            foreach (var preference in sedimented)
+                AddUnique(working.ProjectMemory.Constraints, preference);
         }
 
-        // ProjectMemory: Append new constraints and threads
         if (update.ProjectMemory != null)
         {
-            if (update.ProjectMemory.NewConstraints.Count > 0)
-            {
-                var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
-                var merged = existing.Constraints.Concat(update.ProjectMemory.NewConstraints).Distinct().ToList();
-                updates["project.constraints"] = merged;
-            }
-            if (update.ProjectMemory.UnresolvedThreads.Count > 0)
-            {
-                var existing = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
-                var merged = existing.UnresolvedThreads.Concat(update.ProjectMemory.UnresolvedThreads).ToList();
-                updates["project.unresolved_threads"] = merged;
-            }
+            foreach (var item in Clean(update.ProjectMemory.NewConstraints))
+                AddUnique(working.ProjectMemory.Constraints, item);
+            foreach (var item in Clean(update.ProjectMemory.UnresolvedThreads))
+                AddUnique(working.ProjectMemory.UnresolvedThreads, item);
         }
 
-        // AuthorMemory: Append style preferences (cross-project)
         if (update.AuthorMemory != null)
         {
-            if (update.AuthorMemory.StyleLikes.Count > 0)
-            {
-                var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
-                var merged = existing.StyleLikes.Concat(update.AuthorMemory.StyleLikes).Distinct().ToList();
-                updates["author.style_likes"] = merged;
-            }
-            if (update.AuthorMemory.StyleDislikes.Count > 0)
-            {
-                var existing = await _repository.GetAuthorMemoryAsync(userId, ct);
-                var merged = existing.StyleDislikes.Concat(update.AuthorMemory.StyleDislikes).Distinct().ToList();
-                updates["author.style_dislikes"] = merged;
-            }
+            foreach (var item in Clean(update.AuthorMemory.StyleLikes))
+                AddUnique(working.AuthorMemory.StyleLikes, item);
+            foreach (var item in Clean(update.AuthorMemory.StyleDislikes))
+                AddUnique(working.AuthorMemory.StyleDislikes, item);
         }
 
-        // ExecutionMemory: Append tool execution records
         if (update.ExecutionMemory != null)
         {
-            if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolSuccess))
-            {
-                var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
-                var merged = existing.SuccessfulRepairNotes.Append(update.ExecutionMemory.ToolSuccess).ToList();
-                updates["execution.successful_repairs"] = merged;
-            }
-            if (!string.IsNullOrEmpty(update.ExecutionMemory.ToolFailure))
-            {
-                var existing = await _repository.GetExecutionMemoryAsync(userId, projectId, ct);
-                var merged = existing.RepeatedBlockers.Append(update.ExecutionMemory.ToolFailure).ToList();
-                updates["execution.repeated_blockers"] = merged;
-            }
+            if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolSuccess))
+                AddUnique(working.ExecutionMemory.SuccessfulRepairNotes, update.ExecutionMemory.ToolSuccess.Trim());
+            if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolFailure))
+                AddUnique(working.ExecutionMemory.RepeatedBlockers, update.ExecutionMemory.ToolFailure.Trim());
         }
 
-        // Batch update all changes
+        foreach (var id in Clean(update.UsedKnowledgeIds))
+            AddUnique(working.ProjectMemory.ReferencedKnowledgeIds, id);
+        foreach (var pattern in Clean(update.UsedTropePatterns))
+            AddUnique(working.ProjectMemory.UsedTropePatterns, pattern);
+
+        Trim(working.ProjectMemory.UnresolvedThreads, MaxUnresolvedThreads);
+        Trim(working.ExecutionMemory.RepeatedBlockers, MaxRepeatedBlockers);
+        Trim(working.ExecutionMemory.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
+        Trim(working.AuthorMemory.StyleDislikes, MaxStyleDislikes);
+
+        if (working.ProjectMemory.Constraints.Count > 0)
+            updates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ProjectMemory.UnresolvedThreads.Count > 0)
+            updates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ProjectMemory.ReferencedKnowledgeIds.Count > 0)
+            updates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ProjectMemory.UsedTropePatterns.Count > 0)
+            updates["project.used_trope_patterns"] = working.ProjectMemory.UsedTropePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.SuccessfulRepairNotes.Count > 0)
+            updates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.RepeatedBlockers.Count > 0)
+            updates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.AuthorMemory.StyleLikes.Count > 0)
+            authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.AuthorMemory.StyleDislikes.Count > 0)
+            authorUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
         if (updates.Count > 0)
         {
             await _repository.UpdateMemoryAsync(userId, projectId, updates, ct);
-            _logger.LogInformation("Applied {Count} memory updates for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
         }
 
-        // 关联使用的知识条目
-        if (update.UsedKnowledgeIds?.Any() == true)
+        if (authorUpdates.Count > 0)
         {
-            var projectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
-
-            var newRefs = update.UsedKnowledgeIds
-                .Except(projectMemory.ReferencedKnowledgeIds ?? new List<string>())
-                .ToList();
-
-            if (newRefs.Any())
-            {
-                var updated = projectMemory.ReferencedKnowledgeIds ?? new List<string>();
-                updated.AddRange(newRefs);
-
-                await _repository.UpdateFieldAsync(
-                    userId,
-                    projectId,
-                    "project.referenced_knowledge_ids",
-                    updated,
-                    ct);
-
-                _logger.LogDebug("Added {Count} knowledge references to ProjectMemory", newRefs.Count);
-            }
+            await _repository.UpdateMemoryAsync(userId, null, authorUpdates, ct);
         }
 
-        // 记录使用的套路模式
-        if (update.UsedTropePatterns?.Any() == true)
-        {
-            var projectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct);
-
-            var newTropes = update.UsedTropePatterns
-                .Except(projectMemory.UsedTropePatterns ?? new List<string>())
-                .ToList();
-
-            if (newTropes.Any())
-            {
-                var updated = projectMemory.UsedTropePatterns ?? new List<string>();
-                updated.AddRange(newTropes);
-
-                await _repository.UpdateFieldAsync(
-                    userId,
-                    projectId,
-                    "project.used_trope_patterns",
-                    updated,
-                    ct);
-
-                _logger.LogDebug("Added {Count} trope patterns to ProjectMemory", newTropes.Count);
-            }
-        }
+        _logger.LogInformation(
+            "Applied {ProjectCount} project/execution and {AuthorCount} author memory updates for user {UserId}, project {ProjectId}",
+            updates.Count,
+            authorUpdates.Count,
+            userId,
+            projectId);
     }
 
     public Task<AgentRuntimeContext> LoadRuntimeContextAsync(
@@ -267,6 +245,17 @@ public sealed class AgentMemoryService
     {
         if (list.Count > max)
             list.RemoveRange(0, list.Count - max);
+    }
+
+    private static IEnumerable<string> Clean(IEnumerable<string>? values) =>
+        values?
+            .Select(v => v.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v)) ?? Enumerable.Empty<string>();
+
+    private static void AddUnique(List<string> list, string value)
+    {
+        if (!list.Contains(value, StringComparer.OrdinalIgnoreCase))
+            list.Add(value);
     }
 
     private static string FirstNonEmpty(params string?[] values) =>

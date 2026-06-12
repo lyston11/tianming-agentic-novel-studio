@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using System.Text.Json;
@@ -15,6 +17,8 @@ public class AgentMemoryRepositoryTests
     private readonly NovelAgentDbContext _dbContext;
     private readonly Mock<IDistributedCacheService> _mockRedisCache;
     private readonly Mock<IMemoryCacheService> _mockMemoryCache;
+    private readonly Mock<IVectorStore> _mockVectorStore;
+    private readonly Mock<IMicroEmbeddingService> _mockEmbedding;
     private readonly Mock<ILogger<AgentMemoryRepository>> _mockLogger;
     private readonly AgentMemoryRepository _repository;
 
@@ -26,12 +30,16 @@ public class AgentMemoryRepositoryTests
         _dbContext = new NovelAgentDbContext(options);
         _mockRedisCache = new Mock<IDistributedCacheService>();
         _mockMemoryCache = new Mock<IMemoryCacheService>();
+        _mockVectorStore = new Mock<IVectorStore>();
+        _mockEmbedding = new Mock<IMicroEmbeddingService>();
         _mockLogger = new Mock<ILogger<AgentMemoryRepository>>();
 
         _repository = new AgentMemoryRepository(
             _dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
+            _mockVectorStore.Object,
+            _mockEmbedding.Object,
             _mockLogger.Object);
     }
 
