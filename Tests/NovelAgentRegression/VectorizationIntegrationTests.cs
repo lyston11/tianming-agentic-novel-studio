@@ -62,16 +62,33 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         // Create material chunker
         var chunker = new MaterialChunker();
 
+        var configValues = new Dictionary<string, string?>
+        {
+            ["Qdrant:Host"] = host,
+            ["Qdrant:Port"] = port.ToString(),
+            ["Qdrant:VectorDimension"] = "512",
+            ["Qdrant:BatchSize"] = "100"
+        };
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(configValues)
+            .Build();
+
         // Create collection manager
         var collectionManager = new QdrantCollectionManager(
             _qdrantClient,
+            configuration,
             _loggerFactory.CreateLogger<QdrantCollectionManager>()
         );
+
+        var vectorStore = new QdrantVectorStore(
+            _qdrantClient,
+            configuration,
+            _loggerFactory.CreateLogger<QdrantVectorStore>());
 
         // Create vectorization service
         _service = new MaterialVectorizationService(
             _db,
-            _qdrantClient,
+            vectorStore,
             mockEmbedding,
             chunker,
             collectionManager,
@@ -301,10 +318,9 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         Assert.NotNull(point.Payload);
         Assert.Equal(_testUserId, point.Payload["user_id"].StringValue);
         Assert.Equal(_testProjectId, point.Payload["project_id"].StringValue);
-        Assert.Equal("material", point.Payload["entity_type"].StringValue);
-        Assert.Equal(material.Id, point.Payload["entity_id"].StringValue);
-        Assert.Equal(material.Title, point.Payload["title"].StringValue);
-        Assert.Equal("research", point.Payload["category"].StringValue);
+        Assert.Equal("material", point.Payload["source_type"].StringValue);
+        Assert.Equal(material.Id, point.Payload["source_id"].StringValue);
+        Assert.Contains("Payload test content", point.Payload["content"].StringValue);
     }
 
     private static Material CreateTestMaterial(string userId, string projectId, string content)

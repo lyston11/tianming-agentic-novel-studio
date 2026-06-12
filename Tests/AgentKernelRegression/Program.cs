@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging.Abstractions;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Support;
 
@@ -1436,9 +1437,10 @@ internal static class Program
         var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
         var catalog = new NovelProjectCatalog(workspace);
         AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
         try
         {
-            var registry = new AgentToolRegistry(settings);
+            var registry = CreateToolRegistry(settings);
             var schemas = registry.ListToolSchemas();
 
             Check.True(schemas.Any(s => s.Name == "BuildChapterContextPackage"),
@@ -1448,6 +1450,7 @@ internal static class Program
         }
         finally
         {
+            workspace.ClearRequestContext();
             AgentToolRegistry.ClearWorkspace();
         }
         return Task.CompletedTask;
@@ -1480,7 +1483,8 @@ internal static class Program
         AgentToolRegistry.SetWorkspace(workspace, catalog);
         try
         {
-            var registry = new AgentToolRegistry(settings);
+            workspace.SetRequestContext();
+            var registry = CreateToolRegistry(settings);
             var first = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
             var countAfterFirst = (await catalog.GetAsync()).Projects.Count;
             var second = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
@@ -1495,6 +1499,7 @@ internal static class Program
         }
         finally
         {
+            workspace.ClearRequestContext();
             AgentToolRegistry.ClearWorkspace();
         }
     }
@@ -1526,6 +1531,22 @@ internal static class Program
             }
         };
     }
+
+    private static AgentToolRegistry CreateToolRegistry(UserSettingsManager settings)
+    {
+        return new AgentToolRegistry(settings, EmptyServiceProvider.Instance, NullLogger<AgentToolRegistry>.Instance);
+    }
+}
+
+internal sealed class EmptyServiceProvider : IServiceProvider
+{
+    public static readonly EmptyServiceProvider Instance = new();
+
+    private EmptyServiceProvider()
+    {
+    }
+
+    public object? GetService(Type serviceType) => null;
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

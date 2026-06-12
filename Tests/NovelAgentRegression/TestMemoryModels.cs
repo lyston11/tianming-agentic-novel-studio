@@ -152,6 +152,7 @@ public sealed class AgentToolExecutionResult
 
 public sealed class AgentSession
 {
+    public string UserId { get; set; } = "default";
     public string SessionId { get; set; } = string.Empty;
     public string? ActiveRunId { get; set; }
     public AgentWorkingMemory WorkingMemory { get; set; } = new();
@@ -188,6 +189,8 @@ public sealed class AgentProjectMemory
     public string Tone { get; set; } = string.Empty;
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
+    public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> UsedTropePatterns { get; set; } = new();
 }
 
 public sealed class AgentAuthorMemory
@@ -196,6 +199,7 @@ public sealed class AgentAuthorMemory
     public List<string> StyleDislikes { get; set; } = new();
     public string ConfirmationTolerance { get; set; } = "key_checkpoints";
     public List<string> GenreHabits { get; set; } = new();
+    public List<string> FavoriteKnowledgeIds { get; set; } = new();
 }
 
 public sealed class AgentExecutionMemory
@@ -228,4 +232,3 @@ public sealed class AgentChapterTaskPatch
     public string ChapterId { get; set; } = string.Empty;
     public string QualityIssueSummary { get; set; } = string.Empty;
 }
-

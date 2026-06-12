@@ -74,7 +74,7 @@ public class QdrantVectorStore : IVectorStore
                 return new PointStruct
                 {
                     Id = new PointId { Uuid = v.Id },
-                    Vectors = v.Vector,
+                    Vectors = CreateUnnamedVector(v.Vector),
                     Payload =
                     {
                         ["user_id"] = v.UserId,
@@ -93,6 +93,15 @@ public class QdrantVectorStore : IVectorStore
 
         _logger.LogInformation("Upserted {Count} vectors to {Collection}", vectors.Count, collectionName);
     }
+
+#pragma warning disable CS0612 // Current Qdrant server image expects legacy Vector.Data for unnamed dense vectors.
+    private static Vectors CreateUnnamedVector(float[] values)
+    {
+        var vector = new Vector();
+        vector.Data.AddRange(values);
+        return new Vectors { Vector = vector };
+    }
+#pragma warning restore CS0612
 
     public async Task<List<SearchResult>> SearchSimilarAsync(
         string userId, float[] queryVector, int topK = 10,

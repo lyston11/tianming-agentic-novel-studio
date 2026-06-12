@@ -1126,7 +1126,7 @@ public sealed class AgentRuntime
                 _ => baseMessage,
             };
 
-            return $"我理解你选择了第 {index} 个{kind}。{actionMessage}";
+            return $"我理解你选择了第 {index} 个{kind}。{actionMessage} 如果确认这样推进，请回复“确认”；如果要放弃这次选择，请回复“取消”。";
         }
 
         return FirstNonEmpty(message, action.Reply, baseMessage);

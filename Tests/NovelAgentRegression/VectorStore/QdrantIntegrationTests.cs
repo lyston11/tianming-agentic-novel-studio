@@ -10,7 +10,7 @@ namespace TM.Tests.NovelAgentRegression.VectorStore;
 /// </summary>
 public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
 {
-    private readonly IVectorStore _vectorStore;
+    private readonly ProjectVectorStoreAdapter _vectorStore;
     private const int VectorDimension = 512;
 
     public QdrantIntegrationTests(QdrantTestFixture fixture)
@@ -22,6 +22,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     /// Generate unique project ID for test isolation.
     /// </summary>
     private static string GenerateTestProjectId() => $"test_project_{Guid.NewGuid():N}";
+    private static string GenerateTestUserId() => $"test_user_{Guid.NewGuid():N}";
 
     /// <summary>
     /// Generate random vector with specified dimension.
@@ -41,21 +42,21 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     public async Task Test_CreateCollection_Success()
     {
         // Arrange
-        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
 
         try
         {
             // Act
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             // Assert
-            var exists = await _vectorStore.CollectionExistsAsync(projectId);
+            var exists = await _vectorStore.CollectionExistsAsync(userId);
             Assert.True(exists);
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -63,27 +64,26 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     public async Task Test_GetCollectionInfo_ReturnsCorrectConfig()
     {
         // Arrange
-        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             // Act
-            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(userId);
 
             // Assert
             Assert.NotNull(collectionInfo);
-            Assert.Equal($"project_{projectId}", collectionInfo.Name);
+            Assert.Equal($"novel_agent_{userId}", collectionInfo.Name);
             Assert.Equal(VectorDimension, collectionInfo.VectorDimension);
             Assert.Equal("Cosine", collectionInfo.DistanceMetric);
-            Assert.Equal("HNSW", collectionInfo.IndexType);
             Assert.Equal(0, collectionInfo.VectorCount); // Empty collection
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -97,7 +97,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             var vectorData = new VectorData
             {
@@ -112,17 +112,17 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
             };
 
             // Act
-            await _vectorStore.UpsertVectorsAsync(projectId, new List<VectorData> { vectorData });
+            await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData> { vectorData });
 
             // Assert
-            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(userId);
             Assert.NotNull(collectionInfo);
             Assert.Equal(1, collectionInfo.VectorCount);
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -136,7 +136,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             var vectors = new List<VectorData>();
             for (int i = 0; i < batchSize; i++)
@@ -155,17 +155,17 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
             }
 
             // Act
-            await _vectorStore.UpsertVectorsAsync(projectId, vectors);
+            await _vectorStore.UpsertVectorsAsync(userId, vectors);
 
             // Assert
-            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(userId);
             Assert.NotNull(collectionInfo);
             Assert.Equal(batchSize, collectionInfo.VectorCount);
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -174,12 +174,12 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var userId = "user_003";
+        var userId = GenerateTestUserId();
         var testVector = GenerateRandomVector(VectorDimension);
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             // Insert test vectors
             var vectors = new List<VectorData>();
@@ -198,16 +198,17 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
                 });
             }
 
-            await _vectorStore.UpsertVectorsAsync(projectId, vectors);
+            await _vectorStore.UpsertVectorsAsync(userId, vectors);
 
             // Wait for indexing
             await Task.Delay(500);
 
             // Act
             var results = await _vectorStore.SearchSimilarAsync(
-                projectId,
+                userId,
                 testVector,
-                topK: 5
+                topK: 5,
+                filters: new Dictionary<string, object> { ["project_id"] = projectId }
             );
 
             // Assert
@@ -225,7 +226,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -234,12 +235,13 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var user1Id = "user_alice";
-        var user2Id = "user_bob";
+        var user1Id = GenerateTestUserId();
+        var user2Id = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(user1Id);
+            await _vectorStore.InitializeProjectCollectionAsync(user2Id);
 
             // Insert vectors for user 1
             var user1Vectors = new List<VectorData>();
@@ -275,8 +277,8 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
                 });
             }
 
-            await _vectorStore.UpsertVectorsAsync(projectId, user1Vectors);
-            await _vectorStore.UpsertVectorsAsync(projectId, user2Vectors);
+            await _vectorStore.UpsertVectorsAsync(user1Id, user1Vectors);
+            await _vectorStore.UpsertVectorsAsync(user2Id, user2Vectors);
 
             // Wait for indexing
             await Task.Delay(500);
@@ -285,18 +287,18 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
 
             // Act - Search with user 1 filter
             var user1Results = await _vectorStore.SearchSimilarAsync(
-                projectId,
+                user1Id,
                 queryVector,
                 topK: 10,
-                filters: new Dictionary<string, object> { ["user_id"] = user1Id }
+                filters: new Dictionary<string, object> { ["project_id"] = projectId }
             );
 
             // Act - Search with user 2 filter
             var user2Results = await _vectorStore.SearchSimilarAsync(
-                projectId,
+                user2Id,
                 queryVector,
                 topK: 10,
-                filters: new Dictionary<string, object> { ["user_id"] = user2Id }
+                filters: new Dictionary<string, object> { ["project_id"] = projectId }
             );
 
             // Assert - User 1 results only contain user 1 data
@@ -318,7 +320,8 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(user1Id);
+            await _vectorStore.DeleteCollectionAsync(user2Id);
         }
     }
 
@@ -327,12 +330,12 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var userId = "user_perf_test";
+        var userId = GenerateTestUserId();
         var batchSize = 1000;
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             var vectors = new List<VectorData>();
             for (int i = 0; i < batchSize; i++)
@@ -358,7 +361,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
 
             // Act
             var stopwatch = Stopwatch.StartNew();
-            await _vectorStore.UpsertVectorsAsync(projectId, vectors);
+            await _vectorStore.UpsertVectorsAsync(userId, vectors);
             stopwatch.Stop();
 
             // Assert
@@ -366,14 +369,14 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
             Assert.True(elapsed < 5.0, $"Batch insert took {elapsed:F2}s, expected < 5s");
 
             // Verify all vectors were inserted
-            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var collectionInfo = await _vectorStore.GetCollectionInfoAsync(userId);
             Assert.NotNull(collectionInfo);
             Assert.Equal(batchSize, collectionInfo.VectorCount);
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -381,20 +384,20 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     public async Task Test_DeleteCollection_Success()
     {
         // Arrange
-        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
 
-        await _vectorStore.InitializeProjectCollectionAsync(projectId);
-        var existsBefore = await _vectorStore.CollectionExistsAsync(projectId);
+        await _vectorStore.InitializeProjectCollectionAsync(userId);
+        var existsBefore = await _vectorStore.CollectionExistsAsync(userId);
         Assert.True(existsBefore);
 
         // Act
-        await _vectorStore.DeleteCollectionAsync(projectId);
+        await _vectorStore.DeleteCollectionAsync(userId);
 
         // Assert
-        var existsAfter = await _vectorStore.CollectionExistsAsync(projectId);
+        var existsAfter = await _vectorStore.CollectionExistsAsync(userId);
         Assert.False(existsAfter);
 
-        var collectionInfo = await _vectorStore.GetCollectionInfoAsync(projectId);
+        var collectionInfo = await _vectorStore.GetCollectionInfoAsync(userId);
         Assert.Null(collectionInfo);
     }
 
@@ -403,11 +406,11 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var userId = "user_delete_test";
+        var userId = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             // Insert vectors with different source types
             var vectors = new List<VectorData>
@@ -435,33 +438,34 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
                 }
             };
 
-            await _vectorStore.UpsertVectorsAsync(projectId, vectors);
+            await _vectorStore.UpsertVectorsAsync(userId, vectors);
 
             // Wait for indexing
             await Task.Delay(500);
 
             // Verify initial state
-            var infoBeforeDelete = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var infoBeforeDelete = await _vectorStore.GetCollectionInfoAsync(userId);
             Assert.Equal(2, infoBeforeDelete!.VectorCount);
 
             // Act - Delete only chapter vectors
             await _vectorStore.DeleteVectorsByFilterAsync(
-                projectId,
-                new Dictionary<string, object> { ["source_type"] = "chapter" }
+                userId,
+                new Dictionary<string, object> { ["project_id"] = projectId, ["source_type"] = "chapter" }
             );
 
             // Wait for deletion
             await Task.Delay(500);
 
             // Assert
-            var infoAfterDelete = await _vectorStore.GetCollectionInfoAsync(projectId);
+            var infoAfterDelete = await _vectorStore.GetCollectionInfoAsync(userId);
             Assert.Equal(1, infoAfterDelete!.VectorCount);
 
             // Verify only character vectors remain
             var remainingVectors = await _vectorStore.SearchSimilarAsync(
-                projectId,
+                userId,
                 GenerateRandomVector(VectorDimension),
-                topK: 10
+                topK: 10,
+                filters: new Dictionary<string, object> { ["project_id"] = projectId }
             );
 
             Assert.Single(remainingVectors);
@@ -470,7 +474,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -478,22 +482,22 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     public async Task Test_CreateCollection_Idempotent()
     {
         // Arrange
-        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
 
         try
         {
             // Act - Create collection twice
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
-            await _vectorStore.InitializeProjectCollectionAsync(projectId); // Should not throw
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId); // Should not throw
 
             // Assert
-            var exists = await _vectorStore.CollectionExistsAsync(projectId);
+            var exists = await _vectorStore.CollectionExistsAsync(userId);
             Assert.True(exists);
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -502,11 +506,11 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var userId = "user_filter_test";
+        var userId = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             // Insert mixed source types
             var vectors = new List<VectorData>();
@@ -536,17 +540,17 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
                 });
             }
 
-            await _vectorStore.UpsertVectorsAsync(projectId, vectors);
+            await _vectorStore.UpsertVectorsAsync(userId, vectors);
 
             // Wait for indexing
             await Task.Delay(500);
 
             // Act - Search with source_type filter
             var chapterResults = await _vectorStore.SearchSimilarAsync(
-                projectId,
+                userId,
                 GenerateRandomVector(VectorDimension),
                 topK: 10,
-                filters: new Dictionary<string, object> { ["source_type"] = "chapter" }
+                filters: new Dictionary<string, object> { ["project_id"] = projectId, ["source_type"] = "chapter" }
             );
 
             // Assert
@@ -558,7 +562,7 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -567,11 +571,11 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     {
         // Arrange
         var projectId = GenerateTestProjectId();
-        var userId = "user_invalid";
+        var userId = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             var invalidVector = new VectorData
             {
@@ -587,13 +591,13 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
             // Act & Assert
             await Assert.ThrowsAsync<ArgumentException>(async () =>
             {
-                await _vectorStore.UpsertVectorsAsync(projectId, new List<VectorData> { invalidVector });
+                await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData> { invalidVector });
             });
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 
@@ -601,24 +605,24 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     public async Task Test_SearchSimilar_InvalidQueryDimension_ThrowsException()
     {
         // Arrange
-        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
 
         try
         {
-            await _vectorStore.InitializeProjectCollectionAsync(projectId);
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
 
             var invalidQueryVector = new float[256]; // Wrong dimension
 
             // Act & Assert
             await Assert.ThrowsAsync<ArgumentException>(async () =>
             {
-                await _vectorStore.SearchSimilarAsync(projectId, invalidQueryVector, topK: 5);
+                await _vectorStore.SearchSimilarAsync(userId, invalidQueryVector, topK: 5);
             });
         }
         finally
         {
             // Cleanup
-            await _vectorStore.DeleteCollectionAsync(projectId);
+            await _vectorStore.DeleteCollectionAsync(userId);
         }
     }
 }

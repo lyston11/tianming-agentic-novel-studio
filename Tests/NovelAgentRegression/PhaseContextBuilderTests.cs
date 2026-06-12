@@ -11,7 +11,9 @@ public sealed class PhaseContextBuilderTests
         var tempDir = Path.Combine(Path.GetTempPath(), "test-phase-context-" + Guid.NewGuid().ToString("N"));
         var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
         TestNovelAgentWorkspaceFactory.BindWorkspace(workspace);
-        var memoryService = new AgentMemoryService();
+        var memoryService = new AgentMemoryService(
+            new TestAgentMemoryRepository(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentMemoryService>.Instance);
         return new PhaseContextBuilder(memoryService);
     }
 

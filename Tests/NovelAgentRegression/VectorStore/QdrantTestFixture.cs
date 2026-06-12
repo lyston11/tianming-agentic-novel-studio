@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Qdrant.Client;
 using Testcontainers.Qdrant;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using Xunit;
@@ -18,7 +19,7 @@ public class QdrantTestFixture : IAsyncLifetime
     /// <summary>
     /// Qdrant vector store instance for testing.
     /// </summary>
-    public IVectorStore VectorStore { get; private set; } = null!;
+    public ProjectVectorStoreAdapter VectorStore { get; private set; } = null!;
 
     /// <summary>
     /// Connection string for the Qdrant container.
@@ -64,9 +65,10 @@ public class QdrantTestFixture : IAsyncLifetime
         });
 
         var logger = _loggerFactory.CreateLogger<QdrantVectorStore>();
+        var client = new QdrantClient(host, port);
 
         // Initialize vector store
-        VectorStore = new QdrantVectorStore(configuration, logger);
+        VectorStore = new ProjectVectorStoreAdapter(new QdrantVectorStore(client, configuration, logger));
     }
 
     /// <summary>

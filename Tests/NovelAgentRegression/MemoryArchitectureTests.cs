@@ -211,7 +211,9 @@ public sealed class MemoryArchitectureTests
         var tempDir = Path.Combine(Path.GetTempPath(), "test-memory-" + Guid.NewGuid().ToString("N"));
         var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
         TestNovelAgentWorkspaceFactory.BindWorkspace(workspace);
-        var service = new AgentMemoryService();
+        var service = new AgentMemoryService(
+            new TestAgentMemoryRepository(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentMemoryService>.Instance);
         var session = new SessionContext { SessionId = "s1", ActiveProjectId = "proj1" };
         var project = new NovelProjectInfo { Id = "proj1", Title = "测试小说", StorageProjectName = "test-novel" };
 
