@@ -1520,13 +1520,19 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 
 ## 验收标准
 
+> **2026-06-12 证据状态更新**: 知识库的数据库、Qdrant 写入、删除同步、
+> Agent `SearchCreativeKnowledge` 读取 DB 知识，以及 DB fallback 已有单元/回归证据。
+> 但当前默认 `Embedding:Provider=stub` / `Model=stub-hash-v1`，`/health`
+> 暴露 `semanticQuality=degraded`。因此下面关于“召回准确率”和“真实语义质量”
+> 的条目应视为真实 embedding provider 接入后的目标，不应解读为当前已验证指标。
+
 实施完成后，必须满足以下标准：
 
 1. ✅ **文件上传**：用户可通过 API 上传知识文件，返回 taskId
 2. ✅ **自动处理**：Agent 调用 ProcessKnowledgeFile 工具成功处理文件
 3. ✅ **短文件分析**：< 6K tokens 文件单次 LLM 调用，提取 3-10 条知识条目
 4. ✅ **长文件分析**：≥ 6K tokens 文件分块处理，聚合去重，生成全文级知识
-5. ✅ **向量检索**：CreativeKnowledgeBaseService.RetrieveAsync 使用 Qdrant，召回准确率 > 80%
+5. ⚠️ **向量检索链路**：知识库写入 Qdrant，并可通过 DB/Qdrant 或 DB fallback 被 Agent 检索；`召回准确率 > 80%` 尚未用真实 embedding provider 验证。
 6. ✅ **记忆融合**：检索时自动 Boost 项目引用和作者收藏的知识
 7. ✅ **自动关联**：Reflection 阶段自动记录使用的知识条目到 ProjectMemory
 8. ✅ **进度追踪**：长文件处理显示进度（0-100%）
@@ -1539,7 +1545,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 
 - **短文件处理时间**：< 30 秒
 - **长文件处理时间**：< 2 分钟（10K 字文档）
-- **向量检索响应时间**：< 500ms
+- **向量检索响应时间**：< 500ms（目标；当前证据覆盖本地单元/回归链路，非生产压测）
 - **并发处理能力**：支持 5 个用户同时上传处理
 
 ---
@@ -1568,4 +1574,3 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 - 设计规范：`Docs/superpowers/specs/2026-06-12-knowledge-base-integration.md`
 - API 文档：`/Users/lyston/Obsidian/lyston/Claude/天命AI写作/05 API 设计文档.md`
 - 数据库设计：`/Users/lyston/Obsidian/lyston/Claude/天命AI写作/04 数据库设计.md`
-

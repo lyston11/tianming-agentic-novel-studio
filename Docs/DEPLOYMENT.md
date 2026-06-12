@@ -94,6 +94,11 @@ Located at `Web/NovelAgentWeb/appsettings.json`, this file contains core configu
     "VectorDimension": 512,
     "BatchSize": 100
   },
+  "Embedding": {
+    "Provider": "stub",
+    "Model": "stub-hash-v1",
+    "RequireRealEmbeddings": false
+  },
   "JwtSettings": {
     "SecretKey": "CHANGE_THIS_IN_PRODUCTION",
     "Issuer": "NovelAgentWeb",
@@ -115,6 +120,8 @@ Located at `Web/NovelAgentWeb/appsettings.json`, this file contains core configu
 | `Qdrant:Port` | Qdrant gRPC port | `6334` | Yes |
 | `Qdrant:VectorDimension` | Embedding vector size | `512` | Yes |
 | `Qdrant:BatchSize` | Bulk operation batch size | `100` | No |
+| `Embedding:Provider` | Embedding provider. Current build supports `stub` only | `stub` | Yes |
+| `Embedding:RequireRealEmbeddings` | Fail startup if real embeddings are required but unavailable | `false` | No |
 | `Redis:Enabled` | Enable Redis-backed distributed cache; `false` uses local distributed memory cache | `false` | No |
 | `Redis:ConnectionString` | Redis endpoint when `Redis:Enabled=true` | `localhost:6379` | No |
 | `JwtSettings:SecretKey` | JWT signing secret (min 32 chars) | - | **Yes** |
@@ -234,7 +241,8 @@ npm install
 npm run dev
 ```
 
-Frontend will be available at `http://localhost:5173`
+Frontend will be available at `http://localhost:3002`. Vite proxies `/api`
+requests to `http://127.0.0.1:5002`.
 
 ### Production Build
 
@@ -261,10 +269,11 @@ Edit `vite.config.ts` to customize:
 
 ```bash
 cd Web/NovelAgentWeb
-dotnet run
+ASPNETCORE_URLS=http://+:5002 dotnet run
 ```
 
-Default URL: `http://localhost:5000` (or port from `launchSettings.json`)
+Development URL: `http://localhost:5002`. Keep this aligned with
+`Web/NovelAgentWeb.Frontend/vite.config.ts`.
 
 ### Production Build
 
@@ -277,7 +286,7 @@ dotnet publish -c Release -o ./publish
 
 ```bash
 cd Web/NovelAgentWeb/publish
-dotnet NovelAgentWeb.dll
+ASPNETCORE_URLS=http://+:5002 dotnet NovelAgentWeb.dll
 ```
 
 ### Service Configuration
@@ -297,6 +306,7 @@ Restart=always
 RestartSec=10
 User=novelagent
 Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://+:5002
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
 
 [Install]
@@ -341,8 +351,14 @@ Configuration is loaded in this order (later overrides earlier):
 ### Backend Health Check
 
 ```bash
-curl http://localhost:5000/health
+curl http://localhost:5002/health
 ```
+
+The health response includes an `embedding` block. In the default local build it
+reports `provider=stub`, `semanticQuality=degraded`, and
+`deterministicStub=true`; this means Qdrant/RAG plumbing is testable, but search
+quality is not model-grade semantic retrieval until a real embedding provider is
+implemented and configured.
 
 ### Database Health Check
 
@@ -362,7 +378,7 @@ curl http://localhost:6333/collections
 ```bash
 #!/bin/bash
 echo "Checking Backend..."
-curl -f http://localhost:5000/health || echo "Backend FAILED"
+curl -f http://localhost:5002/health || echo "Backend FAILED"
 
 echo "Checking Qdrant..."
 curl -f http://localhost:6333/health || echo "Qdrant FAILED"
@@ -428,12 +444,13 @@ dotnet ef database update  # Apply pending migrations
 
 ### Issue: Port already in use
 
-**Cause:** Another process using 5000, 6333, or 6334
+**Cause:** Another process using 5002, 3002, 6333, or 6334
 
 **Solution:**
 ```bash
 # Find process using port
-lsof -i :5000
+lsof -i :5002
+lsof -i :3002
 lsof -i :6333
 
 # Kill process or change port in config

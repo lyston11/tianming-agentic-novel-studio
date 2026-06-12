@@ -99,16 +99,16 @@ The following indexes are configured in `NovelAgentDbContext`:
 2. **Start the application**:
    ```bash
    cd Web/NovelAgentWeb
-   dotnet run
+   ASPNETCORE_URLS=http://+:5002 dotnet run
    ```
 
 3. **Run the stress test**:
    ```bash
    # Option 1: Provide JWT token
-   k6 run --env BASE_URL=http://localhost:5000 --env JWT_TOKEN=your_token_here Tests/NovelAgentRegression/Performance/stress-test.js
+   k6 run --env BASE_URL=http://localhost:5002 --env JWT_TOKEN=your_token_here Tests/NovelAgentRegression/Performance/stress-test.js
 
    # Option 2: Let the script create test users
-   k6 run --env BASE_URL=http://localhost:5000 Tests/NovelAgentRegression/Performance/stress-test.js
+   k6 run --env BASE_URL=http://localhost:5002 Tests/NovelAgentRegression/Performance/stress-test.js
    ```
 
 ### Test Scenario

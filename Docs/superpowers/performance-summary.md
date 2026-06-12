@@ -154,13 +154,13 @@ This task implemented comprehensive performance optimizations for the multi-user
 ```bash
 # 1. Start the application
 cd Web/NovelAgentWeb
-dotnet run
+ASPNETCORE_URLS=http://+:5002 dotnet run
 
 # 2. Install k6 (macOS)
 brew install k6
 
 # 3. Run stress test
-k6 run --env BASE_URL=http://localhost:5000 Tests/NovelAgentRegression/Performance/stress-test.js
+k6 run --env BASE_URL=http://localhost:5002 Tests/NovelAgentRegression/Performance/stress-test.js
 ```
 
 #### Running Performance Unit Tests

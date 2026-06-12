@@ -201,10 +201,10 @@
 - Create: `Web/NovelAgentWeb/Models/Projects/CreateProjectRequest.cs`
 
 **Key Steps:**
-- [ ] 重构 GET /api/projects（添加用户过滤，分页支持）
-- [ ] 重构 POST /api/projects（自动设置 userId）
-- [ ] 重构 GET /api/projects/{id}（验证所有权）
-- [ ] 重构 DELETE /api/projects/{id}（级联删除章节、伏笔、Qdrant Collection）
+- [ ] 重构 GET /api/project（添加用户过滤，分页支持）
+- [ ] 重构 POST /api/project（自动设置 userId）
+- [ ] 重构 GET /api/project/{id}（验证所有权）
+- [ ] 重构 DELETE /api/project/{id}（级联删除章节、伏笔、Qdrant Collection）
 - [ ] 测试：CRUD 操作，验证用户隔离
 
 **Commit:** `feat(api): refactor project API with user isolation`

@@ -1,5 +1,12 @@
 # P1 Workflow 数据流接入 - 端到端测试报告
 
+> **2026-06-12 状态更新**: 本报告记录的是早期 `/api/workflow/workspace`
+> 方案的测试结果，已被后续实现取代。当前项目概览接口为
+> `GET /api/workspace`，单项目工作流详情接口为
+> `GET /api/workflow/project/{projectId}`。后续验证以第 09 项修复提交
+> `d0ffc42c` 为准：`http://127.0.0.1:3002/workflow` 已在前端 3002 /
+> 后端 5002 环境中渲染工作流外壳和真实空状态，浏览器控制台无 error。
+
 ## 测试信息
 
 - **测试日期**: 2026-06-11
@@ -25,8 +32,13 @@
 **状态**: ✅ 已实现
 
 **测试内容**:
-- 检查 WorkflowController `/api/workflow/workspace` 端点
-- 检查 WorkflowService.GetWorkspaceAsync 实现
+- 历史检查：WorkflowController `/api/workflow/workspace` 端点
+- 历史检查：WorkflowService.GetWorkspaceAsync 实现
+
+**当前状态（2026-06-12）**:
+- `/api/workflow/workspace` 已不作为现行工作流数据源。
+- 项目概览由 `WorkspaceController` 的 `/api/workspace` 提供。
+- 单项目详情由 `WorkflowController` 的 `/api/workflow/project/{projectId}` 提供。
 
 **验证结果**:
 - ✅ WorkflowController 正确实现，包含认证 `[Authorize]`
@@ -54,7 +66,9 @@ var projects = await _db.NovelProjects
 - 检查 WorkflowPage.tsx 使用情况
 
 **验证结果**:
-- ✅ API 函数正确定义: `getWorkflowWorkspace = () => get<WorkspaceResponse>('/workflow/workspace')`
+- ⚠️ 历史 API 函数 `getWorkflowWorkspace = () => get<WorkspaceResponse>('/workflow/workspace')` 已废弃。
+- ✅ 当前 API 函数：`getWorkspace = () => get<WorkspaceResponse>('/workspace')`
+- ✅ 当前详情 API 函数：`getProjectWorkflow(projectId) => get<ProjectWorkflowDocument>('/workflow/project/{projectId}')`
 - ✅ WorkflowPage 使用 @tanstack/react-query 调用
 - ✅ 配置正确：`staleTime: 30_000`, `retry: 3`
 - ✅ 加载/错误状态处理完整
@@ -64,7 +78,7 @@ var projects = await _db.NovelProjects
 ```typescript
 const { data: workspaceData, isLoading: workspaceLoading, isError } = useQuery({
   queryKey: ['workspace'],
-  queryFn: getWorkflowWorkspace,
+  queryFn: getWorkspace,
   staleTime: 30_000,
   retry: 3,
 });
@@ -172,19 +186,19 @@ CREATE INDEX "idx_chapters_project_status" ON "chapters" ("project_id", "status"
 
 ## 结论
 
-**总体评估**: ✅ **通过**
+**总体评估**: ⚠️ **历史通过，现行方案已变更**
 
-P1 Workflow 数据流从后端到前端的集成已完整实现：
+P1 早期 Workflow 数据流从后端到前端的集成曾按 `/api/workflow/workspace`
+方案验证；2026-06-12 后现行方案为：
 
-- ✅ 后端 API 实现正确，包含认证、查询优化、数据聚合
-- ✅ 前端 API 函数正确定义
-- ✅ WorkflowPage 正确集成，处理加载/错误/空状态
+- ✅ `/api/workspace` 提供项目概览
+- ✅ `/api/workflow/project/{projectId}` 提供卷、章节、会话、runs、任务和 artifact 详情
+- ✅ WorkflowPage 重新接入真实详情数据，并在没有会话 id 时禁用 Agent 操作
 - ✅ 数据库索引优化查询性能
-- ✅ 排序逻辑符合需求
 
 **遗留问题**:
-- ⚠️ API 404 响应需进一步排查（可能是认证中间件配置）
-- 建议清理前端注释代码
+- 原报告中的 `/api/workflow/workspace` 404 排查项不再适用。
+- 后续应以 `/api/workspace` 与 `/api/workflow/project/{projectId}` 的验证证据为准。
 
 **下一步**:
 - 在浏览器中测试完整用户流程

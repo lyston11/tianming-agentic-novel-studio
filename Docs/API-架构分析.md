@@ -3,6 +3,13 @@
 **日期**: 2026-06-11  
 **状态**: 🚨 存在严重设计冗余
 
+> **2026-06-12 状态更新**: 关键偏差已收敛。现行项目列表/工作台使用
+> `GET /api/workspace`，单项目工作流详情使用
+> `GET /api/workflow/project/{projectId}`，项目 CRUD 保持 singular
+> `/api/project`，章节列表使用 `/api/chapters/project/{projectId}`。
+> 下文保留 2026-06-11 的历史诊断，用于解释为什么要迁移旧的
+> `/api/workflow/workspace` 方案。
+
 ---
 
 ## 1️⃣ 前后端对比
@@ -24,20 +31,20 @@
 ```
 前端调用:
   GET /api/workspace            ← 获取当前工作空间状态
-  GET /api/workflow/workspace   ← 获取项目列表+统计 (P1新增)
+  GET /api/workflow/workspace   ← 历史方案：获取项目列表+统计
+  GET /api/workflow/project/{projectId} ← 现行方案：获取单项目工作流详情
 
 后端实现:
   WorkspaceController.Get()
     返回: { projectName, activeProjectId, storageProjectName, projectCount }
     
-  WorkflowController.GetWorkspace()
-    返回: { projects: [...], totalCount: 50 }
+  WorkflowController.GetProject()
+    返回: { project, volumes, chapters, sessions, tasks, runs, artifacts }
 ```
 
 **问题：**
-- 两个端点返回不同内容但都叫 "workspace"
-- `WorkspaceController` 返回的是 `NovelProjectCatalog`（内部状态）
-- `WorkflowController` 返回的是项目列表（用户界面需要的）
+- 2026-06-11 草案中两个端点返回不同内容但都叫 "workspace"
+- 2026-06-12 后 `/api/workspace` 负责项目概览，`/api/workflow/project/{projectId}` 负责详情
 
 #### **问题 2: Project 端点未被前端使用**
 
@@ -57,8 +64,8 @@
 ```
 
 **问题：**
-- `GET /api/project` 返回分页列表，但前端用 `/api/workflow/workspace` 获取列表
-- 功能重复！
+- `GET /api/project` 返回分页列表，前端工作台使用 `/api/workspace` 获取概览
+- 工作台概览与项目 CRUD 已分工，旧 `/api/workflow/workspace` 不再作为现行数据源
 
 #### **问题 3: Chapters 端点确认**
 
@@ -83,7 +90,7 @@ WorkflowController (/api/workflow):
   ✅ GET /api/workflow/volumes          卷管理
   ✅ POST /api/workflow/volumes
   ✅ GET /api/workflow/volumes/{id}
-  ❌ GET /api/workflow/workspace        项目列表（不属于 workflow！）
+  ✅ GET /api/workflow/project/{projectId} 单项目工作流详情
 ```
 
 ---
@@ -92,8 +99,8 @@ WorkflowController (/api/workflow):
 
 | 功能 | 端点 1 | 端点 2 | 前端使用 | 建议 |
 |------|--------|--------|---------|------|
-| 项目列表 | `GET /api/project` | `GET /api/workflow/workspace` | 后者 | 删除前者或合并 |
-| 工作空间状态 | `GET /api/workspace` | `GET /api/workflow/workspace` | 都用 | 合并为一个端点 |
+| 项目列表 | `GET /api/project` | `GET /api/workspace` | 视图不同 | 保持分工：CRUD 分页 vs 工作台概览 |
+| 工作流详情 | `GET /api/workflow/project/{projectId}` | 历史 `/api/workflow/workspace` | 前者 | 历史端点不再作为当前数据源 |
 
 ---
 
@@ -101,11 +108,11 @@ WorkflowController (/api/workflow):
 
 ### 方案 A: 最小改动（推荐）
 
-**目标：** 保持前端不变，只整理后端
+**目标：** 保持前端工作台入口稳定，只整理后端职责
 
 **步骤：**
 
-1. **删除 `/api/workflow/workspace`，移动到 `/api/workspace`**
+1. **将项目概览归口到 `/api/workspace`**
    ```csharp
    // WorkspaceController.cs
    [HttpGet]
@@ -118,12 +125,13 @@ WorkflowController (/api/workflow):
    ```
 
 2. **保留 `GET /api/project` 用于管理后台**
-   - 前端用 `/api/workspace` 获取列表
+   - 前端用 `/api/workspace` 获取概览
    - 管理后台用 `/api/project` 分页查询
 
 3. **清理 WorkflowController 职责**
    ```
    /api/workflow/volumes/*    ← 只管理卷
+   /api/workflow/project/{id} ← 单项目工作流详情
    /api/workspace             ← 管理工作空间和项目列表
    ```
 
@@ -148,10 +156,10 @@ GET    /api/workspace/projects/{id}      ← 项目详情
 PUT    /api/workspace/projects/{id}      ← 更新项目
 DELETE /api/workspace/projects/{id}      ← 删除项目
 
-GET    /api/projects/{id}/volumes        ← 项目的卷
-GET    /api/projects/{id}/chapters       ← 项目的章节
-GET    /api/projects/{id}/characters     ← 项目的角色
-GET    /api/projects/{id}/materials      ← 项目的素材
+GET    /api/workflow/volumes?projectId={id} ← 项目的卷
+GET    /api/chapters/project/{id}           ← 项目的章节
+GET    /api/storybible/characters           ← 角色（按当前项目上下文）
+GET    /api/materials?projectId={id}        ← 项目的素材
 ```
 
 **问题：** 需要大量前端改动
@@ -160,7 +168,7 @@ GET    /api/projects/{id}/materials      ← 项目的素材
 
 ## 4️⃣ 决策建议
 
-**立即执行（P0）：**
+**2026-06-12 已执行（P0）：**
 1. ✅ 移动 `GetWorkspaceAsync` 从 `WorkflowService` 到 `WorkspaceService`
 2. ✅ 更新 `WorkspaceController.Get()` 调用新方法
 3. ✅ 前端改用 `/api/workspace` 而不是 `/api/workflow/workspace`

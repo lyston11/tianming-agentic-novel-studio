@@ -18,7 +18,7 @@
 - **🔐 多用户支持**: JWT 认证，用户数据隔离，多项目管理
 - **📚 项目管理**: 创建、编辑、删除小说项目，支持项目元数据管理
 - **📖 章节管理**: 完整的 CRUD 操作，Markdown 格式存储
-- **🔍 向量检索**: 基于 Qdrant 的语义搜索，找到相似章节和相关片段
+- **🔍 向量检索链路**: 基于 Qdrant 的章节/知识库检索；默认 embedding 为 degraded stub，真实语义质量需接入正式 embedding provider
 - **🤖 NovelAgent**: AI 驱动的章节生成，包含故事地基、卷规划、章节规划和生成后复盘
 - **📊 账本管理**: 
   - **伏笔账本**: Planned → Setup → Reinforced → Due → Paid Off 生命周期
@@ -31,7 +31,7 @@
 
 - **三层架构**: 前端 (React) → API (ASP.NET Core) → 数据层 (SQLite + Qdrant)
 - **RESTful API**: 标准化的 HTTP 接口，易于扩展
-- **向量嵌入**: 章节内容自动向量化，支持语义搜索
+- **向量嵌入**: 章节内容自动向量化；当前默认 `stub-hash-v1` 用于链路验证和本地测试
 - **实时状态管理**: Zustand + TanStack Query 数据管理
 - **自动化部署**: 一键部署脚本，健康检查
 
@@ -133,10 +133,10 @@ dotnet ef database update
 
 ```bash
 cd Web/NovelAgentWeb
-dotnet run
+ASPNETCORE_URLS=http://+:5002 dotnet run
 ```
 
-后端默认运行在 `http://localhost:5000`
+后端开发端口固定为 `http://localhost:5002`。
 
 #### 4. 构建前端
 
@@ -152,11 +152,11 @@ npm run build
 npm run dev
 ```
 
-前端开发服务器运行在 `http://localhost:5173`
+前端开发服务器运行在 `http://localhost:3002`，并把 `/api` 代理到 `http://127.0.0.1:5002`。
 
 #### 5. 访问应用
 
-打开浏览器访问：`http://localhost:5000`
+开发模式访问：`http://localhost:3002`。发布后的后端静态站点访问：`http://localhost:5002`。
 
 ---
 
@@ -274,25 +274,40 @@ Content-Type: application/json
 
 #### 获取项目列表
 ```http
-GET /api/projects
+GET /api/project?pageNumber=1&pageSize=20
 Authorization: Bearer {token}
 ```
 
 #### 创建项目
 ```http
-POST /api/projects
+POST /api/project
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
-  "name": "我的小说",
-  "description": "一个精彩的故事"
+  "title": "我的小说",
+  "genre": "玄幻",
+  "coreHook": "一个精彩的故事"
 }
 ```
 
 #### 获取项目详情
 ```http
-GET /api/projects/{projectId}
+GET /api/project/{projectId}
+Authorization: Bearer {token}
+```
+
+### 工作台 / 工作流
+
+#### 获取工作台项目概览
+```http
+GET /api/workspace
+Authorization: Bearer {token}
+```
+
+#### 获取单项目工作流详情
+```http
+GET /api/workflow/project/{projectId}
 Authorization: Bearer {token}
 ```
 
@@ -300,35 +315,39 @@ Authorization: Bearer {token}
 
 #### 获取章节列表
 ```http
-GET /api/projects/{projectId}/chapters
+GET /api/chapters/project/{projectId}
 Authorization: Bearer {token}
 ```
 
 #### 创建章节
 ```http
-POST /api/projects/{projectId}/chapters
+POST /api/chapters
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
+  "projectId": "abc123",
   "title": "第一章",
+  "chapterNumber": 1,
   "content": "章节内容...",
-  "order": 1
+  "status": "draft"
 }
 ```
 
-### 向量检索
+### 知识库检索
 
-#### 语义搜索
+当前构建仍使用 `Embedding:Provider=stub` 的确定性 hash 向量，`/health` 会标记 `semanticQuality=degraded`。这能验证 Qdrant/数据库链路和 fallback 行为，但不能等同真实模型级语义质量。
+
+#### 搜索项目知识条目
 ```http
-POST /api/vector/search
+POST /api/knowledge/search
 Authorization: Bearer {token}
 Content-Type: application/json
 
 {
   "query": "主角的冒险经历",
   "projectId": "abc123",
-  "limit": 5
+  "topK": 5
 }
 ```
 
@@ -374,6 +393,11 @@ export Qdrant__Host="qdrant-server"
     "Port": 6334,
     "VectorDimension": 512
   },
+  "Embedding": {
+    "Provider": "stub",
+    "Model": "stub-hash-v1",
+    "RequireRealEmbeddings": false
+  },
   "JwtSettings": {
     "SecretKey": "CHANGE_THIS_IN_PRODUCTION",
     "Issuer": "NovelAgentWeb",
@@ -410,7 +434,7 @@ dotnet run
 - ✓ 章节执行 (Chapter Execution)
 - ✓ 生成后复盘 (Post-Reflection)
 - ✓ Canon/伏笔/角色账本 (Ledgers)
-- ✓ RAG 相似片段 (Vector Retrieval)
+- ✓ RAG 相似片段链路 (Vector Retrieval；默认 stub embedding 为 degraded 模式)
 
 ---
 
@@ -474,7 +498,7 @@ docker-compose up -d qdrant
 
 # 2. 启动后端
 cd Web/NovelAgentWeb
-dotnet run
+ASPNETCORE_URLS=http://+:5002 dotnet run
 
 # 3. 启动前端开发服务器
 cd Web/NovelAgentWeb.Frontend
@@ -540,19 +564,20 @@ npm run dev
 
 - [x] 多用户认证和授权
 - [x] SQLite 数据库集成
-- [x] Qdrant 向量检索
+- [x] Qdrant 向量检索链路（默认 stub embedding，`/health` 暴露 degraded 状态）
 - [x] 项目和章节 CRUD API
 - [x] React 前端界面
 - [x] JWT Token 认证
 - [x] 用户数据隔离
 - [x] 自动化部署脚本
 - [x] 单元测试和集成测试
-- [x] 性能优化和缓存
+- [x] 本地分布式内存缓存 fallback
+- [x] Redis 可选接入（`Redis:Enabled=true` 时启用）
 
 ### 计划中
 
 - [ ] PostgreSQL 支持（替代 SQLite，提升并发）
-- [ ] Redis 缓存层（提升响应速度）
+- [ ] 真实 embedding provider 接入（替代 stub hash 向量）
 - [ ] WebSocket 实时协作
 - [ ] 富文本编辑器集成
 - [ ] 章节版本控制

@@ -121,7 +121,7 @@ The existing system uses `ServiceLocator` pattern and doesn't pass userId/projec
 ### Testing
 Use the performance endpoint to measure actual latency:
 ```bash
-curl -X POST http://localhost:5000/api/test/vectorstore/performance/test-project \
+curl -X POST http://localhost:5002/api/test/vectorstore/performance/test-project \
   -H "Content-Type: application/json" \
   -d '{"userId": "test-user-123", "topKValues": [5, 10, 20], "iterations": 20}'
 ```

@@ -1034,8 +1034,8 @@ git commit -m "fix(monitoring): resolve build issues"
 
 - [ ] **Step 1: Start the backend server**
 
-Run: `cd Web/NovelAgentWeb && dotnet run`
-Expected: Server starts on http://localhost:5000
+Run: `cd Web/NovelAgentWeb && ASPNETCORE_URLS=http://+:5002 dotnet run`
+Expected: Server starts on http://localhost:5002
 
 - [ ] **Step 2: Verify middleware loads without errors**
 
@@ -1046,7 +1046,7 @@ Check console output for:
 
 - [ ] **Step 3: Check health endpoint**
 
-Run: `curl -X GET http://localhost:5000/api/admin/workspace/health -H "Authorization: Bearer <admin-token>"`
+Run: `curl -X GET http://localhost:5002/api/admin/workspace/health -H "Authorization: Bearer <admin-token>"`
 Expected: 200 OK or 401 Unauthorized (auth required)
 
 Note: Keep server running for next testing tasks
@@ -1066,7 +1066,7 @@ Either:
 
 - [ ] **Step 2: Call stats endpoint**
 
-Run: `curl -X GET http://localhost:5000/api/admin/workspace/stats -H "Authorization: Bearer <admin-token>"`
+Run: `curl -X GET http://localhost:5002/api/admin/workspace/stats -H "Authorization: Bearer <admin-token>"`
 
 Expected response:
 ```json
@@ -1097,19 +1097,19 @@ Check response contains all expected fields:
 
 - [ ] **Step 1: Make request to workspace endpoint without projectId**
 
-Run: `curl -X GET http://localhost:5000/api/chapters -H "Authorization: Bearer <user-token>"`
+Run: `curl -X GET http://localhost:5002/api/chapters -H "Authorization: Bearer <user-token>"`
 
 Expected: Request succeeds (LogOnly mode) but violation is logged
 
 - [ ] **Step 2: Query violations endpoint**
 
-Run: `curl -X GET http://localhost:5000/api/admin/workspace/violations -H "Authorization: Bearer <admin-token>"`
+Run: `curl -X GET http://localhost:5002/api/admin/workspace/violations -H "Authorization: Bearer <admin-token>"`
 
 Expected: Array with violation entry showing MissingProjectId type
 
 - [ ] **Step 3: Test severity filter**
 
-Run: `curl -X GET "http://localhost:5000/api/admin/workspace/violations?severity=Medium" -H "Authorization: Bearer <admin-token>"`
+Run: `curl -X GET "http://localhost:5002/api/admin/workspace/violations?severity=Medium" -H "Authorization: Bearer <admin-token>"`
 
 Expected: Filtered violations with Medium severity only
 
@@ -1138,12 +1138,12 @@ Change WorkspaceAudit configuration:
 
 Stop server (Ctrl+C) and restart:
 ```bash
-dotnet run
+ASPNETCORE_URLS=http://+:5002 dotnet run
 ```
 
 - [ ] **Step 3: Make request without projectId**
 
-Run: `curl -X GET http://localhost:5000/api/chapters -H "Authorization: Bearer <user-token>"`
+Run: `curl -X GET http://localhost:5002/api/chapters -H "Authorization: Bearer <user-token>"`
 
 Expected: 400 Bad Request with error message
 
@@ -1368,4 +1368,3 @@ git commit -m "docs(monitoring): add Phase 1 completion report"
 ## Plan Complete
 
 All tasks defined with explicit steps, code, and verification commands. Ready for execution with subagent-driven-development or executing-plans skill.
-

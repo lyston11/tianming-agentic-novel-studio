@@ -20,14 +20,15 @@ graph TB
     subgraph "Service Layer"
         ProjectSvc[Project Service]
         ChapterSvc[Chapter Service]
+        KnowledgeSvc[Knowledge Service]
         VectorSvc[Vector Retrieval Service]
         AgentSvc[Novel Agent Service]
         UserSvc[User Service]
     end
     
     subgraph "Data Layer"
-        SQLite[(SQLite Database<br/>Users, Projects, Chapters)]
-        Qdrant[(Qdrant Vector DB<br/>Chapter Embeddings)]
+        SQLite[(SQLite Database<br/>Users, Projects, Chapters, Knowledge)]
+        Qdrant[(Qdrant Vector DB<br/>Chapter, Material, Knowledge Vectors)]
         Files[File System<br/>Markdown Content]
     end
     
@@ -37,6 +38,7 @@ graph TB
     API --> Middleware
     Middleware --> ProjectSvc
     Middleware --> ChapterSvc
+    Middleware --> KnowledgeSvc
     Middleware --> VectorSvc
     Middleware --> AgentSvc
     Middleware --> UserSvc
@@ -44,6 +46,8 @@ graph TB
     ProjectSvc --> SQLite
     ChapterSvc --> SQLite
     ChapterSvc --> Files
+    KnowledgeSvc --> SQLite
+    KnowledgeSvc --> Qdrant
     VectorSvc --> Qdrant
     UserSvc --> SQLite
     AgentSvc --> SQLite
@@ -92,9 +96,9 @@ graph TB
 ├─────────────┤         ├──────────────┤         ├──────────────┤
 │ Id (PK)     │───┐     │ Id (PK)      │───┐     │ Id (PK)      │
 │ Username    │   └────<│ UserId (FK)  │   └────<│ ProjectId(FK)│
-│ PasswordHash│         │ Name         │         │ Title        │
-│ Email       │         │ Description  │         │ Content      │
-│ CreatedAt   │         │ CreatedAt    │         │ Order        │
+│ PasswordHash│         │ Title        │         │ Title        │
+│ Email       │         │ Genre        │         │ ContentPath  │
+│ CreatedAt   │         │ CoreHook     │         │ ChapterNumber│
 │ UpdatedAt   │         │ UpdatedAt    │         │ CreatedAt    │
 └─────────────┘         └──────────────┘         │ UpdatedAt    │
                                                   └──────────────┘
@@ -205,27 +209,42 @@ App_Data/
 - `POST /api/auth/login` - Login and get JWT token
 
 #### Projects
-- `GET /api/projects` - List user's projects
-- `POST /api/projects` - Create new project
-- `GET /api/projects/{id}` - Get project details
-- `PUT /api/projects/{id}` - Update project
-- `DELETE /api/projects/{id}` - Delete project
+- `GET /api/project?pageNumber=1&pageSize=20` - List user's projects
+- `POST /api/project` - Create new project
+- `GET /api/project/{id}` - Get project details
+- `PUT /api/project/{id}` - Update project
+- `DELETE /api/project/{id}` - Delete project
+
+#### Workspace And Workflow
+- `GET /api/workspace` - List workspace project overviews and statistics
+- `GET /api/workflow/project/{projectId}` - Get one project's workflow detail
+- `GET /api/workflow/volumes?projectId={projectId}` - List project volumes
+- `POST /api/workflow/volumes` - Create a volume
 
 #### Chapters
-- `GET /api/projects/{projectId}/chapters` - List chapters
-- `POST /api/projects/{projectId}/chapters` - Create chapter
+- `GET /api/chapters/project/{projectId}` - List chapters
+- `POST /api/chapters` - Create chapter
 - `GET /api/chapters/{id}` - Get chapter details
 - `PUT /api/chapters/{id}` - Update chapter
 - `DELETE /api/chapters/{id}` - Delete chapter
 
-#### Vector Search
-- `POST /api/vector/search` - Semantic search across chapters
-- `POST /api/vector/similar/{chapterId}` - Find similar chapters
+#### Knowledge And Retrieval
+- `GET /api/knowledge?projectId={projectId}` - List project knowledge entries
+- `POST /api/knowledge` - Create knowledge entry
+- `POST /api/knowledge/search` - Search project knowledge entries
+- `POST /api/knowledge/upload` - Upload a knowledge source file
+- `GET /api/knowledge/tasks/{taskId}` - Check processing task status
+
+Current local retrieval uses `Embedding:Provider=stub` with
+`semanticQuality=degraded` in `/health`. Qdrant/SQLite integration is wired, but
+model-grade semantic ranking requires a real embedding provider.
 
 #### Novel Agent
-- `POST /api/agent/run` - Execute agent operation
+- `POST /api/agent/chat` - Send a chat/agent message
+- `GET /api/agent/sse/{sessionId}` - Stream agent events
+- `GET /api/agent/session/{sessionId}` - Get session details
 - `GET /api/agent/sessions` - List agent sessions
-- `GET /api/agent/sessions/{id}` - Get session details
+- `POST /api/agent/session` - Create an agent session
 
 ## Service Architecture
 
@@ -326,9 +345,9 @@ Next Chapter (Loop)
 
 ### Development
 ```
-localhost:5173 (Vite Dev Server)
+localhost:3002 (Vite Dev Server)
     ↓
-localhost:5000 (ASP.NET Core)
+localhost:5002 (ASP.NET Core)
     ↓
 localhost:6333 (Qdrant REST)
 localhost:6334 (Qdrant gRPC)

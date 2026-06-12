@@ -2,6 +2,9 @@
 
 > **日期**: 2026-06-11  
 > **目标**: 实现 GET /api/workflow/workspace 端点，返回用户工作台项目列表，解决前端 WorkflowPage.tsx 数据流断点
+> **2026-06-12 状态**: 已被现行实现取代。项目概览使用
+> `GET /api/workspace`，单项目详情使用
+> `GET /api/workflow/project/{projectId}`。本文件保留为历史设计记录，不再作为当前实现计划。
 
 ---
 
@@ -15,14 +18,18 @@ WorkflowPage.tsx 第 287 行硬编码 `const books: NovelBookView[] = []`，注�
 
 - ❌ 没有返回用户所有项目 + 统计信息的聚合端点
 - ✅ 已有 `/api/workflow/volumes` （仅卷 CRUD）
-- ✅ 已有 `/api/projects`（项目 CRUD，但缺乏工作流视角的统计）
+- ✅ 已有 `/api/project`（项目 CRUD；历史草案曾误写为 `/api/projects`）
 
-### 需求
+### 历史需求
 
-创建 `/api/workflow/workspace` 端点：
+原计划创建 `/api/workflow/workspace` 端点：
 - 返回当前用户所有项目（按最近活动排序）
 - 包含每个项目的统计信息（卷数、章节数、生成状态）
 - 支持分级加载：概览数据 + 按需详情
+
+当前实现已拆分为：
+- `GET /api/workspace`：项目概览与工作台列表。
+- `GET /api/workflow/project/{projectId}`：单项目卷、章节、任务、会话、runs、artifacts 详情。
 
 ---
 
@@ -30,9 +37,9 @@ WorkflowPage.tsx 第 287 行硬编码 `const books: NovelBookView[] = []`，注�
 
 ### 架构选择：分级加载
 
-**端点分工：**
-- `GET /api/workflow/workspace` → 项目列表 + 统计（概览）
-- `GET /api/workflow/projects/{id}` → 单个项目完整数据（详情）
+**当前端点分工：**
+- `GET /api/workspace` → 项目列表 + 统计（概览）
+- `GET /api/workflow/project/{projectId}` → 单个项目完整工作流详情
 
 **理由：**
 - 性能：初始加载只查统计，避免一次性加载所有 volumes/chapters/runs
@@ -47,7 +54,7 @@ WorkflowPage.tsx 第 287 行硬编码 `const books: NovelBookView[] = []`，注�
 
 **请求：**
 ```
-GET /api/workflow/workspace
+GET /api/workspace
 Authorization: Bearer {token}
 ```
 
@@ -233,7 +240,7 @@ export interface WorkspaceResponse {
 **新增 API 函数：**
 ```typescript
 export const getWorkspace = async (): Promise<WorkspaceResponse> => {
-  const response = await api.get('/workflow/workspace');
+  const response = await api.get('/workspace');
   return response.data;
 };
 ```
@@ -300,7 +307,7 @@ WorkflowPage 显示的 artifacts = AgentRun 的聚合视图：
 
 **端到端流程：**
 1. 创建项目、卷、章节
-2. 调用 `/api/workflow/workspace`
+2. 调用 `/api/workspace`
 3. 验证返回数据完整性和顺序
 
 ### 7.3 性能测试
@@ -341,13 +348,13 @@ WorkflowPage 显示的 artifacts = AgentRun 的聚合视图：
 ### 9.2 分页支持
 
 ```
-GET /api/workflow/workspace?page=1&pageSize=20
+GET /api/workspace?page=1&pageSize=20
 ```
 
 ### 9.3 筛选支持
 
 ```
-GET /api/workflow/workspace?status=active&genre=玄幻
+GET /api/workspace?status=active&genre=玄幻
 ```
 
 ---
