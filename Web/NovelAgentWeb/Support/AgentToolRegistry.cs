@@ -1,4 +1,9 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -11,7 +16,9 @@ public sealed class AgentToolRegistry
     private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
 
     private readonly UserSettingsManager _settingsManager;
+    private readonly IServiceProvider _serviceProvider;
     private readonly Dictionary<string, AgentToolEntry> _entries;
+    private readonly ILogger<AgentToolRegistry> _logger;
 
     internal static void SetWorkspace(NovelAgentWorkspace workspace, NovelProjectCatalog catalog)
     {
@@ -25,9 +32,11 @@ public sealed class AgentToolRegistry
         _currentCatalog.Value = null;
     }
 
-    public AgentToolRegistry(UserSettingsManager settingsManager)
+    public AgentToolRegistry(UserSettingsManager settingsManager, IServiceProvider serviceProvider, ILogger<AgentToolRegistry> logger)
     {
         _settingsManager = settingsManager;
+        _serviceProvider = serviceProvider;
+        _logger = logger;
         _entries = BuildEntries();
     }
 
@@ -35,6 +44,7 @@ public sealed class AgentToolRegistry
     {
         "QueryProjectStatus",
         "StartNewNovelProject",
+        "ProcessKnowledgeFile",
     };
 
     private static readonly string[] PlanningTools = new[]
@@ -42,6 +52,7 @@ public sealed class AgentToolRegistry
         "QueryProjectStatus",
         "StartNewNovelProject",
         "SearchCreativeKnowledge",
+        "ProcessKnowledgeFile",
         "PlanStoryFoundation",
         "PlanVolumeArc",
         "PlanChapter",
@@ -63,6 +74,7 @@ public sealed class AgentToolRegistry
         "CommitValidatedChapter",
         "ReviewChapter",
         "RefreshProjectIndexes",
+        "ProcessKnowledgeFile",
     };
 
     public IReadOnlyList<AgentToolDefinition> ListTools() => _entries.Values.Select(e => e.Definition).ToList();
@@ -136,6 +148,7 @@ public sealed class AgentToolRegistry
         {
             Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
             Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
+            Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
             Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", (call, _, _, _, ct) => SearchCreativeKnowledgeAsync(call, ct)),
             Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
@@ -870,6 +883,75 @@ public sealed class AgentToolRegistry
         if (message.Contains("言情")) return "言情";
         if (message.Contains("恐怖")) return "恐怖";
         return string.IsNullOrWhiteSpace(fallback) ? "玄幻" : fallback;
+    }
+
+    private async Task<AgentToolExecutionResult> ProcessKnowledgeFileAsync(
+        AgentToolCall call,
+        CancellationToken ct)
+    {
+        var taskId = call.Arguments.GetValueOrDefault("taskId")?.ToString();
+        if (string.IsNullOrEmpty(taskId))
+        {
+            return new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = "错误：缺少 taskId 参数",
+                Phase = "error",
+            };
+        }
+
+        try
+        {
+            // Get DbContext from the service provider's scope
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+
+            var task = await db.KnowledgeProcessingTasks
+                .FirstOrDefaultAsync(t => t.Id == taskId && t.UserId == _workspace.UserId, ct)
+                .ConfigureAwait(false);
+
+            if (task == null)
+            {
+                return new AgentToolExecutionResult
+                {
+                    Success = false,
+                    Message = "错误：找不到指定的处理任务",
+                    Phase = "error",
+                };
+            }
+
+            if (task.Status != "pending")
+            {
+                return new AgentToolExecutionResult
+                {
+                    Success = false,
+                    Message = $"错误：任务状态为 {task.Status}，无法处理",
+                    Phase = "error",
+                };
+            }
+
+            var processingService = scope.ServiceProvider.GetRequiredService<IKnowledgeProcessingService>();
+            var result = await processingService.ProcessFileAsync(taskId, ct).ConfigureAwait(false);
+
+            return new AgentToolExecutionResult
+            {
+                Success = true,
+                Message = result,
+                Phase = "knowledge_processed",
+                Artifact = BuildArtifact("knowledge_file_processed", taskId, string.Empty, string.Empty, result, new[] { "查看知识库", "继续规划" }),
+                Suggestions = new[] { "查看知识库", "继续规划" },
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process knowledge file {TaskId}", taskId);
+            return new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = $"处理失败：{ex.Message}",
+                Phase = "error",
+            };
+        }
     }
 
     private Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
