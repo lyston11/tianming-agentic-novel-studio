@@ -3,6 +3,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 
 namespace TM.Web.NovelAgentWeb.Services.Materials;
@@ -16,6 +17,7 @@ public class MaterialService : IMaterialService
     private readonly ICurrentUserService _currentUserService;
     private readonly IConfiguration _configuration;
     private readonly IMaterialVectorizationService _vectorization;
+    private readonly IVectorStore _vectorStore;
     private readonly ILogger<MaterialService> _logger;
 
     public MaterialService(
@@ -23,12 +25,14 @@ public class MaterialService : IMaterialService
         ICurrentUserService currentUserService,
         IConfiguration configuration,
         IMaterialVectorizationService vectorization,
+        IVectorStore vectorStore,
         ILogger<MaterialService> logger)
     {
         _db = db;
         _currentUserService = currentUserService;
         _configuration = configuration;
         _vectorization = vectorization;
+        _vectorStore = vectorStore;
         _logger = logger;
     }
 
@@ -73,12 +77,7 @@ public class MaterialService : IMaterialService
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
 
-        // Vectorize to Qdrant (fire-and-forget, don't block material creation)
-        _ = Task.Run(async () =>
-        {
-            try { await _vectorization.VectorizeMaterialAsync(material.Id, userId, ct); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize material {Id}", material.Id); }
-        }, ct);
+        await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Uploaded material {MaterialId} to project {ProjectId}", material.Id, request.ProjectId);
         return MapToResponse(material);
@@ -111,12 +110,7 @@ public class MaterialService : IMaterialService
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
 
-        // Vectorize to Qdrant
-        _ = Task.Run(async () =>
-        {
-            try { await _vectorization.VectorizeMaterialAsync(material.Id, userId, ct); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize material {Id}", material.Id); }
-        }, ct);
+        await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Created material {MaterialId} in project {ProjectId}", material.Id, request.ProjectId);
 
@@ -199,6 +193,7 @@ public class MaterialService : IMaterialService
             material.Tags = request.Tags;
 
         await _db.SaveChangesAsync(ct);
+        await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Updated material {MaterialId}", materialId);
 
@@ -213,6 +208,8 @@ public class MaterialService : IMaterialService
 
         if (material == null)
             throw new KeyNotFoundException($"Material {materialId} not found");
+
+        await TryDeleteMaterialVectorsAsync(userId, material, ct);
 
         // Delete file if exists
         if (!string.IsNullOrEmpty(material.FilePath) && File.Exists(material.FilePath))
@@ -232,6 +229,47 @@ public class MaterialService : IMaterialService
         await _db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Deleted material {MaterialId}", materialId);
+    }
+
+    private async Task TryVectorizeMaterialAsync(string materialId, string userId, CancellationToken ct)
+    {
+        try
+        {
+            await _vectorization.VectorizeMaterialAsync(materialId, userId, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to vectorize material {MaterialId}", materialId);
+        }
+    }
+
+    private async Task TryDeleteMaterialVectorsAsync(string userId, Material material, CancellationToken ct)
+    {
+        try
+        {
+            var filters = new Dictionary<string, object>
+            {
+                ["source_type"] = "material",
+                ["source_id"] = material.Id
+            };
+
+            if (!string.IsNullOrWhiteSpace(material.ProjectId))
+                filters["project_id"] = material.ProjectId;
+
+            await _vectorStore.DeleteVectorsByFilterAsync(userId, filters, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete vectors for material {MaterialId}", material.Id);
+        }
     }
 
     private static MaterialResponse MapToResponse(Material material)

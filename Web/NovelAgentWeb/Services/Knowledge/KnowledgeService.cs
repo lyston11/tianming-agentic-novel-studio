@@ -70,28 +70,7 @@ public class KnowledgeService : IKnowledgeService
         _db.KnowledgeBases.Add(knowledge);
         await _db.SaveChangesAsync(ct);
 
-        // Vectorize to Qdrant
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var vector = await _embedding.EncodeAsync($"{knowledge.Title} {knowledge.Content}", EmbeddingMode.Passage, ct);
-                await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData>
-                {
-                    new()
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        Vector = vector,
-                        UserId = userId,
-                        ProjectId = knowledge.ProjectId,
-                        SourceType = "knowledge",
-                        SourceId = knowledge.Id,
-                        Content = knowledge.Content,
-                    }
-                }, ct);
-            }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to vectorize knowledge {Id}", knowledge.Id); }
-        }, ct);
+        await TryUpsertKnowledgeVectorAsync(userId, knowledge, ct);
 
         _logger.LogInformation("Created knowledge entry {KnowledgeId} in project {ProjectId}", knowledge.Id, request.ProjectId);
 
@@ -158,6 +137,7 @@ public class KnowledgeService : IKnowledgeService
             knowledge.Content = request.Content;
 
         await _db.SaveChangesAsync(ct);
+        await TryUpsertKnowledgeVectorAsync(userId, knowledge, ct);
 
         _logger.LogInformation("Updated knowledge entry {KnowledgeId}", knowledgeId);
 
@@ -178,6 +158,8 @@ public class KnowledgeService : IKnowledgeService
         // Verify project ownership
         if (knowledge.Project.UserId != userId)
             throw new UnauthorizedAccessException("Access denied");
+
+        await TryDeleteKnowledgeVectorsAsync(userId, knowledge, ct);
 
         _db.KnowledgeBases.Remove(knowledge);
         await _db.SaveChangesAsync(ct);
@@ -321,5 +303,71 @@ public class KnowledgeService : IKnowledgeService
         }
 
         return score == 0 ? 0 : score + Math.Clamp(knowledge.Weight, 1, 10) / 100f;
+    }
+
+    private async Task TryUpsertKnowledgeVectorAsync(string userId, KnowledgeBase knowledge, CancellationToken ct)
+    {
+        try
+        {
+            var pointId = string.IsNullOrWhiteSpace(knowledge.VectorId)
+                ? $"knowledge_{knowledge.Id}"
+                : knowledge.VectorId;
+            var vector = await _embedding.EncodeAsync($"{knowledge.Title} {knowledge.Content}", EmbeddingMode.Passage, ct);
+
+            await _vectorStore.InitializeUserCollectionAsync(userId, ct);
+            await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData>
+            {
+                new()
+                {
+                    Id = pointId,
+                    Vector = vector,
+                    UserId = userId,
+                    ProjectId = knowledge.ProjectId,
+                    SourceType = "knowledge",
+                    SourceId = knowledge.Id,
+                    Content = knowledge.Content,
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["entry_type"] = knowledge.EntryType,
+                        ["title"] = knowledge.Title
+                    }
+                }
+            }, ct);
+
+            if (knowledge.VectorId != pointId)
+            {
+                knowledge.VectorId = pointId;
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to vectorize knowledge {KnowledgeId}", knowledge.Id);
+        }
+    }
+
+    private async Task TryDeleteKnowledgeVectorsAsync(string userId, KnowledgeBase knowledge, CancellationToken ct)
+    {
+        try
+        {
+            await _vectorStore.DeleteVectorsByFilterAsync(userId, new Dictionary<string, object>
+            {
+                ["project_id"] = knowledge.ProjectId,
+                ["source_type"] = "knowledge",
+                ["source_id"] = knowledge.Id
+            }, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete vectors for knowledge {KnowledgeId}", knowledge.Id);
+        }
     }
 }
