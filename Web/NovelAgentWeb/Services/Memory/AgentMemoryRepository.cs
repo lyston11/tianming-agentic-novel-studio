@@ -1,9 +1,11 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Web.NovelAgentWeb.Services.Memory;
 
@@ -12,6 +14,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
     private readonly NovelAgentDbContext _context;
     private readonly IDistributedCacheService _redisCache;
     private readonly IMemoryCacheService _memoryCache;
+    private readonly IVectorStore _vectorStore;
+    private readonly IMicroEmbeddingService _embedding;
     private readonly ILogger<AgentMemoryRepository> _logger;
 
     private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
@@ -21,11 +25,15 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         NovelAgentDbContext context,
         IDistributedCacheService redisCache,
         IMemoryCacheService memoryCache,
+        IVectorStore vectorStore,
+        IMicroEmbeddingService embedding,
         ILogger<AgentMemoryRepository> logger)
     {
         _context = context;
         _redisCache = redisCache;
         _memoryCache = memoryCache;
+        _vectorStore = vectorStore;
+        _embedding = embedding;
         _logger = logger;
     }
 
@@ -156,7 +164,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
         else
         {
-            _context.AgentMemories.Add(new AgentMemory
+            _context.AgentMemories.Add(new Data.Entities.AgentMemory
             {
                 Id = Guid.NewGuid().ToString(),
                 UserId = userId,
@@ -171,6 +179,37 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         await InvalidateCacheAsync(userId, projectId, memoryType);
 
         _logger.LogDebug("Updated memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
+
+        if ((memoryType == "project.long_term_goal" || memoryType == "project.reader_promise") && value is string text && !string.IsNullOrWhiteSpace(text))
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var vector = await _embedding.EncodeAsync(text, EmbeddingMode.Passage, CancellationToken.None);
+                    var pointId = $"memory_{userId}_{projectId}_{memoryType}";
+
+                    var vectorData = new VectorData
+                    {
+                        Id = pointId,
+                        Vector = vector,
+                        UserId = userId,
+                        ProjectId = projectId!,
+                        SourceType = "memory",
+                        SourceId = memoryType,
+                        Content = text,
+                        Metadata = new Dictionary<string, object> { { "memory_type", memoryType } }
+                    };
+
+                    await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData> { vectorData }, CancellationToken.None);
+                    _logger.LogDebug("Vectorized memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to vectorize memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
+                }
+            });
+        }
     }
 
     public async Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default)
@@ -202,7 +241,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 }
                 else
                 {
-                    _context.AgentMemories.Add(new AgentMemory
+                    _context.AgentMemories.Add(new Data.Entities.AgentMemory
                     {
                         Id = Guid.NewGuid().ToString(),
                         UserId = userId,
@@ -242,7 +281,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
-    private static T? GetField<T>(List<AgentMemory> rows, string memoryType)
+    private static T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
     {
         var row = rows.FirstOrDefault(r => r.MemoryType == memoryType);
         if (row == null || string.IsNullOrEmpty(row.Content))
