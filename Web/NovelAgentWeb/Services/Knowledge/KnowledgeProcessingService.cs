@@ -139,6 +139,24 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     }
 
     /// <summary>
+    /// Calls the LLM with the given prompt.
+    /// Implementation will be added in Task 5.
+    /// </summary>
+    private async Task<string> CallLLMAsync(string prompt, CancellationToken ct)
+    {
+        throw new NotImplementedException("LLM calling will be implemented in Task 5");
+    }
+
+    /// <summary>
+    /// Parses JSON response from LLM into a list of knowledge entries.
+    /// Implementation will be added in Task 5.
+    /// </summary>
+    private List<ExtractedKnowledgeEntryDto> ParseEntriesFromJson(string json)
+    {
+        throw new NotImplementedException("JSON parsing will be implemented in Task 5");
+    }
+
+    /// <summary>
     /// Processes a long file using chunked analysis.
     /// Implementation will be added in Task 6.
     /// </summary>
