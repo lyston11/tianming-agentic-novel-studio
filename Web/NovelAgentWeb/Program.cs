@@ -159,6 +159,7 @@ builder.Services.AddScoped<IMaterialService, MaterialService>();
 
 // Register Knowledge Service
 builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
+builder.Services.AddScoped<IKnowledgeProcessingService, KnowledgeProcessingService>();
 
 // Register StoryBible Service
 builder.Services.AddScoped<IStoryBibleService, StoryBibleService>();
