@@ -358,15 +358,234 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 
     /// <summary>
     /// Processes a long file using chunked analysis.
-    /// Implementation will be added in Task 6.
+    /// Splits the file into overlapping chunks, analyzes each chunk with context from the previous chunk,
+    /// and aggregates all entries at the end.
     /// </summary>
     private async Task<List<ExtractedKnowledgeEntryDto>> ProcessLongFileAsync(
         string content,
         Data.Entities.KnowledgeProcessingTask task,
         CancellationToken ct)
     {
-        // Will be implemented in Task 6
-        throw new NotImplementedException("Long file processing will be implemented in Task 6");
+        var chunks = ChunkText(content, ChunkSize, ChunkOverlap);
+        task.TotalChunks = chunks.Count;
+        await _db.SaveChangesAsync(ct);
+
+        var allEntries = new List<ExtractedKnowledgeEntryDto>();
+        string previousSummary = "";
+
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            var prompt = BuildChunkedPrompt(chunks[i], i + 1, chunks.Count, previousSummary);
+            var llmResponse = await CallLLMAsync(prompt, ct);
+            var result = ParseChunkedResult(llmResponse);
+
+            allEntries.AddRange(result.Entries);
+            previousSummary = result.Summary;
+
+            task.ProcessedChunks = i + 1;
+            task.Progress = (int)((i + 1) * 80.0 / chunks.Count);
+            await _db.SaveChangesAsync(ct);
+        }
+
+        var aggregated = await AggregateEntriesAsync(allEntries, ct);
+        task.Progress = 100;
+        await _db.SaveChangesAsync(ct);
+
+        return aggregated;
+    }
+
+    /// <summary>
+    /// Splits text into overlapping chunks for processing.
+    /// </summary>
+    private List<string> ChunkText(string text, int chunkSize, int overlap)
+    {
+        var chunks = new List<string>();
+        var start = 0;
+
+        while (start < text.Length)
+        {
+            var length = Math.Min(chunkSize, text.Length - start);
+            chunks.Add(text.Substring(start, length));
+            start += chunkSize - overlap;
+            if (start >= text.Length) break;
+        }
+
+        return chunks;
+    }
+
+    /// <summary>
+    /// Builds the prompt for analyzing a single chunk of a long file.
+    /// Includes context from the previous chunk's summary.
+    /// </summary>
+    private string BuildChunkedPrompt(string chunk, int index, int total, string previousSummary)
+    {
+        var contextPart = index > 1
+            ? $"\n**上一块摘要**：\n{previousSummary}\n"
+            : "";
+
+        return $@"你是创意写作知识提取专家。这是一个长文档的第 {index}/{total} 块。
+
+**当前块内容**：
+{chunk}
+{contextPart}
+提取本块中的写作知识条目，并生成本块摘要（100字内）用于下一块上下文。
+
+**输出格式**（JSON对象）：
+{{
+  ""entries"": [
+    {{
+      ""title"": ""简短标题"",
+      ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample"",
+      ""content"": ""详细说明"",
+      ""tags"": [""标签1""],
+      ""weight"": 5,
+      ""originalText"": ""原文引用""
+    }}
+  ],
+  ""summary"": ""本块内容摘要，包含关键主题、人物、技巧""
+}}
+
+只返回JSON对象，不要其他文字。";
+    }
+
+    /// <summary>
+    /// Parses the LLM response for a single chunk into structured result.
+    /// Handles markdown code fences and returns empty result on parse failure.
+    /// </summary>
+    private ChunkedAnalysisResultDto ParseChunkedResult(string jsonResponse)
+    {
+        try
+        {
+            var cleaned = jsonResponse.Trim();
+            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
+            {
+                cleaned = cleaned.Substring(7);
+            }
+            if (cleaned.StartsWith("```") && cleaned.Length > 3)
+            {
+                cleaned = cleaned.Substring(3);
+            }
+            if (cleaned.EndsWith("```") && cleaned.Length > 3)
+            {
+                cleaned = cleaned.Substring(0, cleaned.Length - 3);
+            }
+            cleaned = cleaned.Trim();
+
+            var result = JsonSerializer.Deserialize<ChunkedAnalysisResultDto>(
+                cleaned,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return result ?? new ChunkedAnalysisResultDto();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse chunked result: {Response}", jsonResponse);
+            return new ChunkedAnalysisResultDto();
+        }
+    }
+
+    /// <summary>
+    /// Aggregates knowledge entries from all chunks using LLM.
+    /// Performs deduplication and cross-chunk aggregation to extract higher-level patterns.
+    /// </summary>
+    private async Task<List<ExtractedKnowledgeEntryDto>> AggregateEntriesAsync(
+        List<ExtractedKnowledgeEntryDto> entries,
+        CancellationToken ct)
+    {
+        if (entries.Count == 0) return entries;
+
+        var prompt = BuildAggregationPrompt(entries);
+        var llmResponse = await CallLLMAsync(prompt, ct);
+        var result = ParseAggregatedResult(llmResponse);
+
+        var final = new List<ExtractedKnowledgeEntryDto>();
+        final.AddRange(result.Deduplicated);
+        final.AddRange(result.Aggregated);
+
+        return final;
+    }
+
+    /// <summary>
+    /// Builds the prompt for aggregating entries from all chunks.
+    /// Instructs the LLM to deduplicate and identify cross-chunk patterns.
+    /// </summary>
+    private string BuildAggregationPrompt(List<ExtractedKnowledgeEntryDto> entries)
+    {
+        var entriesJson = JsonSerializer.Serialize(entries, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+
+        return $@"你是创意写作知识提取专家。已完成分块分析，现在需要跨块聚合。
+
+**各块提取的条目**（JSON数组）：
+{entriesJson}
+
+**任务**：
+1. 识别重复或相似条目，合并去重
+2. 提取跨块的共性主题、技巧模式
+3. 生成全文级别的高阶知识条目（如整体风格特征、叙事结构规律）
+
+**输出格式**：
+{{
+  ""deduplicated"": [
+    {{
+      ""title"": ""..."",
+      ""category"": ""..."",
+      ""content"": ""..."",
+      ""tags"": [...],
+      ""weight"": 5
+    }}
+  ],
+  ""aggregated"": [
+    {{
+      ""title"": ""全文级知识标题"",
+      ""category"": ""..."",
+      ""content"": ""跨块归纳的高阶规律"",
+      ""tags"": [...],
+      ""weight"": 8
+    }}
+  ]
+}}
+
+只返回JSON对象，不要其他文字。";
+    }
+
+    /// <summary>
+    /// Parses the LLM response for aggregated results into structured result.
+    /// Handles markdown code fences and returns empty result on parse failure.
+    /// </summary>
+    private AggregatedAnalysisResultDto ParseAggregatedResult(string jsonResponse)
+    {
+        try
+        {
+            var cleaned = jsonResponse.Trim();
+            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
+            {
+                cleaned = cleaned.Substring(7);
+            }
+            if (cleaned.StartsWith("```") && cleaned.Length > 3)
+            {
+                cleaned = cleaned.Substring(3);
+            }
+            if (cleaned.EndsWith("```") && cleaned.Length > 3)
+            {
+                cleaned = cleaned.Substring(0, cleaned.Length - 3);
+            }
+            cleaned = cleaned.Trim();
+
+            var result = JsonSerializer.Deserialize<AggregatedAnalysisResultDto>(
+                cleaned,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return result ?? new AggregatedAnalysisResultDto();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to parse aggregated result: {Response}", jsonResponse);
+            return new AggregatedAnalysisResultDto();
+        }
     }
 
     /// <summary>
