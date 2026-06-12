@@ -21,6 +21,29 @@ public class WorkflowController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet("project/{projectId}")]
+    public async Task<IActionResult> GetProjectWorkflow(string projectId, CancellationToken ct)
+    {
+        try
+        {
+            var workflow = await _workflowService.GetProjectWorkflowAsync(projectId, ct);
+            return Ok(workflow);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get workflow detail for project {ProjectId}", projectId);
+            return StatusCode(500, new { error = "Failed to get workflow detail" });
+        }
+    }
+
     [HttpPost("volumes")]
     public async Task<IActionResult> CreateVolumeArc(
         [FromBody] CreateVolumeArcRequest request,

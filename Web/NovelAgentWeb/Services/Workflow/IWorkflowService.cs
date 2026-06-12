@@ -8,6 +8,11 @@ namespace TM.Web.NovelAgentWeb.Services.Workflow;
 public interface IWorkflowService
 {
     /// <summary>
+    /// Gets the project workflow detail document for the current user.
+    /// </summary>
+    Task<ProjectWorkflowDocument> GetProjectWorkflowAsync(string projectId, CancellationToken ct = default);
+
+    /// <summary>
     /// Creates a new volume arc for a project.
     /// </summary>
     Task<VolumeArcResponse> CreateVolumeArcAsync(CreateVolumeArcRequest request, CancellationToken ct = default);

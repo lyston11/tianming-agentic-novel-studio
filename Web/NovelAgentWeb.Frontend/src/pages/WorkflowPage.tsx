@@ -5,6 +5,7 @@ import {
   listAgentSessions,
   sendChat,
   getWorkspace,
+  getProjectWorkflow,
 } from '../api';
 import type {
   AgentChapterTask,
@@ -316,19 +317,23 @@ export default function WorkflowPage() {
       ?? null;
   }, [activeBook?.projectId, agentSessions, books, missionOnlyCards]);
 
-  // TODO: Restore workflow query when backend endpoints are available
-  // const { data: workflow, isLoading: workflowLoading } = useQuery({
-  //   queryKey: ['projectWorkflow', currentProjectId],
-  //   queryFn: () => getProjectWorkflow(currentProjectId!),
-  //   enabled: !!currentProjectId,
-  //   refetchInterval: 5000,
-  // });
-  const workflowLoading = false;
+  const { data: workflow, isLoading: workflowLoading } = useQuery({
+    queryKey: ['projectWorkflow', currentProjectId],
+    queryFn: () => getProjectWorkflow(currentProjectId!),
+    enabled: !!currentProjectId,
+    refetchInterval: 5000,
+  });
 
-  const selectedBook = books.find((book) => book.projectId === currentProjectId) ?? activeBook;
+  const selectedBook = workflow?.project
+    ?? books.find((book) => book.projectId === currentProjectId)
+    ?? activeBook;
   const volumes = useMemo(
-    () => flattenVolumes([], [], []),
-    [],
+    () => flattenVolumes(
+      workflow?.library?.volumes ?? [],
+      workflow?.runs ?? [],
+      workflow?.currentChapterArtifacts ?? workflow?.chapterArtifacts ?? [],
+    ),
+    [workflow],
   );
   const chapters = volumes.flatMap((volume) => volume.chapters);
   const selectedChapter = useMemo<DraftChapter | null>(() => {
@@ -345,18 +350,26 @@ export default function WorkflowPage() {
   const selectedBrief = selectedRun?.chapterBrief ?? null;
   const selectedCandidate = selectedBrief?.selectedCandidateTitle || selectedBrief?.recommendedCandidateTitle || firstCandidateTitle(selectedBrief?.candidates ?? []);
   const selectedVolume = volumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? volumes[0];
-  const selectedPlan = null;
+  const selectedPlan = workflow?.missionPlans?.[0]
+    ?? workflow?.sessions?.[0]?.missionPlan
+    ?? agentSessions?.find((session) => session.activeProjectId === currentProjectId)?.memory?.missionPlan
+    ?? null;
   const selectedTreeChapters = missionChapters(selectedPlan);
   const selectedTreeChapter = selectedTreeChapters.find((chapter) => chapter.chapterId === selectedChapter?.chapterId) ?? null;
   const selectedQualityIssues = selectedTreeChapters
     .filter((chapter) => chapter.qualityIssueSummary || chapter.gateIssueSummary)
     .slice(0, 5);
-  const selectedProjectTaskQueue: AgentScheduledTask[] = [];
+  const selectedProjectTaskQueue: AgentScheduledTask[] = workflow?.schedulerTasks ?? selectedPlan?.schedulerState?.tasks ?? [];
   const generatedCount = selectedBook?.generatedChapterCount ?? 0;
   const plannedCount = selectedBook?.plannedChapterCount ?? 0;
   const needsRewriteCount = selectedBook?.needsRewriteCount ?? 0;
-  const activeSessionTitle = '未绑定会话';
-  const activeWorkflowSessionId = '';
+  const activeWorkflowSessionId = workflow?.activeSessionId
+    || workflow?.sessions?.[0]?.sessionId
+    || agentSessions?.find((session) => session.activeProjectId === currentProjectId)?.sessionId
+    || '';
+  const activeSessionTitle = workflow?.sessions?.find((session) => session.sessionId === activeWorkflowSessionId)?.title
+    || agentSessions?.find((session) => session.sessionId === activeWorkflowSessionId)?.title
+    || '未绑定会话';
   const selectedAction = workbenchActions.find((action) => action.key === selectedWorkbenchAction) ?? workbenchActions[0];
   const selectedRunId = selectedRun?.runId || selectedArtifact?.runId || selectedChapter?.runId || '';
   const selectedArtifactStatus = selectedChapter?.artifactStatus
@@ -381,9 +394,12 @@ export default function WorkflowPage() {
     && generatedCount === 0
     && plannedCount === 0
     && !hasCurrentArtifacts
-    && false;
-  const diagnosticReasons: string[] = [];
-  const diagnosticTaskCount = 0;
+    && (workflow?.isEmptyProject ?? true);
+  const diagnosticReasons: string[] = [
+    ...(workflow?.suspectReasons ?? []),
+    ...(workflow?.staleMissionWarnings ?? []),
+  ];
+  const diagnosticTaskCount = workflow?.diagnosticTasks?.length ?? 0;
 
   useEffect(() => {
     if (!currentProjectId && fallbackProjectId) setCurrentProject(fallbackProjectId);
@@ -400,10 +416,12 @@ export default function WorkflowPage() {
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['agentSessions'] });
+    queryClient.invalidateQueries({ queryKey: ['projectWorkflow', currentProjectId] });
   };
 
   const refreshAsync = async () => {
     await queryClient.invalidateQueries({ queryKey: ['agentSessions'] });
+    await queryClient.invalidateQueries({ queryKey: ['projectWorkflow', currentProjectId] });
   };
 
   const agentActionMutation = useMutation({
@@ -477,7 +495,7 @@ export default function WorkflowPage() {
             <p>{selectedBook?.coreHook || 'Agent 创建的新书、草稿、门禁和质量评审会先进入这里。'}</p>
           </div>
           <div className="ops-status-grid">
-            <strong>0<small>会话</small></strong>
+            <strong>{workflow?.sessions.length ?? 0}<small>会话</small></strong>
             <strong>{plannedCount}<small>章节位</small></strong>
             <strong>{generatedCount}<small>已入库</small></strong>
             <strong>{needsRewriteCount}<small>需返工</small></strong>
@@ -485,7 +503,7 @@ export default function WorkflowPage() {
           <div className="ops-live-card">
             <span>{missionStageLabel(selectedPlan)}</span>
             <strong>{activeSessionTitle}</strong>
-            <small>{'工作台自动刷新中'}</small>
+            <small>{workflow?.updatedAt ? `更新 ${new Date(workflow.updatedAt).toLocaleTimeString()}` : '工作台自动刷新中'}</small>
           </div>
         </section>
 

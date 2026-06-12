@@ -15,6 +15,7 @@ import type {
   NovelProjectDeleteResult,
   NovelProjectInfo,
   NovelProjectUpdateRequest,
+  ProjectWorkflowDocument,
   StoryBibleResponse,
   StoryConstitutionResponse,
   UploadMaterialResponse,
@@ -108,6 +109,9 @@ export const deleteCharacterById = (id: string) =>
 // Workflow API (new multi-user endpoints)
 export const listVolumeArcs = (projectId: string) =>
   get<VolumeArcResponse[]>(`/workflow/volumes?projectId=${encodeURIComponent(projectId)}`);
+
+export const getProjectWorkflow = (projectId: string) =>
+  get<ProjectWorkflowDocument>(`/workflow/project/${encodeURIComponent(projectId)}`);
 
 export const getVolumeArc = (id: string) =>
   get<VolumeArcResponse>(`/workflow/volumes/${id}`);

@@ -52,6 +52,40 @@ public sealed class NovelProjectCatalog
         return document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
     }
 
+    public async Task<NovelProjectInfo> UpsertAsync(
+        NovelProjectInfo source,
+        bool makeActive = false,
+        CancellationToken ct = default)
+    {
+        var document = await GetAsync(ct).ConfigureAwait(false);
+        var project = document.Projects.FirstOrDefault(p =>
+            string.Equals(p.Id, source.Id, StringComparison.OrdinalIgnoreCase));
+
+        if (project == null)
+        {
+            project = new NovelProjectInfo { Id = source.Id };
+            document.Projects.Insert(0, project);
+        }
+
+        project.Title = FirstNonEmpty(source.Title, project.Title, "未命名小说");
+        project.Genre = FirstNonEmpty(source.Genre, project.Genre);
+        project.SubGenre = FirstNonEmpty(source.SubGenre, project.SubGenre);
+        project.CoreHook = FirstNonEmpty(source.CoreHook, project.CoreHook);
+        project.ReaderPromise = FirstNonEmpty(source.ReaderPromise, project.ReaderPromise);
+        project.Status = FirstNonEmpty(source.Status, project.Status, "Drafting");
+        project.StorageProjectName = FirstNonEmpty(source.StorageProjectName, project.StorageProjectName, _workspace.ProjectName);
+        project.CreatedAt = source.CreatedAt == default ? project.CreatedAt : source.CreatedAt;
+        project.UpdatedAt = source.UpdatedAt == default ? DateTime.UtcNow : source.UpdatedAt;
+
+        if (makeActive || string.IsNullOrWhiteSpace(document.ActiveProjectId))
+        {
+            document.ActiveProjectId = project.Id;
+        }
+
+        SaveDocument(document);
+        return project;
+    }
+
     public async Task<NovelProjectInfo> ActivateAsync(string projectId, CancellationToken ct = default)
     {
         var document = await GetAsync(ct).ConfigureAwait(false);
