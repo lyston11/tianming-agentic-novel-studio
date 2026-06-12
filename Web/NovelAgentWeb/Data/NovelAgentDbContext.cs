@@ -26,10 +26,16 @@ public class NovelAgentDbContext : DbContext
     public DbSet<ForeshadowEntry> ForeshadowEntries { get; set; } = null!;
     public DbSet<WorldSettingEntry> WorldSettingEntries { get; set; } = null!;
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
+    public DbSet<KnowledgeProcessingTask> KnowledgeProcessingTasks { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Ignore non-entity types from Support namespace
+        modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.ChatMessage>();
+        modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.ChatSummary>();
+        modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.LayeredChatHistory>();
 
         // User entity configuration
         modelBuilder.Entity<User>(entity =>
@@ -508,6 +514,42 @@ public class NovelAgentDbContext : DbContext
 
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.AgentRuns)
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // KnowledgeProcessingTask entity configuration
+        modelBuilder.Entity<KnowledgeProcessingTask>(entity =>
+        {
+            entity.ToTable("knowledge_processing_tasks");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.FileName).HasColumnName("file_name").IsRequired();
+            entity.Property(e => e.FilePath).HasColumnName("file_path").IsRequired();
+            entity.Property(e => e.FileSize).HasColumnName("file_size");
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending");
+            entity.Property(e => e.Strategy).HasColumnName("strategy").HasDefaultValue("single_pass");
+            entity.Property(e => e.Progress).HasColumnName("progress").HasDefaultValue(0);
+            entity.Property(e => e.TotalChunks).HasColumnName("total_chunks");
+            entity.Property(e => e.ProcessedChunks).HasColumnName("processed_chunks").HasDefaultValue(0);
+            entity.Property(e => e.ExtractedEntriesCount).HasColumnName("extracted_entries_count").HasDefaultValue(0);
+            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+            entity.Property(e => e.StartedAt).HasColumnName("started_at");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.Status);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
