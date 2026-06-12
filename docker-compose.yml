@@ -12,6 +12,16 @@ services:
       - QDRANT__LOG_LEVEL=INFO
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: novelagent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -25,8 +35,13 @@ services:
       - ASPNETCORE_URLS=http://+:5002
       - ASPNETCORE_ENVIRONMENT=Development
       - Qdrant__Host=qdrant
-      - Qdrant__Port=6333
-      - Redis__ConnectionString=host.docker.internal:6379
+      - Qdrant__Port=6334
+      - Redis__Enabled=true
+      - Redis__ConnectionString=redis:6379
     depends_on:
       - qdrant
+      - redis
     restart: unless-stopped
+
+volumes:
+  redis-data:

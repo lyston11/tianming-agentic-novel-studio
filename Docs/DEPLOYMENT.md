@@ -115,6 +115,8 @@ Located at `Web/NovelAgentWeb/appsettings.json`, this file contains core configu
 | `Qdrant:Port` | Qdrant gRPC port | `6334` | Yes |
 | `Qdrant:VectorDimension` | Embedding vector size | `512` | Yes |
 | `Qdrant:BatchSize` | Bulk operation batch size | `100` | No |
+| `Redis:Enabled` | Enable Redis-backed distributed cache; `false` uses local distributed memory cache | `false` | No |
+| `Redis:ConnectionString` | Redis endpoint when `Redis:Enabled=true` | `localhost:6379` | No |
 | `JwtSettings:SecretKey` | JWT signing secret (min 32 chars) | - | **Yes** |
 | `JwtSettings:Issuer` | JWT token issuer | `NovelAgentWeb` | Yes |
 | `JwtSettings:Audience` | JWT token audience | `NovelAgentWeb` | Yes |
@@ -175,6 +177,20 @@ This creates a Qdrant container with:
 - REST API on port 6333
 - gRPC API on port 6334
 - Persistent storage in `App_Data/Qdrant/`
+
+When running the full Docker Compose stack, the API connects to Qdrant by gRPC on
+`Qdrant__Host=qdrant` and `Qdrant__Port=6334`.
+
+### Redis Cache Setup
+
+Redis is optional for local development. By default the API uses an in-process
+distributed memory cache and keeps SQLite as the authoritative store. The Docker
+Compose stack includes Redis and enables it for the API with:
+
+```bash
+Redis__Enabled=true
+Redis__ConnectionString=redis:6379
+```
 
 ### Manual Docker Deployment
 
