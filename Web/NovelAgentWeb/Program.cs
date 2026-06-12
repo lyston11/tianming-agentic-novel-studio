@@ -177,8 +177,8 @@ builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 // Register Agent Session Service
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
 
-// Register Embedding Service (using stub for now - replace with BgeSmallZhEmbeddingService when ML packages are configured)
-builder.Services.AddSingleton<IMicroEmbeddingService, StubEmbeddingService>();
+// Register Embedding Service. Stub mode is explicit and reported by /health until a real provider is added.
+builder.Services.AddNovelAgentEmbedding(builder.Configuration, builder.Environment);
 
 // Register WorkspaceFactory with options
 builder.Services.Configure<WorkspaceFactoryOptions>(
@@ -283,7 +283,11 @@ app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+app.MapGet("/health", (EmbeddingRuntimeStatus embedding) => Results.Ok(new
+{
+    status = "ok",
+    embedding = EmbeddingHealthResponse.From(embedding)
+})).AllowAnonymous();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
