@@ -22,7 +22,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly IKnowledgeService _knowledgeService;
     private readonly IMicroEmbeddingService _embedding;
     private readonly UserSettingsManager _settingsManager;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<KnowledgeProcessingService> _logger;
 
     public KnowledgeProcessingService(
@@ -30,14 +30,14 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         IKnowledgeService knowledgeService,
         IMicroEmbeddingService embedding,
         UserSettingsManager settingsManager,
-        HttpClient httpClient,
+        IHttpClientFactory httpClientFactory,
         ILogger<KnowledgeProcessingService> logger)
     {
         _db = db;
         _knowledgeService = knowledgeService;
         _embedding = embedding;
         _settingsManager = settingsManager;
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -160,24 +160,26 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
             throw new InvalidOperationException("LLM settings are not configured");
         }
 
+        var httpClient = _httpClientFactory.CreateClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(90);
+
         var provider = settings.LlmProvider.Trim().ToLowerInvariant();
 
         // Use Anthropic-style API for Anthropic and Mimo providers
-        if (provider.Contains("anthropic", StringComparison.OrdinalIgnoreCase) ||
-            provider.Contains("mimo", StringComparison.OrdinalIgnoreCase) ||
-            provider.Contains("xiaomi", StringComparison.OrdinalIgnoreCase))
+        if (provider.Contains("anthropic", StringComparison.Ordinal) ||
+            provider.Contains("mimo", StringComparison.Ordinal))
         {
-            return await CallAnthropicCompletionAsync(settings, prompt, ct);
+            return await CallAnthropicCompletionAsync(httpClient, settings, prompt, ct);
         }
 
         // Default to OpenAI-compatible API for all other providers
-        return await CallOpenAiCompletionAsync(settings, prompt, ct);
+        return await CallOpenAiCompletionAsync(httpClient, settings, prompt, ct);
     }
 
     /// <summary>
     /// Calls OpenAI-compatible completion API.
     /// </summary>
-    private async Task<string> CallOpenAiCompletionAsync(UserSettings settings, string prompt, CancellationToken ct)
+    private async Task<string> CallOpenAiCompletionAsync(HttpClient httpClient, UserSettings settings, string prompt, CancellationToken ct)
     {
         var url = BuildOpenAiChatCompletionsUrl(settings.LlmBaseUrl);
         var payload = new
@@ -195,7 +197,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.LlmApiKey);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await httpClient.SendAsync(request, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -223,7 +225,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     /// <summary>
     /// Calls Anthropic-compatible completion API.
     /// </summary>
-    private async Task<string> CallAnthropicCompletionAsync(UserSettings settings, string prompt, CancellationToken ct)
+    private async Task<string> CallAnthropicCompletionAsync(HttpClient httpClient, UserSettings settings, string prompt, CancellationToken ct)
     {
         var url = BuildAnthropicMessagesUrl(settings.LlmBaseUrl);
         var payload = new
@@ -246,7 +248,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         request.Headers.Add("anthropic-version", "2023-06-01");
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await httpClient.SendAsync(request, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -280,15 +282,15 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         {
             // Clean up markdown code fences
             var cleaned = jsonResponse.Trim();
-            if (cleaned.StartsWith("```json"))
+            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
             {
                 cleaned = cleaned.Substring(7);
             }
-            if (cleaned.StartsWith("```"))
+            if (cleaned.StartsWith("```") && cleaned.Length > 3)
             {
                 cleaned = cleaned.Substring(3);
             }
-            if (cleaned.EndsWith("```"))
+            if (cleaned.EndsWith("```") && cleaned.Length > 3)
             {
                 cleaned = cleaned.Substring(0, cleaned.Length - 3);
             }
