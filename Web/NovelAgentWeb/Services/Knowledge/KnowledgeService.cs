@@ -55,7 +55,11 @@ public class KnowledgeService : IKnowledgeService
             EntryType = request.EntryType,
             Title = request.Title,
             Content = request.Content,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            SourceType = request.SourceType ?? "manual",
+            SourceFileId = request.SourceFileId,
+            ChunkIndex = request.ChunkIndex,
+            ExtractionContext = request.ExtractionContext
         };
 
         _db.KnowledgeBases.Add(knowledge);

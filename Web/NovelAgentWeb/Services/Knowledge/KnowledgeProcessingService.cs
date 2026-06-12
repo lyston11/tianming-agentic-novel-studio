@@ -590,14 +590,28 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 
     /// <summary>
     /// Saves extracted knowledge entries to the database and vector store.
-    /// Implementation will be added in Task 7.
+    /// Each entry is saved with source tracking information for traceability.
     /// </summary>
     private async Task SaveExtractedEntriesAsync(
         Data.Entities.KnowledgeProcessingTask task,
         List<ExtractedKnowledgeEntryDto> entries,
         CancellationToken ct)
     {
-        // Will be implemented in Task 7
-        throw new NotImplementedException("Saving extracted entries will be implemented in Task 7");
+        foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
+        {
+            await _knowledgeService.CreateKnowledgeAsync(new CreateKnowledgeRequest
+            {
+                ProjectId = task.ProjectId,
+                EntryType = entry.Category,
+                Title = entry.Title,
+                Content = entry.Content,
+                Tags = entry.Tags,
+                Weight = entry.Weight,
+                SourceType = "extracted",
+                SourceFileId = task.Id,
+                ChunkIndex = index,
+                ExtractionContext = entry.OriginalText
+            }, ct);
+        }
     }
 }

@@ -18,6 +18,14 @@ public class CreateKnowledgeRequest
 
     [Required]
     public string Content { get; set; } = null!;
+
+    // Optional fields for knowledge extraction tracking
+    public List<string>? Tags { get; set; }
+    public int? Weight { get; set; }
+    public string? SourceType { get; set; }
+    public string? SourceFileId { get; set; }
+    public int? ChunkIndex { get; set; }
+    public string? ExtractionContext { get; set; }
 }
 
 /// <summary>
