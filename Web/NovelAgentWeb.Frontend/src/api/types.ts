@@ -634,6 +634,9 @@ export interface KnowledgeResponse {
   usageCount: number;
   createdAt: string;
   vectorId: string | null;
+  projectUsageStatus: string;
+  projectUsageCount: number;
+  projectLastUsedAt: string | null;
 }
 
 export interface KnowledgeSearchResult {
@@ -642,6 +645,9 @@ export interface KnowledgeSearchResult {
   title: string;
   content: string;
   score: number;
+  projectUsageStatus: string;
+  projectUsageCount: number;
+  projectLastUsedAt: string | null;
 }
 
 export interface KnowledgeSearchResponse {

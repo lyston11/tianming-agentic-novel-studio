@@ -87,7 +87,12 @@ public class KnowledgeService : IKnowledgeService
 
         _logger.LogInformation("Created knowledge entry {KnowledgeId} in project {ProjectId}", knowledge.Id, request.ProjectId);
 
-        return MapToResponse(knowledge);
+        var usage = await LoadUsageByKnowledgeIdAsync(
+            userId,
+            knowledge.ProjectId,
+            new[] { knowledge.Id },
+            ct);
+        return MapToResponse(knowledge, usage.GetValueOrDefault(knowledge.Id));
     }
 
     public async Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default)
@@ -106,7 +111,15 @@ public class KnowledgeService : IKnowledgeService
             .OrderByDescending(k => k.CreatedAt)
             .ToListAsync(ct);
 
-        return knowledgeEntries.Select(MapToResponse).ToList();
+        var usage = await LoadUsageByKnowledgeIdAsync(
+            userId,
+            projectId,
+            knowledgeEntries.Select(k => k.Id),
+            ct);
+
+        return knowledgeEntries
+            .Select(k => MapToResponse(k, usage.GetValueOrDefault(k.Id)))
+            .ToList();
     }
 
     public async Task<KnowledgeResponse> GetKnowledgeAsync(string knowledgeId, CancellationToken ct = default)
@@ -124,7 +137,12 @@ public class KnowledgeService : IKnowledgeService
         if (knowledge.Project.UserId != userId)
             throw new UnauthorizedAccessException("Access denied");
 
-        return MapToResponse(knowledge);
+        var usage = await LoadUsageByKnowledgeIdAsync(
+            userId,
+            knowledge.ProjectId,
+            new[] { knowledge.Id },
+            ct);
+        return MapToResponse(knowledge, usage.GetValueOrDefault(knowledge.Id));
     }
 
     public async Task<KnowledgeResponse> UpdateKnowledgeAsync(
@@ -154,7 +172,12 @@ public class KnowledgeService : IKnowledgeService
 
         _logger.LogInformation("Updated knowledge entry {KnowledgeId}", knowledgeId);
 
-        return MapToResponse(knowledge);
+        var usage = await LoadUsageByKnowledgeIdAsync(
+            userId,
+            knowledge.ProjectId,
+            new[] { knowledge.Id },
+            ct);
+        return MapToResponse(knowledge, usage.GetValueOrDefault(knowledge.Id));
     }
 
     public async Task DeleteKnowledgeAsync(string knowledgeId, CancellationToken ct = default)
@@ -207,18 +230,20 @@ public class KnowledgeService : IKnowledgeService
             .Where(k => k.ProjectId == request.ProjectId)
             .Where(k => string.IsNullOrEmpty(request.EntryType) || k.EntryType == request.EntryType)
             .ToDictionaryAsync(k => k.Id, ct);
+        var usageByKnowledgeId = await LoadUsageByKnowledgeIdAsync(
+            userId,
+            request.ProjectId,
+            knowledgeById.Keys,
+            ct);
 
         var results = searchResults
             .Where(r => r.EntityType == "knowledge")
             .Where(r => !string.IsNullOrWhiteSpace(r.EntityId) && knowledgeById.ContainsKey(r.EntityId))
-            .Select(r => new KnowledgeSearchResult
-            {
-                Id = r.EntityId,
-                EntryType = knowledgeById[r.EntityId].EntryType,
-                Title = knowledgeById[r.EntityId].Title,
-                Content = string.IsNullOrWhiteSpace(r.Content) ? knowledgeById[r.EntityId].Content : r.Content,
-                Score = r.Score
-            })
+            .Select(r => MapToSearchResult(
+                knowledgeById[r.EntityId],
+                string.IsNullOrWhiteSpace(r.Content) ? knowledgeById[r.EntityId].Content : r.Content,
+                r.Score,
+                usageByKnowledgeId.GetValueOrDefault(r.EntityId)))
             .ToList();
 
         if (results.Count < topK)
@@ -236,14 +261,11 @@ public class KnowledgeService : IKnowledgeService
                 .ThenByDescending(x => x.Knowledge.Weight)
                 .ThenByDescending(x => x.Knowledge.CreatedAt)
                 .Take(topK - results.Count)
-                .Select(x => new KnowledgeSearchResult
-                {
-                    Id = x.Knowledge.Id,
-                    EntryType = x.Knowledge.EntryType,
-                    Title = x.Knowledge.Title,
-                    Content = x.Knowledge.Content,
-                    Score = x.Score
-                });
+                .Select(x => MapToSearchResult(
+                    x.Knowledge,
+                    x.Knowledge.Content,
+                    x.Score,
+                    usageByKnowledgeId.GetValueOrDefault(x.Knowledge.Id)));
 
             results.AddRange(textMatches);
         }
@@ -284,7 +306,9 @@ public class KnowledgeService : IKnowledgeService
         _logger.LogDebug("Incremented usage count for knowledge entry {KnowledgeId}", knowledgeId);
     }
 
-    private static KnowledgeResponse MapToResponse(KnowledgeBase knowledge)
+    private static KnowledgeResponse MapToResponse(
+        KnowledgeBase knowledge,
+        KnowledgeUsageSnapshot? usage = null)
     {
         return new KnowledgeResponse
         {
@@ -295,9 +319,59 @@ public class KnowledgeService : IKnowledgeService
             Content = knowledge.Content,
             UsageCount = knowledge.UsageCount,
             CreatedAt = knowledge.CreatedAt,
-            VectorId = knowledge.VectorId
+            VectorId = knowledge.VectorId,
+            ProjectUsageStatus = usage?.Status ?? "none",
+            ProjectUsageCount = usage?.UsageCount ?? 0,
+            ProjectLastUsedAt = usage?.LastUsedAt
         };
     }
+
+    private static KnowledgeSearchResult MapToSearchResult(
+        KnowledgeBase knowledge,
+        string content,
+        float score,
+        KnowledgeUsageSnapshot? usage = null)
+    {
+        return new KnowledgeSearchResult
+        {
+            Id = knowledge.Id,
+            EntryType = knowledge.EntryType,
+            Title = knowledge.Title,
+            Content = content,
+            Score = score,
+            ProjectUsageStatus = usage?.Status ?? "none",
+            ProjectUsageCount = usage?.UsageCount ?? 0,
+            ProjectLastUsedAt = usage?.LastUsedAt
+        };
+    }
+
+    private async Task<Dictionary<string, KnowledgeUsageSnapshot>> LoadUsageByKnowledgeIdAsync(
+        string userId,
+        string projectId,
+        IEnumerable<string> knowledgeIds,
+        CancellationToken ct)
+    {
+        var ids = knowledgeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return new Dictionary<string, KnowledgeUsageSnapshot>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var usages = await _db.ProjectKnowledgeUsages
+            .AsNoTracking()
+            .Where(u => u.UserId == userId && u.ProjectId == projectId && ids.Contains(u.KnowledgeId))
+            .ToListAsync(ct);
+
+        return usages.ToDictionary(
+            u => u.KnowledgeId,
+            u => new KnowledgeUsageSnapshot(u.Status, u.UsageCount, u.LastUsedAt),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed record KnowledgeUsageSnapshot(string Status, int UsageCount, DateTime? LastUsedAt);
 
     private static float ScoreTextMatch(KnowledgeBase knowledge, string query)
     {

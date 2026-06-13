@@ -1,4 +1,4 @@
-import { api, get, post } from './client';
+import { API_BASE_URL, api, get, post } from './client';
 import type {
   AgentChatRequest,
   AgentChatResponse,
@@ -81,6 +81,23 @@ export const updateKnowledgeEntryById = (id: string, req: { title?: string; cont
 export const deleteKnowledgeEntryById = (id: string) =>
   api<void>(`/knowledge/${id}`, { method: 'DELETE' });
 
+export const uploadKnowledgeFile = (projectId: string, file: File, title?: string) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('projectId', projectId);
+  if (title) formData.append('title', title);
+
+  return api<{ taskId: string; status: string; message: string }>('/knowledge/upload', {
+    method: 'POST',
+    body: formData,
+  });
+};
+
+export const getKnowledgeTask = (taskId: string) =>
+  get<{ id: string; status: string; progress: number; extractedEntriesCount: number; errorMessage?: string }>(
+    `/knowledge/tasks/${encodeURIComponent(taskId)}`
+  );
+
 // StoryBible API (new multi-user endpoints)
 export const getStoryBibleByProject = (projectId: string) =>
   get<StoryBibleResponse>(`/storybible?projectId=${encodeURIComponent(projectId)}`);
@@ -151,12 +168,11 @@ export const rollbackStep = (sessionId: string, runId: string, stepId: string) =
   post<{ success: boolean; message: string }>(`/agent/step/${sessionId}/rollback`, { runId, stepId });
 
 export const createSseConnection = (sessionId: string): EventSource => {
-  const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
   const stored = localStorage.getItem('auth-storage');
   const token = stored ? JSON.parse(stored).state?.token : null;
   const url = token
-    ? `${BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
-    : `${BASE_URL}/agent/sse/${sessionId}`;
+    ? `${API_BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
+    : `${API_BASE_URL}/agent/sse/${sessionId}`;
   return new EventSource(url);
 };
 

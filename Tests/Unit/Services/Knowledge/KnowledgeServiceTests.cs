@@ -120,6 +120,43 @@ public class KnowledgeServiceTests
     }
 
     [Fact]
+    public async Task ListKnowledgeAsync_IncludesProjectUsageFields()
+    {
+        await using var db = CreateDb();
+        SeedUserProject(db);
+        var lastUsedAt = DateTime.UtcNow.AddMinutes(-5);
+        db.KnowledgeBases.Add(new KnowledgeBase
+        {
+            Id = "knowledge-1",
+            ProjectId = "project-1",
+            EntryType = "ReaderPromise",
+            Title = "胜利代价原则",
+            Content = "主角每次胜利都必须付出清晰代价。",
+            Weight = 8,
+            CreatedAt = DateTime.UtcNow
+        });
+        db.ProjectKnowledgeUsages.Add(new ProjectKnowledgeUsage
+        {
+            Id = "usage-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            KnowledgeId = "knowledge-1",
+            Status = "referenced",
+            UsageCount = 3,
+            FirstSeenAt = DateTime.UtcNow.AddHours(-1),
+            LastUsedAt = lastUsedAt
+        });
+        await db.SaveChangesAsync();
+        var service = CreateService(db, "user-1");
+
+        var response = Assert.Single(await service.ListKnowledgeAsync("project-1"));
+
+        Assert.Equal("referenced", response.ProjectUsageStatus);
+        Assert.Equal(3, response.ProjectUsageCount);
+        Assert.Equal(lastUsedAt, response.ProjectLastUsedAt);
+    }
+
+    [Fact]
     public async Task CreateKnowledgeAsync_StoresVectorIdAfterUpsert()
     {
         await using var db = CreateDb();

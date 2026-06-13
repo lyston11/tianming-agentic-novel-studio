@@ -66,6 +66,9 @@ public class KnowledgeResponse
     public int UsageCount { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? VectorId { get; set; }
+    public string ProjectUsageStatus { get; set; } = "none";
+    public int ProjectUsageCount { get; set; }
+    public DateTime? ProjectLastUsedAt { get; set; }
 }
 
 /// <summary>
@@ -78,4 +81,7 @@ public class KnowledgeSearchResult
     public string Title { get; set; } = null!;
     public string Content { get; set; } = null!;
     public float Score { get; set; }
+    public string ProjectUsageStatus { get; set; } = "none";
+    public int ProjectUsageCount { get; set; }
+    public DateTime? ProjectLastUsedAt { get; set; }
 }
