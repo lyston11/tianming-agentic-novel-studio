@@ -11,7 +11,7 @@
 本轮修复不是继续追加临时功能，也不是只更新文档。目标是把当前项目收敛回最初设计的完整形态：
 
 1. 多用户小说创作 SaaS 架构。
-2. SQLite + 文件系统 + Qdrant + Redis/缓存 的混合存储。
+2. SQLite + Qdrant + Redis/缓存 的存储架构；SQLite 是业务数据真源，Qdrant 是语义向量索引。
 3. Agent 的 Observe / Plan / Act / Reflect 闭环。
 4. ChatHistory、SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 的分层记忆闭环。
 5. 知识库从上传、处理、抽取、向量化、检索、Agent 引用到记忆沉淀的完整闭环。
@@ -67,7 +67,7 @@
 
 这些记录补充了原始 5 份文档未完全展开的实现意图：
 
-- 多用户架构采用 SQLite + 文件系统 + Qdrant 三层存储。
+- 历史记录中曾出现 SQLite + 文件系统 + Qdrant 的过渡迁移方案；本次按用户确认修正为 SQLite + Qdrant，文件系统不再作为业务存储层。
 - Workspace 生命周期采用 `(userId, projectId)` 项目级实例池、引用计数、LRU 淘汰。
 - Qdrant collection 使用 `novel_agent_{userId}`，通过 `project_id` payload 做项目隔离与跨项目检索。
 - 前端项目上下文必须使用单一 Zustand store，不能各页面维护独立项目状态。
@@ -108,7 +108,7 @@
 
 - `agent_memories` 当前以 `memory_type + content` 表达字段，原始设计强调 `memory_key/memory_value` 的语义和更明确的细粒度字段访问。
 - `novel_projects` 当前有 `word_count`，原始设计还需要目标字数、状态枚举和项目创作元信息。
-- `materials` 当前已有 `content/file_path/category/content_type/vector_chunk_count`，原始设计需要明确 `material_type/content_path/is_vectorized` 等向量化状态语义。
+- `materials` 当前仍有 `file_path` 等遗留字段；目标设计要求素材原文、解析文本、向量化状态都进入 SQLite，`file_path/content_path` 只能作为迁移来源或临时上传处理痕迹，不能作为运行时业务真源。
 - StoryBible 相关表已部分存在，但 `/api/characters`、世界观设定、伏笔账本、AgentRun 与 Workflow 的契约需要统一。
 
 ### 3.4 记忆系统偏差
@@ -155,12 +155,19 @@
 
 ### 4.1 存储架构
 
-最终采用四层协同：
+最终采用三层协同：
 
-1. **SQLite:** 用户、项目、章节元数据、StoryBible 结构化数据、Agent 会话、Agent 记忆、素材、知识库、工作流状态。
-2. **文件系统:** 章节正文 Markdown、素材原文、必要的大文本 JSON、生成产物。
-3. **Qdrant:** 知识库、素材块、章节上下文、长期项目记忆的语义向量。
-4. **Redis/缓存:** 热数据缓存；本地开发允许降级到 in-process distributed cache，但配置和健康状态必须透明。
+1. **SQLite:** 唯一业务数据真源。保存用户、项目、章节正文、StoryBible、Agent 会话、Agent 记忆、素材原文、知识库、工作流状态、AgentRun 产物、处理任务和所有结构化关系。
+2. **Qdrant:** 语义向量索引。保存知识库、素材块、章节上下文、长期项目记忆等文本的 embedding 与检索 payload；payload 必须能回指 SQLite 行。
+3. **Redis/缓存:** 热数据缓存。本地开发允许降级到 in-process distributed cache，但配置和健康状态必须透明。
+
+文件系统不属于目标业务存储层。允许的文件使用只有三类：
+
+1. HTTP 上传过程中的短生命周期临时缓冲。
+2. 数据库备份、导入、导出、迁移脚本输入。
+3. 构建产物和应用静态资源。
+
+上传文件、章节正文、素材原文、StoryBible 完整内容、知识抽取结果和 Agent 产物在处理完成后必须写入 SQLite。运行时业务逻辑不得依赖 `content_path`、`file_path` 或 Markdown/JSON 文件作为真源。
 
 Qdrant collection 使用 `novel_agent_{userId}`。所有点 payload 必须包含：
 
@@ -317,11 +324,11 @@ AgentController.Chat
 
 ## 7. 知识库设计
 
-### 7.1 文件处理闭环
+### 7.1 上传处理闭环
 
 ```text
 POST /api/knowledge/upload
-  -> knowledge_processing_tasks pending
+  -> upload stream parsed into SQLite raw_content/blob + knowledge_processing_tasks pending
   -> Agent ProcessKnowledgeFile or frontend trigger
   -> short file single pass / long file chunked processing
   -> extracted knowledge entries
@@ -330,7 +337,7 @@ POST /api/knowledge/upload
   -> task completed
 ```
 
-短文件使用单次 LLM 分析。长文件使用分块、上一块摘要、最终聚合总结。所有 LLM 输出必须做 JSON 清洗、校验和失败降级。
+短文件使用单次 LLM 分析。长文件使用 SQLite 中的原文内容做分块、上一块摘要、最终聚合总结。所有 LLM 输出必须做 JSON 清洗、校验和失败降级。上传临时文件如果存在，处理成功或失败后都不能成为业务读取依赖。
 
 ### 7.2 检索闭环
 
@@ -392,12 +399,14 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 本轮允许破坏当前临时接口，但不允许无故丢数据。迁移策略：
 
-1. 先备份 `App_Data` 和 SQLite 数据库。
+1. 先备份 SQLite 数据库；旧 `App_Data` 文件仅作为一次性迁移输入。
 2. 新增缺失字段和表，不直接删除旧列。
 3. 对旧 `memory_type/content` 数据生成新语义字段或兼容视图。
-4. 对旧 materials/knowledge 数据补齐向量化状态。
-5. 对旧 frontend API 调用一次性迁移，不保留双写逻辑。
-6. 最终清理旧接口和过时字段前必须有测试覆盖和用户确认。
+4. 将旧章节 Markdown、素材文件、StoryBible JSON、Agent 产物文件迁移进 SQLite 字段或归档表。
+5. 对旧 materials/knowledge 数据补齐向量化状态。
+6. 迁移后运行时禁止继续从旧文件路径读取业务内容。
+7. 对旧 frontend API 调用一次性迁移，不保留双写逻辑。
+8. 最终清理旧接口和过时字段前必须有测试覆盖和用户确认。
 
 ---
 
