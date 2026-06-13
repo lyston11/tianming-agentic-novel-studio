@@ -438,6 +438,11 @@ public sealed class AgentToolRegistry
                 TopK = 8
             }, ct).ConfigureAwait(false);
 
+            foreach (var result in results)
+            {
+                await knowledgeService.IncrementUsageAsync(result.Id, ct).ConfigureAwait(false);
+            }
+
             return results
                 .Select(MapKnowledgeSearchResult)
                 .ToList();

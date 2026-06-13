@@ -149,6 +149,7 @@ builder.Services.AddScoped<IChapterService, ChapterService>();
 builder.Services.AddScoped<IMaterialService, MaterialService>();
 
 // Register Knowledge Service
+builder.Services.AddScoped<IProjectKnowledgeUsageService, ProjectKnowledgeUsageService>();
 builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
 builder.Services.AddScoped<IKnowledgeProcessingService, KnowledgeProcessingService>();
 

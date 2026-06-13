@@ -20,6 +20,7 @@ public class KnowledgeService : IKnowledgeService
     private readonly IVectorStore _vectorStore;
     private readonly IMicroEmbeddingService _embedding;
     private readonly ILogger<KnowledgeService> _logger;
+    private readonly IProjectKnowledgeUsageService? _projectKnowledgeUsage;
 
     public KnowledgeService(
         NovelAgentDbContext db,
@@ -27,7 +28,8 @@ public class KnowledgeService : IKnowledgeService
         SemanticSearchService searchService,
         IVectorStore vectorStore,
         IMicroEmbeddingService embedding,
-        ILogger<KnowledgeService> logger)
+        ILogger<KnowledgeService> logger,
+        IProjectKnowledgeUsageService? projectKnowledgeUsage = null)
     {
         _db = db;
         _currentUserService = currentUserService;
@@ -35,6 +37,7 @@ public class KnowledgeService : IKnowledgeService
         _vectorStore = vectorStore;
         _embedding = embedding;
         _logger = logger;
+        _projectKnowledgeUsage = projectKnowledgeUsage;
     }
 
     public async Task<KnowledgeResponse> CreateKnowledgeAsync(
@@ -71,6 +74,16 @@ public class KnowledgeService : IKnowledgeService
         await _db.SaveChangesAsync(ct);
 
         await TryUpsertKnowledgeVectorAsync(userId, knowledge, ct);
+        if (_projectKnowledgeUsage != null)
+        {
+            await _projectKnowledgeUsage.MarkImportedAsync(
+                userId,
+                knowledge.ProjectId,
+                knowledge.Id,
+                request.SourceFileId,
+                knowledge.SourceType,
+                ct);
+        }
 
         _logger.LogInformation("Created knowledge entry {KnowledgeId} in project {ProjectId}", knowledge.Id, request.ProjectId);
 
@@ -257,6 +270,16 @@ public class KnowledgeService : IKnowledgeService
 
         knowledge.UsageCount++;
         await _db.SaveChangesAsync(ct);
+        if (_projectKnowledgeUsage != null)
+        {
+            await _projectKnowledgeUsage.MarkReferencedAsync(
+                userId,
+                knowledge.ProjectId,
+                knowledge.Id,
+                null,
+                null,
+                ct);
+        }
 
         _logger.LogDebug("Incremented usage count for knowledge entry {KnowledgeId}", knowledgeId);
     }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
@@ -24,6 +25,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly UserSettingsManager _settingsManager;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<KnowledgeProcessingService> _logger;
+    private readonly IAgentMemoryEventService? _memoryEvents;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
@@ -31,7 +33,8 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         IMicroEmbeddingService embedding,
         UserSettingsManager settingsManager,
         IHttpClientFactory httpClientFactory,
-        ILogger<KnowledgeProcessingService> logger)
+        ILogger<KnowledgeProcessingService> logger,
+        IAgentMemoryEventService? memoryEvents = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
@@ -39,6 +42,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         _settingsManager = settingsManager;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _memoryEvents = memoryEvents;
     }
 
     /// <summary>
@@ -597,9 +601,10 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         List<ExtractedKnowledgeEntryDto> entries,
         CancellationToken ct)
     {
+        var createdIds = new List<string>();
         foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
         {
-            await _knowledgeService.CreateKnowledgeAsync(new CreateKnowledgeRequest
+            var created = await _knowledgeService.CreateKnowledgeAsync(new CreateKnowledgeRequest
             {
                 ProjectId = task.ProjectId,
                 EntryType = entry.Category,
@@ -612,6 +617,22 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 ChunkIndex = index,
                 ExtractionContext = entry.OriginalText
             }, ct);
+            createdIds.Add(created.Id);
+        }
+
+        if (_memoryEvents != null && createdIds.Count > 0)
+        {
+            await _memoryEvents.AppendAsync(
+                task.UserId,
+                task.ProjectId,
+                null,
+                null,
+                "knowledge_processed",
+                "file_processed",
+                "project",
+                "imported_knowledge_ids",
+                new { taskId = task.Id, knowledgeIds = createdIds },
+                ct);
         }
     }
 }
