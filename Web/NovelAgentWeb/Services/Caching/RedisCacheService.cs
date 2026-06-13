@@ -6,6 +6,8 @@ namespace TM.Web.NovelAgentWeb.Services.Caching;
 
 public class RedisCacheService : IDistributedCacheService
 {
+    internal const int PrefixDeleteBatchSize = 500;
+
     private readonly IDistributedCache _cache;
     private readonly IConnectionMultiplexer? _redis;
     private readonly ILogger<RedisCacheService> _logger;
@@ -90,9 +92,7 @@ public class RedisCacheService : IDistributedCacheService
         {
             if (_redis == null)
             {
-                _logger.LogDebug("Redis multiplexer unavailable for prefix remove {KeyPrefix}; falling back to exact remove", keyPrefix);
-                await _cache.RemoveAsync(keyPrefix, ct);
-                return;
+                throw new NotSupportedException("Distributed prefix removal requires a Redis connection multiplexer.");
             }
 
             var redisPrefix = $"{_instanceName}{keyPrefix}";
@@ -109,12 +109,16 @@ public class RedisCacheService : IDistributedCacheService
                     continue;
                 }
 
-                removed += await RemoveKeysAsync(database, server, redisPrefix, ct);
+                removed += await RemoveKeysAsync(database, server, redisPrefix, PrefixDeleteBatchSize, ct);
             }
 
             _logger.LogDebug("Distributed cache prefix remove deleted {Count} keys for prefix {KeyPrefix}", removed, keyPrefix);
         }
         catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (NotSupportedException)
         {
             throw;
         }
@@ -138,26 +142,60 @@ public class RedisCacheService : IDistributedCacheService
         }
     }
 
-    private static async Task<long> RemoveKeysAsync(IDatabase database, IServer server, string redisPrefix, CancellationToken ct)
+    private static async Task<long> RemoveKeysAsync(IDatabase database, IServer server, string redisPrefix, int batchSize, CancellationToken ct)
     {
-        var keys = new List<RedisKey>();
-
-        foreach (var key in server.Keys(pattern: $"{redisPrefix}:*"))
-        {
-            ct.ThrowIfCancellationRequested();
-            keys.Add(key);
-        }
-
+        var keys = server.Keys(pattern: $"{redisPrefix}:*");
         if (await database.KeyExistsAsync(redisPrefix))
         {
-            keys.Add(redisPrefix);
+            keys = keys.Prepend(redisPrefix);
         }
 
-        if (keys.Count == 0)
+        return await DeletePrefixMatchesInBatchesAsync(
+            keys,
+            redisPrefix,
+            batchSize,
+            batch => database.KeyDeleteAsync(batch.ToArray()),
+            ct);
+    }
+
+    internal static async Task<long> DeletePrefixMatchesInBatchesAsync(
+        IEnumerable<RedisKey> keys,
+        string redisPrefix,
+        int batchSize,
+        Func<IReadOnlyList<RedisKey>, Task<long>> deleteBatchAsync,
+        CancellationToken ct = default)
+    {
+        var batch = new List<RedisKey>(batchSize);
+        var removed = 0L;
+
+        foreach (var key in keys)
         {
-            return 0;
+            ct.ThrowIfCancellationRequested();
+            if (!IsPrefixMatch(key.ToString(), redisPrefix))
+            {
+                continue;
+            }
+
+            batch.Add(key);
+            if (batch.Count == batchSize)
+            {
+                removed += await deleteBatchAsync(batch);
+                batch.Clear();
+            }
         }
 
-        return await database.KeyDeleteAsync(keys.ToArray());
+        if (batch.Count > 0)
+        {
+            removed += await deleteBatchAsync(batch);
+        }
+
+        return removed;
+    }
+
+    internal static bool IsPrefixMatch(string key, string keyPrefix)
+    {
+        return key.Length == keyPrefix.Length
+            ? string.Equals(key, keyPrefix, StringComparison.Ordinal)
+            : key.StartsWith(keyPrefix, StringComparison.Ordinal) && key[keyPrefix.Length] == ':';
     }
 }

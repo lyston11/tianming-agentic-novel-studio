@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 
@@ -27,6 +28,9 @@ public class AgentMemoryEventService : IAgentMemoryEventService
         object payload,
         CancellationToken ct = default)
     {
+        var ownsTransaction = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null;
+        await using var transaction = ownsTransaction ? await _db.Database.BeginTransactionAsync(ct) : null;
+
         _db.AgentMemoryEvents.Add(new AgentMemoryEvent
         {
             Id = Guid.NewGuid().ToString(),
@@ -44,5 +48,10 @@ public class AgentMemoryEventService : IAgentMemoryEventService
 
         await _db.SaveChangesAsync(ct);
         await _versions.BumpAsync(userId, projectId, sessionId, memoryScope, ct);
+
+        if (transaction != null)
+        {
+            await transaction.CommitAsync(ct);
+        }
     }
 }

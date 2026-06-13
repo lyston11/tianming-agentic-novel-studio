@@ -11,6 +11,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="NovelAgentRegression" />
     <InternalsVisibleTo Include="AgentKernelRegression" />
+    <InternalsVisibleTo Include="Unit" />
   </ItemGroup>
 
   <ItemGroup>

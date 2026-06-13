@@ -1,8 +1,12 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using StackExchange.Redis;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using Xunit;
@@ -156,6 +160,118 @@ public class AgentMemoryVersionServiceTests
         Assert.False(await distributedCache.ExistsAsync("toolcache:user-1:session-1:project-1:search:v1"));
     }
 
+    [Fact]
+    public async Task BumpAsync_ConcurrentSqliteCallsDoNotLoseIncrements()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            SeedUserAndProject(setupDb);
+            await setupDb.SaveChangesAsync();
+        }
+
+        const int bumpCount = 16;
+        var tasks = Enumerable.Range(0, bumpCount).Select(async _ =>
+        {
+            await using var db = new NovelAgentDbContext(options);
+            var service = new AgentMemoryVersionService(
+                db,
+                Mock.Of<IDistributedCacheService>(),
+                Mock.Of<IMemoryCacheService>());
+
+            return await service.BumpAsync("user-1", "project-1", "session-1", "project");
+        });
+
+        var versions = await Task.WhenAll(tasks);
+
+        await using var verifyDb = new NovelAgentDbContext(options);
+        var savedVersion = await verifyDb.AgentMemoryVersions
+            .Where(v => v.UserId == "user-1" && v.ProjectId == "project-1" && v.SessionId == "session-1" && v.Scope == "project")
+            .Select(v => v.Version)
+            .SingleAsync();
+
+        Assert.Equal(bumpCount, savedVersion);
+        Assert.Equal(Enumerable.Range(1, bumpCount).Select(v => (long)v).ToArray(), versions.OrderBy(v => v).ToArray());
+    }
+
+    [Fact]
+    public async Task AppendAsync_RollsBackEventAndVersionWhenVersionInvalidationFails()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        SeedUserAndProject(db);
+        await db.SaveChangesAsync();
+
+        var versionService = new AgentMemoryVersionService(
+            db,
+            new ThrowingPrefixDistributedCache(),
+            Mock.Of<IMemoryCacheService>());
+        var eventService = new AgentMemoryEventService(db, versionService);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => eventService.AppendAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            "run-1",
+            "knowledge_used",
+            "tool_call",
+            "project",
+            "project.referenced_knowledge_ids",
+            new { knowledgeId = "knowledge-1" }));
+
+        Assert.Equal(0, await db.AgentMemoryEvents.CountAsync());
+        Assert.Equal(0, await db.AgentMemoryVersions.CountAsync());
+    }
+
+    [Fact]
+    public async Task RedisPrefixDeletion_DeleteMatchingKeysInBatchesWithoutDeletingSiblingPrefixes()
+    {
+        var keys = Enumerable.Range(0, 1001)
+            .Select(i => (RedisKey)$"NovelAgent:memory-context:u:s:p:v{i}")
+            .Append("NovelAgent:memory-context:u:s:p2:v1")
+            .ToList();
+        var batchSizes = new List<int>();
+
+        var removed = await RedisCacheService.DeletePrefixMatchesInBatchesAsync(
+            keys,
+            "NovelAgent:memory-context:u:s:p",
+            500,
+            batch =>
+            {
+                batchSizes.Add(batch.Count);
+                return Task.FromResult<long>(batch.Count);
+            });
+
+        Assert.Equal(1001, removed);
+        Assert.Equal(new[] { 500, 500, 1 }, batchSizes);
+    }
+
+    [Fact]
+    public async Task RedisCacheService_RemoveByPrefixAsync_ThrowsWhenMultiplexerUnavailable()
+    {
+        var distributedCache = new Mock<Microsoft.Extensions.Caching.Distributed.IDistributedCache>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Redis:DefaultExpiration"] = "00:10:00",
+                ["Redis:InstanceName"] = "NovelAgent:"
+            })
+            .Build();
+        var service = new RedisCacheService(
+            distributedCache.Object,
+            configuration,
+            Enumerable.Empty<IConnectionMultiplexer>(),
+            NullLogger<RedisCacheService>.Instance);
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => service.RemoveByPrefixAsync("memory-context:u:s:p"));
+    }
+
     private static NovelAgentDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
@@ -165,7 +281,27 @@ public class AgentMemoryVersionServiceTests
         return new NovelAgentDbContext(options);
     }
 
-    private sealed class PrefixAwareDistributedCache : IDistributedCacheService
+    private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
+    {
+        var connection = new SqliteConnection($"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared");
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static DbContextOptions<NovelAgentDbContext> CreateSqliteOptions(string connectionString)
+    {
+        return new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .Options;
+    }
+
+    private static void SeedUserAndProject(NovelAgentDbContext db)
+    {
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+    }
+
+    private class PrefixAwareDistributedCache : IDistributedCacheService
     {
         private readonly HashSet<string> _keys = new(StringComparer.Ordinal);
 
@@ -186,7 +322,7 @@ public class AgentMemoryVersionServiceTests
             return Task.CompletedTask;
         }
 
-        public Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default)
+        public virtual Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default)
         {
             foreach (var key in _keys.Where(key => IsPrefixMatch(key, keyPrefix)).ToList())
             {
@@ -206,6 +342,14 @@ public class AgentMemoryVersionServiceTests
             return key.Length == keyPrefix.Length
                 ? string.Equals(key, keyPrefix, StringComparison.Ordinal)
                 : key.StartsWith(keyPrefix, StringComparison.Ordinal) && key[keyPrefix.Length] == ':';
+        }
+    }
+
+    private sealed class ThrowingPrefixDistributedCache : PrefixAwareDistributedCache
+    {
+        public override Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default)
+        {
+            throw new InvalidOperationException("prefix invalidation failed");
         }
     }
 }
