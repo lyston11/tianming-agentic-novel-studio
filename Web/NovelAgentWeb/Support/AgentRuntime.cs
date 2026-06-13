@@ -29,6 +29,7 @@ public sealed class AgentRuntime
     private readonly AgentToolRegistry _toolRegistry;
     private readonly AgentMemoryService _memoryService;
     private readonly IChatHistoryRepository _chatHistory;
+    private readonly ChatHistoryCompressor _chatHistoryCompressor;
     private readonly AgentMissionTaskTreeService _taskTreeService;
     private readonly AgentTaskScheduler _taskScheduler;
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
@@ -51,6 +52,7 @@ public sealed class AgentRuntime
         AgentToolRegistry toolRegistry,
         AgentMemoryService memoryService,
         IChatHistoryRepository chatHistory,
+        ChatHistoryCompressor chatHistoryCompressor,
         AgentMissionTaskTreeService taskTreeService,
         AgentTaskScheduler taskScheduler,
         MissionBlackboardRecoveryService blackboardRecovery,
@@ -70,6 +72,7 @@ public sealed class AgentRuntime
         _toolRegistry = toolRegistry;
         _memoryService = memoryService;
         _chatHistory = chatHistory;
+        _chatHistoryCompressor = chatHistoryCompressor;
         _taskTreeService = taskTreeService;
         _taskScheduler = taskScheduler;
         _blackboardRecovery = blackboardRecovery;
@@ -187,7 +190,7 @@ public sealed class AgentRuntime
                 _blackboardRecovery.Recover(session, project, bible);
                 lastContext = await _catalog.WithProjectAsync(project,
                     () => _observationBuilder.BuildAsync(session, project, bible, userMessage, userTurn.Intent, ct), ct).ConfigureAwait(false);
-                lastContext.AnchorPrompt = BuildAnchorPrompt(session, project, bible, step, maxSteps, userMessage);
+                lastContext.AnchorPrompt = await BuildAnchorPromptAsync(session, project, bible, step, maxSteps, userMessage, ct).ConfigureAwait(false);
             }
             else
             {
@@ -519,7 +522,7 @@ public sealed class AgentRuntime
     //  Inspired by GenericAgent's _get_anchor_prompt
     // ═══════════════════════════════════════════════════════════════
 
-    private string BuildAnchorPrompt(AgentSession session, NovelProjectInfo? project, StoryBibleDocument? bible, int step, int maxSteps, string userMessage)
+    private async Task<string> BuildAnchorPromptAsync(AgentSession session, NovelProjectInfo? project, StoryBibleDocument? bible, int step, int maxSteps, string userMessage, CancellationToken ct)
     {
         if (project == null || bible == null)
             return $"Step {step}/{maxSteps}. 无项目。用户可以要求创建新小说或切换到现有项目。";
@@ -549,11 +552,12 @@ public sealed class AgentRuntime
         ts.Add($"卷: {bible.VolumeArcs.Count} | 账本: 设定{bible.CanonLedger.Count}/伏笔{bible.ForeshadowLedger.Count}/角色{bible.CharacterLedger.Count}");
         parts.Add($"<task_state>\n{string.Join("\n", ts)}\n</task_state>");
 
-        // Compressed history
-        var recentHistory = session.ChatHistory.TakeLast(10).Select(t =>
-            $"{(t.Role == "user" ? "U" : "A")}: {t.Content.Replace("\n", " ").Trim().Take(120)}");
-        if (recentHistory.Any())
-            parts.Add($"<history>\n{string.Join("\n", recentHistory)}\n</history>");
+        var promptWindow = await _chatHistory
+            .GetPromptWindowAsync(session.UserId, project.Id, session.SessionId, ct)
+            .ConfigureAwait(false);
+        var history = FormatChatPromptWindow(promptWindow);
+        if (!string.IsNullOrWhiteSpace(history))
+            parts.Add($"<history>\n{history}\n</history>");
 
         // Recent observations summary
         var recentObs = session.WorkingMemory.RecentObservations.TakeLast(5).Select(o =>
@@ -573,6 +577,31 @@ public sealed class AgentRuntime
         parts.Add($"<turn_counter>\n{turnInfo}\n</turn_counter>");
 
         return string.Join("\n\n", parts);
+    }
+
+    public static string FormatChatPromptWindow(ChatPromptWindowDto promptWindow)
+    {
+        var lines = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(promptWindow.MetaSummary))
+        {
+            lines.Add($"Meta: {TruncateLine(promptWindow.MetaSummary, 300)}");
+        }
+
+        foreach (var summary in promptWindow.Summaries)
+        {
+            lines.Add($"Summary {summary.StartTurn}-{summary.EndTurn}: {TruncateLine(summary.Content, 240)}");
+            if (summary.KeyDecisions.Count > 0)
+                lines.Add($"Decisions: {string.Join("; ", summary.KeyDecisions.Select(d => TruncateLine(d, 120)))}");
+        }
+
+        foreach (var message in promptWindow.RecentMessages)
+        {
+            var role = string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase) ? "U" : "A";
+            lines.Add($"{role}: {TruncateLine(message.Content, 120)}");
+        }
+
+        return string.Join("\n", lines);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1034,6 +1063,12 @@ public sealed class AgentRuntime
             role,
             trimmed,
             ct).ConfigureAwait(false);
+        await _chatHistoryCompressor.CompressAndPersistAsync(
+            session.UserId,
+            string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+            session.SessionId,
+            session.ChatHistory,
+            ct).ConfigureAwait(false);
     }
 
     private static AgentAction BuildFallbackReplyAction(AgentAction action) => new()
@@ -1178,6 +1213,12 @@ public sealed class AgentRuntime
     }
 
     private static string TrimForReply(string value, int maxLength)
+    {
+        var trimmed = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "...";
+    }
+
+    private static string TruncateLine(string value, int maxLength)
     {
         var trimmed = value.Replace("\r", " ").Replace("\n", " ").Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "...";
