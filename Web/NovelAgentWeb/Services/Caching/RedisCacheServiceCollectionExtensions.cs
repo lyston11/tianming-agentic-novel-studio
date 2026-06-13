@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Caching.StackExchangeRedis;
+using StackExchange.Redis;
 
 namespace TM.Web.NovelAgentWeb.Services.Caching;
 
@@ -20,6 +21,8 @@ public static class RedisCacheServiceCollectionExtensions
                 options.Configuration = redisConnectionString;
                 options.InstanceName = redisInstanceName ?? "NovelAgent:";
             });
+
+            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnectionString));
         }
         else if (redisAllowFallback)
         {

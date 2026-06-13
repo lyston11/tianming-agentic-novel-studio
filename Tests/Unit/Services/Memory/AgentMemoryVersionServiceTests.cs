@@ -34,8 +34,9 @@ public class AgentMemoryVersionServiceTests
 
         memoryCache.Verify(x => x.RemoveByPrefix("memory-context:user-1:session-1:project-1"), Times.Exactly(2));
         memoryCache.Verify(x => x.RemoveByPrefix("toolcache:user-1:session-1:project-1"), Times.Exactly(2));
-        redisCache.Verify(x => x.RemoveAsync("memory-context:user-1:session-1:project-1", It.IsAny<CancellationToken>()), Times.Exactly(2));
-        redisCache.Verify(x => x.RemoveAsync("toolcache:user-1:session-1:project-1", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        redisCache.Verify(x => x.RemoveByPrefixAsync("memory-context:user-1:session-1:project-1", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        redisCache.Verify(x => x.RemoveByPrefixAsync("toolcache:user-1:session-1:project-1", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        redisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -115,6 +116,46 @@ public class AgentMemoryVersionServiceTests
         Assert.Equal("old-tool", service.Get<string>("toolcache:u:s:p:phase:v1"));
     }
 
+    [Fact]
+    public async Task DistributedCache_RemoveByPrefixAsync_RemovesVersionedPrefixMatches()
+    {
+        var cache = new PrefixAwareDistributedCache();
+        await cache.SetAsync("memory-context:u:s:p:v1", new object());
+        await cache.SetAsync("memory-context:u:s:p2:v1", new object());
+        await cache.SetAsync("toolcache:u:s:p:phase:v1", new object());
+
+        await cache.RemoveByPrefixAsync("memory-context:u:s:p");
+
+        Assert.False(await cache.ExistsAsync("memory-context:u:s:p:v1"));
+        Assert.True(await cache.ExistsAsync("memory-context:u:s:p2:v1"));
+        Assert.True(await cache.ExistsAsync("toolcache:u:s:p:phase:v1"));
+
+        await cache.RemoveByPrefixAsync("toolcache:u:s:p");
+
+        Assert.False(await cache.ExistsAsync("toolcache:u:s:p:phase:v1"));
+    }
+
+    [Fact]
+    public async Task BumpAsync_RemovesVersionedDistributedCacheEntriesByPrefix()
+    {
+        await using var db = CreateDbContext();
+        var distributedCache = new PrefixAwareDistributedCache();
+        var service = new AgentMemoryVersionService(
+            db,
+            distributedCache,
+            Mock.Of<IMemoryCacheService>());
+
+        await distributedCache.SetAsync("memory-context:user-1:session-1:project-1:v1", new object());
+        await distributedCache.SetAsync("memory-context:user-1:session-1:project-2:v1", new object());
+        await distributedCache.SetAsync("toolcache:user-1:session-1:project-1:search:v1", new object());
+
+        await service.BumpAsync("user-1", "project-1", "session-1", "project");
+
+        Assert.False(await distributedCache.ExistsAsync("memory-context:user-1:session-1:project-1:v1"));
+        Assert.True(await distributedCache.ExistsAsync("memory-context:user-1:session-1:project-2:v1"));
+        Assert.False(await distributedCache.ExistsAsync("toolcache:user-1:session-1:project-1:search:v1"));
+    }
+
     private static NovelAgentDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
@@ -122,5 +163,49 @@ public class AgentMemoryVersionServiceTests
             .Options;
 
         return new NovelAgentDbContext(options);
+    }
+
+    private sealed class PrefixAwareDistributedCache : IDistributedCacheService
+    {
+        private readonly HashSet<string> _keys = new(StringComparer.Ordinal);
+
+        public Task<T?> GetAsync<T>(string key, CancellationToken ct = default) where T : class
+        {
+            return Task.FromResult<T?>(_keys.Contains(key) ? Activator.CreateInstance<T>() : null);
+        }
+
+        public Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken ct = default) where T : class
+        {
+            _keys.Add(key);
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(string key, CancellationToken ct = default)
+        {
+            _keys.Remove(key);
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default)
+        {
+            foreach (var key in _keys.Where(key => IsPrefixMatch(key, keyPrefix)).ToList())
+            {
+                _keys.Remove(key);
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> ExistsAsync(string key, CancellationToken ct = default)
+        {
+            return Task.FromResult(_keys.Contains(key));
+        }
+
+        private static bool IsPrefixMatch(string key, string keyPrefix)
+        {
+            return key.Length == keyPrefix.Length
+                ? string.Equals(key, keyPrefix, StringComparison.Ordinal)
+                : key.StartsWith(keyPrefix, StringComparison.Ordinal) && key[keyPrefix.Length] == ':';
+        }
     }
 }

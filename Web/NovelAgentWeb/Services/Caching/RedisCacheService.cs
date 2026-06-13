@@ -1,22 +1,28 @@
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
+using StackExchange.Redis;
 
 namespace TM.Web.NovelAgentWeb.Services.Caching;
 
 public class RedisCacheService : IDistributedCacheService
 {
     private readonly IDistributedCache _cache;
+    private readonly IConnectionMultiplexer? _redis;
     private readonly ILogger<RedisCacheService> _logger;
     private readonly TimeSpan _defaultExpiration;
+    private readonly string _instanceName;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public RedisCacheService(
         IDistributedCache cache,
         IConfiguration configuration,
+        IEnumerable<IConnectionMultiplexer> redisConnections,
         ILogger<RedisCacheService> logger)
     {
         _cache = cache;
+        _redis = redisConnections.FirstOrDefault();
         _logger = logger;
+        _instanceName = configuration["Redis:InstanceName"] ?? "NovelAgent:";
 
         if (!TimeSpan.TryParse(configuration["Redis:DefaultExpiration"], out _defaultExpiration))
         {
@@ -78,6 +84,46 @@ public class RedisCacheService : IDistributedCacheService
         }
     }
 
+    public async Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default)
+    {
+        try
+        {
+            if (_redis == null)
+            {
+                _logger.LogDebug("Redis multiplexer unavailable for prefix remove {KeyPrefix}; falling back to exact remove", keyPrefix);
+                await _cache.RemoveAsync(keyPrefix, ct);
+                return;
+            }
+
+            var redisPrefix = $"{_instanceName}{keyPrefix}";
+            var database = _redis.GetDatabase();
+            var removed = 0L;
+
+            foreach (var endpoint in _redis.GetEndPoints())
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var server = _redis.GetServer(endpoint);
+                if (!server.IsConnected || server.IsReplica)
+                {
+                    continue;
+                }
+
+                removed += await RemoveKeysAsync(database, server, redisPrefix, ct);
+            }
+
+            _logger.LogDebug("Distributed cache prefix remove deleted {Count} keys for prefix {KeyPrefix}", removed, keyPrefix);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Distributed cache prefix REMOVE failed for prefix {KeyPrefix}", keyPrefix);
+        }
+    }
+
     public async Task<bool> ExistsAsync(string key, CancellationToken ct = default)
     {
         try
@@ -90,5 +136,28 @@ public class RedisCacheService : IDistributedCacheService
             _logger.LogWarning(ex, "Distributed cache EXISTS check failed for key {Key}, returning false", key);
             return false;
         }
+    }
+
+    private static async Task<long> RemoveKeysAsync(IDatabase database, IServer server, string redisPrefix, CancellationToken ct)
+    {
+        var keys = new List<RedisKey>();
+
+        foreach (var key in server.Keys(pattern: $"{redisPrefix}:*"))
+        {
+            ct.ThrowIfCancellationRequested();
+            keys.Add(key);
+        }
+
+        if (await database.KeyExistsAsync(redisPrefix))
+        {
+            keys.Add(redisPrefix);
+        }
+
+        if (keys.Count == 0)
+        {
+            return 0;
+        }
+
+        return await database.KeyDeleteAsync(keys.ToArray());
     }
 }

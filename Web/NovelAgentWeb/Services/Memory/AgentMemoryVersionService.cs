@@ -80,8 +80,7 @@ public class AgentMemoryVersionService : IAgentMemoryVersionService
         _memoryCache.RemoveByPrefix(memoryContextPrefix);
         _memoryCache.RemoveByPrefix(toolCachePrefix);
 
-        // Distributed cache currently has no prefix delete API, so remove the prefix keys exactly.
-        await _distributedCache.RemoveAsync(memoryContextPrefix, ct);
-        await _distributedCache.RemoveAsync(toolCachePrefix, ct);
+        await _distributedCache.RemoveByPrefixAsync(memoryContextPrefix, ct);
+        await _distributedCache.RemoveByPrefixAsync(toolCachePrefix, ct);
     }
 }

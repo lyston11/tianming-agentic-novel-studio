@@ -22,6 +22,11 @@ public interface IDistributedCacheService
     Task RemoveAsync(string key, CancellationToken ct = default);
 
     /// <summary>
+    /// Remove cached values matching a key prefix.
+    /// </summary>
+    Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default);
+
+    /// <summary>
     /// Check if key exists in cache.
     /// </summary>
     Task<bool> ExistsAsync(string key, CancellationToken ct = default);
