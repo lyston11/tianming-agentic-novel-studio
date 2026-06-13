@@ -213,9 +213,16 @@ agent_memory_events
 
 agent_memory_versions
   user_id, project_id, session_id, scope, version, updated_at
+
+project_knowledge_usages
+  id, user_id, project_id, knowledge_id, status,
+  source_session_id, source_run_id, first_seen_at, last_used_at,
+  usage_count, note
 ```
 
 `agent_sessions.session_data` 保留当前运行快照，包括 `workingMemory`、`toolSearchCache` 和 UI 需要的轻量状态；完整 ChatHistory 真源进入 `agent_chat_turns`，完整记忆字段真源进入 `agent_memories`，每次沉淀来源进入 `agent_memory_events`。`agent_memory_versions` 用于工具缓存、知识检索缓存和 prompt 上下文缓存失效。
+
+`project_knowledge_usages` 是项目级知识使用关系表，用来区分同一条知识在不同项目里的状态。A 项目导入或引用过某条知识，不代表 B 项目也导入或引用过；跨项目偏好只能沉淀到 AuthorMemory 的全局收藏或偏好字段，不能回写污染其他项目的 `referencedKnowledgeIds`。
 
 统一内容层使用以下抽象，不把长内容散落在各业务表的大字段里：
 
@@ -399,6 +406,7 @@ MemoryContext
    - 新写小说、规划卷、规划章节、生成章节、提交章节、知识命中、质量门禁结论都必须检查并更新 ProjectMemory。
    - 知识上传/处理完成进入 `importedKnowledgeIds` 和 `knowledgeInventory`，表示项目拥有这些知识资源。
    - Agent 检索并实际用于规划/写作后，才进入 `referencedKnowledgeIds`，表示创作决策已经引用过。
+   - `importedKnowledgeIds`、`knowledgeInventory`、`referencedKnowledgeIds` 必须按 `userId + projectId` 隔离，同一条知识在不同项目中的导入、引用、使用次数和最近使用时间互不影响。
    - 项目级硬约束优先于 AuthorMemory 风格喜好。
 
 4. **AuthorMemory**
@@ -638,12 +646,13 @@ POST /api/knowledge/upload
 上传知识进入记忆的边界：
 
 1. `SessionMemory.recentUploadedKnowledgeIds` 记录当前会话刚上传或刚处理的任务、文档和知识条目，便于下一轮 Agent 主动知道“用户刚放进来一批知识”。
-2. `ProjectMemory.importedKnowledgeIds` 记录本项目拥有的知识资源，不代表已经用于创作。
-3. `ProjectMemory.knowledgeInventory` 保存轻量索引摘要，例如 `knowledgeId/title/entryType/tags/weight/source/createdAt`，用于 prompt 提示和检索 boost；完整知识正文仍回 SQLite 内容层读取，语义召回走 Qdrant。
-4. 只有 Agent 检索后把知识用于规划、写作、评审或 StoryBible 修改，才写入 `ProjectMemory.referencedKnowledgeIds`。
-5. 用户明确收藏、置顶，或同一知识在多个项目反复高频使用，才写入 `AuthorMemory.favoriteKnowledgeIds`。
-6. 处理失败、向量化失败、JSON 清洗失败、重复知识合并经验写入 `ExecutionMemory.knowledgeProcessingFailures` 或成功修复经验。
-7. 每次上传、处理完成、处理失败、知识编辑、知识删除都必须递增相关 memory version，并失效 `memory-context:*`、`toolcache:*`、知识检索热点结果和前端任务状态缓存。
+2. `ProjectMemory.importedKnowledgeIds` 记录本项目拥有的知识资源，不代表已经用于创作；必须来自 `project_knowledge_usages(project_id, knowledge_id, status=imported)` 或等价项目级关系。
+3. `ProjectMemory.knowledgeInventory` 保存本项目内的轻量索引摘要，例如 `knowledgeId/title/entryType/tags/weight/source/createdAt/projectUsageStatus/projectUsageCount/projectLastUsedAt`，用于 prompt 提示和检索 boost；完整知识正文仍回 SQLite 内容层读取，语义召回走 Qdrant。
+4. 只有 Agent 在当前项目中检索后把知识用于规划、写作、评审或 StoryBible 修改，才写入当前项目的 `ProjectMemory.referencedKnowledgeIds`，并更新 `project_knowledge_usages.status=referenced`、`usage_count`、`last_used_at`。
+5. 同一条知识可以在 A 项目是 `referenced`，在 B 项目只是 `imported` 或完全未使用；检索 boost、used trope 过滤、prompt 展示必须按当前 `projectId` 读取。
+6. 用户明确收藏、置顶，或同一知识在多个项目反复高频使用，才写入 `AuthorMemory.favoriteKnowledgeIds`；这只代表作者全局偏好，不自动让所有项目变成 referenced。
+7. 处理失败、向量化失败、JSON 清洗失败、重复知识合并经验写入 `ExecutionMemory.knowledgeProcessingFailures` 或成功修复经验。
+8. 每次上传、处理完成、处理失败、知识编辑、知识删除都必须递增相关 memory version，并失效 `memory-context:*`、`toolcache:*`、知识检索热点结果和前端任务状态缓存。
 
 ### 7.2 检索闭环
 
@@ -658,7 +667,8 @@ SearchCreativeKnowledge
   -> usage count increment
   -> MemoryEvent(source_type=knowledge_used)
   -> MemoryUpdate.usedKnowledgeIds
-  -> ProjectMemory.referencedKnowledgeIds append used ids
+  -> project_knowledge_usages upsert by userId + projectId + knowledgeId
+  -> current ProjectMemory.referencedKnowledgeIds append used ids
 ```
 
 重排序规则：
@@ -772,6 +782,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 - 补齐原始 schema。
 - 新增统一内容层：`content_documents`、`content_chunks`、`content_vector_points`，以及章节、素材、知识上传任务、StoryBible snapshot、AgentRun artifact 的内容文档引用。
 - 新增 Agent 记忆真源与审计层：`agent_chat_turns`、`agent_chat_summaries`、`agent_memory_events`、`agent_memory_versions`，并补 `agent_memories` 的 session scope 能力。
+- 新增项目级知识使用关系：`project_knowledge_usages` 或等价结构，确保同一知识在不同项目中的 imported/referenced/usage 状态互相隔离。
 - 写 EF migration。
 - 保留现有数据并补迁移脚本。
 - 建立必要索引和外键。
@@ -799,6 +810,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 - 完成知识条目字段更新。
 - 完成上传知识主动写入 SessionMemory 和 ProjectMemory inventory，不能只在检索命中后写记忆。
+- 完成项目级知识使用状态隔离：A 项目引用过的知识不能让 B 项目自动变成 referenced。
 - 完成 usage count 与 MemoryUpdate 引用。
 - 完成显式 material vectorize API。
 - 完成 memory-aware rerank。
@@ -849,6 +861,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 5. 新小说、卷、章节、StoryBible、知识处理、工具调用等重要任务会产生 `MemoryEvent`，并刷新 Redis 与 memory version。
 6. tool_search 缓存命中、过期、Redis miss、memory version 失效、ExecutionMemory 关联失效都有测试和 runtime trace。
 7. 知识库上传文件后能处理、抽取、向量化、主动进入 SessionMemory 和 ProjectMemory inventory；被 Agent 实际使用后再进入 referenced knowledge。
-8. 前端项目上下文跨页面一致。
-9. 后端 build、核心单元测试、关键集成测试、前端 build 全部通过。
-10. `Docs/superpowers` 新增 implementation plan 与测试报告，能追溯每个修复任务。
+8. 同一知识在不同项目中的导入、引用、使用次数和最近使用时间互相隔离；A 项目 referenced 不会污染 B 项目。
+9. 前端项目上下文跨页面一致。
+10. 后端 build、核心单元测试、关键集成测试、前端 build 全部通过。
+11. `Docs/superpowers` 新增 implementation plan 与测试报告，能追溯每个修复任务。
