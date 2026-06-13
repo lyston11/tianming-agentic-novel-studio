@@ -61,7 +61,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Assert.NotNull(user);
             Assert.Equal("journey1user", user.Username);
             Assert.Equal("journey1@test.com", user.Email);
-            Assert.Equal("User", user.Role);
+            Assert.Equal("author", user.Role);
 
             var userSettings = await db.UserSettings.FindAsync(authResponse.User.Id);
             Assert.NotNull(userSettings);

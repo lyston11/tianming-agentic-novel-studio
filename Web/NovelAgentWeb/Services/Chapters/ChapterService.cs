@@ -213,7 +213,7 @@ public class ChapterService : IChapterService
             if (contentChanged && newContent != null)
             {
                 // Delete old vectors
-                await DeleteChapterVectorsAsync(chapter.Id, chapter.ProjectId, cancellationToken);
+                await DeleteChapterVectorsAsync(userId, chapter.Id, chapter.ProjectId, cancellationToken);
 
                 // Generate and store new embeddings
                 await GenerateAndStoreEmbeddingsAsync(chapter, newContent, userId, cancellationToken);
@@ -303,7 +303,7 @@ public class ChapterService : IChapterService
             DeleteFileIfExists(fullPath);
 
             // 3. Delete vectors from Qdrant
-            await DeleteChapterVectorsAsync(chapter.Id, chapter.ProjectId, cancellationToken);
+            await DeleteChapterVectorsAsync(userId, chapter.Id, chapter.ProjectId, cancellationToken);
 
             // Commit transaction
             await transaction.CommitAsync(cancellationToken);
@@ -400,7 +400,7 @@ public class ChapterService : IChapterService
         }
 
         // Store vectors in Qdrant
-        await _vectorStore.UpsertVectorsAsync(chapter.ProjectId, vectors, cancellationToken);
+        await _vectorStore.UpsertVectorsAsync(userId, vectors, cancellationToken);
 
         _logger.LogInformation("Generated and stored {VectorCount} embeddings for chapter {ChapterId}",
             vectors.Count, chapter.Id);
@@ -434,6 +434,7 @@ public class ChapterService : IChapterService
     }
 
     private async Task DeleteChapterVectorsAsync(
+        string userId,
         string chapterId,
         string projectId,
         CancellationToken cancellationToken)
@@ -446,7 +447,7 @@ public class ChapterService : IChapterService
                 ["chapter_id"] = chapterId
             };
 
-            await _vectorStore.DeleteVectorsByFilterAsync(projectId, filters, cancellationToken);
+            await _vectorStore.DeleteVectorsByFilterAsync(userId, filters, cancellationToken);
 
             _logger.LogInformation("Deleted vectors for chapter {ChapterId} from project {ProjectId}",
                 chapterId, projectId);

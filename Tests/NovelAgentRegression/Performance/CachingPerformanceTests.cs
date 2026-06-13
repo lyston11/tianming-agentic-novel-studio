@@ -167,6 +167,10 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authData!.Token);
 
+        // Warm the authenticated MVC pipeline so the threshold measures the steady-state query path.
+        var warmupResponse = await client.GetAsync("/api/projects?pageNumber=1&pageSize=20");
+        warmupResponse.EnsureSuccessStatusCode();
+
         // Act - Measure response time
         var sw = Stopwatch.StartNew();
         var response = await client.GetAsync("/api/projects?pageNumber=1&pageSize=20");

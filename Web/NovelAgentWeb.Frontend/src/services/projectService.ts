@@ -59,7 +59,7 @@ export const projectService = {
     pageSize: number = 20
   ): Promise<PagedResponse<ProjectResponse>> {
     return api<PagedResponse<ProjectResponse>>(
-      `/project?pageNumber=${pageNumber}&pageSize=${pageSize}`
+      `/projects?pageNumber=${pageNumber}&pageSize=${pageSize}`
     );
   },
 
@@ -70,7 +70,7 @@ export const projectService = {
    */
   async listProjects(): Promise<ProjectResponse[]> {
     const response = await api<PagedResponse<ProjectResponse>>(
-      '/project?pageNumber=1&pageSize=1000'
+      '/projects?pageNumber=1&pageSize=1000'
     );
     return response.items;
   },
@@ -82,7 +82,7 @@ export const projectService = {
   async getUserStats(): Promise<UserStats> {
     // Get all projects to calculate stats
     const response = await api<PagedResponse<ProjectResponse>>(
-      '/project?pageNumber=1&pageSize=1000'
+      '/projects?pageNumber=1&pageSize=1000'
     );
 
     const totalWordCount = response.items.reduce(

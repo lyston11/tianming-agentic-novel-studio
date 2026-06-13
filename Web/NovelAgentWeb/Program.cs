@@ -15,6 +15,7 @@ using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Chapters;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Embedding;
+using TM.Web.NovelAgentWeb.Services.Health;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Materials;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -253,7 +254,10 @@ builder.Services.AddScoped<SemanticSearchService>();
 
 // TODO: AgentSchedulerHostedService needs refactoring for multi-user workspace isolation
 // builder.Services.AddHostedService<AgentSchedulerHostedService>();
-builder.Services.AddHostedService<QdrantHealthCheck>();
+builder.Services.AddSingleton<QdrantHealthCheck>();
+builder.Services.AddSingleton<IQdrantHealthProbe>(sp => sp.GetRequiredService<QdrantHealthCheck>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<QdrantHealthCheck>());
+builder.Services.AddSingleton<RuntimeHealthService>();
 
 var app = builder.Build();
 
@@ -290,11 +294,8 @@ app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapGet("/health", (EmbeddingRuntimeStatus embedding) => Results.Ok(new
-{
-    status = "ok",
-    embedding = EmbeddingHealthResponse.From(embedding)
-})).AllowAnonymous();
+app.MapGet("/health", async (RuntimeHealthService health, CancellationToken cancellationToken) =>
+    Results.Ok(await health.CheckAsync(cancellationToken))).AllowAnonymous();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 

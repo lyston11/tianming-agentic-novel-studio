@@ -1,12 +1,22 @@
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Support;
+using DbKnowledgeBase = TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase;
+using DbNovelProject = TM.Web.NovelAgentWeb.Data.Entities.NovelProject;
+using DbUser = TM.Web.NovelAgentWeb.Data.Entities.User;
 
 namespace TM.Tests.AgentKernelRegression;
 
@@ -42,6 +52,7 @@ internal static class Program
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
+        ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
         ("StartNewNovelProject is idempotent while awaiting foundation", StartNewNovelProjectIsIdempotentWhileAwaitingFoundation),
     };
 
@@ -1571,6 +1582,63 @@ internal static class Program
         }
     }
 
+    private static async Task KnowledgeUsageRemainsProjectScoped()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        db.Users.Add(new DbUser { Id = "user-scope", Username = "scope", Email = "scope@example.com", PasswordHash = "hash", Role = "author" });
+        db.NovelProjects.Add(new DbNovelProject { Id = "project-a", UserId = "user-scope", Title = "A" });
+        db.NovelProjects.Add(new DbNovelProject { Id = "project-b", UserId = "user-scope", Title = "B" });
+        db.KnowledgeBases.Add(new DbKnowledgeBase
+        {
+            Id = "knowledge-shared",
+            ProjectId = "project-a",
+            EntryType = "ReaderPromise",
+            Title = "胜利代价",
+            Content = "胜利必须付出代价。",
+            SourceType = "upload",
+            Weight = 8
+        });
+        await db.SaveChangesAsync();
+
+        var memoryRepository = new AgentMemoryRepository(
+            db,
+            new NoopDistributedCacheService(),
+            new DirectMemoryCacheService(),
+            new NoopVectorStore(),
+            new FixedEmbeddingService(),
+            NullLogger<AgentMemoryRepository>.Instance);
+        var usageService = new ProjectKnowledgeUsageService(
+            db,
+            new NoopMemoryEventService(),
+            memoryRepository,
+            NullLogger<ProjectKnowledgeUsageService>.Instance);
+        var contextService = new AgentMemoryContextService(new EmptyChatHistoryRepository(), memoryRepository);
+
+        await usageService.MarkReferencedAsync("user-scope", "project-a", "knowledge-shared", "session-a", "run-a");
+        await usageService.MarkImportedAsync("user-scope", "project-b", "knowledge-shared", "session-b", "upload");
+
+        var projectA = await contextService.BuildAsync("user-scope", "project-a", "session-a");
+        var projectB = await contextService.BuildAsync("user-scope", "project-b", "session-b");
+
+        Check.True(projectA.Project.ReferencedKnowledgeIds.Contains("knowledge-shared"),
+            "Project A should remember that the knowledge was referenced.");
+        Check.True(projectB.Project.ImportedKnowledgeIds.Contains("knowledge-shared"),
+            "Project B should remember imported knowledge for its own project.");
+        Check.True(!projectB.Project.ReferencedKnowledgeIds.Contains("knowledge-shared"),
+            "Project B must not inherit Project A referenced knowledge state.");
+        Check.Equal("referenced", projectA.Project.KnowledgeInventory.Single(x => x.KnowledgeId == "knowledge-shared").ProjectUsageStatus,
+            "Project A inventory should carry referenced usage status.");
+        Check.Equal("imported", projectB.Project.KnowledgeInventory.Single(x => x.KnowledgeId == "knowledge-shared").ProjectUsageStatus,
+            "Project B inventory should carry imported usage status.");
+    }
+
     private static AgentMissionPlan BuildPlanWithChapter(string runId, Action<AgentChapterTask> configure)
     {
         var chapter = new AgentChapterTask
@@ -1662,7 +1730,105 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
     }
 
     public Task IncrementUsageAsync(string knowledgeId, CancellationToken ct = default) =>
-        throw new NotSupportedException();
+        Task.CompletedTask;
+}
+
+internal sealed class NoopDistributedCacheService : IDistributedCacheService
+{
+    public Task<T?> GetAsync<T>(string key, CancellationToken ct = default) where T : class =>
+        Task.FromResult<T?>(null);
+
+    public Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken ct = default) where T : class =>
+        Task.CompletedTask;
+
+    public Task RemoveAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> ExistsAsync(string key, CancellationToken ct = default) => Task.FromResult(false);
+}
+
+internal sealed class DirectMemoryCacheService : IMemoryCacheService
+{
+    public async Task<T?> GetOrSetAsync<T>(
+        string key,
+        Func<Task<T>> factory,
+        TimeSpan expiration,
+        CancellationToken cancellationToken = default)
+    {
+        return await factory();
+    }
+
+    public T? Get<T>(string key) => default;
+    public void Set<T>(string key, T value, TimeSpan expiration) { }
+    public void Remove(string key) { }
+    public void RemoveByPrefix(string keyPrefix) { }
+}
+
+internal sealed class NoopVectorStore : IVectorStore
+{
+    public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<List<SearchResult>> SearchSimilarAsync(
+        string userId,
+        float[] queryVector,
+        int topK = 10,
+        Dictionary<string, object>? filters = null,
+        CancellationToken ct = default) =>
+        Task.FromResult(new List<SearchResult>());
+
+    public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
+    public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) => Task.FromResult<CollectionInfo?>(null);
+    public Task DeleteVectorsByFilterAsync(string userId, Dictionary<string, object> filters, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+internal sealed class FixedEmbeddingService : IMicroEmbeddingService
+{
+    public int Dimension => 3;
+    public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(new[] { 1f, 0f, 0f });
+
+    public Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(texts.Select(_ => new[] { 1f, 0f, 0f }).ToArray());
+
+    public void ReleaseSession() { }
+    public bool IsModelReady() => true;
+}
+
+internal sealed class NoopMemoryEventService : IAgentMemoryEventService
+{
+    public Task AppendAsync(
+        string userId,
+        string? projectId,
+        string? sessionId,
+        string? runId,
+        string sourceType,
+        string triggerType,
+        string memoryScope,
+        string memoryKey,
+        object payload,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+}
+
+internal sealed class EmptyChatHistoryRepository : IChatHistoryRepository
+{
+    public Task AppendAsync(string userId, string? projectId, string sessionId, string role, string content, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task SaveSummaryAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        int startTurn,
+        int endTurn,
+        string summaryType,
+        string content,
+        IReadOnlyList<string> keyDecisions,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task<ChatPromptWindowDto> GetPromptWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(new ChatPromptWindowDto(null, Array.Empty<ChatHistorySummaryDto>(), Array.Empty<ChatHistoryTurnDto>()));
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

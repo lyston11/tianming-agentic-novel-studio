@@ -242,6 +242,16 @@ public class NovelAgentDbContext : DbContext
                 .WithMany(p => p.Characters)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<Chapter>()
+                .WithMany()
+                .HasForeignKey(e => e.FirstAppearChapter)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne<Chapter>()
+                .WithMany()
+                .HasForeignKey(e => e.LastAppearChapter)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Material entity configuration

@@ -461,6 +461,7 @@ public class ForeshadowRepositoryTests
         var character = new Character
         {
             Id = Guid.NewGuid().ToString(),
+            UserId = user.Id,
             ProjectId = project.Id,
             Name = "Hero",
             Role = "protagonist",

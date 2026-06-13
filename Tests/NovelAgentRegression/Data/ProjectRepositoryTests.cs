@@ -176,9 +176,9 @@ public class ProjectRepositoryTests
 
         var characters = new[]
         {
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Protagonist", Role = "hero" },
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Antagonist", Role = "villain" },
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Mentor", Role = "supporting" }
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Protagonist", Role = "hero" },
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Antagonist", Role = "villain" },
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Mentor", Role = "supporting" }
         };
 
         context.Users.Add(user);
@@ -243,13 +243,16 @@ public class ProjectRepositoryTests
         var character = new Character
         {
             Id = Guid.NewGuid().ToString(),
+            UserId = user.Id,
             ProjectId = project.Id,
-            Name = "Hero"
+            Name = "Hero",
+            Role = "protagonist"
         };
 
         var worldSetting = new WorldSettingEntry
         {
             Id = Guid.NewGuid().ToString(),
+            UserId = user.Id,
             ProjectId = project.Id,
             Category = "magic",
             Title = "Magic System",

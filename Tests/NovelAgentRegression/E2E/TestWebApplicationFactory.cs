@@ -4,11 +4,13 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Tests.NovelAgentRegression.E2E;
 
@@ -18,10 +20,22 @@ namespace TM.Tests.NovelAgentRegression.E2E;
 /// </summary>
 public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgentWeb.Program>
 {
+    private const string TestJwtSecretKey = "test-secret-key-with-at-least-32-characters-for-security";
     private SqliteConnection? _connection;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureAppConfiguration((_, config) =>
+        {
+            config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["JwtSettings:SecretKey"] = TestJwtSecretKey,
+                ["JwtSettings:Issuer"] = "NovelAgentWeb",
+                ["JwtSettings:Audience"] = "NovelAgentWeb",
+                ["JwtSettings:ExpiryDays"] = "7"
+            });
+        });
+
         builder.ConfigureServices(services =>
         {
             // Remove the existing DbContext registration
@@ -42,14 +56,16 @@ public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgent
                 options.UseSqlite(_connection);
             });
 
+            services.RemoveAll<IVectorStore>();
+            services.AddSingleton<IVectorStore, NoopVectorStore>();
+
             // Override JWT configuration for tests
             services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
             {
-                var testSecretKey = "test-secret-key-with-at-least-32-characters-for-security";
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(testSecretKey)),
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestJwtSecretKey)),
                     ValidateIssuer = true,
                     ValidIssuer = "NovelAgentWeb",
                     ValidateAudience = true,
@@ -83,3 +99,20 @@ public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgent
     }
 }
 
+internal sealed class NoopVectorStore : IVectorStore
+{
+    public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<List<SearchResult>> SearchSimilarAsync(
+        string userId,
+        float[] queryVector,
+        int topK = 10,
+        Dictionary<string, object>? filters = null,
+        CancellationToken ct = default) =>
+        Task.FromResult(new List<SearchResult>());
+
+    public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
+    public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) => Task.FromResult<CollectionInfo?>(null);
+    public Task DeleteVectorsByFilterAsync(string userId, Dictionary<string, object> filters, CancellationToken ct = default) => Task.CompletedTask;
+}

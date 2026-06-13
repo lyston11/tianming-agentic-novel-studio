@@ -289,9 +289,14 @@ public class StoryBibleRepository : IStoryBibleRepository
 
         if (existing != null)
         {
+            var existingEntry = _context.Entry(existing);
+            var previousContent = existingEntry.State == EntityState.Modified
+                ? existingEntry.OriginalValues.GetValue<string>(nameof(WorldSettingEntry.Content))
+                : existing.Content;
+
             // Update existing - increment version
             worldSetting.Version = existing.Version + 1;
-            worldSetting.PreviousVersion = existing.Content; // Store previous content
+            worldSetting.PreviousVersion = previousContent; // Store previous content
             worldSetting.CreatedAt = existing.CreatedAt;
             _context.Entry(existing).CurrentValues.SetValues(worldSetting);
             _logger.LogInformation("Updated WorldSetting '{Title}' (ID: {SettingId}, Version: {Version}) for project {ProjectId}",

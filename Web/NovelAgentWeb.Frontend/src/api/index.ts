@@ -178,20 +178,20 @@ export const createSseConnection = (sessionId: string): EventSource => {
 
 // Novel Projects
 export const createNovelProject = (req: NovelProjectCreateRequest) =>
-  post<NovelProjectInfo>('/project', {
+  post<NovelProjectInfo>('/projects', {
     title: req.title || '未命名新书',
     genre: req.genre,
     coreHook: req.seed,
   });
 export const activateNovelProject = (projectId: string) =>
-  get<NovelProjectInfo>(`/project/${projectId}`);
+  get<NovelProjectInfo>(`/projects/${projectId}`);
 export const updateNovelProject = (projectId: string, req: NovelProjectUpdateRequest) =>
-  api<NovelProjectInfo>(`/project/${projectId}`, {
+  api<NovelProjectInfo>(`/projects/${projectId}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   });
 export const deleteNovelProject = async (projectId: string): Promise<NovelProjectDeleteResult> => {
-  await api<void>(`/project/${projectId}`, { method: 'DELETE' });
+  await api<void>(`/projects/${projectId}`, { method: 'DELETE' });
   return { success: true, message: '项目已删除。', activeProjectId: '' };
 };
 
