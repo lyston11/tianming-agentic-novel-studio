@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
@@ -16,17 +17,20 @@ public class KnowledgeController : ControllerBase
     private readonly IKnowledgeService _knowledgeService;
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IContentDocumentService? _contentDocuments;
     private readonly ILogger<KnowledgeController> _logger;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
-        ILogger<KnowledgeController> logger)
+        ILogger<KnowledgeController> logger,
+        IContentDocumentService? contentDocuments = null)
     {
         _knowledgeService = knowledgeService;
         _db = db;
         _currentUserService = currentUserService;
+        _contentDocuments = contentDocuments;
         _logger = logger;
     }
 
@@ -228,6 +232,8 @@ public class KnowledgeController : ControllerBase
             _db.KnowledgeProcessingTasks.Add(task);
             await _db.SaveChangesAsync();
 
+            await TrySaveUploadContentDocumentAsync(userId, projectId, task, filePath);
+
             _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
                 task.FileName, task.FileSize, userId, task.Id);
 
@@ -248,6 +254,33 @@ public class KnowledgeController : ControllerBase
         {
             _logger.LogError(ex, "Failed to upload file");
             return StatusCode(500, new { error = "Failed to upload file" });
+        }
+    }
+
+    private async Task TrySaveUploadContentDocumentAsync(
+        string userId,
+        string? projectId,
+        Data.Entities.KnowledgeProcessingTask task,
+        string filePath)
+    {
+        if (_contentDocuments == null)
+            return;
+
+        try
+        {
+            var text = await System.IO.File.ReadAllTextAsync(filePath);
+            await _contentDocuments.SaveTextAsync(
+                userId,
+                projectId,
+                "knowledge_upload",
+                task.Id,
+                "upload_raw",
+                task.FileName,
+                text);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to save content document for uploaded knowledge task {TaskId}", task.Id);
         }
     }
 

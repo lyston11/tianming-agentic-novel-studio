@@ -3,6 +3,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 
@@ -19,6 +20,7 @@ public class MaterialService : IMaterialService
     private readonly IMaterialVectorizationService _vectorization;
     private readonly IVectorStore _vectorStore;
     private readonly ILogger<MaterialService> _logger;
+    private readonly IContentDocumentService? _contentDocuments;
 
     public MaterialService(
         NovelAgentDbContext db,
@@ -26,7 +28,8 @@ public class MaterialService : IMaterialService
         IConfiguration configuration,
         IMaterialVectorizationService vectorization,
         IVectorStore vectorStore,
-        ILogger<MaterialService> logger)
+        ILogger<MaterialService> logger,
+        IContentDocumentService? contentDocuments = null)
     {
         _db = db;
         _currentUserService = currentUserService;
@@ -34,6 +37,7 @@ public class MaterialService : IMaterialService
         _vectorization = vectorization;
         _vectorStore = vectorStore;
         _logger = logger;
+        _contentDocuments = contentDocuments;
     }
 
     public async Task<MaterialResponse> UploadMaterialAsync(
@@ -77,6 +81,7 @@ public class MaterialService : IMaterialService
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
 
+        await TrySaveMaterialContentDocumentAsync(userId, material, request.Title, filePath, null, ct);
         await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Uploaded material {MaterialId} to project {ProjectId}", material.Id, request.ProjectId);
@@ -110,6 +115,7 @@ public class MaterialService : IMaterialService
         _db.Materials.Add(material);
         await _db.SaveChangesAsync(ct);
 
+        await TrySaveMaterialContentDocumentAsync(userId, material, request.Title, null, request.Content, ct);
         await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Created material {MaterialId} in project {ProjectId}", material.Id, request.ProjectId);
@@ -244,6 +250,41 @@ public class MaterialService : IMaterialService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to vectorize material {MaterialId}", materialId);
+        }
+    }
+
+    private async Task TrySaveMaterialContentDocumentAsync(
+        string userId,
+        Material material,
+        string title,
+        string? filePath,
+        string? content,
+        CancellationToken ct)
+    {
+        if (_contentDocuments == null)
+            return;
+
+        try
+        {
+            var text = content;
+            if (string.IsNullOrWhiteSpace(text) && !string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+                text = await File.ReadAllTextAsync(filePath, ct);
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            await _contentDocuments.SaveTextAsync(
+                userId,
+                material.ProjectId,
+                "material",
+                material.Id,
+                "material_raw",
+                title,
+                text,
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to save content document for material {MaterialId}", material.Id);
         }
     }
 

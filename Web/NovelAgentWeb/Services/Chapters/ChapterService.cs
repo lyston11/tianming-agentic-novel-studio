@@ -3,6 +3,7 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Models.Chapters;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Web.NovelAgentWeb.Services.Chapters;
@@ -18,6 +19,7 @@ public class ChapterService : IChapterService
     private readonly IMicroEmbeddingService _embeddingService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ChapterService> _logger;
+    private readonly IContentDocumentService? _contentDocuments;
     private const int ChunkSize = 500; // Characters per chunk for embedding
 
     public ChapterService(
@@ -25,13 +27,15 @@ public class ChapterService : IChapterService
         IVectorStore vectorStore,
         IMicroEmbeddingService embeddingService,
         IConfiguration configuration,
-        ILogger<ChapterService> logger)
+        ILogger<ChapterService> logger,
+        IContentDocumentService? contentDocuments = null)
     {
         _context = context;
         _vectorStore = vectorStore;
         _embeddingService = embeddingService;
         _configuration = configuration;
         _logger = logger;
+        _contentDocuments = contentDocuments;
     }
 
     public async Task<ChapterResponse> CreateChapterAsync(
@@ -101,6 +105,7 @@ public class ChapterService : IChapterService
             // 2. Write content to file system
             var fullPath = GetFullContentPath(userId, project.StorageProjectName, chapter.ContentPath);
             await WriteContentToFileAsync(fullPath, request.Content, cancellationToken);
+            await TrySaveChapterContentDocumentAsync(userId, chapter, request.Content, cancellationToken);
 
             // 3. Generate and store embeddings in Qdrant
             await GenerateAndStoreEmbeddingsAsync(chapter, request.Content, userId, cancellationToken);
@@ -199,6 +204,7 @@ public class ChapterService : IChapterService
                 // Write updated content to file system
                 var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
                 await WriteContentToFileAsync(fullPath, newContent, cancellationToken);
+                await TrySaveChapterContentDocumentAsync(userId, chapter, newContent, cancellationToken);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -400,6 +406,33 @@ public class ChapterService : IChapterService
             vectors.Count, chapter.Id);
     }
 
+    private async Task TrySaveChapterContentDocumentAsync(
+        string userId,
+        Chapter chapter,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        if (_contentDocuments == null)
+            return;
+
+        try
+        {
+            await _contentDocuments.SaveTextAsync(
+                userId,
+                chapter.ProjectId,
+                "chapter",
+                chapter.Id,
+                "chapter_body",
+                chapter.Title,
+                content,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to save content document for chapter {ChapterId}", chapter.Id);
+        }
+    }
+
     private async Task DeleteChapterVectorsAsync(
         string chapterId,
         string projectId,
@@ -562,4 +595,3 @@ public class ChapterService : IChapterService
         };
     }
 }
-
