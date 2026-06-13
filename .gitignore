@@ -13,6 +13,7 @@ Thumbs.db
 # Local assistant and mission state
 .claude/
 .mission/
+.worktrees/
 
 # .NET build output
 bin/
