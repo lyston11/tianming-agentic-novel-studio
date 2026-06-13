@@ -800,7 +800,7 @@ public sealed class AgentObservationBuilder
     private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
 
     private readonly AgentToolRegistry _toolRegistry;
-    private readonly AgentMemoryService _memoryService;
+    private readonly IAgentMemoryContextService _memoryContextService;
     private readonly AgentMissionTaskTreeService _taskTreeService;
 
     internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
@@ -808,11 +808,11 @@ public sealed class AgentObservationBuilder
 
     public AgentObservationBuilder(
         AgentToolRegistry toolRegistry,
-        AgentMemoryService memoryService,
+        IAgentMemoryContextService memoryContextService,
         AgentMissionTaskTreeService taskTreeService)
     {
         _toolRegistry = toolRegistry;
-        _memoryService = memoryService;
+        _memoryContextService = memoryContextService;
         _taskTreeService = taskTreeService;
     }
 
@@ -833,7 +833,8 @@ public sealed class AgentObservationBuilder
             session.WorkingMemory.MissionPlan.InteractionState = envelope;
         }
         EnsureMissionPlan(session, project, bible, userMessage, turnIntent);
-        await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
+        var memoryContext = await _memoryContextService.BuildAsync(session.UserId, project.Id, session.SessionId, ct).ConfigureAwait(false);
+        ApplyMemoryContext(session, project.Id, memoryContext);
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
@@ -878,8 +879,7 @@ public sealed class AgentObservationBuilder
             Phase = session.Phase,
             ActiveRunId = session.ActiveRunId ?? string.Empty,
             ProjectSummary = AgentProjectSummaryBuilder.Build(bible),
-            RecentMessages = session.ChatHistory
-                .TakeLast(10)
+            RecentMessages = memoryContext.Chat.RecentMessages
                 .Select(t => $"{t.Role}: {t.Content}")
                 .ToList(),
             RecentObservations = session.WorkingMemory.RecentObservations.TakeLast(8).ToList(),
@@ -901,6 +901,57 @@ public sealed class AgentObservationBuilder
             }).ToList(),
         };
     }
+
+    private static void ApplyMemoryContext(AgentSession session, string projectId, AgentMemoryContextDto memoryContext)
+    {
+        session.WorkingMemory.SessionMemory = MapSession(memoryContext.Session, memoryContext.Chat);
+        session.WorkingMemory.ProjectMemory = MapProject(memoryContext.Project, projectId);
+        session.WorkingMemory.AuthorMemory = MapAuthor(memoryContext.Author);
+        session.WorkingMemory.ExecutionMemory = MapExecution(memoryContext.Execution);
+    }
+
+    private static AgentSessionMemory MapSession(SessionMemory source, ChatMemoryContext chat) => new()
+    {
+        CurrentGoal = source.CurrentGoal,
+        OpenQuestions = new List<string>(source.OpenQuestions),
+        ChatSummary = chat.MetaSummary ?? string.Empty,
+        ShortTermPreferences = new List<string>(source.ShortTermPreferences),
+        RecentObservations = new List<string>(source.RecentObservations),
+        LastObservations = new List<string>(source.RecentObservations),
+        RecentUploadedKnowledgeIds = new List<string>(source.RecentUploadedKnowledgeIds),
+        PendingToolName = source.PendingToolName,
+        LastIntent = source.LastIntent
+    };
+
+    private static AgentProjectMemory MapProject(ProjectMemory source, string projectId) => new()
+    {
+        ProjectId = projectId,
+        LongTermGoal = source.LongTermGoal ?? string.Empty,
+        ReaderPromise = source.ReaderPromise ?? string.Empty,
+        Constraints = new List<string>(source.Constraints),
+        UnresolvedThreads = new List<string>(source.UnresolvedThreads),
+        ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
+        ImportedKnowledgeIds = new List<string>(source.ImportedKnowledgeIds),
+        KnowledgeInventory = new List<KnowledgeInventoryItem>(source.KnowledgeInventory),
+        UsedTropePatterns = new List<string>(source.UsedTropePatterns)
+    };
+
+    private static AgentAuthorMemory MapAuthor(AuthorMemory source) => new()
+    {
+        StyleLikes = new List<string>(source.StyleLikes),
+        StyleDislikes = new List<string>(source.StyleDislikes),
+        ConfirmationTolerance = source.ConfirmationTolerance ?? "key_checkpoints",
+        GenreHabits = new List<string>(source.GenreHabits),
+        FavoriteKnowledgeIds = new List<string>(source.FavoriteKnowledgeIds)
+    };
+
+    private static AgentExecutionMemory MapExecution(ExecutionMemory source) => new()
+    {
+        ToolFailurePatterns = new List<string>(source.ToolFailurePatterns),
+        RepeatedBlockers = new List<string>(source.RepeatedBlockers),
+        SuccessfulRepairNotes = new List<string>(source.SuccessfulRepairNotes),
+        KnowledgeProcessingFailures = new List<string>(source.KnowledgeProcessingFailures)
+    };
 
     private async Task<AgentRagContext> BuildRagAsync(
         AgentSession session,

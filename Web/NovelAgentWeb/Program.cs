@@ -128,6 +128,7 @@ builder.Services.AddScoped<IAgentMemoryRepository, AgentMemoryRepository>();
 builder.Services.AddScoped<IAgentMemoryVersionService, AgentMemoryVersionService>();
 builder.Services.AddScoped<IAgentMemoryEventService, AgentMemoryEventService>();
 builder.Services.AddScoped<IChatHistoryRepository, ChatHistoryRepository>();
+builder.Services.AddScoped<IAgentMemoryContextService, AgentMemoryContextService>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
