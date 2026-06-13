@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -1031,7 +1032,7 @@ public sealed class AgentToolRegistry
         }
     }
 
-    private Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
+    private async Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
         var phaseArg = Arg(call, "phase", "Conversation");
 
@@ -1062,9 +1063,7 @@ public sealed class AgentToolRegistry
             ? $"阶段「{phaseArg}」没有可用工具。"
             : $"阶段「{phaseArg}」可用工具（{toolList.Count}个）：\n{string.Join("\n", toolList)}";
 
-        // 缓存到Session
-        session.DiscoveredPhase = phaseArg;
-        session.DiscoveredTools = toolNames
+        var discoveredTools = toolNames
             .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
             .Where(def => def != null)
             .Select(def => new ToolSchema
@@ -1076,9 +1075,12 @@ public sealed class AgentToolRegistry
                 Parameters = def.Arguments?.ToDictionary(p => p, _ => "string") ?? new Dictionary<string, string>()
             })
             .ToList();
-        session.LastToolSearchAt = DateTime.UtcNow;
 
-        return Task.FromResult(new AgentToolExecutionResult
+        using var scope = _serviceProvider.CreateScope();
+        var cache = scope.ServiceProvider.GetRequiredService<IToolSearchCacheService>();
+        await cache.SaveAsync(session, phaseArg, discoveredTools, ct).ConfigureAwait(false);
+
+        return new AgentToolExecutionResult
         {
             Success = true,
             Message = message,
@@ -1086,6 +1088,6 @@ public sealed class AgentToolRegistry
             Data = new { Phase = phaseArg, Tools = toolNames },
             Artifact = BuildArtifact("tool_search_result", phaseArg, session.ActiveProjectId ?? string.Empty, string.Empty, $"检索到 {toolList.Count} 个工具。", Array.Empty<string>()),
             Suggestions = Array.Empty<string>(),
-        });
+        };
     }
 }

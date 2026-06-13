@@ -26,6 +26,7 @@ public sealed class AgentSession
     public string? DiscoveredPhase { get; set; }
     public List<ToolSchema> DiscoveredTools { get; set; } = new();
     public DateTime? LastToolSearchAt { get; set; }
+    public string? ToolSearchCacheVersion { get; set; }
 
     public void NormalizeLegacyState()
     {
@@ -198,7 +199,8 @@ public sealed class AgentSessionManager
             {
                 discoveredPhase = session.DiscoveredPhase,
                 discoveredTools = session.DiscoveredTools,
-                lastToolSearchAt = session.LastToolSearchAt
+                lastToolSearchAt = session.LastToolSearchAt,
+                version = session.ToolSearchCacheVersion
             }
         }, JsonOptions());
 
@@ -223,6 +225,7 @@ public sealed class AgentSessionManager
             DiscoveredPhase = data?.ToolSearchCache?.DiscoveredPhase,
             DiscoveredTools = data?.ToolSearchCache?.DiscoveredTools ?? new(),
             LastToolSearchAt = data?.ToolSearchCache?.LastToolSearchAt,
+            ToolSearchCacheVersion = data?.ToolSearchCache?.Version,
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt
         };
@@ -255,5 +258,6 @@ public sealed class AgentSessionManager
         public string? DiscoveredPhase { get; set; }
         public List<ToolSchema> DiscoveredTools { get; set; } = new();
         public DateTime? LastToolSearchAt { get; set; }
+        public string? Version { get; set; }
     }
 }

@@ -7,6 +7,7 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Middleware;
 using TM.Web.NovelAgentWeb.Services;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Caching;
@@ -129,6 +130,7 @@ builder.Services.AddScoped<IAgentMemoryVersionService, AgentMemoryVersionService
 builder.Services.AddScoped<IAgentMemoryEventService, AgentMemoryEventService>();
 builder.Services.AddScoped<IChatHistoryRepository, ChatHistoryRepository>();
 builder.Services.AddScoped<IAgentMemoryContextService, AgentMemoryContextService>();
+builder.Services.AddScoped<IToolSearchCacheService, ToolSearchCacheService>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services

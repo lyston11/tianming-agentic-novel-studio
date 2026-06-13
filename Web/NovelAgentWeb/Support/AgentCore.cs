@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -801,6 +802,7 @@ public sealed class AgentObservationBuilder
 
     private readonly AgentToolRegistry _toolRegistry;
     private readonly IAgentMemoryContextService _memoryContextService;
+    private readonly IToolSearchCacheService _toolSearchCache;
     private readonly AgentMissionTaskTreeService _taskTreeService;
 
     internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
@@ -809,10 +811,12 @@ public sealed class AgentObservationBuilder
     public AgentObservationBuilder(
         AgentToolRegistry toolRegistry,
         IAgentMemoryContextService memoryContextService,
+        IToolSearchCacheService toolSearchCache,
         AgentMissionTaskTreeService taskTreeService)
     {
         _toolRegistry = toolRegistry;
         _memoryContextService = memoryContextService;
+        _toolSearchCache = toolSearchCache;
         _taskTreeService = taskTreeService;
     }
 
@@ -838,18 +842,13 @@ public sealed class AgentObservationBuilder
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
-        // Check session cache for tools, otherwise expose only tool_search
-        IReadOnlyList<ToolSchema> availableTools;
+        var toolCachePhase = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
+            ? session.Phase
+            : session.DiscoveredPhase;
+        var availableTools = await _toolSearchCache.GetAsync(session, toolCachePhase, ct).ConfigureAwait(false);
 
-        if (!string.IsNullOrWhiteSpace(session.DiscoveredPhase) &&
-            session.DiscoveredTools.Count > 0)
+        if (availableTools == null)
         {
-            // Has cache, expose previously discovered tools
-            availableTools = session.DiscoveredTools;
-        }
-        else
-        {
-            // No cache, expose only tool_search
             var toolSearchEntry = _toolRegistry.Find("tool_search");
             if (toolSearchEntry == null)
             {
