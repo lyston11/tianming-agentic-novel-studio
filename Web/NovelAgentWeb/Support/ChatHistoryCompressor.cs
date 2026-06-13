@@ -20,7 +20,22 @@ public class ChatHistoryCompressor
     /// <summary>
     /// Compress chat history based on turn count.
     /// </summary>
-    public async Task<LayeredChatHistory> CompressAsync(List<AgentConversationTurn> chatHistory, CancellationToken ct = default)
+    public Task<LayeredChatHistory> CompressAsync(List<AgentConversationTurn> chatHistory, CancellationToken ct = default) =>
+        CompressCoreAsync(chatHistory, ct);
+
+    public async Task<LayeredChatHistory> CompressAndPersistAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        List<AgentConversationTurn> chatHistory,
+        CancellationToken ct = default)
+    {
+        var layered = await CompressAsync(chatHistory, ct);
+        await SaveSummariesAsync(userId, projectId, sessionId, layered, ct);
+        return layered;
+    }
+
+    protected virtual Task<LayeredChatHistory> CompressCoreAsync(List<AgentConversationTurn> chatHistory, CancellationToken ct = default)
     {
         var turnCount = chatHistory.Count / 2; // User messages only
 
@@ -43,7 +58,7 @@ public class ChatHistoryCompressor
             // TODO: Generate meta-summary in Task 14
         }
 
-        return layered;
+        return Task.FromResult(layered);
     }
 
     public async Task SaveSummariesAsync(
