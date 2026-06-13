@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Middleware;
+using TM.Web.NovelAgentWeb.Scripts;
 using TM.Web.NovelAgentWeb.Services;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
@@ -260,6 +261,17 @@ var app = builder.Build();
 if (args.Contains("--migrate-memory"))
 {
     await TM.Web.NovelAgentWeb.Scripts.MigrateMemoryToSqlite.RunAsync(app.Services);
+    return;
+}
+
+if (args.Contains("--migrate-legacy-content", StringComparer.OrdinalIgnoreCase))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+    var content = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("MigrateLegacyContentToSqlite");
+    var storageRoot = app.Configuration["NovelAgent:StorageRoot"] ?? "App_Data";
+    await MigrateLegacyContentToSqlite.RunAsync(db, content, storageRoot, logger);
     return;
 }
 
