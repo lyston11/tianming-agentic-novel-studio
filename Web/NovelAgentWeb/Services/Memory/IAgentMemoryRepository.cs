@@ -14,6 +14,11 @@ public interface IAgentMemoryRepository
     Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default);
 
     /// <summary>
+    /// Get session memory for a user's project session.
+    /// </summary>
+    Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default);
+
+    /// <summary>
     /// Get author memory for a user (cross-project).
     /// </summary>
     Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default);
@@ -46,6 +51,20 @@ public interface IAgentMemoryRepository
 }
 
 /// <summary>
+/// Session-level memory (tied to a specific project session).
+/// </summary>
+public class SessionMemory
+{
+    public string CurrentGoal { get; set; } = string.Empty;
+    public List<string> OpenQuestions { get; set; } = new();
+    public List<string> ShortTermPreferences { get; set; } = new();
+    public List<string> RecentObservations { get; set; } = new();
+    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
+    public string? PendingToolName { get; set; }
+    public string? LastIntent { get; set; }
+}
+
+/// <summary>
 /// Project-level memory (tied to a specific project).
 /// </summary>
 public class ProjectMemory
@@ -55,7 +74,22 @@ public class ProjectMemory
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> ImportedKnowledgeIds { get; set; } = new();
+    public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
     public List<string> UsedTropePatterns { get; set; } = new();
+}
+
+public class KnowledgeInventoryItem
+{
+    public string KnowledgeId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string EntryType { get; set; } = string.Empty;
+    public List<string> Tags { get; set; } = new();
+    public int Weight { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public string ProjectUsageStatus { get; set; } = "imported";
+    public int ProjectUsageCount { get; set; }
+    public DateTime? ProjectLastUsedAt { get; set; }
 }
 
 /// <summary>
@@ -78,4 +112,5 @@ public class ExecutionMemory
     public List<string> ToolFailurePatterns { get; set; } = new();
     public List<string> RepeatedBlockers { get; set; } = new();
     public List<string> SuccessfulRepairNotes { get; set; } = new();
+    public List<string> KnowledgeProcessingFailures { get; set; } = new();
 }

@@ -64,12 +64,58 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     Constraints = GetField<List<string>>(rows, "project.constraints") ?? new(),
                     UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new(),
                     ReferencedKnowledgeIds = GetField<List<string>>(rows, "project.referenced_knowledge_ids") ?? new(),
+                    ImportedKnowledgeIds = GetField<List<string>>(rows, "project.imported_knowledge_ids") ?? new(),
+                    KnowledgeInventory = GetField<List<KnowledgeInventoryItem>>(rows, "project.knowledge_inventory") ?? new(),
                     UsedTropePatterns = GetField<List<string>>(rows, "project.used_trope_patterns") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
 
                 _logger.LogDebug("ProjectMemory loaded from database for user {UserId}, project {ProjectId}", userId, projectId);
+                return memory;
+            },
+            MemoryCacheDuration,
+            ct);
+    }
+
+    public async Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+    {
+        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+
+        return await _memoryCache.GetOrSetAsync(
+            cacheKey,
+            async () =>
+            {
+                var cached = await _redisCache.GetAsync<SessionMemory>(cacheKey, ct);
+                if (cached != null)
+                {
+                    _logger.LogDebug("SessionMemory cache hit (Redis) for user {UserId}, project {ProjectId}, session {SessionId}", userId, projectId, sessionId);
+                    return cached;
+                }
+
+                var rows = await _context.AgentMemories
+                    .AsNoTracking()
+                    .Where(m =>
+                        m.UserId == userId &&
+                        m.ProjectId == projectId &&
+                        m.SessionId == sessionId &&
+                        m.MemoryType.StartsWith("session."))
+                    .ToListAsync(ct);
+
+                var memory = new SessionMemory
+                {
+                    CurrentGoal = GetField<string>(rows, "session.current_goal") ?? string.Empty,
+                    OpenQuestions = GetField<List<string>>(rows, "session.open_questions") ?? new(),
+                    ShortTermPreferences = GetField<List<string>>(rows, "session.short_term_preferences") ?? new(),
+                    RecentObservations = GetField<List<string>>(rows, "session.recent_observations") ?? new(),
+                    RecentUploadedKnowledgeIds = GetField<List<string>>(rows, "session.recent_uploaded_knowledge_ids") ?? new(),
+                    PendingToolName = GetField<string>(rows, "session.pending_tool_name"),
+                    LastIntent = GetField<string>(rows, "session.last_intent")
+                };
+
+                await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
+
+                _logger.LogDebug("SessionMemory loaded from database for user {UserId}, project {ProjectId}, session {SessionId}", userId, projectId, sessionId);
                 return memory;
             },
             MemoryCacheDuration,
@@ -138,7 +184,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 {
                     ToolFailurePatterns = GetField<List<string>>(rows, "execution.tool_failures") ?? new(),
                     RepeatedBlockers = GetField<List<string>>(rows, "execution.repeated_blockers") ?? new(),
-                    SuccessfulRepairNotes = GetField<List<string>>(rows, "execution.successful_repairs") ?? new()
+                    SuccessfulRepairNotes = GetField<List<string>>(rows, "execution.successful_repairs") ?? new(),
+                    KnowledgeProcessingFailures = GetField<List<string>>(rows, "execution.knowledge_processing_failures") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
@@ -173,6 +220,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 UserId = userId,
                 ProjectId = projectId,
                 MemoryType = memoryType,
+                MemoryKey = GetMemoryKey(memoryType),
                 Content = json,
                 UpdatedAt = DateTime.UtcNow
             });
@@ -250,6 +298,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                         UserId = userId,
                         ProjectId = projectId,
                         MemoryType = memoryType,
+                        MemoryKey = GetMemoryKey(memoryType),
                         Content = json,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -304,12 +353,27 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             "project" => $"memory:project:{userId}:{projectId}",
             "author" => $"memory:author:{userId}",
             "execution" => $"memory:execution:{userId}:{projectId}",
+            "session" => null,
             _ => throw new ArgumentException($"Unknown memory type: {memoryType}")
         };
+
+        if (cacheKey == null)
+        {
+            _logger.LogDebug("Skipped session memory cache invalidation without session scope for user {UserId}, project {ProjectId}", userId, projectId);
+            return;
+        }
 
         _memoryCache.Remove(cacheKey);
         await _redisCache.RemoveAsync(cacheKey);
 
         _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
+    }
+
+    private static string GetMemoryKey(string memoryType)
+    {
+        var separator = memoryType.IndexOf('.');
+        return separator >= 0 && separator < memoryType.Length - 1
+            ? memoryType[(separator + 1)..]
+            : memoryType;
     }
 }

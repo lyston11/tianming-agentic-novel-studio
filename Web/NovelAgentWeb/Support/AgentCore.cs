@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -528,9 +529,15 @@ public sealed class AgentWorkingMemory
 
 public sealed class AgentSessionMemory
 {
+    public string CurrentGoal { get; set; } = string.Empty;
+    public List<string> OpenQuestions { get; set; } = new();
     public string ChatSummary { get; set; } = string.Empty;
     public List<string> ShortTermPreferences { get; set; } = new();
+    public List<string> RecentObservations { get; set; } = new();
     public List<string> LastObservations { get; set; } = new();
+    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
+    public string? PendingToolName { get; set; }
+    public string? LastIntent { get; set; }
 }
 
 public sealed class AgentProjectMemory
@@ -542,6 +549,8 @@ public sealed class AgentProjectMemory
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> ImportedKnowledgeIds { get; set; } = new();
+    public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
     public List<string> UsedTropePatterns { get; set; } = new();
 }
 
@@ -559,6 +568,7 @@ public sealed class AgentExecutionMemory
     public List<string> ToolFailurePatterns { get; set; } = new();
     public List<string> RepeatedBlockers { get; set; } = new();
     public List<string> SuccessfulRepairNotes { get; set; } = new();
+    public List<string> KnowledgeProcessingFailures { get; set; } = new();
 }
 
 public sealed class AgentMissionState

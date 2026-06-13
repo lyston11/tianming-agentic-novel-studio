@@ -117,6 +117,34 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
+    public async Task GetSessionMemoryAsync_ReadsRedisThenSqliteAndIncludesUploadedKnowledge()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+        var sessionId = "session789";
+        _dbContext.AgentMemories.Add(new AgentMemory
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = projectId,
+            SessionId = sessionId,
+            MemoryType = "session.recent_uploaded_knowledge_ids",
+            MemoryKey = "recent_uploaded_knowledge_ids",
+            Content = JsonSerializer.Serialize(new List<string> { "knowledge-1" })
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(It.IsAny<string>(), It.IsAny<Func<Task<SessionMemory>>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<SessionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<SessionMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionMemory?)null);
+
+        var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
+
+        Assert.Contains("knowledge-1", result.RecentUploadedKnowledgeIds);
+    }
+
+    [Fact]
     public async Task GetProjectMemoryAsync_DeserializesDataCorrectly_WhenDataExists()
     {
         var userId = "user123";

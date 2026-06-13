@@ -32,6 +32,12 @@ public sealed class AgentMemoryService
     {
         var userId = session.UserId;
         session.WorkingMemory.SessionMemory ??= new AgentSessionMemory();
+        var transientSessionMemory = session.WorkingMemory.SessionMemory;
+
+        var sessionMem = await _repository.GetSessionMemoryAsync(userId, project.Id, session.SessionId, ct);
+        session.WorkingMemory.SessionMemory = sessionMem != null
+            ? MapToAgentSessionMemory(sessionMem, transientSessionMemory)
+            : transientSessionMemory;
 
         var projectMem = await _repository.GetProjectMemoryAsync(userId, project.Id, ct);
         session.WorkingMemory.ProjectMemory = projectMem != null ? MapToAgentProjectMemory(projectMem, project.Id) : BuildProjectMemory(project, bible);
@@ -53,16 +59,13 @@ public sealed class AgentMemoryService
 
         ApplyReflection(session, reflection);
 
-        if (reflection?.MissionPatch.MemoryUpdate == null)
-            return;
-
-        await ApplyMemoryUpdateAsync(session, project.Id, reflection.MissionPatch.MemoryUpdate, ct);
+        await ApplyMemoryUpdateAsync(session, project.Id, reflection?.MissionPatch.MemoryUpdate, ct);
     }
 
     /// <summary>
     /// Applies memory updates from Reflection phase to repository.
     /// </summary>
-    private async Task ApplyMemoryUpdateAsync(AgentSession session, string projectId, AgentMemoryUpdate update, CancellationToken ct)
+    private async Task ApplyMemoryUpdateAsync(AgentSession session, string projectId, AgentMemoryUpdate? update, CancellationToken ct)
     {
         var userId = session.UserId;
         var working = session.WorkingMemory;
@@ -74,7 +77,7 @@ public sealed class AgentMemoryService
         var updates = new Dictionary<string, object>();
         var authorUpdates = new Dictionary<string, object>();
 
-        if (update.SessionMemory != null)
+        if (update?.SessionMemory != null)
         {
             if (!string.IsNullOrWhiteSpace(update.SessionMemory.ChatSummary))
                 working.SessionMemory.ChatSummary = update.SessionMemory.ChatSummary.Trim();
@@ -94,7 +97,7 @@ public sealed class AgentMemoryService
                 AddUnique(working.ProjectMemory.Constraints, preference);
         }
 
-        if (update.ProjectMemory != null)
+        if (update?.ProjectMemory != null)
         {
             foreach (var item in Clean(update.ProjectMemory.NewConstraints))
                 AddUnique(working.ProjectMemory.Constraints, item);
@@ -102,7 +105,7 @@ public sealed class AgentMemoryService
                 AddUnique(working.ProjectMemory.UnresolvedThreads, item);
         }
 
-        if (update.AuthorMemory != null)
+        if (update?.AuthorMemory != null)
         {
             foreach (var item in Clean(update.AuthorMemory.StyleLikes))
                 AddUnique(working.AuthorMemory.StyleLikes, item);
@@ -110,7 +113,7 @@ public sealed class AgentMemoryService
                 AddUnique(working.AuthorMemory.StyleDislikes, item);
         }
 
-        if (update.ExecutionMemory != null)
+        if (update?.ExecutionMemory != null)
         {
             if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolSuccess))
                 AddUnique(working.ExecutionMemory.SuccessfulRepairNotes, update.ExecutionMemory.ToolSuccess.Trim());
@@ -118,9 +121,9 @@ public sealed class AgentMemoryService
                 AddUnique(working.ExecutionMemory.RepeatedBlockers, update.ExecutionMemory.ToolFailure.Trim());
         }
 
-        foreach (var id in Clean(update.UsedKnowledgeIds))
+        foreach (var id in Clean(update?.UsedKnowledgeIds))
             AddUnique(working.ProjectMemory.ReferencedKnowledgeIds, id);
-        foreach (var pattern in Clean(update.UsedTropePatterns))
+        foreach (var pattern in Clean(update?.UsedTropePatterns))
             AddUnique(working.ProjectMemory.UsedTropePatterns, pattern);
 
         Trim(working.ProjectMemory.UnresolvedThreads, MaxUnresolvedThreads);
@@ -128,9 +131,11 @@ public sealed class AgentMemoryService
         Trim(working.ExecutionMemory.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
         Trim(working.AuthorMemory.StyleDislikes, MaxStyleDislikes);
 
-        if (working.ProjectMemory.Constraints.Count > 0)
+        var hasExplicitUpdate = update != null;
+
+        if (hasExplicitUpdate && working.ProjectMemory.Constraints.Count > 0)
             updates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (working.ProjectMemory.UnresolvedThreads.Count > 0)
+        if (hasExplicitUpdate && working.ProjectMemory.UnresolvedThreads.Count > 0)
             updates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.ReferencedKnowledgeIds.Count > 0)
             updates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -140,7 +145,7 @@ public sealed class AgentMemoryService
             updates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ExecutionMemory.RepeatedBlockers.Count > 0)
             updates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (working.AuthorMemory.StyleLikes.Count > 0)
+        if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
             authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.AuthorMemory.StyleDislikes.Count > 0)
             authorUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -261,6 +266,30 @@ public sealed class AgentMemoryService
     private static string FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
 
+    private static AgentSessionMemory MapToAgentSessionMemory(SessionMemory source, AgentSessionMemory transient)
+    {
+        var memory = new AgentSessionMemory
+        {
+            CurrentGoal = FirstNonEmpty(transient.CurrentGoal, source.CurrentGoal),
+            ChatSummary = transient.ChatSummary,
+            PendingToolName = transient.PendingToolName ?? source.PendingToolName,
+            LastIntent = transient.LastIntent ?? source.LastIntent
+        };
+
+        CopyDistinct(memory.OpenQuestions, source.OpenQuestions);
+        CopyDistinct(memory.OpenQuestions, transient.OpenQuestions);
+        CopyDistinct(memory.ShortTermPreferences, source.ShortTermPreferences);
+        CopyDistinct(memory.ShortTermPreferences, transient.ShortTermPreferences);
+        CopyDistinct(memory.RecentObservations, source.RecentObservations);
+        CopyDistinct(memory.RecentObservations, transient.RecentObservations);
+        CopyDistinct(memory.LastObservations, source.RecentObservations);
+        CopyDistinct(memory.LastObservations, transient.LastObservations);
+        CopyDistinct(memory.RecentUploadedKnowledgeIds, source.RecentUploadedKnowledgeIds);
+        CopyDistinct(memory.RecentUploadedKnowledgeIds, transient.RecentUploadedKnowledgeIds);
+
+        return memory;
+    }
+
     private static AgentProjectMemory MapToAgentProjectMemory(ProjectMemory source, string projectId) => new()
     {
         ProjectId = projectId,
@@ -270,6 +299,8 @@ public sealed class AgentMemoryService
         Constraints = new List<string>(source.Constraints),
         UnresolvedThreads = new List<string>(source.UnresolvedThreads),
         ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
+        ImportedKnowledgeIds = new List<string>(source.ImportedKnowledgeIds),
+        KnowledgeInventory = new List<KnowledgeInventoryItem>(source.KnowledgeInventory),
         UsedTropePatterns = new List<string>(source.UsedTropePatterns)
     };
 
@@ -286,6 +317,13 @@ public sealed class AgentMemoryService
     {
         ToolFailurePatterns = new List<string>(source.ToolFailurePatterns),
         RepeatedBlockers = new List<string>(source.RepeatedBlockers),
-        SuccessfulRepairNotes = new List<string>(source.SuccessfulRepairNotes)
+        SuccessfulRepairNotes = new List<string>(source.SuccessfulRepairNotes),
+        KnowledgeProcessingFailures = new List<string>(source.KnowledgeProcessingFailures)
     };
+
+    private static void CopyDistinct(List<string> target, IEnumerable<string>? values)
+    {
+        foreach (var value in Clean(values))
+            AddUnique(target, value);
+    }
 }

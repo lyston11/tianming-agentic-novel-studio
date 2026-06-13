@@ -110,25 +110,27 @@ public class AgentMemoryServiceTests
     }
 
     [Fact]
-    public async Task PersistAsync_WithNoMemoryUpdate_DoesNotWriteRepository()
+    public async Task PersistAsync_WithNoMemoryUpdate_PersistsRuleBasedExecutionAndAuthorChanges()
     {
         var repository = new RecordingMemoryRepository();
         var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession { UserId = "user-1" };
+        session.WorkingMemory.ExecutionMemory.RepeatedBlockers.Add("ValidateChapterDraft 失败：节奏拖慢");
+        session.WorkingMemory.AuthorMemory.StyleDislikes.Add("文风重复");
 
-        await service.PersistAsync(
-            new AgentSession { UserId = "user-1" },
-            new NovelProjectInfo { Id = "project-1" },
-            new StoryBibleDocument(),
-            new AgentReflection());
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection
+        {
+            QualityGate = new AgentQualityGateReport { Status = "fail", RewriteDecision = "节奏拖慢" }
+        });
 
-        Assert.Empty(repository.ProjectUpdates);
-        Assert.Empty(repository.AuthorUpdates);
-        Assert.Equal(0, repository.UpdateMemoryCallCount);
+        Assert.True(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
+        Assert.True(repository.AuthorUpdates.ContainsKey("author.style_dislikes"));
     }
 
     private sealed class RecordingMemoryRepository : IAgentMemoryRepository
     {
         public ProjectMemory ProjectMemory { get; set; } = new();
+        public SessionMemory SessionMemory { get; set; } = new();
         public AuthorMemory AuthorMemory { get; set; } = new();
         public ExecutionMemory ExecutionMemory { get; set; } = new();
         public Dictionary<string, object> ProjectUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -137,6 +139,9 @@ public class AgentMemoryServiceTests
 
         public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
             => Task.FromResult(ProjectMemory);
+
+        public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+            => Task.FromResult(SessionMemory);
 
         public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
             => Task.FromResult(AuthorMemory);
