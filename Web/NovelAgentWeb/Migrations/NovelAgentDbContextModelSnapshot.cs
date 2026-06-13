@@ -307,6 +307,26 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("UserId", "ProjectId", "SessionId", "Scope")
                         .IsUnique();
 
+                    b.HasIndex("UserId", "Scope")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memory_versions_user_scope_global")
+                        .HasFilter("project_id IS NULL AND session_id IS NULL");
+
+                    b.HasIndex("UserId", "ProjectId", "Scope")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memory_versions_user_project_scope")
+                        .HasFilter("project_id IS NOT NULL AND session_id IS NULL");
+
+                    b.HasIndex("UserId", "SessionId", "Scope")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memory_versions_user_session_scope")
+                        .HasFilter("project_id IS NULL AND session_id IS NOT NULL");
+
+                    b.HasIndex("UserId", "ProjectId", "SessionId", "Scope")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memory_versions_user_project_session_scope_not_null")
+                        .HasFilter("project_id IS NOT NULL AND session_id IS NOT NULL");
+
                     b.ToTable("agent_memory_versions", (string)null);
                 });
 

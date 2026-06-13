@@ -524,6 +524,22 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Scope }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_scope_global")
+                .IsUnique()
+                .HasFilter("project_id IS NULL AND session_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_project_scope")
+                .IsUnique()
+                .HasFilter("project_id IS NOT NULL AND session_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_session_scope")
+                .IsUnique()
+                .HasFilter("project_id IS NULL AND session_id IS NOT NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_project_session_scope_not_null")
+                .IsUnique()
+                .HasFilter("project_id IS NOT NULL AND session_id IS NOT NULL");
 
             entity.HasOne<User>()
                 .WithMany()

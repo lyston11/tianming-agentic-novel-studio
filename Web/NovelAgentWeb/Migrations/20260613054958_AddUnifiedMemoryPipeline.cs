@@ -11,25 +11,59 @@ namespace TM.Web.NovelAgentWeb.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<DateTime>(
-                name: "created_at",
-                table: "agent_memories",
-                type: "TEXT",
-                nullable: false,
-                defaultValueSql: "CURRENT_TIMESTAMP");
+            migrationBuilder.Sql("PRAGMA foreign_keys=OFF;");
 
-            migrationBuilder.AddColumn<string>(
-                name: "memory_key",
-                table: "agent_memories",
-                type: "TEXT",
-                nullable: false,
-                defaultValue: "");
+            migrationBuilder.CreateTable(
+                name: "agent_memories_new",
+                columns: table => new
+                {
+                    id = table.Column<string>(type: "TEXT", nullable: false),
+                    user_id = table.Column<string>(type: "TEXT", nullable: false),
+                    project_id = table.Column<string>(type: "TEXT", nullable: true),
+                    session_id = table.Column<string>(type: "TEXT", nullable: true),
+                    memory_type = table.Column<string>(type: "TEXT", nullable: false),
+                    memory_key = table.Column<string>(type: "TEXT", nullable: false, defaultValue: ""),
+                    content = table.Column<string>(type: "TEXT", nullable: false),
+                    created_at = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    updated_at = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_agent_memories", x => x.id);
+                    table.ForeignKey(
+                        name: "FK_agent_memories_novel_projects_project_id",
+                        column: x => x.project_id,
+                        principalTable: "novel_projects",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_agent_memories_users_user_id",
+                        column: x => x.user_id,
+                        principalTable: "users",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
 
-            migrationBuilder.AddColumn<string>(
-                name: "session_id",
+            migrationBuilder.Sql("""
+                INSERT INTO agent_memories_new (id, user_id, project_id, session_id, memory_type, memory_key, content, created_at, updated_at)
+                SELECT id, user_id, project_id, NULL, memory_type, '', content, COALESCE(updated_at, CURRENT_TIMESTAMP), updated_at
+                FROM agent_memories;
+                """);
+
+            migrationBuilder.DropTable(name: "agent_memories");
+            migrationBuilder.RenameTable(name: "agent_memories_new", newName: "agent_memories");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agent_memories_project_id",
                 table: "agent_memories",
-                type: "TEXT",
-                nullable: true);
+                column: "project_id");
+
+            migrationBuilder.CreateIndex(
+                name: "idx_memories_user_project",
+                table: "agent_memories",
+                columns: new[] { "user_id", "project_id" });
+
+            migrationBuilder.Sql("PRAGMA foreign_keys=ON;");
 
             migrationBuilder.CreateTable(
                 name: "agent_chat_summaries",
@@ -350,6 +384,34 @@ namespace TM.Web.NovelAgentWeb.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_agent_memory_versions_user_scope_global",
+                table: "agent_memory_versions",
+                columns: new[] { "user_id", "scope" },
+                unique: true,
+                filter: "project_id IS NULL AND session_id IS NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agent_memory_versions_user_project_scope",
+                table: "agent_memory_versions",
+                columns: new[] { "user_id", "project_id", "scope" },
+                unique: true,
+                filter: "project_id IS NOT NULL AND session_id IS NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agent_memory_versions_user_session_scope",
+                table: "agent_memory_versions",
+                columns: new[] { "user_id", "session_id", "scope" },
+                unique: true,
+                filter: "project_id IS NULL AND session_id IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agent_memory_versions_user_project_session_scope_not_null",
+                table: "agent_memory_versions",
+                columns: new[] { "user_id", "project_id", "session_id", "scope" },
+                unique: true,
+                filter: "project_id IS NOT NULL AND session_id IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_content_chunks_document_id_chunk_index",
                 table: "content_chunks",
                 columns: new[] { "document_id", "chunk_index" },
@@ -430,17 +492,56 @@ namespace TM.Web.NovelAgentWeb.Migrations
             migrationBuilder.DropTable(
                 name: "content_documents");
 
-            migrationBuilder.DropColumn(
-                name: "created_at",
-                table: "agent_memories");
+            migrationBuilder.Sql("PRAGMA foreign_keys=OFF;");
 
-            migrationBuilder.DropColumn(
-                name: "memory_key",
-                table: "agent_memories");
+            migrationBuilder.CreateTable(
+                name: "agent_memories_old",
+                columns: table => new
+                {
+                    id = table.Column<string>(type: "TEXT", nullable: false),
+                    user_id = table.Column<string>(type: "TEXT", nullable: false),
+                    project_id = table.Column<string>(type: "TEXT", nullable: true),
+                    memory_type = table.Column<string>(type: "TEXT", nullable: false),
+                    content = table.Column<string>(type: "TEXT", nullable: false),
+                    updated_at = table.Column<DateTime>(type: "TEXT", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_agent_memories", x => x.id);
+                    table.ForeignKey(
+                        name: "FK_agent_memories_novel_projects_project_id",
+                        column: x => x.project_id,
+                        principalTable: "novel_projects",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_agent_memories_users_user_id",
+                        column: x => x.user_id,
+                        principalTable: "users",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
 
-            migrationBuilder.DropColumn(
-                name: "session_id",
-                table: "agent_memories");
+            migrationBuilder.Sql("""
+                INSERT INTO agent_memories_old (id, user_id, project_id, memory_type, content, updated_at)
+                SELECT id, user_id, project_id, memory_type, content, updated_at
+                FROM agent_memories;
+                """);
+
+            migrationBuilder.DropTable(name: "agent_memories");
+            migrationBuilder.RenameTable(name: "agent_memories_old", newName: "agent_memories");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agent_memories_project_id",
+                table: "agent_memories",
+                column: "project_id");
+
+            migrationBuilder.CreateIndex(
+                name: "idx_memories_user_project",
+                table: "agent_memories",
+                columns: new[] { "user_id", "project_id" });
+
+            migrationBuilder.Sql("PRAGMA foreign_keys=ON;");
         }
     }
 }
