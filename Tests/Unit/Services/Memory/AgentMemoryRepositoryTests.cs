@@ -2,6 +2,7 @@ using Xunit;
 using Moq;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
@@ -281,4 +282,68 @@ public class AgentMemoryRepositoryTests
         _mockMemoryCache.Verify(x => x.Remove(It.IsAny<string>()), Times.Exactly(2));
         _mockRedisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
+
+    [Fact]
+    public async Task UnionMemoryAsync_ConcurrentSqliteCallsPreserveAllListValues()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            setupDb.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        var tasks = Enumerable.Range(0, 16).Select(async i =>
+        {
+            await using var db = new NovelAgentDbContext(options);
+            var repository = CreateRepository(db);
+            await repository.UnionMemoryAsync(
+                "user-1",
+                "project-1",
+                new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["execution.repeated_blockers"] = new[] { $"blocker-{i}" }
+                });
+        });
+
+        await Task.WhenAll(tasks);
+
+        await using var verifyDb = new NovelAgentDbContext(options);
+        var rows = await verifyDb.AgentMemories
+            .Where(m => m.UserId == "user-1" &&
+                        m.ProjectId == "project-1" &&
+                        m.MemoryType == "execution.repeated_blockers")
+            .ToListAsync();
+
+        var row = Assert.Single(rows);
+        Assert.Equal("repeated_blockers", row.MemoryKey);
+        var values = JsonSerializer.Deserialize<List<string>>(row.Content) ?? new();
+        Assert.Equal(16, values.Count);
+        foreach (var expected in Enumerable.Range(0, 16).Select(i => $"blocker-{i}"))
+            Assert.Contains(expected, values);
+    }
+
+    private AgentMemoryRepository CreateRepository(NovelAgentDbContext dbContext) =>
+        new(
+            dbContext,
+            _mockRedisCache.Object,
+            _mockMemoryCache.Object,
+            _mockVectorStore.Object,
+            _mockEmbedding.Object,
+            _mockLogger.Object);
+
+    private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
+    {
+        var connection = new SqliteConnection($"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared");
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static DbContextOptions<NovelAgentDbContext> CreateSqliteOptions(string connectionString) =>
+        new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .Options;
 }

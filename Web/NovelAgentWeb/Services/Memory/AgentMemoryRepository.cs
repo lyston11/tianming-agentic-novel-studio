@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using TM.Services.Framework.AI.Embedding;
@@ -20,6 +21,15 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RedisCacheDuration = TimeSpan.FromMinutes(10);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MemoryLocks = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> UnionListMemoryTypes = new(StringComparer.Ordinal)
+    {
+        "project.referenced_knowledge_ids",
+        "project.used_trope_patterns",
+        "execution.successful_repairs",
+        "execution.repeated_blockers",
+        "author.style_dislikes"
+    };
 
     public AgentMemoryRepository(
         NovelAgentDbContext context,
@@ -333,6 +343,122 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
+    public async Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
+    {
+        foreach (var memoryType in updates.Keys)
+        {
+            if (!UnionListMemoryTypes.Contains(memoryType))
+            {
+                throw new ArgumentException($"Memory type does not support list union updates: {memoryType}", nameof(updates));
+            }
+
+            var scope = memoryType.Split('.')[0];
+            if (scope == "author" && projectId != null)
+            {
+                throw new ArgumentException("Author memory union updates must use a null projectId.", nameof(projectId));
+            }
+
+            if (scope is "project" or "execution" && string.IsNullOrWhiteSpace(projectId))
+            {
+                throw new ArgumentException($"{scope} memory union updates require a projectId.", nameof(projectId));
+            }
+        }
+
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var lockKey = $"{userId}:{projectId ?? "<author>"}";
+        var memoryLock = MemoryLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
+        await memoryLock.WaitAsync(ct);
+        try
+        {
+            var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
+            IDbContextTransaction? transaction = null;
+
+            if (!isInMemory)
+            {
+                transaction = await _context.Database.BeginTransactionAsync(ct);
+            }
+
+            try
+            {
+                foreach (var (memoryType, incomingValues) in updates)
+                {
+                    var existing = await _context.AgentMemories
+                        .FirstOrDefaultAsync(m =>
+                            m.UserId == userId &&
+                            m.ProjectId == projectId &&
+                            m.MemoryType == memoryType, ct);
+
+                    var merged = ReadStringList(existing?.Content);
+                    foreach (var value in incomingValues.Select(v => v.Trim()).Where(v => !string.IsNullOrWhiteSpace(v)))
+                    {
+                        if (!merged.Contains(value, StringComparer.OrdinalIgnoreCase))
+                        {
+                            merged.Add(value);
+                        }
+                    }
+
+                    var json = JsonSerializer.Serialize(merged);
+                    var now = DateTime.UtcNow;
+
+                    if (existing != null)
+                    {
+                        existing.Content = json;
+                        existing.MemoryKey = GetMemoryKey(memoryType);
+                        existing.UpdatedAt = now;
+                    }
+                    else
+                    {
+                        _context.AgentMemories.Add(new Data.Entities.AgentMemory
+                        {
+                            Id = Guid.NewGuid().ToString(),
+                            UserId = userId,
+                            ProjectId = projectId,
+                            MemoryType = memoryType,
+                            MemoryKey = GetMemoryKey(memoryType),
+                            Content = json,
+                            CreatedAt = now,
+                            UpdatedAt = now
+                        });
+                    }
+                }
+
+                await _context.SaveChangesAsync(ct);
+
+                if (transaction != null)
+                {
+                    await transaction.CommitAsync(ct);
+                }
+            }
+            catch
+            {
+                if (transaction != null)
+                {
+                    await transaction.RollbackAsync(ct);
+                }
+                throw;
+            }
+            finally
+            {
+                transaction?.Dispose();
+            }
+        }
+        finally
+        {
+            memoryLock.Release();
+        }
+
+        foreach (var memoryType in updates.Keys)
+        {
+            await InvalidateCacheAsync(userId, projectId, memoryType);
+        }
+
+        _logger.LogDebug("Union updated {Count} memory fields for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
+    }
+
     public async Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
     {
         if (updates.Keys.Any(memoryType => !memoryType.StartsWith("session.", StringComparison.Ordinal)))
@@ -422,6 +548,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
 
         return JsonSerializer.Deserialize<T>(row.Content);
+    }
+
+    private static List<string> ReadStringList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException("Stored memory content is not a list of strings.", ex);
+        }
     }
 
     private async Task InvalidateCacheAsync(string userId, string? projectId, string memoryType)

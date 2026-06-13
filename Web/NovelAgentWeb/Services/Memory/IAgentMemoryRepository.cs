@@ -50,6 +50,14 @@ public interface IAgentMemoryRepository
     Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default);
 
     /// <summary>
+    /// Union list memory fields with the latest stored database values.
+    /// </summary>
+    /// <param name="userId">User ID</param>
+    /// <param name="projectId">Project ID (null for cross-project)</param>
+    /// <param name="updates">Dictionary of memoryType → list values to merge case-insensitively</param>
+    Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default);
+
+    /// <summary>
     /// Update multiple session memory fields in a single transaction.
     /// </summary>
     /// <param name="userId">User ID</param>

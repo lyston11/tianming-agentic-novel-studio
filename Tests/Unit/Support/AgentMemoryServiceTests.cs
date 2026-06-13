@@ -101,12 +101,14 @@ public class AgentMemoryServiceTests
 
         Assert.True(repository.ProjectUpdates.TryGetValue("project.constraints", out var constraints));
         Assert.Contains("保持节奏紧凑", Assert.IsType<List<string>>(constraints));
-        Assert.True(repository.ProjectUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
         Assert.Contains("kb-new", Assert.IsType<List<string>>(knowledgeIds));
-        Assert.True(repository.ProjectUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
         Assert.Contains("ValidateChapterDraft 发现节奏问题", Assert.IsType<List<string>>(blockers));
         Assert.True(repository.AuthorUpdates.TryGetValue("author.style_likes", out var styleLikes));
         Assert.Contains("细腻心理描写", Assert.IsType<List<string>>(styleLikes));
+        Assert.False(repository.ProjectUpdates.ContainsKey("project.referenced_knowledge_ids"));
+        Assert.False(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
     }
 
     [Fact]
@@ -123,8 +125,10 @@ public class AgentMemoryServiceTests
             QualityGate = new AgentQualityGateReport { Status = "fail", RewriteDecision = "节奏拖慢" }
         });
 
-        Assert.True(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
-        Assert.True(repository.AuthorUpdates.ContainsKey("author.style_dislikes"));
+        Assert.True(repository.ProjectUnionUpdates.ContainsKey("execution.repeated_blockers"));
+        Assert.True(repository.AuthorUnionUpdates.ContainsKey("author.style_dislikes"));
+        Assert.False(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.style_dislikes"));
     }
 
     [Fact]
@@ -157,23 +161,23 @@ public class AgentMemoryServiceTests
 
         await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
 
-        Assert.True(repository.ProjectUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
         Assert.Contains("other-session blocker", Assert.IsType<List<string>>(blockers));
         Assert.Contains("current-session blocker", Assert.IsType<List<string>>(blockers));
 
-        Assert.True(repository.ProjectUpdates.TryGetValue("execution.successful_repairs", out var repairs));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.successful_repairs", out var repairs));
         Assert.Contains("other-session repair", Assert.IsType<List<string>>(repairs));
         Assert.Contains("current-session repair", Assert.IsType<List<string>>(repairs));
 
-        Assert.True(repository.AuthorUpdates.TryGetValue("author.style_dislikes", out var dislikes));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.style_dislikes", out var dislikes));
         Assert.Contains("other-session dislike", Assert.IsType<List<string>>(dislikes));
         Assert.Contains("current-session dislike", Assert.IsType<List<string>>(dislikes));
 
-        Assert.True(repository.ProjectUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
         Assert.Contains("other-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
         Assert.Contains("current-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
 
-        Assert.True(repository.ProjectUpdates.TryGetValue("project.used_trope_patterns", out var tropePatterns));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.used_trope_patterns", out var tropePatterns));
         Assert.Contains("other-session-pattern", Assert.IsType<List<string>>(tropePatterns));
         Assert.Contains("current-session-pattern", Assert.IsType<List<string>>(tropePatterns));
     }
@@ -186,6 +190,8 @@ public class AgentMemoryServiceTests
         public ExecutionMemory ExecutionMemory { get; set; } = new();
         public Dictionary<string, object> ProjectUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> ProjectUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> AuthorUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int UpdateMemoryCallCount { get; private set; }
 
         public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
@@ -212,6 +218,14 @@ public class AgentMemoryServiceTests
             var target = projectId == null ? AuthorUpdates : ProjectUpdates;
             foreach (var (key, value) in updates)
                 target[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
+        {
+            var target = projectId == null ? AuthorUnionUpdates : ProjectUnionUpdates;
+            foreach (var (key, value) in updates)
+                target[key] = value.ToList();
             return Task.CompletedTask;
         }
 

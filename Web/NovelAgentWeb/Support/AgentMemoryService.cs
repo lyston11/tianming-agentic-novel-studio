@@ -80,6 +80,8 @@ public sealed class AgentMemoryService
 
         var updates = new Dictionary<string, object>();
         var authorUpdates = new Dictionary<string, object>();
+        var unionUpdates = new Dictionary<string, IReadOnlyList<string>>();
+        var authorUnionUpdates = new Dictionary<string, IReadOnlyList<string>>();
 
         if (update?.SessionMemory != null)
         {
@@ -148,17 +150,17 @@ public sealed class AgentMemoryService
         if (hasExplicitUpdate && working.ProjectMemory.UnresolvedThreads.Count > 0)
             updates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.ReferencedKnowledgeIds.Count > 0)
-            updates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.UsedTropePatterns.Count > 0)
-            updates["project.used_trope_patterns"] = working.ProjectMemory.UsedTropePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["project.used_trope_patterns"] = working.ProjectMemory.UsedTropePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ExecutionMemory.SuccessfulRepairNotes.Count > 0)
-            updates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ExecutionMemory.RepeatedBlockers.Count > 0)
-            updates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
             authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.AuthorMemory.StyleDislikes.Count > 0)
-            authorUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         if (updates.Count > 0)
         {
@@ -170,10 +172,22 @@ public sealed class AgentMemoryService
             await _repository.UpdateMemoryAsync(userId, null, authorUpdates, ct);
         }
 
+        if (unionUpdates.Count > 0)
+        {
+            await _repository.UnionMemoryAsync(userId, projectId, unionUpdates, ct);
+        }
+
+        if (authorUnionUpdates.Count > 0)
+        {
+            await _repository.UnionMemoryAsync(userId, null, authorUnionUpdates, ct);
+        }
+
         _logger.LogInformation(
-            "Applied {ProjectCount} project/execution and {AuthorCount} author memory updates for user {UserId}, project {ProjectId}",
+            "Applied {ProjectCount} project/execution, {AuthorCount} author, {UnionCount} project/execution union, and {AuthorUnionCount} author union memory updates for user {UserId}, project {ProjectId}",
             updates.Count,
             authorUpdates.Count,
+            unionUpdates.Count,
+            authorUnionUpdates.Count,
             userId,
             projectId);
     }

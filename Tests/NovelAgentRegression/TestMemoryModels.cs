@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -176,9 +177,15 @@ public sealed class AgentWorkingMemory
 // Memory layer types for AgentMemoryService
 public sealed class AgentSessionMemory
 {
+    public string CurrentGoal { get; set; } = string.Empty;
+    public List<string> OpenQuestions { get; set; } = new();
     public string ChatSummary { get; set; } = string.Empty;
     public List<string> ShortTermPreferences { get; set; } = new();
+    public List<string> RecentObservations { get; set; } = new();
     public List<string> LastObservations { get; set; } = new();
+    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
+    public string? PendingToolName { get; set; }
+    public string? LastIntent { get; set; }
 }
 
 public sealed class AgentProjectMemory
@@ -190,6 +197,8 @@ public sealed class AgentProjectMemory
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> ImportedKnowledgeIds { get; set; } = new();
+    public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
     public List<string> UsedTropePatterns { get; set; } = new();
 }
 
@@ -207,6 +216,7 @@ public sealed class AgentExecutionMemory
     public List<string> ToolFailurePatterns { get; set; } = new();
     public List<string> RepeatedBlockers { get; set; } = new();
     public List<string> SuccessfulRepairNotes { get; set; } = new();
+    public List<string> KnowledgeProcessingFailures { get; set; } = new();
 }
 
 public sealed class AgentReflection
@@ -224,7 +234,45 @@ public sealed class AgentQualityGateReport
 
 public sealed class AgentMissionPatch
 {
+    public string Status { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public string CurrentFocus { get; set; } = string.Empty;
     public List<AgentChapterTaskPatch> ChapterPatches { get; set; } = new();
+    public AgentMemoryUpdate? MemoryUpdate { get; set; }
+}
+
+public sealed class AgentMemoryUpdate
+{
+    public SessionMemoryUpdate SessionMemory { get; set; } = new();
+    public ProjectMemoryUpdate ProjectMemory { get; set; } = new();
+    public AuthorMemoryUpdate AuthorMemory { get; set; } = new();
+    public ExecutionMemoryUpdate ExecutionMemory { get; set; } = new();
+    public List<string> UsedKnowledgeIds { get; set; } = new();
+    public List<string> UsedTropePatterns { get; set; } = new();
+}
+
+public sealed class SessionMemoryUpdate
+{
+    public string? ChatSummary { get; set; }
+    public List<string> ExtractedPreferences { get; set; } = new();
+}
+
+public sealed class ProjectMemoryUpdate
+{
+    public List<string> NewConstraints { get; set; } = new();
+    public List<string> UnresolvedThreads { get; set; } = new();
+}
+
+public sealed class AuthorMemoryUpdate
+{
+    public List<string> StyleLikes { get; set; } = new();
+    public List<string> StyleDislikes { get; set; } = new();
+}
+
+public sealed class ExecutionMemoryUpdate
+{
+    public string? ToolSuccess { get; set; }
+    public string? ToolFailure { get; set; }
 }
 
 public sealed class AgentChapterTaskPatch
