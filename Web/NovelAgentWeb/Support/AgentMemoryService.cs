@@ -74,6 +74,10 @@ public sealed class AgentMemoryService
         working.AuthorMemory ??= new AgentAuthorMemory();
         working.ExecutionMemory ??= new AgentExecutionMemory();
 
+        var currentProjectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct) ?? new ProjectMemory();
+        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct) ?? new AuthorMemory();
+        var currentExecutionMemory = await _repository.GetExecutionMemoryAsync(userId, projectId, ct) ?? new ExecutionMemory();
+
         var updates = new Dictionary<string, object>();
         var authorUpdates = new Dictionary<string, object>();
 
@@ -125,6 +129,12 @@ public sealed class AgentMemoryService
             AddUnique(working.ProjectMemory.ReferencedKnowledgeIds, id);
         foreach (var pattern in Clean(update?.UsedTropePatterns))
             AddUnique(working.ProjectMemory.UsedTropePatterns, pattern);
+
+        MergeCurrentThenWorking(working.ProjectMemory.ReferencedKnowledgeIds, currentProjectMemory.ReferencedKnowledgeIds);
+        MergeCurrentThenWorking(working.ProjectMemory.UsedTropePatterns, currentProjectMemory.UsedTropePatterns);
+        MergeCurrentThenWorking(working.ExecutionMemory.SuccessfulRepairNotes, currentExecutionMemory.SuccessfulRepairNotes);
+        MergeCurrentThenWorking(working.ExecutionMemory.RepeatedBlockers, currentExecutionMemory.RepeatedBlockers);
+        MergeCurrentThenWorking(working.AuthorMemory.StyleDislikes, currentAuthorMemory.StyleDislikes);
 
         Trim(working.ProjectMemory.UnresolvedThreads, MaxUnresolvedThreads);
         Trim(working.ExecutionMemory.RepeatedBlockers, MaxRepeatedBlockers);
@@ -261,6 +271,16 @@ public sealed class AgentMemoryService
     {
         if (!list.Contains(value, StringComparer.OrdinalIgnoreCase))
             list.Add(value);
+    }
+
+    private static void MergeCurrentThenWorking(List<string> target, IEnumerable<string>? currentValues)
+    {
+        var workingValues = target.ToList();
+        target.Clear();
+        foreach (var value in Clean(currentValues))
+            AddUnique(target, value);
+        foreach (var value in Clean(workingValues))
+            AddUnique(target, value);
     }
 
     private static string FirstNonEmpty(params string?[] values) =>

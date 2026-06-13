@@ -34,4 +34,11 @@ internal sealed class TestAgentMemoryRepository : IAgentMemoryRepository
             Updates[key] = value;
         return Task.CompletedTask;
     }
+
+    public Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
+    {
+        foreach (var (key, value) in updates)
+            Updates[key] = value;
+        return Task.CompletedTask;
+    }
 }

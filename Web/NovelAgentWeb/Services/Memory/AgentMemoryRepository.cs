@@ -333,6 +333,86 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
+    public async Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
+    {
+        if (updates.Keys.Any(memoryType => !memoryType.StartsWith("session.", StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Session memory updates must use session.* memory types.", nameof(updates));
+        }
+
+        var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
+        IDbContextTransaction? transaction = null;
+
+        if (!isInMemory)
+        {
+            transaction = await _context.Database.BeginTransactionAsync(ct);
+        }
+
+        try
+        {
+            foreach (var (memoryType, value) in updates)
+            {
+                var json = JsonSerializer.Serialize(value);
+
+                var existing = await _context.AgentMemories
+                    .FirstOrDefaultAsync(m =>
+                        m.UserId == userId &&
+                        m.ProjectId == projectId &&
+                        m.SessionId == sessionId &&
+                        m.MemoryType == memoryType, ct);
+
+                if (existing != null)
+                {
+                    existing.Content = json;
+                    existing.MemoryKey = GetMemoryKey(memoryType);
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _context.AgentMemories.Add(new Data.Entities.AgentMemory
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        UserId = userId,
+                        ProjectId = projectId,
+                        SessionId = sessionId,
+                        MemoryType = memoryType,
+                        MemoryKey = GetMemoryKey(memoryType),
+                        Content = json,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+
+            if (transaction != null)
+            {
+                await transaction.CommitAsync(ct);
+            }
+
+            await InvalidateSessionCacheAsync(userId, projectId, sessionId, ct);
+
+            _logger.LogDebug(
+                "Batch updated {Count} session memory fields for user {UserId}, project {ProjectId}, session {SessionId}",
+                updates.Count,
+                userId,
+                projectId,
+                sessionId);
+        }
+        catch
+        {
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            throw;
+        }
+        finally
+        {
+            transaction?.Dispose();
+        }
+    }
+
     private static T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
     {
         var row = rows.FirstOrDefault(r => r.MemoryType == memoryType);
@@ -365,6 +445,15 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
         _memoryCache.Remove(cacheKey);
         await _redisCache.RemoveAsync(cacheKey);
+
+        _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
+    }
+
+    private async Task InvalidateSessionCacheAsync(string userId, string projectId, string sessionId, CancellationToken ct)
+    {
+        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+        _memoryCache.Remove(cacheKey);
+        await _redisCache.RemoveAsync(cacheKey, ct);
 
         _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
     }

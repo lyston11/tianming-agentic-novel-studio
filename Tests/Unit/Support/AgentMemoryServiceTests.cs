@@ -127,6 +127,57 @@ public class AgentMemoryServiceTests
         Assert.True(repository.AuthorUpdates.ContainsKey("author.style_dislikes"));
     }
 
+    [Fact]
+    public async Task PersistAsync_WithNoMemoryUpdate_MergesRepositoryListsBeforePersistingRuleBasedChanges()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            ProjectMemory = new ProjectMemory
+            {
+                ReferencedKnowledgeIds = new List<string> { "other-session-knowledge" },
+                UsedTropePatterns = new List<string> { "other-session-pattern" }
+            },
+            AuthorMemory = new AuthorMemory
+            {
+                StyleDislikes = new List<string> { "other-session dislike" }
+            },
+            ExecutionMemory = new ExecutionMemory
+            {
+                RepeatedBlockers = new List<string> { "other-session blocker" },
+                SuccessfulRepairNotes = new List<string> { "other-session repair" }
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession { UserId = "user-1" };
+        session.WorkingMemory.ProjectMemory.ReferencedKnowledgeIds.Add("current-session-knowledge");
+        session.WorkingMemory.ProjectMemory.UsedTropePatterns.Add("current-session-pattern");
+        session.WorkingMemory.AuthorMemory.StyleDislikes.Add("current-session dislike");
+        session.WorkingMemory.ExecutionMemory.RepeatedBlockers.Add("current-session blocker");
+        session.WorkingMemory.ExecutionMemory.SuccessfulRepairNotes.Add("current-session repair");
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
+
+        Assert.True(repository.ProjectUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.Contains("other-session blocker", Assert.IsType<List<string>>(blockers));
+        Assert.Contains("current-session blocker", Assert.IsType<List<string>>(blockers));
+
+        Assert.True(repository.ProjectUpdates.TryGetValue("execution.successful_repairs", out var repairs));
+        Assert.Contains("other-session repair", Assert.IsType<List<string>>(repairs));
+        Assert.Contains("current-session repair", Assert.IsType<List<string>>(repairs));
+
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.style_dislikes", out var dislikes));
+        Assert.Contains("other-session dislike", Assert.IsType<List<string>>(dislikes));
+        Assert.Contains("current-session dislike", Assert.IsType<List<string>>(dislikes));
+
+        Assert.True(repository.ProjectUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
+        Assert.Contains("other-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
+        Assert.Contains("current-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
+
+        Assert.True(repository.ProjectUpdates.TryGetValue("project.used_trope_patterns", out var tropePatterns));
+        Assert.Contains("other-session-pattern", Assert.IsType<List<string>>(tropePatterns));
+        Assert.Contains("current-session-pattern", Assert.IsType<List<string>>(tropePatterns));
+    }
+
     private sealed class RecordingMemoryRepository : IAgentMemoryRepository
     {
         public ProjectMemory ProjectMemory { get; set; } = new();
@@ -163,5 +214,8 @@ public class AgentMemoryServiceTests
                 target[key] = value;
             return Task.CompletedTask;
         }
+
+        public Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }

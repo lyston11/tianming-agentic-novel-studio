@@ -48,6 +48,15 @@ public interface IAgentMemoryRepository
     /// <param name="projectId">Project ID (null for cross-project)</param>
     /// <param name="updates">Dictionary of memoryType → value</param>
     Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default);
+
+    /// <summary>
+    /// Update multiple session memory fields in a single transaction.
+    /// </summary>
+    /// <param name="userId">User ID</param>
+    /// <param name="projectId">Project ID</param>
+    /// <param name="sessionId">Session ID</param>
+    /// <param name="updates">Dictionary of session memoryType → value</param>
+    Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default);
 }
 
 /// <summary>
