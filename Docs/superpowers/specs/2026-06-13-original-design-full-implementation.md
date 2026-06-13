@@ -343,6 +343,7 @@ MemoryContext
     openQuestions
     shortTermPreferences
     recentObservations
+    recentUploadedKnowledgeIds
     pendingToolName
     lastIntent
   project:
@@ -350,6 +351,8 @@ MemoryContext
     readerPromise
     constraints
     unresolvedThreads
+    importedKnowledgeIds
+    knowledgeInventory
     referencedKnowledgeIds
     usedTropePatterns
   author:
@@ -362,6 +365,7 @@ MemoryContext
     toolFailurePatterns
     repeatedBlockers
     successfulRepairNotes
+    knowledgeProcessingFailures
   tool:
     discoveredPhase
     discoveredTools
@@ -382,28 +386,32 @@ MemoryContext
    - ChatHistory 是 SessionMemory、ProjectMemory 和 AuthorMemory 沉淀的主要来源。
 
 2. **SessionMemory**
-   - 当前目标、开放问题、短期偏好、最近观察、待执行工具、最后意图。
+   - 当前目标、开放问题、短期偏好、最近观察、最近上传/处理知识、待执行工具、最后意图。
    - 范围是 `userId + sessionId + activeProjectId`；同一会话切换项目时必须重建或隔离项目相关字段。
    - 写入路径为 MemoryCache -> Redis -> SQLite `agent_memories`，`agent_sessions.session_data` 只保留可恢复运行快照。
    - 每轮从 ChatHistory 和当前动作提取轻量更新，保证下一轮 Agent 对话能拿到刚刚说过的目标、偏好和开放问题。
    - 会话结束或归档时可以沉淀到 ProjectMemory/AuthorMemory，但不能直接丢失。
 
 3. **ProjectMemory**
-   - 长期目标、读者承诺、项目约束、未解决伏笔、引用知识、已用套路。
+   - 长期目标、读者承诺、项目约束、未解决伏笔、已导入知识清单、引用知识、已用套路。
    - 项目生命周期内跨会话共享。
    - `long_term_goal`、`reader_promise` 向量化到 Qdrant。
    - 新写小说、规划卷、规划章节、生成章节、提交章节、知识命中、质量门禁结论都必须检查并更新 ProjectMemory。
+   - 知识上传/处理完成进入 `importedKnowledgeIds` 和 `knowledgeInventory`，表示项目拥有这些知识资源。
+   - Agent 检索并实际用于规划/写作后，才进入 `referencedKnowledgeIds`，表示创作决策已经引用过。
    - 项目级硬约束优先于 AuthorMemory 风格喜好。
 
 4. **AuthorMemory**
    - 风格喜好、风格反感、确认容忍度、类型习惯、常用知识。
    - 范围是 `userId` 全局，`projectId = null`，跨项目共享。
    - 只有跨项目重复出现的稳定偏好、明确全局偏好、风格禁忌才进入 AuthorMemory。
+   - 用户明确收藏、置顶或跨项目反复使用的知识进入 `favoriteKnowledgeIds`。
    - AuthorMemory 可以参与知识检索 boost 和工具策略，但不能覆盖当前 SessionMemory 的明确指令。
 
 5. **ExecutionMemory**
    - 工具失败模式、重复阻塞、成功修复经验。
    - 工具调用后实时更新。
+   - 知识处理失败、解析异常、向量化失败和可复用修复经验进入 `knowledgeProcessingFailures` 或成功修复经验。
    - 与工具调用和 `tool_search` 缓存强关联：工具失败、恢复成功、前置工具链经验都必须写 ExecutionMemory。
    - ExecutionMemory 更新后提升 `agent_memory_versions.execution`，使相关工具缓存和 prompt 上下文缓存失效。
    - 后续 `tool_search` 和 AgentPlanner 应参考 ExecutionMemory，避免重复失败链，优先使用已验证的修复路径。
@@ -424,6 +432,11 @@ UserMessage
        emit MemoryEvent
        update AgentRun / SessionMemory / ProjectMemory / ExecutionMemory
        bump memory version and invalidate Redis keys
+  -> KnowledgeUpload? / KnowledgeProcessed?
+       emit MemoryEvent(source_type=knowledge_upload|knowledge_processed)
+       update SessionMemory.recentUploadedKnowledgeIds
+       update ProjectMemory.importedKnowledgeIds + knowledgeInventory
+       update ExecutionMemory on processing failure/repair
   -> Reflection or lightweight extraction
        emit MemoryEvent
        update SessionMemory / ProjectMemory / AuthorMemory / ExecutionMemory
@@ -452,7 +465,9 @@ UserMessage
 - 同一偏好重复 3 次进入 ProjectMemory constraints。
 - 多项目重复模式进入 AuthorMemory。
 - 工具失败/修复实时进入 ExecutionMemory。
-- 知识库命中进入 ProjectMemory referenced knowledge。
+- 知识上传成功或知识处理完成进入 SessionMemory 最近上传知识，以及 ProjectMemory 已导入知识清单。
+- 知识库命中且被 Agent 实际用于规划/写作后，才进入 ProjectMemory referenced knowledge。
+- 用户明确收藏、置顶或跨项目反复使用的知识进入 AuthorMemory favorite knowledge。
 - 每次 `tool_search` 结果进入 ToolSearchCache；后续工具执行结果进入 ExecutionMemory。
 - 新写小说、规划卷、规划章节、生成章节、提交章节、StoryBible 修改、知识上传处理完成属于重要任务，必须强制写 `MemoryEvent`。
 - 每 10 轮 ChatHistory 压缩必须写 `agent_chat_summaries`；每 30 轮 MetaSummary 可作为长语义记忆写 Qdrant。
@@ -604,15 +619,31 @@ UserMessage
 ```text
 POST /api/knowledge/upload
   -> upload stream parsed into content_documents/content_chunks + knowledge_processing_tasks pending
+  -> MemoryEvent(source_type=knowledge_upload)
+  -> SessionMemory.recentUploadedKnowledgeIds append task/document id
   -> Agent ProcessKnowledgeFile or frontend trigger
   -> short file single pass / long file chunked processing
   -> extracted knowledge entries
   -> SQLite knowledge rows
   -> Qdrant vectors
+  -> MemoryEvent(source_type=knowledge_processed)
+  -> ProjectMemory.importedKnowledgeIds append extracted knowledge ids
+  -> ProjectMemory.knowledgeInventory update title/type/tags/weight/source summary
+  -> bump session/project memory version and invalidate knowledge/memory/tool caches
   -> task completed
 ```
 
 短文件使用单次 LLM 分析。长文件使用 SQLite 内容层中的有序分块做分块分析、上一块摘要、最终聚合总结。所有 LLM 输出必须做 JSON 清洗、校验和失败降级。上传临时文件如果存在，处理成功或失败后都不能成为业务读取依赖。
+
+上传知识进入记忆的边界：
+
+1. `SessionMemory.recentUploadedKnowledgeIds` 记录当前会话刚上传或刚处理的任务、文档和知识条目，便于下一轮 Agent 主动知道“用户刚放进来一批知识”。
+2. `ProjectMemory.importedKnowledgeIds` 记录本项目拥有的知识资源，不代表已经用于创作。
+3. `ProjectMemory.knowledgeInventory` 保存轻量索引摘要，例如 `knowledgeId/title/entryType/tags/weight/source/createdAt`，用于 prompt 提示和检索 boost；完整知识正文仍回 SQLite 内容层读取，语义召回走 Qdrant。
+4. 只有 Agent 检索后把知识用于规划、写作、评审或 StoryBible 修改，才写入 `ProjectMemory.referencedKnowledgeIds`。
+5. 用户明确收藏、置顶，或同一知识在多个项目反复高频使用，才写入 `AuthorMemory.favoriteKnowledgeIds`。
+6. 处理失败、向量化失败、JSON 清洗失败、重复知识合并经验写入 `ExecutionMemory.knowledgeProcessingFailures` 或成功修复经验。
+7. 每次上传、处理完成、处理失败、知识编辑、知识删除都必须递增相关 memory version，并失效 `memory-context:*`、`toolcache:*`、知识检索热点结果和前端任务状态缓存。
 
 ### 7.2 检索闭环
 
@@ -625,12 +656,14 @@ SearchCreativeKnowledge
   -> text fallback if vector unavailable
   -> memory-aware rerank
   -> usage count increment
+  -> MemoryEvent(source_type=knowledge_used)
   -> MemoryUpdate.usedKnowledgeIds
+  -> ProjectMemory.referencedKnowledgeIds append used ids
 ```
 
 重排序规则：
 
-- ProjectMemory 已引用知识加权。
+- ProjectMemory 已导入知识进入候选提示；已引用知识加权更高。
 - AuthorMemory 收藏知识加权。
 - 题材匹配加权。
 - 已用套路过滤或降权。
@@ -750,6 +783,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 - 补 SessionMemory repository/cache/read/write，并从 `session_data` 快照升级为 Redis + SQLite 真源闭环。
 - 修复 Reflection 无 MemoryUpdate 时工具结果、质量门禁、知识引用和明确偏好不持久的问题。
 - 完成重要任务强制记忆写入：新小说、卷、章节、StoryBible、知识处理、工具调用。
+- 完成知识上传/处理/使用/收藏的分层记忆字段：`recentUploadedKnowledgeIds`、`importedKnowledgeIds`、`knowledgeInventory`、`referencedKnowledgeIds`、`favoriteKnowledgeIds`、`knowledgeProcessingFailures`。
 - 完成 memory version、Redis key 失效和 prompt 上下文缓存测试。
 - 完成记忆沉淀和冲突优先级测试。
 
@@ -764,6 +798,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 ### P1: 知识库闭环
 
 - 完成知识条目字段更新。
+- 完成上传知识主动写入 SessionMemory 和 ProjectMemory inventory，不能只在检索命中后写记忆。
 - 完成 usage count 与 MemoryUpdate 引用。
 - 完成显式 material vectorize API。
 - 完成 memory-aware rerank。
@@ -813,7 +848,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 4. Agent 回合后，SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 可持久化并在下一回合通过 `MemoryContext` 恢复。
 5. 新小说、卷、章节、StoryBible、知识处理、工具调用等重要任务会产生 `MemoryEvent`，并刷新 Redis 与 memory version。
 6. tool_search 缓存命中、过期、Redis miss、memory version 失效、ExecutionMemory 关联失效都有测试和 runtime trace。
-7. 知识库上传文件后能处理、抽取、向量化、检索，并被 Agent 引用到记忆。
+7. 知识库上传文件后能处理、抽取、向量化、主动进入 SessionMemory 和 ProjectMemory inventory；被 Agent 实际使用后再进入 referenced knowledge。
 8. 前端项目上下文跨页面一致。
 9. 后端 build、核心单元测试、关键集成测试、前端 build 全部通过。
 10. `Docs/superpowers` 新增 implementation plan 与测试报告，能追溯每个修复任务。
