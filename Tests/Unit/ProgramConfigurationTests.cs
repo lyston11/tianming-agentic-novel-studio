@@ -17,6 +17,9 @@ public class ProgramConfigurationTests
 
         Assert.Equal("true", config["Redis:Enabled"], ignoreCase: true);
         Assert.Equal("localhost:6379", config["Redis:ConnectionString"]);
+        Assert.Equal("NovelAgent:", config["Redis:InstanceName"]);
+        Assert.Equal("00:10:00", config["Redis:DefaultExpiration"]);
+        Assert.Equal("false", config["Redis:AllowInMemoryFallback"], ignoreCase: true);
         Assert.Equal("http://localhost:6333", config["Qdrant:BaseUrl"]);
         Assert.Equal("6334", config["Qdrant:Port"]);
     }

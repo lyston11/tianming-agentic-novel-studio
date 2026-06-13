@@ -120,29 +120,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
-// Distributed cache: Redis is required by default; tests may opt into memory fallback explicitly.
-var redisEnabled = builder.Configuration.GetValue("Redis:Enabled", true);
-var redisAllowFallback = builder.Configuration.GetValue("Redis:AllowInMemoryFallback", false);
-var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
-var redisInstanceName = builder.Configuration["Redis:InstanceName"];
-
-if (redisEnabled && !string.IsNullOrWhiteSpace(redisConnectionString))
-{
-    builder.Services.AddStackExchangeRedisCache(options =>
-    {
-        options.Configuration = redisConnectionString;
-        options.InstanceName = redisInstanceName ?? "NovelAgent:";
-    });
-}
-else if (redisAllowFallback)
-{
-    builder.Services.AddDistributedMemoryCache();
-}
-else
-{
-    throw new InvalidOperationException("Redis is required. Set Redis:Enabled=true and Redis:ConnectionString, or set Redis:AllowInMemoryFallback=true only for tests.");
-}
-
+builder.Services.AddNovelAgentDistributedCache(builder.Configuration);
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 
 // Agent memory repository with three-tier caching
