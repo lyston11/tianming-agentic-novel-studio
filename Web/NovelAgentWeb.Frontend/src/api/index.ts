@@ -149,8 +149,8 @@ export const deleteVolumeArc = (id: string) =>
 export const sendChat = (req: AgentChatRequest) =>
   post<AgentChatResponse>('/agent/chat', req);
 
-export const createAgentSession = () =>
-  post<AgentSessionInfo>('/agent/session');
+export const createAgentSession = (projectId?: string | null) =>
+  post<AgentSessionInfo>(`/agent/session${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`);
 
 export const getAgentSession = (sessionId: string) =>
   get<AgentSessionInfo>(`/agent/session/${sessionId}`);
@@ -183,10 +183,8 @@ export const createNovelProject = (req: NovelProjectCreateRequest) =>
     genre: req.genre,
     coreHook: req.seed,
   });
-export const activateNovelProject = async (projectId: string) => {
-  sessionStorage.setItem('currentProjectId', projectId);
-  return get<NovelProjectInfo>(`/project/${projectId}`);
-};
+export const activateNovelProject = (projectId: string) =>
+  get<NovelProjectInfo>(`/project/${projectId}`);
 export const updateNovelProject = (projectId: string, req: NovelProjectUpdateRequest) =>
   api<NovelProjectInfo>(`/project/${projectId}`, {
     method: 'PUT',

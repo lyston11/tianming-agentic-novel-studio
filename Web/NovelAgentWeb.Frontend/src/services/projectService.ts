@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import type { NovelProjectInfo } from '../api/types';
 
 export interface ProjectResponse {
   id: string;
@@ -31,6 +32,21 @@ export interface UserStats {
   projectCount: number;
   totalWordCount: number;
   storageUsedMb: number;
+}
+
+export function toNovelProjectInfo(project: ProjectResponse): NovelProjectInfo {
+  return {
+    id: project.id,
+    title: project.title,
+    genre: project.genre ?? '',
+    subGenre: project.subGenre ?? '',
+    coreHook: project.coreHook ?? '',
+    readerPromise: '',
+    status: project.status,
+    storageProjectName: project.storageProjectName ?? '',
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
 }
 
 export const projectService = {

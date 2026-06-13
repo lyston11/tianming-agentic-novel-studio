@@ -12,6 +12,7 @@ import type {
   AgentMissionPlan,
   AgentScheduledTask,
   AgentSessionSummary,
+  NovelProjectInfo,
   NovelAgentRun,
   NovelBookView,
   NovelChapterView,
@@ -240,6 +241,21 @@ function projectShortId(projectId?: string | null) {
   return projectId === 'default' ? 'default' : projectId.slice(0, 8);
 }
 
+function bookToProjectInfo(book: NovelBookView): NovelProjectInfo {
+  return {
+    id: book.projectId,
+    title: book.title,
+    genre: book.genre,
+    subGenre: book.subGenre,
+    coreHook: book.coreHook,
+    readerPromise: book.readerPromise,
+    status: book.status,
+    storageProjectName: '',
+    createdAt: book.updatedAt,
+    updatedAt: book.updatedAt,
+  };
+}
+
 function compactList(values: (string | undefined | null)[]) {
   return values
     .map((value) => (value ?? '').trim())
@@ -278,6 +294,7 @@ export default function WorkflowPage() {
   const queryClient = useQueryClient();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
+  const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
   const { data: agentSessions } = useQuery({
     queryKey: ['agentSessions'],
     queryFn: listAgentSessions,
@@ -402,15 +419,27 @@ export default function WorkflowPage() {
   const diagnosticTaskCount = workflow?.diagnosticTasks?.length ?? 0;
 
   useEffect(() => {
-    if (!currentProjectId && fallbackProjectId) setCurrentProject(fallbackProjectId);
-  }, [fallbackProjectId, currentProjectId, setCurrentProject]);
+    if (!currentProjectId && fallbackProjectId) {
+      const book = books.find((item) => item.projectId === fallbackProjectId);
+      if (book) {
+        setCurrentProject(bookToProjectInfo(book));
+      } else {
+        setCurrentProjectId(fallbackProjectId);
+      }
+    }
+  }, [books, fallbackProjectId, currentProjectId, setCurrentProject, setCurrentProjectId]);
 
   useEffect(() => {
     setSelectedChapterId(null);
   }, [currentProjectId]);
 
   const selectProject = (projectId: string) => {
-    setCurrentProject(projectId);
+    const book = books.find((item) => item.projectId === projectId);
+    if (book) {
+      setCurrentProject(bookToProjectInfo(book));
+    } else {
+      setCurrentProjectId(projectId);
+    }
     setSelectedChapterId(null);
   };
 

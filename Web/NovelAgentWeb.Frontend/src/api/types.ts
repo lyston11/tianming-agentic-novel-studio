@@ -482,6 +482,11 @@ export interface CreativeKnowledgeEntry {
   tags: string[];
   weight: number;
   source: string;
+  usageCount?: number;
+  createdAt?: string;
+  projectUsageStatus?: string;
+  projectUsageCount?: number;
+  projectLastUsedAt?: string | null;
 }
 
 export interface CreativeKnowledgeMutationResult {

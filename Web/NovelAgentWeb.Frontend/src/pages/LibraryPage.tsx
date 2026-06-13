@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { deleteNovelProject, updateNovelProject, getStoryBibleByProject, listVolumeArcs } from '../api';
 import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
-import { projectService } from '../services/projectService';
+import { projectService, toNovelProjectInfo } from '../services/projectService';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/useProjectStore';
 import Topbar from '../components/layout/Topbar';
@@ -36,6 +36,7 @@ export default function LibraryPage() {
   const { user } = useAuthStore();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
+  const ensureProjectSelected = useProjectStore((s) => s.ensureProjectSelected);
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects'],
     queryFn: () => projectService.listProjects(),
@@ -50,6 +51,10 @@ export default function LibraryPage() {
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
 
   const projectsList = projects ?? [];
+  const projectInfos = useMemo(
+    () => projectsList.map(toNovelProjectInfo),
+    [projectsList],
+  );
 
   const { data: storyBible, isLoading: bibleLoading } = useQuery({
     queryKey: ['storyBible', currentProjectId],
@@ -192,11 +197,9 @@ export default function LibraryPage() {
   const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
 
   useEffect(() => {
-    if (!currentProjectId && projectsList.length > 0) {
-      setCurrentProject(projectsList[0].id);
-    }
+    if (projects) ensureProjectSelected(projectInfos);
     if (projectsList.length === 0 && mode !== 'store') setMode('store');
-  }, [currentProjectId, projectsList, setCurrentProject, mode]);
+  }, [ensureProjectSelected, projectInfos, projects, projectsList.length, mode]);
 
   const deleteMutation = useMutation({
     mutationFn: (projectId: string) => deleteNovelProject(projectId),
@@ -221,13 +224,15 @@ export default function LibraryPage() {
   });
 
   const openBookDetail = (book: NovelBookView) => {
-    setCurrentProject(book.projectId);
+    const project = projectsList.find((item) => item.id === book.projectId);
+    if (project) setCurrentProject(toNovelProjectInfo(project));
     setSelectedChapterId(null);
     setMode('detail');
   };
 
   const openBookReader = (book: NovelBookView) => {
-    setCurrentProject(book.projectId);
+    const project = projectsList.find((item) => item.id === book.projectId);
+    if (project) setCurrentProject(toNovelProjectInfo(project));
     setSelectedChapterId(book.selectedChapter?.chapterId ?? null);
     setMode('reader');
   };

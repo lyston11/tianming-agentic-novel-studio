@@ -18,6 +18,7 @@ import type {
 import { useAgentStore } from '../stores/useAgentStore';
 import { useAppStore } from '../stores/useAppStore';
 import { useChatStore } from '../stores/useChatStore';
+import { useProjectStore } from '../stores/useProjectStore';
 import '../styles/agent.css';
 
 function formatSessionTime(value: string) {
@@ -120,6 +121,8 @@ export default function AgentPage() {
     setSending,
   } = useChatStore();
   const addLog = useAppStore((s) => s.addLog);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
   const {
     sessionId,
     setSessionId,
@@ -155,20 +158,22 @@ export default function AgentPage() {
       setSessionLoadError('');
       const detail = await getAgentSession(id);
       setSessionId(detail.sessionId);
+      if (detail.activeProjectId) setCurrentProjectId(detail.activeProjectId);
       setActiveRun(null);
       clearEvents();
       loadSessionMessages(detail.sessionId, detail.messages, detail.memory);
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '会话详情加载失败');
     }
-  }, [clearEvents, loadSessionMessages, setActiveRun, setSessionId]);
+  }, [clearEvents, loadSessionMessages, setActiveRun, setCurrentProjectId, setSessionId]);
 
   const createNewSession = useCallback(async () => {
     try {
       setSessionLoadError('');
       setSessionMenu(null);
-      const detail = await createAgentSession();
+      const detail = await createAgentSession(currentProjectId);
       setSessionId(detail.sessionId);
+      if (detail.activeProjectId) setCurrentProjectId(detail.activeProjectId);
       setActiveRun(null);
       clearEvents();
       loadSessionMessages(detail.sessionId, detail.messages, detail.memory);
@@ -176,7 +181,7 @@ export default function AgentPage() {
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '新建会话失败');
     }
-  }, [clearEvents, loadSessionMessages, reloadSessions, setActiveRun, setSessionId]);
+  }, [clearEvents, currentProjectId, loadSessionMessages, reloadSessions, setActiveRun, setCurrentProjectId, setSessionId]);
 
   const renameSession = useCallback(async (target: AgentSessionSummary) => {
     setSessionMenu(null);
@@ -232,11 +237,26 @@ export default function AgentPage() {
     if (sessionId) return;
     if (!sessionsLoaded) return;
     if (sessions.length > 0) {
-      void selectSession(sessions[0].sessionId);
+      const preferred = currentProjectId
+        ? sessions.find((item) => item.activeProjectId === currentProjectId)
+        : null;
+      void selectSession((preferred ?? sessions[0]).sessionId);
       return;
     }
     void createNewSession();
-  }, [createNewSession, selectSession, sessionId, sessions, sessionsLoaded]);
+  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
+
+  useEffect(() => {
+    if (!sessionId || !sessionsLoaded || !currentProjectId) return;
+    const active = sessions.find((item) => item.sessionId === sessionId);
+    if (active?.activeProjectId === currentProjectId) return;
+    const matching = sessions.find((item) => item.activeProjectId === currentProjectId);
+    if (matching) {
+      void selectSession(matching.sessionId);
+      return;
+    }
+    void createNewSession();
+  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
     if (!sessionId) return;
