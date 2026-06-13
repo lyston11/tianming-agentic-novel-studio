@@ -11,7 +11,7 @@
 本轮修复不是继续追加临时功能，也不是只更新文档。目标是把当前项目收敛回最初设计的完整形态：
 
 1. 多用户小说创作 SaaS 架构。
-2. SQLite + Qdrant + Redis/缓存 的存储架构；SQLite 是业务数据真源，Qdrant 是语义向量索引。
+2. SQLite + Redis + Qdrant 的存储架构；SQLite 是业务数据真源，Redis 是热缓存与分布式状态层，Qdrant 是语义向量索引。
 3. Agent 的 Observe / Plan / Act / Reflect 闭环。
 4. ChatHistory、SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 的分层记忆闭环。
 5. 知识库从上传、处理、抽取、向量化、检索、Agent 引用到记忆沉淀的完整闭环。
@@ -67,7 +67,7 @@
 
 这些记录补充了原始 5 份文档未完全展开的实现意图：
 
-- 历史记录中曾出现 SQLite + 文件系统 + Qdrant 的过渡迁移方案；本次按用户确认修正为 SQLite + Qdrant，文件系统不再作为业务存储层。
+- 历史记录中曾出现 SQLite + 文件系统 + Qdrant 的过渡迁移方案；本次按用户确认修正为 SQLite + Redis + Qdrant，文件系统不再作为业务存储层。
 - Workspace 生命周期采用 `(userId, projectId)` 项目级实例池、引用计数、LRU 淘汰。
 - Qdrant collection 使用 `novel_agent_{userId}`，通过 `project_id` payload 做项目隔离与跨项目检索。
 - 前端项目上下文必须使用单一 Zustand store，不能各页面维护独立项目状态。
@@ -81,7 +81,7 @@
 
 ### 3.1 基础设施偏差
 
-当前后端 CORS 只放行 `http://localhost:3000`，与固定前端端口 `3002` 不一致。Qdrant 客户端配置偏向 gRPC `6334`，但健康检查与文档需要明确 HTTP `6333` 和 gRPC `6334` 分工。Redis 已经变成可选回退，但原始架构要求 Redis 是缓存层，需要保留本地降级，同时在配置和健康状态中明确 Redis 运行模式。
+当前后端 CORS 只放行 `http://localhost:3000`，与固定前端端口 `3002` 不一致。Qdrant 客户端配置偏向 gRPC `6334`，但健康检查与文档需要明确 HTTP `6333` 和 gRPC `6334` 分工。Redis 在当前实现里有本地内存降级，但目标架构必须把 Redis 明确作为一等缓存组件：开发/生产配置、连接健康、缓存命中状态、降级状态都要可见。
 
 ### 3.2 API 契约偏差
 
@@ -158,8 +158,16 @@
 最终采用三层协同：
 
 1. **SQLite:** 唯一业务数据真源。保存用户、项目、章节正文、StoryBible、Agent 会话、Agent 记忆、素材原文、知识库、工作流状态、AgentRun 产物、处理任务和所有结构化关系。
-2. **Qdrant:** 语义向量索引。保存知识库、素材块、章节上下文、长期项目记忆等文本的 embedding 与检索 payload；payload 必须能回指 SQLite 行。
-3. **Redis/缓存:** 热数据缓存。本地开发允许降级到 in-process distributed cache，但配置和健康状态必须透明。
+2. **Redis:** 热缓存与分布式状态层。缓存 ProjectMemory、AuthorMemory、ExecutionMemory、SessionMemory 快照、用户设置、项目列表、知识检索热点结果、Agent 工具发现缓存和短期运行状态。Redis 不保存业务真源，缓存失效后必须能从 SQLite/Qdrant 重建。
+3. **Qdrant:** 语义向量索引。保存知识库、素材块、章节上下文、长期项目记忆等文本的 embedding 与检索 payload；payload 必须能回指 SQLite 行。
+
+Redis 运行要求：
+
+1. 默认开发栈暴露 `localhost:6379`。
+2. `Redis:Enabled=true` 时必须连接 Redis；连接失败应在 `/health` 中显示 degraded 或 unhealthy。
+3. 本地调试允许显式关闭 Redis 并降级到 in-process distributed cache，但 UI 和 health response 必须显示当前是降级模式。
+4. 缓存 key 必须带 `userId` 和必要的 `projectId/sessionId`，避免多用户污染。
+5. 更新 SQLite 真源后必须失效对应 Redis key。
 
 文件系统不属于目标业务存储层。允许的文件使用只有三类：
 
@@ -416,6 +424,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 1. **后端单元测试**
    - Memory repository。
+   - Redis cache key、TTL、失效和本地降级。
    - ChatHistory compressor。
    - Knowledge service。
    - Tool search。
@@ -444,6 +453,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 5. **端到端验证**
    - 后端 `5002`。
    - 前端 `3002`。
+   - Redis `6379` 健康状态可见。
    - 登录 -> 创建项目 -> 上传知识 -> 处理知识 -> Agent 搜索知识 -> 生成/规划 -> 记忆沉淀。
 
 ---
@@ -454,7 +464,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 - 修复端口/CORS 为 `3002 -> 5002`。
 - 明确 Qdrant HTTP/gRPC 配置。
-- 明确 Redis 配置和本地降级。
+- 明确 Redis 配置、健康检查、缓存 key 规范和本地降级显示。
 - 恢复原始 API 路由骨架与测试。
 
 ### P0: 数据库与迁移
