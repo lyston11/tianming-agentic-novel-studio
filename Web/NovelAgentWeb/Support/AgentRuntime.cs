@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -27,6 +28,7 @@ public sealed class AgentRuntime
     private readonly ReflectionEngine _reflectionEngine;
     private readonly AgentToolRegistry _toolRegistry;
     private readonly AgentMemoryService _memoryService;
+    private readonly IChatHistoryRepository _chatHistory;
     private readonly AgentMissionTaskTreeService _taskTreeService;
     private readonly AgentTaskScheduler _taskScheduler;
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
@@ -48,6 +50,7 @@ public sealed class AgentRuntime
         ReflectionEngine reflectionEngine,
         AgentToolRegistry toolRegistry,
         AgentMemoryService memoryService,
+        IChatHistoryRepository chatHistory,
         AgentMissionTaskTreeService taskTreeService,
         AgentTaskScheduler taskScheduler,
         MissionBlackboardRecoveryService blackboardRecovery,
@@ -66,6 +69,7 @@ public sealed class AgentRuntime
         _reflectionEngine = reflectionEngine;
         _toolRegistry = toolRegistry;
         _memoryService = memoryService;
+        _chatHistory = chatHistory;
         _taskTreeService = taskTreeService;
         _taskScheduler = taskScheduler;
         _blackboardRecovery = blackboardRecovery;
@@ -129,7 +133,7 @@ public sealed class AgentRuntime
             session.Title = BuildSessionTitle(userMessage);
 
         // Add user message to chat history immediately so Agent can see it in context
-        AddChatTurn(session, "user", userMessage);
+        await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
 
         // ── Load project if session has one ──
         NovelProjectInfo? project = null;
@@ -776,7 +780,7 @@ public sealed class AgentRuntime
         CancellationToken ct)
     {
         var reply = FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。");
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         session.Phase = action.Type == AgentActionType.Clarify ? "awaiting_user_foundation" : session.Phase;
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, action.Suggestions, action, context, trace);
@@ -804,7 +808,7 @@ public sealed class AgentRuntime
         _logger.LogInformation("Memory update trigger: {Trigger} for session {SessionId}", trigger, session.SessionId);
 
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, result.Suggestions, action, context, trace);
     }
@@ -863,7 +867,7 @@ public sealed class AgentRuntime
         plan.CurrentRunId = session.ActiveRunId ?? plan.CurrentRunId;
         plan.UpdatedAt = DateTime.UtcNow;
         var reply = confirmationMessage;
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, new[] { "继续执行", "调整方案" }, action, context, trace);
     }
@@ -1018,10 +1022,18 @@ public sealed class AgentRuntime
             session.WorkingMemory.UserPreferences.RemoveRange(0, session.WorkingMemory.UserPreferences.Count - MaxRecentObservations);
     }
 
-    private static void AddChatTurn(AgentSession session, string role, string content)
+    private async Task AddChatTurnAsync(AgentSession session, string role, string content, CancellationToken ct)
     {
-        session.ChatHistory.Add(new AgentConversationTurn { Role = role, Content = content.Trim(), CreatedAt = DateTime.UtcNow });
-        if (session.ChatHistory.Count > 40) session.ChatHistory.RemoveRange(0, session.ChatHistory.Count - 40);
+        var trimmed = content.Trim();
+        session.ChatHistory.Add(new AgentConversationTurn { Role = role, Content = trimmed, CreatedAt = DateTime.UtcNow });
+        await _sessionManager.SaveSessionAsync(session, ct).ConfigureAwait(false);
+        await _chatHistory.AppendAsync(
+            session.UserId,
+            string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+            session.SessionId,
+            role,
+            trimmed,
+            ct).ConfigureAwait(false);
     }
 
     private static AgentAction BuildFallbackReplyAction(AgentAction action) => new()

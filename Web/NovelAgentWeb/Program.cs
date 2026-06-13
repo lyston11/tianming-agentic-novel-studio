@@ -127,6 +127,7 @@ builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 builder.Services.AddScoped<IAgentMemoryRepository, AgentMemoryRepository>();
 builder.Services.AddScoped<IAgentMemoryVersionService, AgentMemoryVersionService>();
 builder.Services.AddScoped<IAgentMemoryEventService, AgentMemoryEventService>();
+builder.Services.AddScoped<IChatHistoryRepository, ChatHistoryRepository>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services

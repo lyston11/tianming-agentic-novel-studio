@@ -1,3 +1,5 @@
+using TM.Web.NovelAgentWeb.Services.Memory;
+
 namespace TM.Web.NovelAgentWeb.Support;
 
 /// <summary>
@@ -7,10 +9,12 @@ namespace TM.Web.NovelAgentWeb.Support;
 public class ChatHistoryCompressor
 {
     private readonly ILogger<ChatHistoryCompressor> _logger;
+    private readonly IChatHistoryRepository _chatHistory;
 
-    public ChatHistoryCompressor(ILogger<ChatHistoryCompressor> logger)
+    public ChatHistoryCompressor(ILogger<ChatHistoryCompressor> logger, IChatHistoryRepository chatHistory)
     {
         _logger = logger;
+        _chatHistory = chatHistory;
     }
 
     /// <summary>
@@ -40,6 +44,46 @@ public class ChatHistoryCompressor
         }
 
         return layered;
+    }
+
+    public async Task SaveSummariesAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        LayeredChatHistory layered,
+        CancellationToken ct = default)
+    {
+        foreach (var summary in layered.Summaries)
+        {
+            await _chatHistory.SaveSummaryAsync(
+                userId,
+                projectId,
+                sessionId,
+                summary.StartTurn,
+                summary.EndTurn,
+                "summary",
+                summary.Content,
+                summary.KeyDecisions,
+                ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(layered.MetaSummary))
+        {
+            var endTurn = layered.Summaries.Count == 0
+                ? 0
+                : layered.Summaries.Max(s => s.EndTurn);
+
+            await _chatHistory.SaveSummaryAsync(
+                userId,
+                projectId,
+                sessionId,
+                1,
+                endTurn,
+                "meta",
+                layered.MetaSummary,
+                Array.Empty<string>(),
+                ct);
+        }
     }
 
     private static ChatMessage MapToChatMessage(AgentConversationTurn turn)
