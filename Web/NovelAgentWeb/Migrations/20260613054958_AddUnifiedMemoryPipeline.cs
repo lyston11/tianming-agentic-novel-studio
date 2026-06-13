@@ -90,6 +90,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
+                        name: "FK_agent_chat_summaries_agent_sessions_session_id",
+                        column: x => x.session_id,
+                        principalTable: "agent_sessions",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
                         name: "FK_agent_chat_summaries_users_user_id",
                         column: x => x.user_id,
                         principalTable: "users",
@@ -119,6 +125,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         name: "FK_agent_chat_turns_novel_projects_project_id",
                         column: x => x.project_id,
                         principalTable: "novel_projects",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_agent_chat_turns_agent_sessions_session_id",
+                        column: x => x.session_id,
+                        principalTable: "agent_sessions",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
@@ -282,6 +294,7 @@ namespace TM.Web.NovelAgentWeb.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_content_chunks", x => x.id);
+                    table.UniqueConstraint("AK_content_chunks_id_document_id", x => new { x.id, x.document_id });
                     table.ForeignKey(
                         name: "FK_content_chunks_content_documents_document_id",
                         column: x => x.document_id,
@@ -308,10 +321,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                 {
                     table.PrimaryKey("PK_content_vector_points", x => x.id);
                     table.ForeignKey(
-                        name: "FK_content_vector_points_content_chunks_chunk_id",
-                        column: x => x.chunk_id,
+                        name: "FK_content_vector_points_content_chunks_chunk_id_document_id",
+                        columns: x => new { x.chunk_id, x.document_id },
                         principalTable: "content_chunks",
-                        principalColumn: "id",
+                        principalColumns: new[] { "id", "document_id" },
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
                         name: "FK_content_vector_points_content_documents_document_id",
@@ -436,6 +449,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                 name: "IX_content_vector_points_chunk_id",
                 table: "content_vector_points",
                 column: "chunk_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_content_vector_points_chunk_id_document_id",
+                table: "content_vector_points",
+                columns: new[] { "chunk_id", "document_id" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_content_vector_points_document_id",

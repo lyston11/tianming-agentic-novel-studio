@@ -377,6 +377,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.CharEnd).HasColumnName("char_end");
             entity.Property(e => e.ContentHash).HasColumnName("content_hash").IsRequired();
 
+            entity.HasAlternateKey(e => new { e.Id, e.DocumentId });
             entity.HasIndex(e => new { e.DocumentId, e.ChunkIndex }).IsUnique();
 
             entity.HasOne(e => e.Document)
@@ -402,6 +403,7 @@ public class NovelAgentDbContext : DbContext
 
             entity.HasIndex(e => e.DocumentId);
             entity.HasIndex(e => e.ChunkId);
+            entity.HasIndex(e => new { e.ChunkId, e.DocumentId });
             entity.HasIndex(e => new { e.QdrantCollection, e.QdrantPointId }).IsUnique();
 
             entity.HasOne(e => e.Document)
@@ -411,7 +413,8 @@ public class NovelAgentDbContext : DbContext
 
             entity.HasOne<ContentChunk>()
                 .WithMany()
-                .HasForeignKey(e => e.ChunkId)
+                .HasForeignKey(e => new { e.ChunkId, e.DocumentId })
+                .HasPrincipalKey(e => new { e.Id, e.DocumentId })
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -438,6 +441,11 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne<User>()
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<AgentSession>()
+                .WithMany(s => s.ChatTurns)
+                .HasForeignKey(e => e.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne<NovelProject>()
@@ -469,6 +477,11 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne<User>()
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<AgentSession>()
+                .WithMany(s => s.ChatSummaries)
+                .HasForeignKey(e => e.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne<NovelProject>()

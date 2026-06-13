@@ -114,4 +114,64 @@ public class UnifiedMemorySchemaTests
 
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
+
+    [Fact]
+    public async Task AgentSession_DeleteCascadesToChatTurnsAndSummaries()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.AgentSessions.Add(new AgentSession { Id = "session-1", UserId = "user-1", Title = "session" });
+        db.AgentChatTurns.Add(new AgentChatTurn { Id = "turn-1", SessionId = "session-1", UserId = "user-1", TurnIndex = 1, Role = "user", Content = "hello" });
+        db.AgentChatSummaries.Add(new AgentChatSummary { Id = "summary-1", SessionId = "session-1", UserId = "user-1", StartTurn = 1, EndTurn = 1, Content = "hello" });
+        await db.SaveChangesAsync();
+
+        var session = await db.AgentSessions.SingleAsync(x => x.Id == "session-1");
+        db.AgentSessions.Remove(session);
+        await db.SaveChangesAsync();
+
+        Assert.Equal(0, await db.AgentChatTurns.CountAsync());
+        Assert.Equal(0, await db.AgentChatSummaries.CountAsync());
+    }
+
+    [Fact]
+    public async Task ContentVectorPoints_RejectChunkFromDifferentDocument()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.ContentDocuments.AddRange(
+            new ContentDocument { Id = "doc-a", UserId = "user-1", SourceType = "manual", SourceId = "a", DocumentRole = "source", Title = "A", ContentHash = "hash-a" },
+            new ContentDocument { Id = "doc-b", UserId = "user-1", SourceType = "manual", SourceId = "b", DocumentRole = "source", Title = "B", ContentHash = "hash-b" });
+        db.ContentChunks.Add(new ContentChunk { Id = "chunk-b", DocumentId = "doc-b", ChunkIndex = 0, ChunkText = "chunk", ContentHash = "chunk-hash" });
+        await db.SaveChangesAsync();
+
+        db.ContentVectorPoints.Add(new ContentVectorPoint
+        {
+            Id = "vector-1",
+            DocumentId = "doc-a",
+            ChunkId = "chunk-b",
+            QdrantCollection = "content",
+            QdrantPointId = "point-1",
+            VectorModel = "model"
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
 }

@@ -20,4 +20,6 @@ public class AgentSession
     // Navigation properties
     public User User { get; set; } = null!;
     public NovelProject? Project { get; set; }
+    public ICollection<AgentChatTurn> ChatTurns { get; set; } = new List<AgentChatTurn>();
+    public ICollection<AgentChatSummary> ChatSummaries { get; set; } = new List<AgentChatSummary>();
 }

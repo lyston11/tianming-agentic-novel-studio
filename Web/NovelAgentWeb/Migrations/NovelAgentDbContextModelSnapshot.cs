@@ -304,9 +304,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId");
 
-                    b.HasIndex("UserId", "ProjectId", "SessionId", "Scope")
-                        .IsUnique();
-
                     b.HasIndex("UserId", "Scope")
                         .IsUnique()
                         .HasDatabaseName("IX_agent_memory_versions_user_scope_global")
@@ -852,6 +849,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ChunkId");
+
+                    b.HasIndex("ChunkId", "DocumentId");
 
                     b.HasIndex("DocumentId");
 
@@ -1879,6 +1878,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
 
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", null)
+                        .WithMany("ChatSummaries")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -1892,6 +1897,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .WithMany()
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", null)
+                        .WithMany("ChatTurns")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
                         .WithMany()
@@ -2047,16 +2058,17 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
                 {
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentChunk", null)
-                        .WithMany()
-                        .HasForeignKey("ChunkId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "Document")
                         .WithMany()
                         .HasForeignKey("DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentChunk", null)
+                        .WithMany()
+                        .HasForeignKey("ChunkId", "DocumentId")
+                        .HasPrincipalKey("Id", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade);
 
                     b.Navigation("Document");
                 });
@@ -2265,6 +2277,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("Project");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", b =>
+                {
+                    b.Navigation("ChatSummaries");
+
+                    b.Navigation("ChatTurns");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Chapter", b =>

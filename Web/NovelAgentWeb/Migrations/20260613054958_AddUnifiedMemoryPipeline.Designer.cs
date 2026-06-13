@@ -718,6 +718,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("Id", "DocumentId");
+
                     b.HasIndex("DocumentId", "ChunkIndex")
                         .IsUnique();
 
@@ -855,6 +857,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ChunkId");
+
+                    b.HasIndex("ChunkId", "DocumentId");
 
                     b.HasIndex("DocumentId");
 
@@ -1882,6 +1886,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
 
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", null)
+                        .WithMany("ChatSummaries")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -1895,6 +1905,12 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .WithMany()
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", null)
+                        .WithMany("ChatTurns")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
                         .WithMany()
@@ -2052,7 +2068,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentChunk", null)
                         .WithMany()
-                        .HasForeignKey("ChunkId")
+                        .HasForeignKey("ChunkId", "DocumentId")
+                        .HasPrincipalKey("Id", "DocumentId")
                         .OnDelete(DeleteBehavior.Cascade);
 
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "Document")
@@ -2320,6 +2337,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("NovelProjects");
 
                     b.Navigation("UserSettings");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", b =>
+                {
+                    b.Navigation("ChatSummaries");
+
+                    b.Navigation("ChatTurns");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Volume", b =>
