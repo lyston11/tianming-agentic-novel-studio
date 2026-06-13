@@ -48,6 +48,7 @@ public class ChatHistoryRepository : IChatHistoryRepository
             {
                 try
                 {
+                    await EnsureSessionExistsAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
                     await AppendTurnOnceAsync(userId, projectId, sessionId, role, trimmed, ct);
                     await WriteHotWindowAsync(userId, sessionId, ct);
                     return;
@@ -189,6 +190,41 @@ public class ChatHistoryRepository : IChatHistoryRepository
         });
 
         await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task EnsureSessionExistsAsync(string userId, string? projectId, string sessionId, CancellationToken ct)
+    {
+        var exists = await _context.AgentSessions
+            .AnyAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+            .ConfigureAwait(false);
+        if (exists)
+            return;
+
+        _context.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            UserId = userId,
+            ProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+            Title = "新会话",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        try
+        {
+            await _context.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+        catch (DbUpdateException)
+        {
+            _context.ChangeTracker.Clear();
+            exists = await _context.AgentSessions
+                .AnyAsync(s => s.Id == sessionId && s.UserId == userId, ct)
+                .ConfigureAwait(false);
+            if (!exists)
+            {
+                throw;
+            }
+        }
     }
 
     private Task<AgentChatSummary?> FindSummaryAsync(

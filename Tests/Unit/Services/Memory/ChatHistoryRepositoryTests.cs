@@ -15,6 +15,7 @@ namespace Tests.Unit.Services.Memory;
 
 public class ChatHistoryRepositoryTests
 {
+    private const string UnifiedMemoryMigration = "20260613054958_AddUnifiedMemoryPipeline";
     private const string ChatSummaryRangeUniquenessMigration = "20260613160459_EnforceChatSummaryRangeUniqueness";
 
     [Fact]
@@ -107,6 +108,32 @@ public class ChatHistoryRepositoryTests
 
         Assert.Equal(appendCount, indexes.Count);
         Assert.Equal(Enumerable.Range(1, appendCount), indexes);
+    }
+
+    [Fact]
+    public async Task AppendAsync_CreatesMissingSessionBeforeFirstTurnOnSqlite()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        await using var db = new NovelAgentDbContext(options);
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance);
+
+        await repo.AppendAsync("user-1", null, "session-new", "user", "第一条消息", CancellationToken.None);
+
+        Assert.True(await db.AgentSessions.AnyAsync(s => s.Id == "session-new" && s.UserId == "user-1"));
+        Assert.True(await db.AgentChatTurns.AnyAsync(t => t.SessionId == "session-new" && t.TurnIndex == 1));
     }
 
     [Fact]
@@ -210,6 +237,56 @@ public class ChatHistoryRepositoryTests
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
+    [Fact]
+    public async Task ChatSummaryRangeUniquenessMigration_DeduplicatesExistingSummaryRangesBeforeCreatingIndexes()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+
+        await using (var db = new NovelAgentDbContext(options))
+        {
+            await db.GetService<IMigrator>().MigrateAsync(UnifiedMemoryMigration);
+            SeedUserProjectAndSession(db);
+            db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-global", UserId = "user-1", Title = "Global Session" });
+            db.AgentChatSummaries.AddRange(
+                CreateSummary("project-old", "project-1", "session-1", "项目旧摘要", new DateTime(2026, 6, 13, 8, 0, 0, DateTimeKind.Utc)),
+                CreateSummary("project-new", "project-1", "session-1", "项目新摘要", new DateTime(2026, 6, 13, 8, 1, 0, DateTimeKind.Utc)),
+                CreateSummary("global-old", null, "session-global", "全局旧摘要", new DateTime(2026, 6, 13, 8, 0, 0, DateTimeKind.Utc)),
+                CreateSummary("global-new", null, "session-global", "全局新摘要", new DateTime(2026, 6, 13, 8, 1, 0, DateTimeKind.Utc)));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new NovelAgentDbContext(options))
+        {
+            await db.GetService<IMigrator>().MigrateAsync(ChatSummaryRangeUniquenessMigration);
+        }
+
+        await using (var verifyDb = new NovelAgentDbContext(options))
+        {
+            var projectRows = await verifyDb.AgentChatSummaries
+                .Where(s => s.UserId == "user-1" &&
+                            s.ProjectId == "project-1" &&
+                            s.SessionId == "session-1" &&
+                            s.SummaryType == "summary" &&
+                            s.StartTurn == 1 &&
+                            s.EndTurn == 10)
+                .ToListAsync();
+            var globalRows = await verifyDb.AgentChatSummaries
+                .Where(s => s.UserId == "user-1" &&
+                            s.ProjectId == null &&
+                            s.SessionId == "session-global" &&
+                            s.SummaryType == "summary" &&
+                            s.StartTurn == 1 &&
+                            s.EndTurn == 10)
+                .ToListAsync();
+
+            Assert.Single(projectRows);
+            Assert.Single(globalRows);
+            Assert.Equal("项目新摘要", projectRows[0].Content);
+            Assert.Equal("全局新摘要", globalRows[0].Content);
+        }
+    }
+
     private static NovelAgentDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
@@ -239,7 +316,7 @@ public class ChatHistoryRepositoryTests
         db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-1", UserId = "user-1", ProjectId = "project-1", Title = "Session" });
     }
 
-    private static AgentChatSummary CreateSummary(string id, string? projectId, string sessionId, string content) =>
+    private static AgentChatSummary CreateSummary(string id, string? projectId, string sessionId, string content, DateTime? createdAt = null) =>
         new()
         {
             Id = id,
@@ -250,6 +327,6 @@ public class ChatHistoryRepositoryTests
             EndTurn = 10,
             SummaryType = "summary",
             Content = content,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = createdAt ?? DateTime.UtcNow
         };
 }
