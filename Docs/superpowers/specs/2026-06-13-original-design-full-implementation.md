@@ -1,7 +1,7 @@
 # 原始设计全量实现修复设计
 
 **日期:** 2026-06-13  
-**实现口径:** 以原始 5 份设计文档、后续 Docs/superpowers 执行记录和用户本轮确认的 SQLite + Qdrant 内容边界为准，允许 API、数据库和前端调用发生破坏性调整
+**实现口径:** 以原始 5 份设计文档、后续 Docs/superpowers 执行记录、用户本轮确认的 SQLite + Qdrant 内容边界和 Redis 必选缓存层为准，允许 API、数据库和前端调用发生破坏性调整
 **端口契约:** 前端 `http://localhost:3002`，后端 `http://localhost:5002`
 
 ---
@@ -11,7 +11,7 @@
 本轮修复不是继续追加临时功能，也不是只更新文档。目标是把当前项目收敛回最初设计的完整形态：
 
 1. 多用户小说创作 SaaS 架构。
-2. SQLite + Qdrant 的持久内容架构；SQLite 保存精确真源、版本、关系和分块文本，Qdrant 保存可重建的语义向量索引。Redis 如启用，只作为可失效缓存，不承载内容真源。
+2. SQLite + Qdrant + Redis 的完整存储/缓存架构；SQLite 保存精确真源、版本、关系和分块文本，Qdrant 保存可重建的语义向量索引，Redis 是必须接入的分布式缓存与运行态层，但不承载章节、素材、知识、StoryBible、AgentRun 产物的唯一内容真源。
 3. Agent 的 Observe / Plan / Act / Reflect 闭环。
 4. ChatHistory、SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 的分层记忆闭环。
 5. 知识库从上传、处理、抽取、向量化、检索、Agent 引用到记忆沉淀的完整闭环。
@@ -38,7 +38,7 @@
 - 后端 ASP.NET Core 8，前端 React/Vite/Zustand。
 - 后端 `5002`，前端 `3002`。
 - Qdrant HTTP `6333`，gRPC `6334`。
-- Redis `6379` 可作为缓存/运行态加速层，但不属于章节、素材、知识、StoryBible、AgentRun 产物的持久真源。
+- Redis `6379` 是必选缓存/运行态层，用于记忆、会话热点、项目配置、工具发现、检索结果和短期状态加速；但不属于章节、素材、知识、StoryBible、AgentRun 产物的唯一持久真源。
 - SQLite 是结构化数据、精确内容、版本和关系真源。
 - Qdrant 负责语义向量检索，所有向量点都必须能由 SQLite 重建。
 - Agent 入口为 `AgentController -> AgentRouter -> AgentRuntime`。
@@ -67,7 +67,7 @@
 
 这些记录补充了原始 5 份文档未完全展开的实现意图：
 
-- 历史记录中曾出现 SQLite + 文件系统 + Qdrant 的过渡迁移方案；本次按用户确认修正为 SQLite + Qdrant 的持久内容架构，文件系统不再作为业务存储层，Redis 只作为可选缓存层。
+- 历史记录中曾出现 SQLite + 文件系统 + Qdrant 的过渡迁移方案；本次按用户确认修正为 SQLite + Qdrant 承载持久内容，Redis 作为必选缓存/运行态层进入项目架构，文件系统不再作为业务存储层。
 - Workspace 生命周期采用 `(userId, projectId)` 项目级实例池、引用计数、LRU 淘汰。
 - Qdrant collection 使用 `novel_agent_{userId}`，通过 `project_id` payload 做项目隔离与跨项目检索。
 - 前端项目上下文必须使用单一 Zustand store，不能各页面维护独立项目状态。
@@ -81,7 +81,7 @@
 
 ### 3.1 基础设施偏差
 
-当前后端 CORS 只放行 `http://localhost:3000`，与固定前端端口 `3002` 不一致。Qdrant 客户端配置偏向 gRPC `6334`，但健康检查与文档需要明确 HTTP `6333` 和 gRPC `6334` 分工。Redis 如果保留为缓存组件，需要让开发/生产配置、连接健康、缓存命中状态、降级状态可见；但内容持久化不能依赖 Redis。
+当前后端 CORS 只放行 `http://localhost:3000`，与固定前端端口 `3002` 不一致。Qdrant 客户端配置偏向 gRPC `6334`，但健康检查与文档需要明确 HTTP `6333` 和 gRPC `6334` 分工。Redis 目前没有被完整设计进项目运行路径：开发/生产配置、连接健康、缓存命中状态、降级状态、key 规范和失效策略都需要补齐；同时内容持久化不能依赖 Redis。
 
 ### 3.2 API 契约偏差
 
@@ -155,11 +155,44 @@
 
 ### 4.1 存储架构
 
-最终采用 SQLite + Qdrant 的持久内容架构：
+最终采用 SQLite + Qdrant + Redis 的协同架构：
 
 1. **SQLite:** 精确真源。保存用户、项目、业务元数据、内容文档、内容版本、顺序分块、hash、关系、状态、Agent 会话、Agent 记忆、处理任务、AgentRun 清单，以及 Qdrant point 的反向映射。SQLite 负责完整读取、版本回滚、审计和重建索引。
 2. **Qdrant:** 语义索引。保存章节、素材、知识、StoryBible section、AgentRun 可复用产物、长期记忆等文本分块的 embedding 与检索 payload。Qdrant 只负责召回和相似度，不是唯一真源；任意 collection 损坏后必须能从 SQLite 重建。
-3. **Redis / MemoryCache:** 可选缓存。可缓存 SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 快照、用户设置、项目列表、知识检索热点结果、Agent 工具发现缓存和短期运行状态。缓存失效后必须能从 SQLite/Qdrant 重建，不能保存唯一业务内容。
+3. **Redis:** 必选分布式缓存与运行态层。缓存 SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 快照、用户设置、项目列表、知识检索热点结果、Agent 工具发现缓存、任务进度快照、短期运行状态和幂等锁。Redis 不保存唯一业务内容，缓存失效后必须能从 SQLite/Qdrant 重建。
+4. **MemoryCache:** 进程内一级热缓存。只缓存极短 TTL 热点数据，必须以 Redis/SQLite/Qdrant 为下游来源，不能绕过 Redis 规范形成独立真源。
+
+Redis 运行要求：
+
+1. 默认开发栈必须暴露 `localhost:6379`。
+2. `Redis:Enabled=true` 是标准开发/生产路径；连接失败时 `/health` 必须显示 degraded 或 unhealthy，并标明 Redis 不可用。
+3. 允许测试环境显式使用 fake/in-memory Redis adapter，但需要在配置和测试输出中明确标记，不能伪装成真实 Redis。
+4. 缓存 key 必须带 `userId` 和必要的 `projectId/sessionId/taskId`，避免多用户污染。
+5. 更新 SQLite 真源或 Qdrant 索引状态后必须失效或刷新对应 Redis key。
+6. Agent 决策、记忆读取、知识检索和任务进度读取都必须经过统一缓存接口，不能各服务私自绕过 Redis 规范。
+
+Redis 标准读写路径：
+
+```text
+读取:
+请求 -> MemoryCache -> Redis -> SQLite/Qdrant -> 写回 Redis -> 写回 MemoryCache
+
+写入:
+写 SQLite 真源 / Qdrant 索引状态 -> 刷新或失效 Redis -> 刷新或失效 MemoryCache
+```
+
+标准 TTL：
+
+| 数据 | Redis TTL | 失效时机 |
+| --- | --- | --- |
+| SessionMemory 快照 | 10 分钟 | 会话写入、归档、删除 |
+| ProjectMemory / AuthorMemory / ExecutionMemory | 10 分钟 | MemoryUpdate 持久化后 |
+| 用户设置 | 10 分钟 | 设置保存后 |
+| 项目列表/当前项目摘要 | 2 分钟 | 项目创建、更新、删除后 |
+| 知识检索热点结果 | 2-5 分钟 | 知识条目、向量索引或记忆引用变化后 |
+| Agent 工具发现缓存 | 5 分钟 | 工具注册表、阶段上下文或策略变化后 |
+| 任务进度快照 | 30 秒 | 任务状态推进或完成后 |
+| 幂等锁/短期运行锁 | 30-120 秒 | 操作完成或超时自动释放 |
 
 统一内容层使用以下抽象，不把长内容散落在各业务表的大字段里：
 
@@ -464,7 +497,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 1. **后端单元测试**
    - Memory repository。
-   - 可选缓存 key、TTL、失效和本地降级。
+   - Redis cache key、TTL、失效、fake adapter 和 degraded health。
    - ChatHistory compressor。
    - Knowledge service。
    - Tool search。
@@ -493,7 +526,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 5. **端到端验证**
    - 后端 `5002`。
    - 前端 `3002`。
-   - Redis 如启用，`6379` 健康状态可见；未启用时 UI/API 明确显示缓存降级。
+   - Redis `6379` 健康状态可见，记忆/检索/工具发现缓存命中与失效路径可验证。
    - 登录 -> 创建项目 -> 上传知识 -> 处理知识 -> Agent 搜索知识 -> 生成/规划 -> 记忆沉淀。
 
 ---
@@ -504,7 +537,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 - 修复端口/CORS 为 `3002 -> 5002`。
 - 明确 Qdrant HTTP/gRPC 配置。
-- 明确 Redis 仅为可选缓存，配置、健康检查、缓存 key 规范和本地降级显示不能影响内容真源。
+- 将 Redis 作为必选缓存/运行态层接入：配置、健康检查、统一缓存接口、key 规范、TTL、失效策略、fake adapter 测试路径和 degraded 显示都必须补齐。
 - 恢复原始 API 路由骨架与测试。
 
 ### P0: 数据库与迁移
@@ -562,8 +595,8 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 3. **LLM 不稳定风险**
    - 处理方式：关键路径必须有规则兜底和测试，不只依赖提示词。
 
-4. **Qdrant/可选缓存本地依赖风险**
-   - 处理方式：健康检查公开真实运行模式；Qdrant 不可用时保留 SQLite 真源并允许文本检索降级；Redis 未启用或不可用时 UI 和 API 显示缓存降级。
+4. **Qdrant/Redis 本地依赖风险**
+   - 处理方式：健康检查公开真实运行模式；Qdrant 不可用时保留 SQLite 真源并允许文本检索降级；Redis 不可用时 UI 和 API 显示缓存层 degraded，业务可读路径从 SQLite/Qdrant 重建，但标准开发/生产环境必须恢复 Redis。
 
 5. **当前工作树污染**
    - 当前仓库包含生成物、Qdrant 数据、SQLite wal/shm、前端未提交修改。
