@@ -187,12 +187,35 @@ Redis 标准读写路径：
 | --- | --- | --- |
 | SessionMemory 快照 | 10 分钟 | 会话写入、归档、删除 |
 | ProjectMemory / AuthorMemory / ExecutionMemory | 10 分钟 | MemoryUpdate 持久化后 |
+| ChatHistory 热窗口 | 10 分钟 | 每轮用户/助手消息写入、会话归档、压缩摘要刷新 |
 | 用户设置 | 10 分钟 | 设置保存后 |
 | 项目列表/当前项目摘要 | 2 分钟 | 项目创建、更新、删除后 |
 | 知识检索热点结果 | 2-5 分钟 | 知识条目、向量索引或记忆引用变化后 |
-| Agent 工具发现缓存 | 5 分钟 | 工具注册表、阶段上下文或策略变化后 |
+| Agent 工具发现缓存 | 5 分钟 | 工具注册表、阶段上下文、memory version、项目或工作流状态变化后 |
 | 任务进度快照 | 30 秒 | 任务状态推进或完成后 |
 | 幂等锁/短期运行锁 | 30-120 秒 | 操作完成或超时自动释放 |
+
+Agent 运行态还需要以下 SQLite 真源表/字段，避免 Chat、Session、工具缓存和执行经验散落在不可追踪的 JSON 中：
+
+```text
+agent_chat_turns
+  id, session_id, user_id, project_id, turn_index, role, content,
+  token_count, created_at, compressed_into_summary_id
+
+agent_chat_summaries
+  id, session_id, user_id, project_id, start_turn, end_turn,
+  summary_type, content, key_decisions_json, created_at
+
+agent_memory_events
+  id, user_id, project_id, session_id, run_id, source_type,
+  trigger_type, memory_scope, memory_key, payload_json,
+  created_at
+
+agent_memory_versions
+  user_id, project_id, session_id, scope, version, updated_at
+```
+
+`agent_sessions.session_data` 保留当前运行快照，包括 `workingMemory`、`toolSearchCache` 和 UI 需要的轻量状态；完整 ChatHistory 真源进入 `agent_chat_turns`，完整记忆字段真源进入 `agent_memories`，每次沉淀来源进入 `agent_memory_events`。`agent_memory_versions` 用于工具缓存、知识检索缓存和 prompt 上下文缓存失效。
 
 统一内容层使用以下抽象，不把长内容散落在各业务表的大字段里：
 
@@ -294,49 +317,134 @@ Agent、StoryBible、Material、Knowledge、Workflow 操作都必须在用户与
 
 ## 5. 分层记忆设计
 
-### 5.1 记忆层
+### 5.1 统一记忆原则
+
+本轮修复采用 `MemoryContext + MemoryEvent` 统一通路，而不是让 ChatHistory、WorkingMemory、agent_memories、tool cache 各自漂移。
+
+核心原则：
+
+1. 每次用户消息和助手回复都必须先写 ChatHistory 热缓存，并最终落 SQLite 真源。
+2. 每个 Agent 回合都从统一的 `MemoryContext` 构建 prompt，不允许各服务自己拼接零散记忆。
+3. 每次工具调用、知识引用、章节/卷/新小说创建、Reflection、质量门禁结果都产生 `MemoryEvent`。
+4. `MemoryEvent` 负责更新对应记忆层、提升 memory version、刷新或失效 Redis key。
+5. Redis 是标准运行层；SQLite 是精确真源；Qdrant 只保存可由 SQLite 重建的长语义索引。
+6. ChatHistory 完整内容不能因为 prompt 长度被硬截断；prompt 只使用压缩后的上下文视图。
+
+标准 `MemoryContext` 包含：
+
+```text
+MemoryContext
+  chat:
+    metaSummary
+    recentSummaries
+    recentMessages
+  session:
+    currentGoal
+    openQuestions
+    shortTermPreferences
+    recentObservations
+    pendingToolName
+    lastIntent
+  project:
+    longTermGoal
+    readerPromise
+    constraints
+    unresolvedThreads
+    referencedKnowledgeIds
+    usedTropePatterns
+  author:
+    styleLikes
+    styleDislikes
+    confirmationTolerance
+    genreHabits
+    favoriteKnowledgeIds
+  execution:
+    toolFailurePatterns
+    repeatedBlockers
+    successfulRepairNotes
+  tool:
+    discoveredPhase
+    discoveredTools
+    lastToolSearchAt
+    cacheVersion
+```
+
+### 5.2 记忆层
 
 最终使用五个协同层：
 
 1. **ChatHistory**
-   - 最近 5 条完整消息保留。
-   - 每 10 轮生成 Summary。
-   - 30 轮后生成 MetaSummary。
-   - 压缩失败时不能中断用户请求，必须降级保留最近消息。
+   - 每一次用户消息和助手回复都必须写入 Redis 热窗口，并持久化到 SQLite `agent_chat_turns`。
+   - 不允许用运行时 `40` 条硬截断作为业务真源清理策略；完整真源只能按归档/保留策略显式清理。
+   - Prompt 注入使用 `MetaSummary + 最近 Summary + 最近完整消息`，不把完整历史无脑塞进模型。
+   - 默认每 10 轮生成 Summary，保留最近 5 条完整消息作为 prompt 热窗口；30 轮后生成 MetaSummary。
+   - 压缩失败时不能中断用户请求，必须降级为最近消息 + 旧摘要，并记录 `agent_memory_events`。
+   - ChatHistory 是 SessionMemory、ProjectMemory 和 AuthorMemory 沉淀的主要来源。
 
 2. **SessionMemory**
    - 当前目标、开放问题、短期偏好、最近观察、待执行工具、最后意图。
-   - 随会话持久化到 `agent_sessions.session_data`，并在 repository/cache 侧有清晰读写接口。
+   - 范围是 `userId + sessionId + activeProjectId`；同一会话切换项目时必须重建或隔离项目相关字段。
+   - 写入路径为 MemoryCache -> Redis -> SQLite `agent_memories`，`agent_sessions.session_data` 只保留可恢复运行快照。
+   - 每轮从 ChatHistory 和当前动作提取轻量更新，保证下一轮 Agent 对话能拿到刚刚说过的目标、偏好和开放问题。
+   - 会话结束或归档时可以沉淀到 ProjectMemory/AuthorMemory，但不能直接丢失。
 
 3. **ProjectMemory**
    - 长期目标、读者承诺、项目约束、未解决伏笔、引用知识、已用套路。
    - 项目生命周期内跨会话共享。
    - `long_term_goal`、`reader_promise` 向量化到 Qdrant。
+   - 新写小说、规划卷、规划章节、生成章节、提交章节、知识命中、质量门禁结论都必须检查并更新 ProjectMemory。
+   - 项目级硬约束优先于 AuthorMemory 风格喜好。
 
 4. **AuthorMemory**
    - 风格喜好、风格反感、确认容忍度、类型习惯、常用知识。
-   - 跨项目共享。
+   - 范围是 `userId` 全局，`projectId = null`，跨项目共享。
+   - 只有跨项目重复出现的稳定偏好、明确全局偏好、风格禁忌才进入 AuthorMemory。
+   - AuthorMemory 可以参与知识检索 boost 和工具策略，但不能覆盖当前 SessionMemory 的明确指令。
 
 5. **ExecutionMemory**
    - 工具失败模式、重复阻塞、成功修复经验。
    - 工具调用后实时更新。
+   - 与工具调用和 `tool_search` 缓存强关联：工具失败、恢复成功、前置工具链经验都必须写 ExecutionMemory。
+   - ExecutionMemory 更新后提升 `agent_memory_versions.execution`，使相关工具缓存和 prompt 上下文缓存失效。
+   - 后续 `tool_search` 和 AgentPlanner 应参考 ExecutionMemory，避免重复失败链，优先使用已验证的修复路径。
 
-### 5.2 信息流
+### 5.3 信息流
 
 每次 Agent 回合必须走完整路径：
 
 ```text
 UserMessage
-  -> ChatHistory append
-  -> Hydrate Session/Project/Author/Execution Memory
+  -> AppendChatTurn(user)
+       MemoryCache + Redis chat hot window
+       SQLite agent_chat_turns
+  -> Load MemoryContext
+       MemoryCache -> Redis -> SQLite/Qdrant
   -> Observe/Plan/Act/Reflect
-  -> MemoryUpdate extraction
-  -> SessionData + AgentMemory rows + Qdrant vectors
-  -> SaveSession
+  -> ToolCall? / KnowledgeHit? / ImportantTask?
+       emit MemoryEvent
+       update AgentRun / SessionMemory / ProjectMemory / ExecutionMemory
+       bump memory version and invalidate Redis keys
+  -> Reflection or lightweight extraction
+       emit MemoryEvent
+       update SessionMemory / ProjectMemory / AuthorMemory / ExecutionMemory
+  -> AppendChatTurn(assistant)
+       MemoryCache + Redis chat hot window
+       SQLite agent_chat_turns
+  -> Compress if needed
+       agent_chat_summaries
+       optional long summary vectors in Qdrant
+  -> SaveSession snapshot
   -> Response with decision/rag/memory evidence
 ```
 
-### 5.3 沉淀与冲突
+写入顺序要求：
+
+1. Chat turn 先写 Redis 热窗口，再落 SQLite；SQLite 失败时本轮不得假装成功。
+2. 记忆字段更新先写 SQLite `agent_memories` 和 `agent_memory_events`，再刷新 Redis 和 MemoryCache。
+3. 需要语义检索的长记忆摘要再异步写 Qdrant，失败时保留 SQLite 真源并进入重试队列。
+4. `agent_memory_versions` 必须在成功写入 SQLite 后递增；缓存 key 带 version 或在递增后显式删除。
+
+### 5.4 触发与沉淀
 
 沉淀规则：
 
@@ -345,6 +453,10 @@ UserMessage
 - 多项目重复模式进入 AuthorMemory。
 - 工具失败/修复实时进入 ExecutionMemory。
 - 知识库命中进入 ProjectMemory referenced knowledge。
+- 每次 `tool_search` 结果进入 ToolSearchCache；后续工具执行结果进入 ExecutionMemory。
+- 新写小说、规划卷、规划章节、生成章节、提交章节、StoryBible 修改、知识上传处理完成属于重要任务，必须强制写 `MemoryEvent`。
+- 每 10 轮 ChatHistory 压缩必须写 `agent_chat_summaries`；每 30 轮 MetaSummary 可作为长语义记忆写 Qdrant。
+- Reflection 缺少 `MemoryUpdate` 时，运行时已经产生的工具结果、质量门禁结果、知识引用和用户明确偏好仍必须由规则兜底持久化。
 
 冲突优先级：
 
@@ -353,6 +465,36 @@ UserMessage
 3. AuthorMemory 风格反感。
 4. ExecutionMemory 失败经验。
 5. AuthorMemory 风格喜好。
+
+### 5.5 Redis 与数据库 key 规范
+
+标准 Redis key：
+
+```text
+chat:{userId}:{sessionId}:hot
+memory:session:{userId}:{sessionId}:{projectId}:v{version}
+memory:project:{userId}:{projectId}:v{version}
+memory:author:{userId}:v{version}
+memory:execution:{userId}:{projectId}:v{version}
+memory-context:{userId}:{sessionId}:{projectId}:v{combinedVersion}
+toolcache:{userId}:{sessionId}:{projectId}:{phase}:v{combinedVersion}
+```
+
+SQLite 映射：
+
+- ChatHistory 真源：`agent_chat_turns`。
+- ChatHistory 摘要：`agent_chat_summaries`。
+- SessionMemory：`agent_memories` 中 `session.*`，带 `session_id` 或等价 scope 字段；`agent_sessions.session_data` 只作快照。
+- ProjectMemory：`agent_memories` 中 `project.*`，`project_id` 必填。
+- AuthorMemory：`agent_memories` 中 `author.*`，`project_id = null`。
+- ExecutionMemory：`agent_memories` 中 `execution.*`，通常绑定 `project_id`，必要时可增加全局 execution 经验。
+- 记忆来源审计：`agent_memory_events`。
+
+Qdrant 映射：
+
+- 长 Chat Summary、MetaSummary、ProjectMemory 长目标、ReaderPromise、重要 AgentRun 复盘可进入 Qdrant。
+- Qdrant payload 必须带 `memory_scope`、`memory_key`、`session_id`、`run_id` 中可用字段。
+- Qdrant 返回只用于召回；完整内容和版本仍回 SQLite 读取。
 
 ---
 
@@ -422,8 +564,17 @@ UserMessage
 工具缓存必须分三层：
 
 1. **MemoryCache:** 当前进程内最热缓存，TTL 1 分钟。
-2. **Redis:** 标准工具发现缓存层，TTL 5 分钟，key 必须包含 `userId/sessionId/projectId`。
-3. **SQLite `agent_sessions.session_data`:** 可恢复快照，保存 `discoveredPhase`、`discoveredTools`、`lastToolSearchAt`，用于 Redis 丢失后的重建。
+2. **Redis:** 标准工具发现缓存层，TTL 5 分钟，key 必须包含 `userId/sessionId/projectId/phase/combinedMemoryVersion`。
+3. **SQLite `agent_sessions.session_data`:** 可恢复快照，保存 `discoveredPhase`、`discoveredTools`、`lastToolSearchAt`、`cacheVersion`，用于 Redis 丢失后的重建。
+
+工具缓存与记忆的关联规则：
+
+- `combinedMemoryVersion = session + project + author + execution + toolRegistryVersion + workflowVersion`。
+- SessionMemory 当前目标、ProjectMemory 约束、AuthorMemory 风格禁忌、ExecutionMemory 失败经验变化后，相关工具缓存必须失效。
+- 工具执行前写 `agent_runs` running 记录，工具执行后写 completed/failed，并发出 `MemoryEvent(source_type=tool_call)`。
+- 工具失败写入 `ExecutionMemory.toolFailurePatterns/repeatedBlockers`；恢复成功写入 `ExecutionMemory.successfulRepairNotes`。
+- 下一次 `tool_search` 必须把 ExecutionMemory 摘要纳入选择上下文，避免反复给出已经失败的工具链。
+- `tool_search` 本身的结果缓存只保存 schema 和选择上下文摘要，不保存章节正文、知识正文或 StoryBible 完整内容。
 
 当前代码已有 session 级实现：
 
@@ -436,8 +587,9 @@ UserMessage
 本轮目标不是推翻现有实现，而是补齐偏差：
 
 - 将工具缓存接入 Redis 必选缓存层，不能只依赖 `session_data`。
-- 补齐 `LastToolSearchAt` 的 TTL 判断。
+- 补齐 `LastToolSearchAt` 的 TTL 判断和 `cacheVersion` 判断。
 - 补齐工具注册表变化、阶段上下文变化、项目切换、StoryBible/Workflow 状态变化后的失效策略。
+- 补齐 ExecutionMemory 变化后的工具缓存失效和工具选择上下文注入。
 - 补齐缓存命中、缓存过期、阶段切换、Redis miss 后从 SQLite 恢复的回归测试。
 - 在 runtime trace 中输出 tool cache hit/miss、cached phase、refresh reason，方便前端调试。
 
@@ -586,22 +738,26 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 - 补齐原始 schema。
 - 新增统一内容层：`content_documents`、`content_chunks`、`content_vector_points`，以及章节、素材、知识上传任务、StoryBible snapshot、AgentRun artifact 的内容文档引用。
+- 新增 Agent 记忆真源与审计层：`agent_chat_turns`、`agent_chat_summaries`、`agent_memory_events`、`agent_memory_versions`，并补 `agent_memories` 的 session scope 能力。
 - 写 EF migration。
 - 保留现有数据并补迁移脚本。
 - 建立必要索引和外键。
 
 ### P0: 分层记忆闭环
 
-- 补 SessionMemory repository/cache/read/write。
-- 修复 Reflection 无 MemoryUpdate 时执行经验不持久的问题。
-- 完成 ChatHistory 压缩容错。
+- 建立 `MemoryContext + MemoryEvent` 统一服务，所有 Agent prompt 从统一上下文读取。
+- 补 ChatHistory 每轮 Redis 热缓存、SQLite 真源、摘要持久化和压缩容错，移除运行时硬截断真源风险。
+- 补 SessionMemory repository/cache/read/write，并从 `session_data` 快照升级为 Redis + SQLite 真源闭环。
+- 修复 Reflection 无 MemoryUpdate 时工具结果、质量门禁、知识引用和明确偏好不持久的问题。
+- 完成重要任务强制记忆写入：新小说、卷、章节、StoryBible、知识处理、工具调用。
+- 完成 memory version、Redis key 失效和 prompt 上下文缓存测试。
 - 完成记忆沉淀和冲突优先级测试。
 
 ### P1: Agent 决策闭环
 
 - 固化 Chat/Tool/Reflection 三模式。
 - 完成 tool_search 三层缓存：MemoryCache、Redis、SQLite `session_data` 可恢复快照。
-- 完成 tool_search TTL、阶段切换、状态失效和 runtimeTrace 可观测性。
+- 完成 tool_search TTL、cacheVersion、阶段切换、ExecutionMemory 关联失效和 runtimeTrace 可观测性。
 - 接入失败恢复路径。
 - 稳定 response contract。
 
@@ -653,8 +809,11 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 
 1. `http://localhost:3002` 前端能稳定访问 `http://localhost:5002` 后端。
 2. 原始 API 文档中的核心接口有实现和测试。
-3. Agent 回合后，ChatHistory、SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 可持久化并在下一回合恢复。
-4. 知识库上传文件后能处理、抽取、向量化、检索，并被 Agent 引用到记忆。
-5. 前端项目上下文跨页面一致。
-6. 后端 build、核心单元测试、关键集成测试、前端 build 全部通过。
-7. `Docs/superpowers` 新增 implementation plan 与测试报告，能追溯每个修复任务。
+3. 每轮用户/助手消息都进入 ChatHistory Redis 热窗口和 SQLite 真源，下一轮 Agent prompt 能读取最近对话、Summary 和 MetaSummary。
+4. Agent 回合后，SessionMemory、ProjectMemory、AuthorMemory、ExecutionMemory 可持久化并在下一回合通过 `MemoryContext` 恢复。
+5. 新小说、卷、章节、StoryBible、知识处理、工具调用等重要任务会产生 `MemoryEvent`，并刷新 Redis 与 memory version。
+6. tool_search 缓存命中、过期、Redis miss、memory version 失效、ExecutionMemory 关联失效都有测试和 runtime trace。
+7. 知识库上传文件后能处理、抽取、向量化、检索，并被 Agent 引用到记忆。
+8. 前端项目上下文跨页面一致。
+9. 后端 build、核心单元测试、关键集成测试、前端 build 全部通过。
+10. `Docs/superpowers` 新增 implementation plan 与测试报告，能追溯每个修复任务。
