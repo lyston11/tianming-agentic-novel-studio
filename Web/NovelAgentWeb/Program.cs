@@ -120,8 +120,9 @@ builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
-// Distributed cache: Redis is opt-in; local/dev falls back to in-process distributed memory.
-var redisEnabled = builder.Configuration.GetValue("Redis:Enabled", false);
+// Distributed cache: Redis is required by default; tests may opt into memory fallback explicitly.
+var redisEnabled = builder.Configuration.GetValue("Redis:Enabled", true);
+var redisAllowFallback = builder.Configuration.GetValue("Redis:AllowInMemoryFallback", false);
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
 var redisInstanceName = builder.Configuration["Redis:InstanceName"];
 
@@ -133,9 +134,13 @@ if (redisEnabled && !string.IsNullOrWhiteSpace(redisConnectionString))
         options.InstanceName = redisInstanceName ?? "NovelAgent:";
     });
 }
-else
+else if (redisAllowFallback)
 {
     builder.Services.AddDistributedMemoryCache();
+}
+else
+{
+    throw new InvalidOperationException("Redis is required. Set Redis:Enabled=true and Redis:ConnectionString, or set Redis:AllowInMemoryFallback=true only for tests.");
 }
 
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
@@ -195,9 +200,10 @@ builder.Services.AddScoped<IStoryBibleRepository, StoryBibleRepository>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Dev", policy =>
-        policy.WithOrigins("http://localhost:3000")
+        policy.WithOrigins("http://localhost:3002")
             .AllowAnyHeader()
-            .AllowAnyMethod());
+            .AllowAnyMethod()
+            .AllowCredentials());
 });
 
 // NovelAgentWorkspace and NovelProjectCatalog are now provided dynamically via WorkspaceFactory
