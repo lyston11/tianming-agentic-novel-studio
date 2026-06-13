@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
@@ -10,6 +11,8 @@ public class ChatHistoryRepository : IChatHistoryRepository
 {
     private static readonly TimeSpan HotWindowTtl = TimeSpan.FromMinutes(10);
     private const int HotWindowSize = 20;
+    private const int MaxAppendAttempts = 3;
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> SessionLocks = new(StringComparer.Ordinal);
 
     private readonly NovelAgentDbContext _context;
     private readonly IDistributedCacheService _redisCache;
@@ -37,26 +40,31 @@ public class ChatHistoryRepository : IChatHistoryRepository
         CancellationToken ct = default)
     {
         var trimmed = content.Trim();
-        var nextTurnIndex = await _context.AgentChatTurns
-            .Where(t => t.SessionId == sessionId)
-            .Select(t => (int?)t.TurnIndex)
-            .MaxAsync(ct) ?? 0;
-
-        _context.AgentChatTurns.Add(new AgentChatTurn
+        var sessionLock = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await sessionLock.WaitAsync(ct);
+        try
         {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId,
-            SessionId = sessionId,
-            TurnIndex = nextTurnIndex + 1,
-            Role = role.Trim(),
-            Content = trimmed,
-            TokenCount = EstimateTokenCount(trimmed),
-            CreatedAt = DateTime.UtcNow
-        });
+            for (var attempt = 1; attempt <= MaxAppendAttempts; attempt++)
+            {
+                try
+                {
+                    await AppendTurnOnceAsync(userId, projectId, sessionId, role, trimmed, ct);
+                    await WriteHotWindowAsync(userId, sessionId, ct);
+                    return;
+                }
+                catch (DbUpdateException) when (attempt < MaxAppendAttempts)
+                {
+                    _context.ChangeTracker.Clear();
+                    _logger.LogWarning("Retrying chat turn append after unique index conflict for session {SessionId}", sessionId);
+                }
+            }
 
-        await _context.SaveChangesAsync(ct);
-        await WriteHotWindowAsync(userId, sessionId, ct);
+            throw new DbUpdateException($"Failed to append chat turn for session {sessionId} after {MaxAppendAttempts} attempts.");
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     public async Task SaveSummaryAsync(
@@ -70,17 +78,41 @@ public class ChatHistoryRepository : IChatHistoryRepository
         IReadOnlyList<string> keyDecisions,
         CancellationToken ct = default)
     {
+        var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
+        var normalizedSummaryType = string.IsNullOrWhiteSpace(summaryType) ? "summary" : summaryType.Trim();
+        var trimmedContent = content.Trim();
+        var keyDecisionsJson = JsonSerializer.Serialize(keyDecisions);
+
+        var existing = await _context.AgentChatSummaries
+            .FirstOrDefaultAsync(s =>
+                s.UserId == userId &&
+                s.ProjectId == normalizedProjectId &&
+                s.SessionId == sessionId &&
+                s.SummaryType == normalizedSummaryType &&
+                s.StartTurn == startTurn &&
+                s.EndTurn == endTurn,
+                ct);
+
+        if (existing != null)
+        {
+            existing.Content = trimmedContent;
+            existing.KeyDecisionsJson = keyDecisionsJson;
+            existing.CreatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+            return;
+        }
+
         _context.AgentChatSummaries.Add(new AgentChatSummary
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = userId,
-            ProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+            ProjectId = normalizedProjectId,
             SessionId = sessionId,
             StartTurn = startTurn,
             EndTurn = endTurn,
-            SummaryType = string.IsNullOrWhiteSpace(summaryType) ? "summary" : summaryType.Trim(),
-            Content = content.Trim(),
-            KeyDecisionsJson = JsonSerializer.Serialize(keyDecisions),
+            SummaryType = normalizedSummaryType,
+            Content = trimmedContent,
+            KeyDecisionsJson = keyDecisionsJson,
             CreatedAt = DateTime.UtcNow
         });
 
@@ -123,6 +155,35 @@ public class ChatHistoryRepository : IChatHistoryRepository
         var recentMessages = await LoadRecentTurnsAsync(userId, sessionId, ct);
 
         return new ChatPromptWindowDto(metaSummary, summaries, recentMessages);
+    }
+
+    private async Task AppendTurnOnceAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        string role,
+        string trimmed,
+        CancellationToken ct)
+    {
+        var nextTurnIndex = await _context.AgentChatTurns
+            .Where(t => t.SessionId == sessionId)
+            .Select(t => (int?)t.TurnIndex)
+            .MaxAsync(ct) ?? 0;
+
+        _context.AgentChatTurns.Add(new AgentChatTurn
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = userId,
+            ProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+            SessionId = sessionId,
+            TurnIndex = nextTurnIndex + 1,
+            Role = role.Trim(),
+            Content = trimmed,
+            TokenCount = EstimateTokenCount(trimmed),
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync(ct);
     }
 
     private async Task WriteHotWindowAsync(string userId, string sessionId, CancellationToken ct)

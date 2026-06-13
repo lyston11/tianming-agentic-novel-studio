@@ -1,7 +1,10 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using Xunit;
@@ -63,11 +66,86 @@ public class ChatHistoryRepositoryTests
         Assert.Contains(await db.AgentChatTurns.ToListAsync(), t => t.TurnIndex == 1 && t.Content == "内容 0");
     }
 
+    [Fact]
+    public async Task AppendAsync_ConcurrentSqliteAppendsForSameSessionKeepContiguousIndexes()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            SeedUserProjectAndSession(setupDb);
+            await setupDb.SaveChangesAsync();
+        }
+
+        const int appendCount = 16;
+        var tasks = Enumerable.Range(0, appendCount).Select(async i =>
+        {
+            await using var db = new NovelAgentDbContext(options);
+            var repo = new ChatHistoryRepository(
+                db,
+                Mock.Of<IDistributedCacheService>(),
+                Mock.Of<IMemoryCacheService>(),
+                NullLogger<ChatHistoryRepository>.Instance);
+
+            await repo.AppendAsync("user-1", "project-1", "session-1", i % 2 == 0 ? "user" : "assistant", $"消息 {i}", CancellationToken.None);
+        });
+
+        await Task.WhenAll(tasks);
+
+        await using var verifyDb = new NovelAgentDbContext(options);
+        var indexes = await verifyDb.AgentChatTurns
+            .Where(t => t.SessionId == "session-1")
+            .OrderBy(t => t.TurnIndex)
+            .Select(t => t.TurnIndex)
+            .ToListAsync();
+
+        Assert.Equal(appendCount, indexes.Count);
+        Assert.Equal(Enumerable.Range(1, appendCount), indexes);
+    }
+
+    [Fact]
+    public async Task SaveSummaryAsync_UpsertsSameSessionTypeAndRange()
+    {
+        await using var db = CreateDb();
+        var repo = new ChatHistoryRepository(db, Mock.Of<IDistributedCacheService>(), Mock.Of<IMemoryCacheService>(), NullLogger<ChatHistoryRepository>.Instance);
+
+        await repo.SaveSummaryAsync("user-1", "project-1", "session-1", 1, 10, "summary", "旧摘要", new[] { "旧决定" }, CancellationToken.None);
+        await repo.SaveSummaryAsync("user-1", "project-1", "session-1", 1, 10, "summary", "新摘要", new[] { "新决定" }, CancellationToken.None);
+
+        var saved = await db.AgentChatSummaries.SingleAsync();
+        Assert.Equal("新摘要", saved.Content);
+        var decisions = JsonSerializer.Deserialize<List<string>>(saved.KeyDecisionsJson!) ?? new();
+        Assert.Equal(new[] { "新决定" }, decisions);
+    }
+
     private static NovelAgentDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         return new NovelAgentDbContext(options);
+    }
+
+    private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
+    {
+        var connection = new SqliteConnection($"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared");
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static DbContextOptions<NovelAgentDbContext> CreateSqliteOptions(string connectionString)
+    {
+        return new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .Options;
+    }
+
+    private static void SeedUserProjectAndSession(NovelAgentDbContext db)
+    {
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-1", UserId = "user-1", ProjectId = "project-1", Title = "Session" });
     }
 }

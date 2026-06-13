@@ -57,6 +57,34 @@ public class ChatHistoryCompressorTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task CompressAndPersistAsync_DoesNotSaveMetaSummaryWithoutCoveredRange()
+    {
+        var repository = new Mock<IChatHistoryRepository>();
+        var compressor = new TestChatHistoryCompressor(repository.Object, new LayeredChatHistory
+        {
+            MetaSummary = "总体摘要"
+        });
+
+        await compressor.CompressAndPersistAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            new List<AgentConversationTurn>(),
+            CancellationToken.None);
+
+        repository.Verify(x => x.SaveSummaryAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<int>(),
+            It.IsAny<int>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private sealed class TestChatHistoryCompressor : ChatHistoryCompressor
     {
         private readonly LayeredChatHistory _layered;

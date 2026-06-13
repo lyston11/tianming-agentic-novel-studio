@@ -30,4 +30,26 @@ public class AgentRuntimeTests
         Assert.Contains("A: SQLite 回复", history);
         Assert.DoesNotContain("session snapshot only", history);
     }
+
+    [Fact]
+    public void FormatSessionHistorySnapshot_BoundsFallbackHistoryWhenPromptWindowFails()
+    {
+        var session = new AgentSession();
+        for (var i = 0; i < 12; i++)
+        {
+            session.ChatHistory.Add(new AgentConversationTurn
+            {
+                Role = i % 2 == 0 ? "user" : "assistant",
+                Content = $"session fallback {i}"
+            });
+        }
+
+        var history = AgentRuntime.FormatSessionHistorySnapshot(session);
+        var lines = history.Split('\n');
+
+        Assert.DoesNotContain(lines, line => line == "U: session fallback 0");
+        Assert.DoesNotContain(lines, line => line == "A: session fallback 1");
+        Assert.Contains("U: session fallback 2", lines);
+        Assert.Contains("A: session fallback 11", lines);
+    }
 }

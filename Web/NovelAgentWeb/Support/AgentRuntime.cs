@@ -552,10 +552,7 @@ public sealed class AgentRuntime
         ts.Add($"卷: {bible.VolumeArcs.Count} | 账本: 设定{bible.CanonLedger.Count}/伏笔{bible.ForeshadowLedger.Count}/角色{bible.CharacterLedger.Count}");
         parts.Add($"<task_state>\n{string.Join("\n", ts)}\n</task_state>");
 
-        var promptWindow = await _chatHistory
-            .GetPromptWindowAsync(session.UserId, project.Id, session.SessionId, ct)
-            .ConfigureAwait(false);
-        var history = FormatChatPromptWindow(promptWindow);
+        var history = await BuildHistoryBlockAsync(session, project.Id, ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(history))
             parts.Add($"<history>\n{history}\n</history>");
 
@@ -602,6 +599,37 @@ public sealed class AgentRuntime
         }
 
         return string.Join("\n", lines);
+    }
+
+    public static string FormatSessionHistorySnapshot(AgentSession session)
+    {
+        var recentHistory = session.ChatHistory.TakeLast(10).Select(t =>
+        {
+            var role = string.Equals(t.Role, "user", StringComparison.OrdinalIgnoreCase) ? "U" : "A";
+            return $"{role}: {TruncateLine(t.Content, 120)}";
+        });
+
+        return string.Join("\n", recentHistory);
+    }
+
+    private async Task<string> BuildHistoryBlockAsync(AgentSession session, string projectId, CancellationToken ct)
+    {
+        try
+        {
+            var promptWindow = await _chatHistory
+                .GetPromptWindowAsync(session.UserId, projectId, session.SessionId, ct)
+                .ConfigureAwait(false);
+            return FormatChatPromptWindow(promptWindow);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load chat prompt window for session {SessionId}; falling back to session snapshot", session.SessionId);
+            return FormatSessionHistorySnapshot(session);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1055,7 +1083,6 @@ public sealed class AgentRuntime
     {
         var trimmed = content.Trim();
         session.ChatHistory.Add(new AgentConversationTurn { Role = role, Content = trimmed, CreatedAt = DateTime.UtcNow });
-        await _sessionManager.SaveSessionAsync(session, ct).ConfigureAwait(false);
         await _chatHistory.AppendAsync(
             session.UserId,
             string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,

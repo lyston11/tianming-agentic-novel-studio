@@ -87,6 +87,8 @@ public class ChatHistoryCompressor
             var endTurn = layered.Summaries.Count == 0
                 ? 0
                 : layered.Summaries.Max(s => s.EndTurn);
+            if (endTurn <= 0)
+                return;
 
             await _chatHistory.SaveSummaryAsync(
                 userId,
