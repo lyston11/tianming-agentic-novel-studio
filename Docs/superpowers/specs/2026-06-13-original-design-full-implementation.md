@@ -393,11 +393,53 @@ AgentController.Chat
 
 采用历史记录中确认的 Hermes 风格 `tool_search`：
 
-- LLM 根据当前任务判断需要什么工具。
-- 如果缓存工具满足需求，直接使用。
-- 如果缓存不满足，调用 `tool_search(phase=...)`。
-- 缓存需要 TTL 和关键状态变化失效。
+- LLM 根据当前任务判断需要什么工具，不由后端硬编码 PhaseInference 替它决定。
+- 首次进入会话或工具缓存为空时，Agent 只暴露 `tool_search` 元工具。
+- LLM 调用 `tool_search(phase=...)` 后，系统返回该阶段工具 schema 并写入工具缓存。
+- 后续回合如果缓存工具满足需求，直接暴露缓存工具并调用，不重复 `tool_search`。
+- 如果用户意图切换、缓存不满足、缓存过期或关键状态变化，LLM 重新调用 `tool_search` 刷新工具列表。
 - 工具阶段包括 Conversation、Planning、Creation、Review、All。
+
+标准流程：
+
+```text
+UserMessage
+  -> AgentRuntime.RunAsync
+  -> AgentObservationBuilder.BuildAsync
+  -> LoadToolSearchCache(sessionId/userId/projectId)
+  -> has valid cached tools?
+       yes -> AvailableTools = cached tools
+       no  -> AvailableTools = [tool_search]
+  -> AgentPlanner.PlanActionAsync
+  -> if tool_search called:
+       AgentToolRegistry.ToolSearchAsync
+       -> resolve phase tools
+       -> save ToolSearchCache
+       -> return tool list
+  -> next planner step or next user turn can directly call cached tools
+```
+
+工具缓存必须分三层：
+
+1. **MemoryCache:** 当前进程内最热缓存，TTL 1 分钟。
+2. **Redis:** 标准工具发现缓存层，TTL 5 分钟，key 必须包含 `userId/sessionId/projectId`。
+3. **SQLite `agent_sessions.session_data`:** 可恢复快照，保存 `discoveredPhase`、`discoveredTools`、`lastToolSearchAt`，用于 Redis 丢失后的重建。
+
+当前代码已有 session 级实现：
+
+- `AgentSession.DiscoveredPhase`
+- `AgentSession.DiscoveredTools`
+- `AgentSession.LastToolSearchAt`
+- `AgentCore` 有缓存时暴露缓存工具，无缓存时只暴露 `tool_search`
+- `AgentToolRegistry.ToolSearchAsync` 会把搜索结果写回 session
+
+本轮目标不是推翻现有实现，而是补齐偏差：
+
+- 将工具缓存接入 Redis 必选缓存层，不能只依赖 `session_data`。
+- 补齐 `LastToolSearchAt` 的 TTL 判断。
+- 补齐工具注册表变化、阶段上下文变化、项目切换、StoryBible/Workflow 状态变化后的失效策略。
+- 补齐缓存命中、缓存过期、阶段切换、Redis miss 后从 SQLite 恢复的回归测试。
+- 在 runtime trace 中输出 tool cache hit/miss、cached phase、refresh reason，方便前端调试。
 
 高风险写入型工具仍可采用“先执行后修正”的工作流，但必须有可回滚/可修复路径，并在测试中覆盖误调用保护。
 
@@ -500,7 +542,7 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
    - Redis cache key、TTL、失效、fake adapter 和 degraded health。
    - ChatHistory compressor。
    - Knowledge service。
-   - Tool search。
+   - Tool search cache hit/miss、TTL、阶段切换、Redis miss 后从 SQLite `session_data` 恢复。
    - Agent decision fallback。
 
 2. **后端集成测试**
@@ -558,7 +600,8 @@ Materials、Knowledge、Workflow、Library、Rail、Agent 全部只从 store 读
 ### P1: Agent 决策闭环
 
 - 固化 Chat/Tool/Reflection 三模式。
-- 完成 tool_search TTL 和状态失效。
+- 完成 tool_search 三层缓存：MemoryCache、Redis、SQLite `session_data` 可恢复快照。
+- 完成 tool_search TTL、阶段切换、状态失效和 runtimeTrace 可观测性。
 - 接入失败恢复路径。
 - 稳定 response contract。
 
