@@ -73,6 +73,16 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("SessionId");
 
+                    b.HasIndex("UserId", "ProjectId", "SessionId", "SummaryType", "StartTurn", "EndTurn")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_chat_summaries_range_project")
+                        .HasFilter("project_id IS NOT NULL");
+
+                    b.HasIndex("UserId", "SessionId", "SummaryType", "StartTurn", "EndTurn")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_chat_summaries_range_global")
+                        .HasFilter("project_id IS NULL");
+
                     b.HasIndex("UserId");
 
                     b.ToTable("agent_chat_summaries", (string)null);

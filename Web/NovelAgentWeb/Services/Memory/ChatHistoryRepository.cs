@@ -83,21 +83,11 @@ public class ChatHistoryRepository : IChatHistoryRepository
         var trimmedContent = content.Trim();
         var keyDecisionsJson = JsonSerializer.Serialize(keyDecisions);
 
-        var existing = await _context.AgentChatSummaries
-            .FirstOrDefaultAsync(s =>
-                s.UserId == userId &&
-                s.ProjectId == normalizedProjectId &&
-                s.SessionId == sessionId &&
-                s.SummaryType == normalizedSummaryType &&
-                s.StartTurn == startTurn &&
-                s.EndTurn == endTurn,
-                ct);
+        var existing = await FindSummaryAsync(userId, normalizedProjectId, sessionId, normalizedSummaryType, startTurn, endTurn, ct);
 
         if (existing != null)
         {
-            existing.Content = trimmedContent;
-            existing.KeyDecisionsJson = keyDecisionsJson;
-            existing.CreatedAt = DateTime.UtcNow;
+            UpdateSummary(existing, trimmedContent, keyDecisionsJson);
             await _context.SaveChangesAsync(ct);
             return;
         }
@@ -116,7 +106,22 @@ public class ChatHistoryRepository : IChatHistoryRepository
             CreatedAt = DateTime.UtcNow
         });
 
-        await _context.SaveChangesAsync(ct);
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            _context.ChangeTracker.Clear();
+            var concurrentExisting = await FindSummaryAsync(userId, normalizedProjectId, sessionId, normalizedSummaryType, startTurn, endTurn, ct);
+            if (concurrentExisting == null)
+            {
+                throw;
+            }
+
+            UpdateSummary(concurrentExisting, trimmedContent, keyDecisionsJson);
+            await _context.SaveChangesAsync(ct);
+        }
     }
 
     public async Task<ChatPromptWindowDto> GetPromptWindowAsync(
@@ -184,6 +189,31 @@ public class ChatHistoryRepository : IChatHistoryRepository
         });
 
         await _context.SaveChangesAsync(ct);
+    }
+
+    private Task<AgentChatSummary?> FindSummaryAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        string summaryType,
+        int startTurn,
+        int endTurn,
+        CancellationToken ct) =>
+        _context.AgentChatSummaries
+            .FirstOrDefaultAsync(s =>
+                s.UserId == userId &&
+                s.ProjectId == projectId &&
+                s.SessionId == sessionId &&
+                s.SummaryType == summaryType &&
+                s.StartTurn == startTurn &&
+                s.EndTurn == endTurn,
+                ct);
+
+    private static void UpdateSummary(AgentChatSummary summary, string content, string keyDecisionsJson)
+    {
+        summary.Content = content;
+        summary.KeyDecisionsJson = keyDecisionsJson;
+        summary.CreatedAt = DateTime.UtcNow;
     }
 
     private async Task WriteHotWindowAsync(string userId, string sessionId, CancellationToken ct)

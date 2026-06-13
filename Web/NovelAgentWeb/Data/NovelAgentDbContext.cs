@@ -473,6 +473,14 @@ public class NovelAgentDbContext : DbContext
             entity.HasIndex(e => e.SessionId);
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.SummaryType, e.StartTurn, e.EndTurn })
+                .IsUnique()
+                .HasDatabaseName("IX_agent_chat_summaries_range_global")
+                .HasFilter("project_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.SummaryType, e.StartTurn, e.EndTurn })
+                .IsUnique()
+                .HasDatabaseName("IX_agent_chat_summaries_range_project")
+                .HasFilter("project_id IS NOT NULL");
 
             entity.HasOne<User>()
                 .WithMany()
