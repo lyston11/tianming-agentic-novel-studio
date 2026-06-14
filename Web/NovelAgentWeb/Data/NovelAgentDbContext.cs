@@ -143,13 +143,14 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.ChapterNumber).HasColumnName("chapter_number");
             entity.Property(e => e.WordCount).HasColumnName("word_count").HasDefaultValue(0);
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("draft");
-            entity.Property(e => e.ContentPath).HasColumnName("content_path").IsRequired();
+            entity.Property(e => e.ContentDocumentId).HasColumnName("content_document_id");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.ProjectId).HasDatabaseName("idx_chapters_project");
             entity.HasIndex(e => e.VolumeId).HasDatabaseName("idx_chapters_volume");
             entity.HasIndex(e => e.Status).HasDatabaseName("idx_chapters_status");
+            entity.HasIndex(e => e.ContentDocumentId).HasDatabaseName("idx_chapters_content_doc");
 
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.Chapters)
@@ -159,6 +160,11 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne(e => e.Volume)
                 .WithMany(v => v.Chapters)
                 .HasForeignKey(e => e.VolumeId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.ContentDocument)
+                .WithMany()
+                .HasForeignKey(e => e.ContentDocumentId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

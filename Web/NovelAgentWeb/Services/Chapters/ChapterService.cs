@@ -3,34 +3,32 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Models.Chapters;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Web.NovelAgentWeb.Services.Chapters;
 
-/// <summary>
-/// Implementation of chapter CRUD operations with synchronization across
-/// SQLite (metadata), file system (Markdown content), and Qdrant (vectors).
-/// </summary>
 public class ChapterService : IChapterService
 {
     private readonly NovelAgentDbContext _context;
     private readonly IVectorStore _vectorStore;
     private readonly IMicroEmbeddingService _embeddingService;
-    private readonly IConfiguration _configuration;
+    private readonly IContentDocumentService _contentDocumentService;
     private readonly ILogger<ChapterService> _logger;
-    private const int ChunkSize = 500; // Characters per chunk for embedding
+    private const int ChunkSize = 4000;
+    private const int ChunkOverlap = 200;
 
     public ChapterService(
         NovelAgentDbContext context,
         IVectorStore vectorStore,
         IMicroEmbeddingService embeddingService,
-        IConfiguration configuration,
+        IContentDocumentService contentDocumentService,
         ILogger<ChapterService> logger)
     {
         _context = context;
         _vectorStore = vectorStore;
         _embeddingService = embeddingService;
-        _configuration = configuration;
+        _contentDocumentService = contentDocumentService;
         _logger = logger;
     }
 
@@ -40,47 +38,34 @@ public class ChapterService : IChapterService
         bool isAdmin,
         CancellationToken cancellationToken = default)
     {
-        // Verify project ownership
         var project = await _context.NovelProjects
             .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
 
         if (project == null)
-        {
             throw new KeyNotFoundException($"Project with ID {request.ProjectId} not found");
-        }
 
         if (!isAdmin && project.UserId != userId)
-        {
             throw new UnauthorizedAccessException("You do not have permission to create chapters in this project");
-        }
 
-        // Verify volume ownership if provided
         if (!string.IsNullOrEmpty(request.VolumeId))
         {
             var volume = await _context.Volumes
                 .FirstOrDefaultAsync(v => v.Id == request.VolumeId && v.ProjectId == request.ProjectId, cancellationToken);
 
             if (volume == null)
-            {
                 throw new KeyNotFoundException($"Volume with ID {request.VolumeId} not found in project {request.ProjectId}");
-            }
         }
 
-        // Check for duplicate chapter number in project
         var existingChapter = await _context.Chapters
             .FirstOrDefaultAsync(c => c.ProjectId == request.ProjectId && c.ChapterNumber == request.ChapterNumber, cancellationToken);
 
         if (existingChapter != null)
-        {
             throw new InvalidOperationException($"Chapter number {request.ChapterNumber} already exists in project {request.ProjectId}");
-        }
 
-        // Begin transaction for atomic operation
         using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
         try
         {
-            // 1. Create chapter entity
             var chapter = new Chapter
             {
                 Id = Guid.NewGuid().ToString(),
@@ -90,7 +75,6 @@ public class ChapterService : IChapterService
                 ChapterNumber = request.ChapterNumber,
                 Status = request.Status,
                 WordCount = CountWords(request.Content),
-                ContentPath = GetChapterContentPath(project.StorageProjectName, request.ChapterNumber),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -98,32 +82,25 @@ public class ChapterService : IChapterService
             _context.Chapters.Add(chapter);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 2. Write content to file system
-            var fullPath = GetFullContentPath(userId, project.StorageProjectName, chapter.ContentPath);
-            await WriteContentToFileAsync(fullPath, request.Content, cancellationToken);
+            var contentDoc = await _contentDocumentService.SaveTextAsync(
+                userId, request.ProjectId, "chapter", chapter.Id, "chapter_body",
+                chapter.Title, request.Content, cancellationToken);
 
-            // 3. Generate and store embeddings in Qdrant
+            chapter.ContentDocumentId = contentDoc.Id;
+            await _context.SaveChangesAsync(cancellationToken);
+
             await GenerateAndStoreEmbeddingsAsync(chapter, request.Content, userId, cancellationToken);
 
-            // Commit transaction
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation("Created chapter {ChapterId} in project {ProjectId} with {VectorCount} vectors",
-                chapter.Id, request.ProjectId, GetChunkCount(request.Content));
+            _logger.LogInformation("Created chapter {ChapterId} in project {ProjectId}", chapter.Id, request.ProjectId);
 
-            // Return response with content
             return MapToResponse(chapter, request.Content);
         }
         catch (Exception ex)
         {
             await transaction.RollbackAsync(cancellationToken);
             _logger.LogError(ex, "Failed to create chapter in project {ProjectId}", request.ProjectId);
-
-            // Clean up file if it was created
-            var fullPath = GetFullContentPath(userId, project.StorageProjectName,
-                GetChapterContentPath(project.StorageProjectName, request.ChapterNumber));
-            DeleteFileIfExists(fullPath);
-
             throw;
         }
     }
@@ -135,35 +112,25 @@ public class ChapterService : IChapterService
         bool isAdmin,
         CancellationToken cancellationToken = default)
     {
-        // Get chapter with project info
         var chapter = await _context.Chapters
             .Include(c => c.Project)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
         if (chapter == null)
-        {
             throw new KeyNotFoundException($"Chapter with ID {chapterId} not found");
-        }
 
-        // Verify ownership
         if (!isAdmin && chapter.Project.UserId != userId)
-        {
             throw new UnauthorizedAccessException("You do not have permission to update this chapter");
-        }
 
-        // Verify volume ownership if changing volume
         if (request.VolumeId != null && request.VolumeId != chapter.VolumeId)
         {
             var volume = await _context.Volumes
                 .FirstOrDefaultAsync(v => v.Id == request.VolumeId && v.ProjectId == chapter.ProjectId, cancellationToken);
 
             if (volume == null)
-            {
                 throw new KeyNotFoundException($"Volume with ID {request.VolumeId} not found in project {chapter.ProjectId}");
-            }
         }
 
-        // Begin transaction for atomic operation
         using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
         try
@@ -171,57 +138,43 @@ public class ChapterService : IChapterService
             var contentChanged = false;
             string? newContent = null;
 
-            // Update metadata
             if (!string.IsNullOrEmpty(request.Title))
-            {
                 chapter.Title = request.Title;
-            }
 
             if (!string.IsNullOrEmpty(request.Status))
-            {
                 chapter.Status = request.Status;
-            }
 
             if (request.VolumeId != null)
-            {
                 chapter.VolumeId = request.VolumeId;
-            }
 
             chapter.UpdatedAt = DateTime.UtcNow;
 
-            // Update content if provided
             if (!string.IsNullOrEmpty(request.Content))
             {
                 contentChanged = true;
                 newContent = request.Content;
                 chapter.WordCount = CountWords(newContent);
 
-                // Write updated content to file system
-                var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-                await WriteContentToFileAsync(fullPath, newContent, cancellationToken);
+                await _contentDocumentService.SaveTextAsync(
+                    userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body",
+                    chapter.Title, newContent, cancellationToken);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
 
-            // Regenerate embeddings if content changed
             if (contentChanged && newContent != null)
             {
-                // Delete old vectors
-                await DeleteChapterVectorsAsync(chapter.Id, chapter.ProjectId, cancellationToken);
-
-                // Generate and store new embeddings
+                await DeleteChapterVectorsAsync(chapter.Id, userId, cancellationToken);
                 await GenerateAndStoreEmbeddingsAsync(chapter, newContent, userId, cancellationToken);
             }
 
-            // Commit transaction
             await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation("Updated chapter {ChapterId}, content changed: {ContentChanged}",
                 chapterId, contentChanged);
 
-            // Read current content for response
-            var content = newContent ?? await ReadContentFromFileAsync(
-                GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath), cancellationToken);
+            var content = newContent ?? await _contentDocumentService.GetDocumentContentBySourceAsync(
+                "chapter", chapter.Id, cancellationToken) ?? "";
 
             return MapToResponse(chapter, content);
         }
@@ -245,19 +198,13 @@ public class ChapterService : IChapterService
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
         if (chapter == null)
-        {
             throw new KeyNotFoundException($"Chapter with ID {chapterId} not found");
-        }
 
-        // Verify ownership
         if (!isAdmin && chapter.Project.UserId != userId)
-        {
             throw new UnauthorizedAccessException("You do not have permission to access this chapter");
-        }
 
-        // Read content from file system
-        var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-        var content = await ReadContentFromFileAsync(fullPath, cancellationToken);
+        var content = await _contentDocumentService.GetDocumentContentBySourceAsync(
+            "chapter", chapter.Id, cancellationToken) ?? "";
 
         return MapToResponse(chapter, content);
     }
@@ -273,33 +220,22 @@ public class ChapterService : IChapterService
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
         if (chapter == null)
-        {
             throw new KeyNotFoundException($"Chapter with ID {chapterId} not found");
-        }
 
-        // Verify ownership
         if (!isAdmin && chapter.Project.UserId != userId)
-        {
             throw new UnauthorizedAccessException("You do not have permission to delete this chapter");
-        }
 
-        // Begin transaction for atomic operation
         using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
         try
         {
-            // 1. Delete from database (this will cascade FK references to NULL)
+            await _contentDocumentService.DeleteDocumentBySourceAsync("chapter", chapter.Id, cancellationToken);
+
             _context.Chapters.Remove(chapter);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 2. Delete content file
-            var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-            DeleteFileIfExists(fullPath);
+            await DeleteChapterVectorsAsync(chapter.Id, userId, cancellationToken);
 
-            // 3. Delete vectors from Qdrant
-            await DeleteChapterVectorsAsync(chapter.Id, chapter.ProjectId, cancellationToken);
-
-            // Commit transaction
             await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation("Deleted chapter {ChapterId} from project {ProjectId}",
@@ -319,21 +255,15 @@ public class ChapterService : IChapterService
         bool isAdmin,
         CancellationToken cancellationToken = default)
     {
-        // Verify project ownership
         var project = await _context.NovelProjects
             .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
 
         if (project == null)
-        {
             throw new KeyNotFoundException($"Project with ID {projectId} not found");
-        }
 
         if (!isAdmin && project.UserId != userId)
-        {
             throw new UnauthorizedAccessException("You do not have permission to access this project's chapters");
-        }
 
-        // Get all chapters for the project (without content)
         var chapters = await _context.Chapters
             .AsNoTracking()
             .Where(c => c.ProjectId == projectId)
@@ -343,22 +273,18 @@ public class ChapterService : IChapterService
         return chapters.Select(c => MapToResponse(c, null)).ToList();
     }
 
-    // Private helper methods
-
     private async Task GenerateAndStoreEmbeddingsAsync(
         Chapter chapter,
         string content,
         string userId,
         CancellationToken cancellationToken)
     {
-        // Ensure Qdrant collection exists
         var collectionExists = await _vectorStore.CollectionExistsAsync(userId, cancellationToken);
         if (!collectionExists)
         {
             await _vectorStore.InitializeUserCollectionAsync(userId, cancellationToken);
         }
 
-        // Split content into chunks for embedding
         var chunks = ChunkContent(content);
         if (chunks.Count == 0)
         {
@@ -366,10 +292,8 @@ public class ChapterService : IChapterService
             return;
         }
 
-        // Generate embeddings for all chunks
         var embeddings = await _embeddingService.EncodeBatchAsync(chunks, EmbeddingMode.Passage, cancellationToken);
 
-        // Create vector data for Qdrant
         var vectors = new List<VectorData>();
         for (int i = 0; i < chunks.Count; i++)
         {
@@ -393,8 +317,7 @@ public class ChapterService : IChapterService
             });
         }
 
-        // Store vectors in Qdrant
-        await _vectorStore.UpsertVectorsAsync(chapter.ProjectId, vectors, cancellationToken);
+        await _vectorStore.UpsertVectorsAsync(userId, vectors, cancellationToken);
 
         _logger.LogInformation("Generated and stored {VectorCount} embeddings for chapter {ChapterId}",
             vectors.Count, chapter.Id);
@@ -402,26 +325,23 @@ public class ChapterService : IChapterService
 
     private async Task DeleteChapterVectorsAsync(
         string chapterId,
-        string projectId,
+        string userId,
         CancellationToken cancellationToken)
     {
         try
         {
-            // Use the new DeleteVectorsByFilterAsync method
             var filters = new Dictionary<string, object>
             {
                 ["chapter_id"] = chapterId
             };
 
-            await _vectorStore.DeleteVectorsByFilterAsync(projectId, filters, cancellationToken);
+            await _vectorStore.DeleteVectorsByFilterAsync(userId, filters, cancellationToken);
 
-            _logger.LogInformation("Deleted vectors for chapter {ChapterId} from project {ProjectId}",
-                chapterId, projectId);
+            _logger.LogInformation("Deleted vectors for chapter {ChapterId}", chapterId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete vectors for chapter {ChapterId}", chapterId);
-            // Don't throw - we want to continue with other cleanup operations
         }
     }
 
@@ -429,42 +349,41 @@ public class ChapterService : IChapterService
     {
         var chunks = new List<string>();
         if (string.IsNullOrWhiteSpace(content))
-        {
             return chunks;
-        }
 
-        // Split content into chunks of approximately ChunkSize characters
-        for (int i = 0; i < content.Length; i += ChunkSize)
+        var start = 0;
+        while (start < content.Length)
         {
-            var chunkLength = Math.Min(ChunkSize, content.Length - i);
-            var chunk = content.Substring(i, chunkLength).Trim();
+            var length = Math.Min(ChunkSize, content.Length - start);
+            var end = start + length;
 
+            if (end < content.Length)
+            {
+                var paragraphBreak = content.LastIndexOf("\n\n", end - 1, length, StringComparison.Ordinal);
+                if (paragraphBreak > start + 500)
+                {
+                    end = paragraphBreak + 2;
+                }
+            }
+
+            var chunk = content[start..end].Trim();
             if (!string.IsNullOrWhiteSpace(chunk))
             {
                 chunks.Add(chunk);
             }
+
+            start = end > start ? end - ChunkOverlap : end;
+            if (start >= content.Length) break;
         }
 
         return chunks;
     }
 
-    private int GetChunkCount(string content)
+    private static int CountWords(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
-        {
             return 0;
-        }
-        return (int)Math.Ceiling((double)content.Length / ChunkSize);
-    }
 
-    private int CountWords(string content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return 0;
-        }
-
-        // Count Chinese characters and English words
         int count = 0;
         bool inWord = false;
 
@@ -474,7 +393,7 @@ public class ChapterService : IChapterService
             {
                 inWord = false;
             }
-            else if (c >= 0x4E00 && c <= 0x9FFF) // Chinese characters
+            else if (c >= 0x4E00 && c <= 0x9FFF)
             {
                 count++;
                 inWord = false;
@@ -489,62 +408,7 @@ public class ChapterService : IChapterService
         return count;
     }
 
-    private string GetChapterContentPath(string storageProjectName, int chapterNumber)
-    {
-        // Return relative path: Chapters/chapter_{number}.md
-        return $"Chapters/chapter_{chapterNumber}.md";
-    }
-
-    private string GetFullContentPath(string userId, string storageProjectName, string contentPath)
-    {
-        // Build full path: App_Data/Users/{userId}/Projects/{projectName}/{contentPath}
-        var storageRoot = _configuration["NovelAgent:StorageRoot"]
-            ?? Path.Combine(AppContext.BaseDirectory, "App_Data");
-
-        return Path.Combine(storageRoot, "Users", userId, "Projects", storageProjectName, contentPath);
-    }
-
-    private async Task WriteContentToFileAsync(string fullPath, string content, CancellationToken cancellationToken)
-    {
-        // Ensure directory exists
-        var directory = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        // Write content to file
-        await File.WriteAllTextAsync(fullPath, content, cancellationToken);
-    }
-
-    private async Task<string> ReadContentFromFileAsync(string fullPath, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(fullPath))
-        {
-            throw new FileNotFoundException($"Chapter content file not found: {fullPath}");
-        }
-
-        return await File.ReadAllTextAsync(fullPath, cancellationToken);
-    }
-
-    private void DeleteFileIfExists(string fullPath)
-    {
-        try
-        {
-            if (File.Exists(fullPath))
-            {
-                File.Delete(fullPath);
-                _logger.LogInformation("Deleted content file: {FilePath}", fullPath);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete content file: {FilePath}", fullPath);
-            // Don't throw - this is cleanup code
-        }
-    }
-
-    private ChapterResponse MapToResponse(Chapter chapter, string? content)
+    private static ChapterResponse MapToResponse(Chapter chapter, string? content)
     {
         return new ChapterResponse
         {
@@ -555,11 +419,10 @@ public class ChapterService : IChapterService
             ChapterNumber = chapter.ChapterNumber,
             Status = chapter.Status,
             WordCount = chapter.WordCount,
-            ContentPath = chapter.ContentPath,
+            ContentPath = chapter.ContentDocumentId ?? "",
             Content = content,
             CreatedAt = chapter.CreatedAt,
             UpdatedAt = chapter.UpdatedAt
         };
     }
 }
-
