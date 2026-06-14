@@ -541,7 +541,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id");
             entity.Property(e => e.FileName).HasColumnName("file_name").IsRequired();
-            entity.Property(e => e.FilePath).HasColumnName("file_path").IsRequired();
+            entity.Property(e => e.ContentDocumentId).HasColumnName("content_document_id");
             entity.Property(e => e.FileSize).HasColumnName("file_size");
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending");
             entity.Property(e => e.Strategy).HasColumnName("strategy").HasDefaultValue("single_pass");
@@ -556,6 +556,7 @@ public class NovelAgentDbContext : DbContext
 
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ContentDocumentId).HasDatabaseName("idx_knowledge_tasks_content_doc");
 
             entity.HasOne(e => e.User)
                 .WithMany()
@@ -566,6 +567,11 @@ public class NovelAgentDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.ContentDocument)
+                .WithMany()
+                .HasForeignKey(e => e.ContentDocumentId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // ContentDocument entity configuration

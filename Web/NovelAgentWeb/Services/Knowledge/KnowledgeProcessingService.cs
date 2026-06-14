@@ -4,6 +4,7 @@ using System.Text.Json;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
@@ -21,6 +22,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly NovelAgentDbContext _db;
     private readonly IKnowledgeService _knowledgeService;
     private readonly IMicroEmbeddingService _embedding;
+    private readonly IContentDocumentService _contentDocumentService;
     private readonly UserSettingsManager _settingsManager;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<KnowledgeProcessingService> _logger;
@@ -29,6 +31,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         NovelAgentDbContext db,
         IKnowledgeService knowledgeService,
         IMicroEmbeddingService embedding,
+        IContentDocumentService contentDocumentService,
         UserSettingsManager settingsManager,
         IHttpClientFactory httpClientFactory,
         ILogger<KnowledgeProcessingService> logger)
@@ -36,6 +39,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         _db = db;
         _knowledgeService = knowledgeService;
         _embedding = embedding;
+        _contentDocumentService = contentDocumentService;
         _settingsManager = settingsManager;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -56,7 +60,12 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 
         try
         {
-            var content = await File.ReadAllTextAsync(task.FilePath, ct);
+            var content = await _contentDocumentService.GetDocumentContentBySourceAsync(
+                "knowledge_upload", task.Id, ct);
+
+            if (string.IsNullOrEmpty(content))
+                throw new InvalidOperationException($"No content found for task {taskId}");
+
             var tokenCount = EstimateTokenCount(content);
 
             List<ExtractedKnowledgeEntryDto> entries;

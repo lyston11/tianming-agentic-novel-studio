@@ -6,7 +6,7 @@ public class KnowledgeProcessingTask
     public string UserId { get; set; } = string.Empty;
     public string? ProjectId { get; set; }
     public string FileName { get; set; } = string.Empty;
-    public string FilePath { get; set; } = string.Empty;
+    public string? ContentDocumentId { get; set; }
     public long FileSize { get; set; }
     public string Status { get; set; } = "pending";
     public string Strategy { get; set; } = "single_pass";
@@ -21,4 +21,5 @@ public class KnowledgeProcessingTask
 
     public User User { get; set; } = null!;
     public NovelProject? Project { get; set; }
+    public ContentDocument? ContentDocument { get; set; }
 }

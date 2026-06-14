@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
@@ -14,17 +15,20 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 public class KnowledgeController : ControllerBase
 {
     private readonly IKnowledgeService _knowledgeService;
+    private readonly IContentDocumentService _contentDocumentService;
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
     private readonly ILogger<KnowledgeController> _logger;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
+        IContentDocumentService contentDocumentService,
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         ILogger<KnowledgeController> logger)
     {
         _knowledgeService = knowledgeService;
+        _contentDocumentService = contentDocumentService;
         _db = db;
         _currentUserService = currentUserService;
         _logger = logger;
@@ -192,7 +196,8 @@ public class KnowledgeController : ControllerBase
     public async Task<IActionResult> UploadFile(
         [FromForm] IFormFile file,
         [FromForm] string? projectId,
-        [FromForm] string? title)
+        [FromForm] string? title,
+        CancellationToken ct)
     {
         try
         {
@@ -200,15 +205,12 @@ public class KnowledgeController : ControllerBase
                 return BadRequest(new { error = "No file provided" });
 
             var userId = _currentUserService.GetUserId();
-            var uploadDir = Path.Combine("App_Data", "KnowledgeUploads", userId);
-            Directory.CreateDirectory(uploadDir);
-
             var fileName = Path.GetFileName(file.FileName);
-            var filePath = Path.Combine(uploadDir, Guid.NewGuid().ToString("N") + "_" + fileName);
 
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            string content;
+            using (var reader = new StreamReader(file.OpenReadStream()))
             {
-                await file.CopyToAsync(stream);
+                content = await reader.ReadToEndAsync(ct);
             }
 
             var task = new Data.Entities.KnowledgeProcessingTask
@@ -217,7 +219,6 @@ public class KnowledgeController : ControllerBase
                 UserId = userId,
                 ProjectId = projectId,
                 FileName = title ?? fileName,
-                FilePath = filePath,
                 FileSize = file.Length,
                 Status = "pending",
                 Strategy = "single_pass",
@@ -226,7 +227,14 @@ public class KnowledgeController : ControllerBase
             };
 
             _db.KnowledgeProcessingTasks.Add(task);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
+
+            var contentDoc = await _contentDocumentService.SaveTextAsync(
+                userId, projectId, "knowledge_upload", task.Id, "upload_raw",
+                task.FileName, content, ct);
+
+            task.ContentDocumentId = contentDoc.Id;
+            await _db.SaveChangesAsync(ct);
 
             _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
                 task.FileName, task.FileSize, userId, task.Id);
