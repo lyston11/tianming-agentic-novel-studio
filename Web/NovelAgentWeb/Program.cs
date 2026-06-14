@@ -20,6 +20,7 @@ using TM.Web.NovelAgentWeb.Services.Repositories;
 using TM.Web.NovelAgentWeb.Services.StoryBible;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Workflow;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
@@ -254,6 +255,9 @@ builder.Services.AddScoped<IMaterialChunker, MaterialChunker>();
 builder.Services.AddScoped<IQdrantCollectionManager, QdrantCollectionManager>();
 builder.Services.AddScoped<IMaterialVectorizationService, MaterialVectorizationService>();
 builder.Services.AddScoped<SemanticSearchService>();
+
+// Register Content Document Service
+builder.Services.AddScoped<IContentDocumentService, ContentDocumentService>();
 
 // TODO: AgentSchedulerHostedService needs refactoring for multi-user workspace isolation
 // builder.Services.AddHostedService<AgentSchedulerHostedService>();
