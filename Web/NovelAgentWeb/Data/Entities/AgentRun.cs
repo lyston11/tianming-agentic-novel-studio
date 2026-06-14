@@ -45,14 +45,6 @@ public sealed class AgentRun
     [Column("context_package_size")]
     public int? ContextPackageSize { get; set; }
 
-    [Column("context_package_path")]
-    [StringLength(500)]
-    public string? ContextPackagePath { get; set; }
-
-    [Column("gate_report_path")]
-    [StringLength(500)]
-    public string? GateReportPath { get; set; }
-
     [Required]
     [Column("started_at")]
     public DateTime StartedAt { get; set; }

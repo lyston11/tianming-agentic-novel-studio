@@ -508,8 +508,6 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.InputParams).HasColumnName("input_params");
             entity.Property(e => e.OutputData).HasColumnName("output_data");
             entity.Property(e => e.ContextPackageSize).HasColumnName("context_package_size");
-            entity.Property(e => e.ContextPackagePath).HasColumnName("context_package_path");
-            entity.Property(e => e.GateReportPath).HasColumnName("gate_report_path");
             entity.Property(e => e.StartedAt).HasColumnName("started_at");
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
             entity.Property(e => e.DurationMs).HasColumnName("duration_ms");
