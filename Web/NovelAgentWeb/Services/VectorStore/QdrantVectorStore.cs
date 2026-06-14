@@ -71,20 +71,30 @@ public class QdrantVectorStore : IVectorStore
                 if (v.Vector.Length != _vectorDimension)
                     throw new ArgumentException($"Vector {v.Id} dim {v.Vector.Length} != {_vectorDimension}");
 
+                var payload = new Dictionary<string, Value>
+                {
+                    ["user_id"] = v.UserId,
+                    ["project_id"] = v.ProjectId,
+                    ["source_type"] = v.SourceType,
+                    ["source_id"] = v.SourceId,
+                    ["chapter_id"] = v.ChapterId ?? "",
+                    ["chunk_index"] = v.ChunkIndex ?? 0,
+                    ["content"] = v.Content ?? "",
+                };
+
+                if (v.Metadata != null)
+                {
+                    foreach (var kvp in v.Metadata)
+                    {
+                        payload[kvp.Key] = ConvertToValue(kvp.Value);
+                    }
+                }
+
                 return new PointStruct
                 {
                     Id = new PointId { Uuid = v.Id },
                     Vectors = CreateUnnamedVector(v.Vector),
-                    Payload =
-                    {
-                        ["user_id"] = v.UserId,
-                        ["project_id"] = v.ProjectId,
-                        ["source_type"] = v.SourceType,
-                        ["source_id"] = v.SourceId,
-                        ["chapter_id"] = v.ChapterId ?? "",
-                        ["chunk_index"] = v.ChunkIndex ?? 0,
-                        ["content"] = v.Content ?? "",
-                    }
+                    Payload = { payload }
                 };
             }).ToList();
 
@@ -93,6 +103,17 @@ public class QdrantVectorStore : IVectorStore
 
         _logger.LogInformation("Upserted {Count} vectors to {Collection}", vectors.Count, collectionName);
     }
+
+    private static Value ConvertToValue(object obj) => obj switch
+    {
+        string s => s,
+        int i => i,
+        long l => l,
+        float f => f,
+        double d => d,
+        bool b => b,
+        _ => obj.ToString() ?? ""
+    };
 
 #pragma warning disable CS0612 // Current Qdrant server image expects legacy Vector.Data for unnamed dense vectors.
     private static Vectors CreateUnnamedVector(float[] values)
@@ -141,6 +162,7 @@ public class QdrantVectorStore : IVectorStore
             ChapterId = GetPayloadString(r.Payload, "chapter_id"),
             ChunkIndex = GetPayloadInt(r.Payload, "chunk_index"),
             Content = GetPayloadString(r.Payload, "content"),
+            Metadata = ExtractMetadata(r.Payload)
         }).ToList();
     }
 
@@ -189,4 +211,27 @@ public class QdrantVectorStore : IVectorStore
 
     private static int? GetPayloadInt(Google.Protobuf.Collections.MapField<string, Value> payload, string key)
         => payload.TryGetValue(key, out var v) ? (int)v.IntegerValue : null;
+
+    private static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "user_id", "project_id", "source_type", "source_id", "chapter_id", "chunk_index", "content"
+    };
+
+    private static Dictionary<string, object>? ExtractMetadata(Google.Protobuf.Collections.MapField<string, Value> payload)
+    {
+        var metadata = new Dictionary<string, object>();
+        foreach (var kvp in payload)
+        {
+            if (ReservedKeys.Contains(kvp.Key)) continue;
+            metadata[kvp.Key] = kvp.Value.KindCase switch
+            {
+                Value.KindOneofCase.StringValue => kvp.Value.StringValue,
+                Value.KindOneofCase.IntegerValue => kvp.Value.IntegerValue,
+                Value.KindOneofCase.DoubleValue => kvp.Value.DoubleValue,
+                Value.KindOneofCase.BoolValue => kvp.Value.BoolValue,
+                _ => kvp.Value.StringValue ?? ""
+            };
+        }
+        return metadata.Count > 0 ? metadata : null;
+    }
 }
