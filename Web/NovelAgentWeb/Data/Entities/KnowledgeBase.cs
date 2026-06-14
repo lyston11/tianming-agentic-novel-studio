@@ -6,7 +6,8 @@ namespace TM.Web.NovelAgentWeb.Data.Entities;
 public class KnowledgeBase
 {
     public string Id { get; set; } = null!;
-    public string ProjectId { get; set; } = null!;
+    public string UserId { get; set; } = null!;
+    public string? SourceProjectId { get; set; }
     public string EntryType { get; set; } = null!;
     public string Title { get; set; } = null!;
     public string Content { get; set; } = null!;
@@ -22,9 +23,9 @@ public class KnowledgeBase
     [StringLength(50)]
     public string SourceType { get; set; } = "manual";
 
-    [Column("source_file_id")]
+    [Column("source_upload_task_id")]
     [StringLength(100)]
-    public string? SourceFileId { get; set; }
+    public string? SourceUploadTaskId { get; set; }
 
     [Column("chunk_index")]
     public int? ChunkIndex { get; set; }
@@ -39,6 +40,7 @@ public class KnowledgeBase
     [Column("weight")]
     public int Weight { get; set; } = 5;
 
-    // Navigation property
-    public NovelProject Project { get; set; } = null!;
+    // Navigation properties
+    public User User { get; set; } = null!;
+    public NovelProject? SourceProject { get; set; }
 }

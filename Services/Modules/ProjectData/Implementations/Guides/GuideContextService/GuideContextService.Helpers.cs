@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Framework.Common.Services;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 
 namespace TM.Services.Modules.ProjectData.Implementations
@@ -214,18 +216,13 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         private async Task<string> LoadChapterContentAsync(string chapterId)
         {
-            var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-            var chapterFile = Path.Combine(chaptersPath, $"{chapterId}.md");
-
-            if (!File.Exists(chapterFile))
-            {
-                TM.App.Log($"[GuideContextService] 章节文件不存在: {chapterId}");
-                return string.Empty;
-            }
-
             try
             {
-                return await File.ReadAllTextAsync(chapterFile).ConfigureAwait(false);
+                var chapterCatalog = ServiceLocator.TryGet<IChapterCatalogService>();
+                if (chapterCatalog == null)
+                    return string.Empty;
+
+                return await chapterCatalog.GetChapterContentAsync(chapterId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

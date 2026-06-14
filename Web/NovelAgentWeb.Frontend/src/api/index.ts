@@ -1,13 +1,14 @@
-import { api, get, post } from './client';
+import { API_BASE_URL, api, get, post } from './client';
 import type {
   AgentChatRequest,
   AgentChatResponse,
   AgentSessionInfo,
+  AgentSessionResumeResponse,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
   CharacterResponse,
   KnowledgeResponse,
-  KnowledgeSearchResponse,
+  KnowledgeSearchResult,
   MaterialContentResponse,
   MaterialListResponse,
   MaterialResponse,
@@ -63,16 +64,16 @@ export const deleteMaterialById = (id: string) =>
   api<void>(`/materials/${id}`, { method: 'DELETE' });
 
 // Knowledge API (new multi-user endpoints)
-export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; category?: string }) =>
-  post<KnowledgeSearchResponse>('/knowledge/search', req);
+export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; entryType?: string }) =>
+  post<KnowledgeSearchResult[]>('/knowledge/search', req);
 
-export const listKnowledgeEntries = (projectId: string, category?: string) =>
-  get<KnowledgeResponse[]>(`/knowledge?projectId=${encodeURIComponent(projectId)}${category ? `&category=${encodeURIComponent(category)}` : ''}`);
+export const listKnowledgeEntries = (projectId: string) =>
+  get<KnowledgeResponse[]>(`/knowledge?projectId=${encodeURIComponent(projectId)}`);
 
-export const createKnowledgeEntry = (req: { projectId: string; title: string; content: string; category: string; tags?: string; sourceType?: string; sourceId?: string }) =>
+export const createKnowledgeEntry = (req: { projectId: string; title: string; content: string; entryType: string; tags?: string[] }) =>
   post<KnowledgeResponse>('/knowledge', req);
 
-export const updateKnowledgeEntryById = (id: string, req: { title?: string; content?: string; category?: string; tags?: string }) =>
+export const updateKnowledgeEntryById = (id: string, req: { title?: string; content?: string }) =>
   api<KnowledgeResponse>(`/knowledge/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
@@ -80,6 +81,23 @@ export const updateKnowledgeEntryById = (id: string, req: { title?: string; cont
 
 export const deleteKnowledgeEntryById = (id: string) =>
   api<void>(`/knowledge/${id}`, { method: 'DELETE' });
+
+export const uploadKnowledgeFile = (projectId: string, file: File, title?: string) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('projectId', projectId);
+  if (title) formData.append('title', title);
+
+  return api<{ taskId: string; status: string; message: string }>('/knowledge/upload', {
+    method: 'POST',
+    body: formData,
+  });
+};
+
+export const getKnowledgeTask = (taskId: string) =>
+  get<{ id: string; status: string; progress: number; extractedEntriesCount: number; errorMessage?: string }>(
+    `/knowledge/tasks/${encodeURIComponent(taskId)}`
+  );
 
 // StoryBible API (new multi-user endpoints)
 export const getStoryBibleByProject = (projectId: string) =>
@@ -132,11 +150,14 @@ export const deleteVolumeArc = (id: string) =>
 export const sendChat = (req: AgentChatRequest) =>
   post<AgentChatResponse>('/agent/chat', req);
 
-export const createAgentSession = () =>
-  post<AgentSessionInfo>('/agent/session');
+export const createAgentSession = (projectId?: string | null) =>
+  post<AgentSessionInfo>(`/agent/session${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`);
 
 export const getAgentSession = (sessionId: string) =>
   get<AgentSessionInfo>(`/agent/session/${sessionId}`);
+
+export const resumeAgentSession = (sessionId: string) =>
+  get<AgentSessionResumeResponse>(`/agent/sessions/${encodeURIComponent(sessionId)}/resume`);
 
 export const listAgentSessions = () =>
   get<AgentSessionSummary[]>('/agent/sessions');
@@ -151,33 +172,30 @@ export const rollbackStep = (sessionId: string, runId: string, stepId: string) =
   post<{ success: boolean; message: string }>(`/agent/step/${sessionId}/rollback`, { runId, stepId });
 
 export const createSseConnection = (sessionId: string): EventSource => {
-  const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
   const stored = localStorage.getItem('auth-storage');
   const token = stored ? JSON.parse(stored).state?.token : null;
   const url = token
-    ? `${BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
-    : `${BASE_URL}/agent/sse/${sessionId}`;
+    ? `${API_BASE_URL}/agent/sse/${sessionId}?token=${encodeURIComponent(token)}`
+    : `${API_BASE_URL}/agent/sse/${sessionId}`;
   return new EventSource(url);
 };
 
 // Novel Projects
 export const createNovelProject = (req: NovelProjectCreateRequest) =>
-  post<NovelProjectInfo>('/project', {
+  post<NovelProjectInfo>('/projects', {
     title: req.title || '未命名新书',
     genre: req.genre,
     coreHook: req.seed,
   });
-export const activateNovelProject = async (projectId: string) => {
-  sessionStorage.setItem('currentProjectId', projectId);
-  return get<NovelProjectInfo>(`/project/${projectId}`);
-};
+export const activateNovelProject = (projectId: string) =>
+  get<NovelProjectInfo>(`/projects/${projectId}`);
 export const updateNovelProject = (projectId: string, req: NovelProjectUpdateRequest) =>
-  api<NovelProjectInfo>(`/project/${projectId}`, {
+  api<NovelProjectInfo>(`/projects/${projectId}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   });
 export const deleteNovelProject = async (projectId: string): Promise<NovelProjectDeleteResult> => {
-  await api<void>(`/project/${projectId}`, { method: 'DELETE' });
+  await api<void>(`/projects/${projectId}`, { method: 'DELETE' });
   return { success: true, message: '项目已删除。', activeProjectId: '' };
 };
 

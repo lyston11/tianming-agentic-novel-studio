@@ -250,8 +250,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             if (_cache.TryGetValue(volumeNumber, out var cached))
                 return cached;
 
-            var path = (await MilestoneCondenser.GetEffectiveFilePathAsync(volumeNumber).ConfigureAwait(false))
-                       ?? GetMilestoneFilePath(volumeNumber);
+            var path = GetMilestoneFilePath(volumeNumber);
             var epoch = Volatile.Read(ref _cacheEpoch);
             if (!File.Exists(path))
                 return string.Empty;

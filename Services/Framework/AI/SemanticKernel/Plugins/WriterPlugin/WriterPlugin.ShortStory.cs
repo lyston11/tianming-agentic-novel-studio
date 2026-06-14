@@ -11,6 +11,7 @@ using TM.Services.Framework.AI.Interfaces.AI;
 using TM.Services.Framework.AI.WritingConfig;
 using TM.Services.Modules.ProjectData.Implementations;
 using TM.Services.Modules.ProjectData.Implementations.Generation;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Modules.Design.Templates.OneClickGenerate.ShortStoryBlueprint.Services;
 
 namespace TM.Services.Framework.AI.SemanticKernel.Plugins
@@ -51,7 +52,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 }
 
                 var chapterId = ChapterParserHelper.BuildChapterId(1, chapterIndex);
-                var contentServiceGate = ServiceLocator.Get<GeneratedContentService>();
+                var contentServiceGate = ServiceLocator.Get<IGeneratedContentService>();
                 if (contentServiceGate.ChapterExists(chapterId))
                 {
                     var dupMsg = $"章节 {chapterId} 已存在。如需重新生成请使用 @重写:{chapterId} 指令。";
@@ -332,7 +333,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                     }
                 }
 
-                var contentServiceSave = ServiceLocator.Get<GeneratedContentService>();
+                var contentServiceSave = ServiceLocator.Get<IGeneratedContentService>();
                 await contentServiceSave.SaveChapterAsync(chapterId, cleaned).ConfigureAwait(false);
 
                 if (!string.IsNullOrWhiteSpace(wordCountWarningTitle))

@@ -41,39 +41,8 @@ namespace TM.Services.Modules.ProjectData.Implementations.Tracking.Rules
 
         private async Task<string?> TryResolveGenreFromEnabledCreativeMaterialsAsync()
         {
-            var path = StoragePathHelper.GetFilePath(
-                "Modules",
-                "Design/Templates/CreativeMaterials",
-                "creative_materials.json");
-
-            if (!File.Exists(path))
-            {
-                return null;
-            }
-
-            try
-            {
-                var lastWrite = File.GetLastWriteTimeUtc(path);
-                if (_cachedRuleSet != null && lastWrite == _cachedFileLastWrite)
-                    return _cachedGenre;
-
-                _cachedFileLastWrite = lastWrite;
-                var json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
-                var items = JsonSerializer.Deserialize<List<CreativeMaterialData>>(json, JsonOptions) ?? new();
-
-                var enabled = items
-                    .Where(i => i != null && i.IsEnabled)
-                    .OrderByDescending(i => i!.ModifiedTime)
-                    .FirstOrDefault();
-
-                var genre = enabled?.Genre;
-                return string.IsNullOrWhiteSpace(genre) ? null : genre.Trim();
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[LedgerRuleSetProvider] 读取创作模板题材失败，回退通用规则: {ex.Message}");
-                return null;
-            }
+            await Task.CompletedTask.ConfigureAwait(false);
+            return null;
         }
 
         private static LedgerRuleSet BuildRuleSetByGenre(string? genre)

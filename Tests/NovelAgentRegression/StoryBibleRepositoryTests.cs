@@ -6,6 +6,7 @@ using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Repositories;
 using TM.Tests.NovelAgentRegression.Helpers;
 using Xunit;
@@ -21,6 +22,8 @@ public class StoryBibleRepositoryTests : IDisposable
     private readonly TestDbContext _testDb;
     private readonly NovelAgentDbContext _dbContext;
     private readonly Mock<ICurrentUserService> _currentUserServiceMock;
+    private readonly Mock<IDistributedCacheService> _redisCacheMock;
+    private readonly Mock<IMemoryCacheService> _memoryCacheMock;
     private readonly Mock<ILogger<StoryBibleRepository>> _loggerMock;
     private readonly StoryBibleRepository _repository;
 
@@ -35,11 +38,22 @@ public class StoryBibleRepositoryTests : IDisposable
         _dbContext = _testDb.Context;
 
         _currentUserServiceMock = new Mock<ICurrentUserService>();
+        _redisCacheMock = new Mock<IDistributedCacheService>();
+        _memoryCacheMock = new Mock<IMemoryCacheService>();
         _loggerMock = new Mock<ILogger<StoryBibleRepository>>();
+
+        _memoryCacheMock.Setup(c => c.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<StoryBible>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string _, Func<Task<StoryBible>> factory, TimeSpan _, CancellationToken _) => factory());
 
         _repository = new StoryBibleRepository(
             _dbContext,
             _currentUserServiceMock.Object,
+            _redisCacheMock.Object,
+            _memoryCacheMock.Object,
             _loggerMock.Object);
 
         SeedTestData();

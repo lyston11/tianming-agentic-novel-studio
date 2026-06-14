@@ -7,8 +7,8 @@ using TM.Web.NovelAgentWeb.Services.Chapters;
 namespace TM.Web.NovelAgentWeb.Controllers;
 
 /// <summary>
-/// API controller for chapter CRUD operations with synchronization across
-/// SQLite (metadata), file system (Markdown content), and Qdrant (vectors).
+/// API controller for chapter CRUD operations backed by SQLite content documents
+/// and Qdrant vectors.
 /// All endpoints require JWT authentication.
 /// </summary>
 [ApiController]
@@ -31,7 +31,7 @@ public class ChaptersController : ControllerBase
     }
 
     /// <summary>
-    /// Create a new chapter with atomic synchronization across database, file system, and Qdrant.
+    /// Create a new chapter with atomic synchronization across database content and Qdrant.
     /// </summary>
     /// <param name="request">Chapter creation request</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -172,11 +172,6 @@ public class ChaptersController : ControllerBase
         {
             return Forbid();
         }
-        catch (FileNotFoundException ex)
-        {
-            _logger.LogError(ex, "Chapter content file not found for chapter {ChapterId}", id);
-            return NotFound(new { error = "Chapter content file not found" });
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get chapter {ChapterId}", id);
@@ -187,7 +182,7 @@ public class ChaptersController : ControllerBase
 
     /// <summary>
     /// Delete a chapter with atomic synchronization.
-    /// Removes metadata from database, content file, and vectors from Qdrant.
+    /// Removes metadata, SQLite content document, and vectors from Qdrant.
     /// Foreign key references (foreshadows) are automatically set to NULL.
     /// </summary>
     /// <param name="id">Chapter ID</param>

@@ -146,10 +146,9 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
                 if (trackedChapters.Count == 0) return warnings;
 
-                var chaptersPath = TM.Framework.Common.Helpers.Storage.StoragePathHelper.GetProjectChaptersPath();
-                if (!System.IO.Directory.Exists(chaptersPath)) return warnings;
-
-                var allChapterIds = await GetCachedChapterIdsAsync(chaptersPath).ConfigureAwait(false);
+                var contentGuide = await GetContentGuideAsync().ConfigureAwait(false);
+                var allChapterIds = contentGuide.Chapters.Keys.ToArray();
+                if (allChapterIds.Length == 0) return warnings;
                 var comparer = Comparer<string>.Create(ChapterParserHelper.CompareChapterId);
 
                 var gapChapters = allChapterIds

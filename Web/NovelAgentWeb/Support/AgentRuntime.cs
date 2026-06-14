@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -11,6 +12,7 @@ public sealed class AgentRuntime
     private const int MaxRecentObservations = 16;
 
     // Thread-local workspace context for current request
+    private static readonly AsyncLocal<WorkspaceEntry?> _currentWorkspaceEntry = new();
     private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
     private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
 
@@ -27,6 +29,8 @@ public sealed class AgentRuntime
     private readonly ReflectionEngine _reflectionEngine;
     private readonly AgentToolRegistry _toolRegistry;
     private readonly AgentMemoryService _memoryService;
+    private readonly IChatHistoryRepository _chatHistory;
+    private readonly ChatHistoryCompressor _chatHistoryCompressor;
     private readonly AgentMissionTaskTreeService _taskTreeService;
     private readonly AgentTaskScheduler _taskScheduler;
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
@@ -34,6 +38,7 @@ public sealed class AgentRuntime
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
     private readonly PhaseContextBuilder _contextBuilder;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentRuntime> _logger;
     private AgentAction? lastAction;
 
@@ -48,12 +53,15 @@ public sealed class AgentRuntime
         ReflectionEngine reflectionEngine,
         AgentToolRegistry toolRegistry,
         AgentMemoryService memoryService,
+        IChatHistoryRepository chatHistory,
+        ChatHistoryCompressor chatHistoryCompressor,
         AgentMissionTaskTreeService taskTreeService,
         AgentTaskScheduler taskScheduler,
         MissionBlackboardRecoveryService blackboardRecovery,
         AgentToolGuardrails guardrails,
         ConversationKernel conversationKernel,
         PhaseContextBuilder contextBuilder,
+        IServiceScopeFactory scopeFactory,
         ILogger<AgentRuntime> logger)
     {
         _workspaceFactory = workspaceFactory;
@@ -66,6 +74,8 @@ public sealed class AgentRuntime
         _reflectionEngine = reflectionEngine;
         _toolRegistry = toolRegistry;
         _memoryService = memoryService;
+        _chatHistory = chatHistory;
+        _chatHistoryCompressor = chatHistoryCompressor;
         _taskTreeService = taskTreeService;
         _taskScheduler = taskScheduler;
         _blackboardRecovery = blackboardRecovery;
@@ -73,6 +83,7 @@ public sealed class AgentRuntime
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
         _contextBuilder = contextBuilder;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -93,28 +104,79 @@ public sealed class AgentRuntime
             : session.ActiveProjectId;
 
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct).ConfigureAwait(false);
+        SetWorkspaceContext(workspaceEntry);
         try
         {
-            // Set workspace context for this request across all services
-            var workspace = workspaceEntry.Workspace;
-            var catalog = new NovelProjectCatalog(workspace);
-
-            _currentWorkspace.Value = workspace;
-            _currentCatalog.Value = catalog;
-            AgentMemoryService.SetWorkspace(workspace);
-            AgentToolRegistry.SetWorkspace(workspace, catalog);
-            PhaseContextBuilder.SetWorkspace(workspace);
-
             return await RunWithWorkspaceAsync(session, userMessage, ct).ConfigureAwait(false);
         }
         finally
         {
-            _currentWorkspace.Value = null;
-            _currentCatalog.Value = null;
-            AgentMemoryService.ClearWorkspace();
-            AgentToolRegistry.ClearWorkspace();
-            PhaseContextBuilder.ClearWorkspace();
-            workspaceEntry.ReleaseLease();
+            ClearWorkspaceContext(releaseLease: true);
+        }
+    }
+
+    private void SetWorkspaceContext(WorkspaceEntry workspaceEntry)
+    {
+        var workspace = workspaceEntry.Workspace;
+        var catalog = new NovelProjectCatalog(workspace, _scopeFactory);
+
+        _currentWorkspaceEntry.Value = workspaceEntry;
+        _currentWorkspace.Value = workspace;
+        _currentCatalog.Value = catalog;
+        workspace.SetRequestContext();
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        ProjectScopedExecutor.SetCatalog(catalog);
+        PhaseContextBuilder.SetWorkspace(workspace);
+    }
+
+    private void ClearWorkspaceContext(bool releaseLease)
+    {
+        var workspaceEntry = _currentWorkspaceEntry.Value;
+        var workspace = _currentWorkspace.Value;
+
+        workspace?.ClearRequestContext();
+        _currentWorkspaceEntry.Value = null;
+        _currentWorkspace.Value = null;
+        _currentCatalog.Value = null;
+        AgentToolRegistry.ClearWorkspace();
+        ProjectScopedExecutor.ClearCatalog();
+        PhaseContextBuilder.ClearWorkspace();
+
+        if (releaseLease)
+            workspaceEntry?.ReleaseLease();
+    }
+
+    private async Task EnsureWorkspaceForSessionProjectAsync(AgentSession session, CancellationToken ct)
+    {
+        var userId = _currentUserService.GetUserId();
+        var desiredProjectId = string.IsNullOrWhiteSpace(session.ActiveProjectId)
+            ? "temp-" + userId
+            : session.ActiveProjectId;
+
+        var currentEntry = _currentWorkspaceEntry.Value;
+        if (currentEntry != null && string.Equals(currentEntry.ProjectId, desiredProjectId, StringComparison.Ordinal))
+            return;
+
+        WorkspaceEntry nextEntry;
+        if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
+            !session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
+        {
+            nextEntry = await _workspaceFactory.AcquireAsync(userId, session.ActiveProjectId, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            nextEntry = await _workspaceFactory.AcquireAsync(userId, desiredProjectId, ct).ConfigureAwait(false);
+        }
+
+        ClearWorkspaceContext(releaseLease: true);
+        try
+        {
+            SetWorkspaceContext(nextEntry);
+        }
+        catch
+        {
+            nextEntry.ReleaseLease();
+            throw;
         }
     }
 
@@ -129,7 +191,7 @@ public sealed class AgentRuntime
             session.Title = BuildSessionTitle(userMessage);
 
         // Add user message to chat history immediately so Agent can see it in context
-        AddChatTurn(session, "user", userMessage);
+        await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
 
         // ── Load project if session has one ──
         NovelProjectInfo? project = null;
@@ -152,6 +214,7 @@ public sealed class AgentRuntime
         {
             bible = await _catalog.WithProjectAsync(project,
                 () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+            await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
         }
         trace.Add(new AgentRuntimeStep
         {
@@ -160,7 +223,7 @@ public sealed class AgentRuntime
             StopReason = $"{userTurn.Intent.Label}:{userTurn.DialogueAct}",
         });
 
-        // ── Legacy quick-path: old pending confirmations resume as autopilot work. ──
+        // Pending confirmations resume as explicit follow-up work.
         var pendingAction = ResolvePendingConfirmationAction(session, userMessage);
         if (pendingAction != null)
         {
@@ -183,7 +246,7 @@ public sealed class AgentRuntime
                 _blackboardRecovery.Recover(session, project, bible);
                 lastContext = await _catalog.WithProjectAsync(project,
                     () => _observationBuilder.BuildAsync(session, project, bible, userMessage, userTurn.Intent, ct), ct).ConfigureAwait(false);
-                lastContext.AnchorPrompt = BuildAnchorPrompt(session, project, bible, step, maxSteps, userMessage);
+                lastContext.AnchorPrompt = await BuildAnchorPromptAsync(session, project, bible, step, maxSteps, userMessage, ct).ConfigureAwait(false);
             }
             else
             {
@@ -194,6 +257,7 @@ public sealed class AgentRuntime
                     TurnIntent = userTurn.Intent,
                     UserTurn = userTurn,
                     MissionPlan = session.WorkingMemory.MissionPlan ?? new AgentMissionPlan(),
+                    AvailableTools = BuildToolSearchOnlyContext(),
                     AnchorPrompt = $"Step {step}/{maxSteps}. No active project. User can ask to create a new novel or switch to existing project.",
                 };
             }
@@ -438,6 +502,7 @@ public sealed class AgentRuntime
             // Refresh project if tool execution set ActiveProjectId
             if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
             {
+                await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
                 project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
                 if (project != null)
                 {
@@ -490,6 +555,7 @@ public sealed class AgentRuntime
             // Refresh project/bible for next iteration
             if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
             {
+                await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
                 project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
                 if (project != null)
                 {
@@ -515,7 +581,7 @@ public sealed class AgentRuntime
     //  Inspired by GenericAgent's _get_anchor_prompt
     // ═══════════════════════════════════════════════════════════════
 
-    private string BuildAnchorPrompt(AgentSession session, NovelProjectInfo? project, StoryBibleDocument? bible, int step, int maxSteps, string userMessage)
+    private async Task<string> BuildAnchorPromptAsync(AgentSession session, NovelProjectInfo? project, StoryBibleDocument? bible, int step, int maxSteps, string userMessage, CancellationToken ct)
     {
         if (project == null || bible == null)
             return $"Step {step}/{maxSteps}. 无项目。用户可以要求创建新小说或切换到现有项目。";
@@ -545,11 +611,9 @@ public sealed class AgentRuntime
         ts.Add($"卷: {bible.VolumeArcs.Count} | 账本: 设定{bible.CanonLedger.Count}/伏笔{bible.ForeshadowLedger.Count}/角色{bible.CharacterLedger.Count}");
         parts.Add($"<task_state>\n{string.Join("\n", ts)}\n</task_state>");
 
-        // Compressed history
-        var recentHistory = session.ChatHistory.TakeLast(10).Select(t =>
-            $"{(t.Role == "user" ? "U" : "A")}: {t.Content.Replace("\n", " ").Trim().Take(120)}");
-        if (recentHistory.Any())
-            parts.Add($"<history>\n{string.Join("\n", recentHistory)}\n</history>");
+        var history = await BuildHistoryBlockAsync(session, project.Id, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(history))
+            parts.Add($"<history>\n{history}\n</history>");
 
         // Recent observations summary
         var recentObs = session.WorkingMemory.RecentObservations.TakeLast(5).Select(o =>
@@ -569,6 +633,62 @@ public sealed class AgentRuntime
         parts.Add($"<turn_counter>\n{turnInfo}\n</turn_counter>");
 
         return string.Join("\n\n", parts);
+    }
+
+    public static string FormatChatPromptWindow(ChatPromptWindowDto promptWindow)
+    {
+        var lines = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(promptWindow.MetaSummary))
+        {
+            lines.Add($"Meta: {TruncateLine(promptWindow.MetaSummary, 300)}");
+        }
+
+        foreach (var summary in promptWindow.Summaries)
+        {
+            lines.Add($"Summary {summary.StartTurn}-{summary.EndTurn}: {TruncateLine(summary.Content, 240)}");
+            if (summary.KeyDecisions.Count > 0)
+                lines.Add($"Decisions: {string.Join("; ", summary.KeyDecisions.Select(d => TruncateLine(d, 120)))}");
+        }
+
+        foreach (var message in promptWindow.RecentMessages)
+        {
+            var role = string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase) ? "U" : "A";
+            lines.Add($"{role}: {TruncateLine(message.Content, 120)}");
+        }
+
+        return string.Join("\n", lines);
+    }
+
+    public static string FormatSessionHistorySnapshot(AgentSession session)
+    {
+        var recentHistory = session.ChatHistory.TakeLast(10).Select(t =>
+        {
+            var role = string.Equals(t.Role, "user", StringComparison.OrdinalIgnoreCase) ? "U" : "A";
+            return $"{role}: {TruncateLine(t.Content, 120)}";
+        });
+
+        return string.Join("\n", recentHistory);
+    }
+
+    private async Task<string> BuildHistoryBlockAsync(AgentSession session, string projectId, CancellationToken ct)
+    {
+        try
+        {
+            var promptWindow = await _chatHistory
+                .GetPromptWindowAsync(session.UserId, projectId, session.SessionId, ct)
+                .ConfigureAwait(false);
+            return FormatChatPromptWindow(promptWindow);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load chat prompt window for session {SessionId}; falling back to session snapshot", session.SessionId);
+            return FormatSessionHistorySnapshot(session);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -644,6 +764,18 @@ public sealed class AgentRuntime
     private static bool IsPendingConfirmationAction(AgentAction action, AgentSession session) =>
         string.Equals(action.Source, "pending_confirmation", StringComparison.OrdinalIgnoreCase) &&
         session.WorkingMemory.PendingConfirmation?.ToolCall != null;
+
+    private static List<AgentToolDefinition> BuildToolSearchOnlyContext() => new()
+    {
+        new AgentToolDefinition
+        {
+            Name = "tool_search",
+            Description = "搜索指定阶段的可用工具。",
+            Risk = "Low",
+            RequiresConfirmation = false,
+            Arguments = new List<string> { "phase" }
+        }
+    };
 
     private static bool IsAutopilotAuthorizedAction(AgentAction action, AgentSession session) =>
         IsPendingConfirmationAction(action, session) ||
@@ -749,6 +881,7 @@ public sealed class AgentRuntime
         if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
             throw new InvalidOperationException("No active project in session");
 
+        await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
         var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
         if (project == null)
             throw new InvalidOperationException($"Project {session.ActiveProjectId} not found");
@@ -762,11 +895,13 @@ public sealed class AgentRuntime
         session.ActiveProjectId = project.Id;
         try
         {
+            await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
             return await _catalog.WithProjectAsync(project, operation, ct).ConfigureAwait(false);
         }
         finally
         {
             session.ActiveProjectId = previousProjectId;
+            await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
         }
     }
 
@@ -776,10 +911,58 @@ public sealed class AgentRuntime
         CancellationToken ct)
     {
         var reply = FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。");
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         session.Phase = action.Type == AgentActionType.Clarify ? "awaiting_user_foundation" : session.Phase;
+        await PersistTextSessionMemoryAsync(session, action, context, reflection, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, action.Suggestions, action, context, trace);
+    }
+
+    private async Task PersistTextSessionMemoryAsync(
+        AgentSession session,
+        AgentAction action,
+        AgentObservationContext? context,
+        AgentReflection? reflection,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) ||
+            session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+            if (project == null)
+                return;
+
+            SyncMissionPlan(session, project, null, action);
+            if (context?.MissionPlan != null)
+            {
+                session.WorkingMemory.MissionPlan.ActiveTurnId = FirstNonEmpty(
+                    session.WorkingMemory.MissionPlan.ActiveTurnId,
+                    context.MissionPlan.ActiveTurnId);
+                session.WorkingMemory.MissionPlan.ActiveToolTransactionId = FirstNonEmpty(
+                    session.WorkingMemory.MissionPlan.ActiveToolTransactionId,
+                    context.MissionPlan.ActiveToolTransactionId);
+                session.WorkingMemory.MissionPlan.ArtifactCursor = FirstNonEmpty(
+                    session.WorkingMemory.MissionPlan.ArtifactCursor,
+                    context.MissionPlan.ArtifactCursor);
+            }
+
+            var bible = await _catalog.WithProjectAsync(project,
+                () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+            await _memoryService.PersistAsync(session, project, bible, reflection, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist pure text session memory for session {SessionId}", session.SessionId);
+        }
     }
 
     private MemoryUpdateTrigger DetermineUpdateTrigger(AgentSession session)
@@ -804,7 +987,7 @@ public sealed class AgentRuntime
         _logger.LogInformation("Memory update trigger: {Trigger} for session {SessionId}", trigger, session.SessionId);
 
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, result.Suggestions, action, context, trace);
     }
@@ -863,7 +1046,7 @@ public sealed class AgentRuntime
         plan.CurrentRunId = session.ActiveRunId ?? plan.CurrentRunId;
         plan.UpdatedAt = DateTime.UtcNow;
         var reply = confirmationMessage;
-        AddChatTurn(session, "assistant", reply);
+        await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, new[] { "继续执行", "调整方案" }, action, context, trace);
     }
@@ -1018,10 +1201,23 @@ public sealed class AgentRuntime
             session.WorkingMemory.UserPreferences.RemoveRange(0, session.WorkingMemory.UserPreferences.Count - MaxRecentObservations);
     }
 
-    private static void AddChatTurn(AgentSession session, string role, string content)
+    private async Task AddChatTurnAsync(AgentSession session, string role, string content, CancellationToken ct)
     {
-        session.ChatHistory.Add(new AgentConversationTurn { Role = role, Content = content.Trim(), CreatedAt = DateTime.UtcNow });
-        if (session.ChatHistory.Count > 40) session.ChatHistory.RemoveRange(0, session.ChatHistory.Count - 40);
+        var trimmed = content.Trim();
+        session.ChatHistory.Add(new AgentConversationTurn { Role = role, Content = trimmed, CreatedAt = DateTime.UtcNow });
+        await _chatHistory.AppendAsync(
+            session.UserId,
+            string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+            session.SessionId,
+            role,
+            trimmed,
+            ct).ConfigureAwait(false);
+        await _chatHistoryCompressor.CompressAndPersistAsync(
+            session.UserId,
+            string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+            session.SessionId,
+            session.ChatHistory,
+            ct).ConfigureAwait(false);
     }
 
     private static AgentAction BuildFallbackReplyAction(AgentAction action) => new()
@@ -1166,6 +1362,12 @@ public sealed class AgentRuntime
     }
 
     private static string TrimForReply(string value, int maxLength)
+    {
+        var trimmed = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "...";
+    }
+
+    private static string TruncateLine(string value, int maxLength)
     {
         var trimmed = value.Replace("\r", " ").Replace("\n", " ").Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "...";

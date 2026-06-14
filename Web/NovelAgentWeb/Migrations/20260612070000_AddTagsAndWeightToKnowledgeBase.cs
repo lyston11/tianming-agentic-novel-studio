@@ -1,10 +1,14 @@
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using TM.Web.NovelAgentWeb.Data;
 
 #nullable disable
 
 namespace TM.Web.NovelAgentWeb.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(NovelAgentDbContext))]
+    [Migration("20260612070000_AddTagsAndWeightToKnowledgeBase")]
     public partial class AddTagsAndWeightToKnowledgeBase : Migration
     {
         /// <inheritdoc />

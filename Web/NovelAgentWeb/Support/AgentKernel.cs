@@ -460,8 +460,17 @@ public sealed class ToolPolicyEngine
     {
         var name = call.Name.Trim();
 
+        if (!IsDiscoveredOrAuthorized(name, context, confirmed))
+        {
+            var result = ToolPolicyResult.Block(
+                $"工具 {name} 尚未通过 tool_search 暴露。请先调用 tool_search 发现当前阶段工具，再从已发现工具中选择执行。");
+            result.UserFacingMessage = "请先调用 tool_search 发现当前阶段工具。";
+            return result;
+        }
+
         return name switch
         {
+            "tool_search" => ToolPolicyResult.Allow(),
             "QueryProjectStatus" or "SearchCreativeKnowledge" or "StartNewNovelProject" => ToolPolicyResult.Allow(),
             "PlanStoryFoundation" => ToolPolicyResult.Allow(),  // LLM decided, trust it
             "CommitStoryFoundation" => PolicyCommitStoryFoundation(call, session, bible, confirmed),
@@ -477,6 +486,18 @@ public sealed class ToolPolicyEngine
             "RefreshProjectIndexes" or "AnalyzeDependencyImpact" or "ReviewChapter" => ToolPolicyResult.Allow("Medium"),
             _ => ToolPolicyResult.Block($"未知工具：{name}。请使用已注册的工具。"),
         };
+    }
+
+    private static bool IsDiscoveredOrAuthorized(string name, AgentObservationContext context, bool confirmed)
+    {
+        if (string.Equals(name, "tool_search", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (confirmed)
+            return true;
+
+        return context.AvailableTools.Any(tool =>
+            string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     // PlanVolumeArc: only check structural prerequisite (Story Bible must exist)

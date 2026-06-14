@@ -8,6 +8,7 @@ using TM.Framework.UI.Workspace.Services;
 using TM.Modules.Generate.Elements.Chapter.Services;
 using TM.Modules.Generate.Elements.VolumeDesign.Services;
 using TM.Services.Modules.ProjectData.Implementations;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Generate.VolumeDesign;
 using System.Reflection;
 using TM.Services.Modules.ProjectData.Models.Tracking;
@@ -47,7 +48,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
         {
             ct.ThrowIfCancellationRequested();
 
-            var contentService = ServiceLocator.Get<GeneratedContentService>();
+            var contentService = ServiceLocator.Get<IGeneratedContentService>();
             var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
 
             var baseChapterNumber = 0;
@@ -135,7 +136,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 throw new InvalidOperationException($"未找到包含第{chapterNumber}章的分卷范围，请在分卷设计或仿写分类中明确卷号。");
             }
 
-            var contentService = ServiceLocator.Get<GeneratedContentService>();
+            var contentService = ServiceLocator.Get<IGeneratedContentService>();
             var currentVolPriority = 0;
             if (CurrentChapterTracker.HasCurrentChapter)
             {
@@ -219,7 +220,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
 
             ct.ThrowIfCancellationRequested();
 
-            var contentService = ServiceLocator.Get<GeneratedContentService>();
+            var contentService = ServiceLocator.Get<IGeneratedContentService>();
             var generatedChapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
 
             if (generatedChapters.Count == 0)
@@ -337,7 +338,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
         {
             ct.ThrowIfCancellationRequested();
 
-            var contentService = ServiceLocator.Get<GeneratedContentService>();
+            var contentService = ServiceLocator.Get<IGeneratedContentService>();
             if (string.IsNullOrWhiteSpace(chapterId))
             {
                 chapterId = await GenerateDefaultNextChapterIdAsync(ct).ConfigureAwait(false);

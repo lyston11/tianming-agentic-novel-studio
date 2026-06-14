@@ -3,15 +3,15 @@ using TM.Web.NovelAgentWeb.Models.Chapters;
 namespace TM.Web.NovelAgentWeb.Services.Chapters;
 
 /// <summary>
-/// Service interface for chapter CRUD operations with synchronization across
-/// SQLite (metadata), file system (Markdown content), and Qdrant (vectors).
+/// Service interface for chapter CRUD operations backed by SQLite content
+/// documents and Qdrant vectors.
 /// </summary>
 public interface IChapterService
 {
     /// <summary>
     /// Create a new chapter with atomic synchronization:
     /// - Insert metadata into SQLite
-    /// - Write Markdown file to file system
+    /// - Persist Markdown content into SQLite content documents
     /// - Generate and store embeddings in Qdrant
     /// All operations succeed together or roll back.
     /// </summary>
@@ -29,7 +29,7 @@ public interface IChapterService
     /// <summary>
     /// Update an existing chapter with atomic synchronization:
     /// - Update metadata in SQLite
-    /// - Update Markdown file if content changed
+    /// - Update SQLite content document if content changed
     /// - Regenerate and update embeddings in Qdrant if content changed
     /// All operations succeed together or roll back.
     /// </summary>
@@ -64,7 +64,7 @@ public interface IChapterService
     /// <summary>
     /// Delete a chapter with atomic synchronization:
     /// - Delete metadata from SQLite (cascades to FK references)
-    /// - Delete Markdown file from file system
+    /// - Delete SQLite content document
     /// - Delete embeddings from Qdrant
     /// Foreign key references (foreshadows) are automatically set to NULL.
     /// </summary>

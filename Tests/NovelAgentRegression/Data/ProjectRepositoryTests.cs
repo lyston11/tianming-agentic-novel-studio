@@ -36,8 +36,7 @@ public class ProjectRepositoryTests
             SubGenre = "Epic Fantasy",
             CoreHook = "A hero's journey",
             Status = "draft",
-            WordCount = 0,
-            StorageProjectName = "test-novel-001"
+            WordCount = 0
         };
 
         // Act
@@ -73,15 +72,14 @@ public class ProjectRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel with Chapters",
-            StorageProjectName = "novel-chapters"
+            Title = "Novel with Chapters"
         };
 
         var chapters = new[]
         {
-            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 1", ChapterNumber = 1, ContentPath = "/ch1.txt" },
-            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 2", ChapterNumber = 2, ContentPath = "/ch2.txt" },
-            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 3", ChapterNumber = 3, ContentPath = "/ch3.txt" }
+            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 1", ChapterNumber = 1 },
+            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 2", ChapterNumber = 2 },
+            new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Chapter 3", ChapterNumber = 3 }
         };
 
         context.Users.Add(user);
@@ -122,8 +120,7 @@ public class ProjectRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel with Foreshadows",
-            StorageProjectName = "novel-foreshadows"
+            Title = "Novel with Foreshadows"
         };
 
         var foreshadows = new[]
@@ -170,15 +167,14 @@ public class ProjectRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel with Characters",
-            StorageProjectName = "novel-characters"
+            Title = "Novel with Characters"
         };
 
         var characters = new[]
         {
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Protagonist", Role = "hero" },
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Antagonist", Role = "villain" },
-            new Character { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Name = "Mentor", Role = "supporting" }
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Protagonist", Role = "hero" },
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Antagonist", Role = "villain" },
+            new Character { Id = Guid.NewGuid().ToString(), UserId = user.Id, ProjectId = project.Id, Name = "Mentor", Role = "supporting" }
         };
 
         context.Users.Add(user);
@@ -219,8 +215,7 @@ public class ProjectRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Complete Novel",
-            StorageProjectName = "complete-novel"
+            Title = "Complete Novel"
         };
 
         var chapter = new Chapter
@@ -228,8 +223,7 @@ public class ProjectRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Chapter 1",
-            ChapterNumber = 1,
-            ContentPath = "/ch1.txt"
+            ChapterNumber = 1
         };
 
         var foreshadow = new Foreshadow
@@ -243,13 +237,16 @@ public class ProjectRepositoryTests
         var character = new Character
         {
             Id = Guid.NewGuid().ToString(),
+            UserId = user.Id,
             ProjectId = project.Id,
-            Name = "Hero"
+            Name = "Hero",
+            Role = "protagonist"
         };
 
         var worldSetting = new WorldSettingEntry
         {
             Id = Guid.NewGuid().ToString(),
+            UserId = user.Id,
             ProjectId = project.Id,
             Category = "magic",
             Title = "Magic System",
@@ -259,7 +256,8 @@ public class ProjectRepositoryTests
         var knowledgeBase = new KnowledgeBase
         {
             Id = Guid.NewGuid().ToString(),
-            ProjectId = project.Id,
+            UserId = user.Id,
+            SourceProjectId = project.Id,
             EntryType = "lore",
             Title = "Ancient History",
             Content = "Long ago..."
@@ -285,12 +283,14 @@ public class ProjectRepositoryTests
         context.NovelProjects.Remove(project);
         await context.SaveChangesAsync();
 
-        // Assert - All child entities should be cascade deleted
+        // Assert - Project-owned entities should be cascade deleted; user-level knowledge should remain.
         Assert.Null(await context.Chapters.FindAsync(chapter.Id));
         Assert.Null(await context.Foreshadows.FindAsync(foreshadow.Id));
         Assert.Null(await context.Characters.FindAsync(character.Id));
         Assert.Null(await context.WorldSettingEntries.FindAsync(worldSetting.Id));
-        Assert.Null(await context.KnowledgeBases.FindAsync(knowledgeBase.Id));
+        var retainedKnowledge = await context.KnowledgeBases.FindAsync(knowledgeBase.Id);
+        Assert.NotNull(retainedKnowledge);
+        Assert.Null(retainedKnowledge.SourceProjectId);
     }
 
     [Fact]
@@ -315,8 +315,7 @@ public class ProjectRepositoryTests
             UserId = user.Id,
             Title = "Original Title",
             Status = "draft",
-            WordCount = 1000,
-            StorageProjectName = "original"
+            WordCount = 1000
         };
 
         context.Users.Add(user);
@@ -350,9 +349,9 @@ public class ProjectRepositoryTests
 
         var projects = new[]
         {
-            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user1.Id, Title = "User1 Project1", StorageProjectName = "u1p1" },
-            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user1.Id, Title = "User1 Project2", StorageProjectName = "u1p2" },
-            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user2.Id, Title = "User2 Project1", StorageProjectName = "u2p1" }
+            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user1.Id, Title = "User1 Project1" },
+            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user1.Id, Title = "User1 Project2" },
+            new NovelProject { Id = Guid.NewGuid().ToString(), UserId = user2.Id, Title = "User2 Project1" }
         };
 
         context.Users.AddRange(user1, user2);
@@ -368,7 +367,7 @@ public class ProjectRepositoryTests
     }
 
     [Fact]
-    public async Task Test_UniqueStorageProjectName_Constraint()
+    public async Task Test_ProjectIdentity_UsesProjectIdNotStorageName()
     {
         // Arrange
         using var testDb = TestDbContextFactory.CreateDisposableContext();
@@ -387,24 +386,25 @@ public class ProjectRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Project 1",
-            StorageProjectName = "duplicate-storage-name"
+            Title = "Same Title"
         };
 
         var project2 = new NovelProject
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Project 2",
-            StorageProjectName = "duplicate-storage-name" // Same storage name
+            Title = "Same Title"
         };
 
         context.Users.Add(user);
         context.NovelProjects.Add(project1);
         await context.SaveChangesAsync();
 
-        // Act & Assert
+        // Act
         context.NovelProjects.Add(project2);
-        await Assert.ThrowsAsync<DbUpdateException>(async () => await context.SaveChangesAsync());
+        await context.SaveChangesAsync();
+
+        // Assert
+        Assert.Equal(2, await context.NovelProjects.CountAsync(p => p.UserId == user.Id));
     }
 }

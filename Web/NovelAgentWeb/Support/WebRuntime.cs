@@ -7,12 +7,12 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Services;
 using TM.Services.Modules.ProjectData.Implementations;
 using TM.Services.Modules.ProjectData.Implementations.Guides;
-using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Implementations.Tracking.Rules;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Support;
 
 namespace TM
 {
@@ -162,7 +162,6 @@ namespace TM.Framework.Common.Helpers.Storage
                     _asyncProjectName.Value = trimmed;
                 else
                     _fallbackProjectName = trimmed;
-                EnsureProjectDirectories();
                 CurrentProjectChanged?.Invoke(old, trimmed);
             }
         }
@@ -172,7 +171,6 @@ namespace TM.Framework.Common.Helpers.Storage
             _fallbackStorageRoot = storageRoot;
             Directory.CreateDirectory(storageRoot);
             CurrentProjectName = projectName;
-            EnsureProjectDirectories();
         }
 
         /// <summary>
@@ -183,7 +181,6 @@ namespace TM.Framework.Common.Helpers.Storage
             _asyncStorageRoot.Value = storageRoot;
             _asyncProjectName.Value = projectName;
             Directory.CreateDirectory(storageRoot);
-            EnsureProjectDirectories();
         }
 
         /// <summary>
@@ -203,33 +200,26 @@ namespace TM.Framework.Common.Helpers.Storage
 
         public static string GetCurrentProjectPath()
         {
-            var path = Path.Combine(WebStorageRoot, "Projects", CurrentProjectName);
-            Directory.CreateDirectory(path);
-            return path;
+            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
         }
 
-        public static string GetProjectConfigPath() => EnsureDirectory(Path.Combine(GetCurrentProjectPath(), "Config"));
+        public static string GetProjectConfigPath() =>
+            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
 
         public static string GetProjectConfigPath(string subPath) =>
-            EnsureDirectory(Path.Combine(GetProjectConfigPath(), NormalizeSubPath(subPath)));
+            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
 
-        public static string GetProjectChaptersPath() => EnsureDirectory(Path.Combine(GetCurrentProjectPath(), "Chapters"));
+        public static string GetProjectHistoryPath() =>
+            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
 
-        public static string GetProjectHistoryPath() => EnsureDirectory(Path.Combine(GetCurrentProjectPath(), "History"));
-
-        public static string GetProjectValidationPath() => EnsureDirectory(Path.Combine(GetCurrentProjectPath(), "Validation"));
+        public static string GetProjectValidationPath() =>
+            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
 
         public static string GetServicesStoragePath(string subPath) =>
             EnsureDirectory(Path.Combine(WebStorageRoot, "Services", NormalizeSubPath(subPath)));
 
         public static string GetModulesStoragePath(string modulePath) =>
             EnsureDirectory(Path.Combine(WebStorageRoot, "Modules", NormalizeSubPath(modulePath)));
-
-        public static string GetFilePath(string layer, string subPath, string fileName)
-        {
-            var path = EnsureDirectory(Path.Combine(WebStorageRoot, "Projects", CurrentProjectName, layer, NormalizeSubPath(subPath)));
-            return Path.Combine(path, fileName);
-        }
 
         public static void EnsureDirectoryExists(string path)
         {
@@ -241,13 +231,8 @@ namespace TM.Framework.Common.Helpers.Storage
             TM.App.Log($"[StoragePathHelper] module enabled changed: {dirPath} => {enabled}");
         }
 
-        private static void EnsureProjectDirectories()
-        {
-            _ = GetProjectConfigPath();
-            _ = GetProjectChaptersPath();
-            _ = GetProjectHistoryPath();
-            _ = GetProjectValidationPath();
-        }
+        private const string ProjectBusinessFilesystemDisabledMessage =
+            "Project business data is stored in SQLite, Redis, and Qdrant. Web runtime project filesystem paths are disabled.";
 
         private static string EnsureDirectory(string path)
         {
@@ -365,6 +350,7 @@ namespace TM.Web.NovelAgentWeb.Support
     public sealed class NovelAgentWorkspace
     {
         public string UserId { get; internal set; } = "default";
+        public string ProjectId { get; }
         public string ProjectName { get; }
         public string StorageRoot { get; }
         public SemaphoreSlim ProjectContextLock { get; } = new(1, 1);
@@ -379,11 +365,16 @@ namespace TM.Web.NovelAgentWeb.Support
             IWebHostEnvironment environment,
             IConfiguration configuration,
             UserSettingsManager settingsManager,
+            string userId = "default",
+            string projectId = "",
             IVectorStore? vectorStore = null,
             IMicroEmbeddingService? embeddingService = null,
             ICurrentUserService? currentUserService = null,
-            IAgentMemoryRepository? memoryRepository = null)
+            IAgentMemoryRepository? memoryRepository = null,
+            IServiceScopeFactory? scopeFactory = null)
         {
+            UserId = string.IsNullOrWhiteSpace(userId) ? "default" : userId;
+            ProjectId = projectId ?? string.Empty;
             ProjectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
             var baseStorageRoot = configuration["NovelAgent:StorageRoot"]
                 ?? Path.Combine(environment.ContentRootPath, "App_Data");
@@ -398,27 +389,37 @@ namespace TM.Web.NovelAgentWeb.Support
             // Do NOT call StoragePathHelper.Configure() here — global state mutation.
             // Context is set per-request via SetRequestContext().
 
-            StoryBibleService = new StoryBibleService();
+            StoryBibleService = scopeFactory != null
+                ? new StoryBibleService(
+                    new WebStoryBibleDocumentStore(scopeFactory, UserId, ProjectId),
+                    $"sqlite-redis://story-bible/{UserId}/{ProjectId}")
+                : new StoryBibleService();
             CreativeKnowledgeBaseService = new CreativeKnowledgeBaseService(
                 vectorStore,
                 embeddingService,
                 currentUserService,
-                memoryRepository);
+                memoryRepository,
+                ProjectId);
 
             var guideManager = new GuideManager();
             var summaryStore = new ChapterSummaryStore();
             var milestoneStore = new ChapterMilestoneStore();
             var factSnapshotExtractor = new FactSnapshotExtractor(guideManager);
             var guideContextService = new GuideContextService(factSnapshotExtractor, summaryStore, milestoneStore);
-            var contentChunkSearch = new ContentChunkSearchService();
-            var chapterEmbeddingIndex = new ChapterEmbeddingIndex();
-            var chunkEmbeddingIndex = new ChunkEmbeddingIndex();
+            IContentChunkSearchService contentChunkSearch = scopeFactory != null
+                ? new WebContentChunkSearchService(scopeFactory, UserId, ProjectId, vectorStore, embeddingService)
+                : new UnavailableContentChunkSearchService();
             var webEmbeddingService = new WebEmbeddingService();
             var generationGate = new GenerationGate(
                 new LedgerConsistencyChecker(),
                 new LedgerRuleSetProvider(),
                 new EntityOmissionDetector(guideManager));
-            var generatedContentService = new GeneratedContentService();
+            IChapterCatalogService? chapterCatalog = scopeFactory != null
+                ? new WebChapterCatalogService(scopeFactory, UserId, ProjectId)
+                : null;
+            IGeneratedContentService generatedContentService = scopeFactory != null
+                ? new WebGeneratedContentService(scopeFactory, currentUserService, ProjectId, vectorStore, embeddingService)
+                : new UnavailableGeneratedContentService();
             var versionTracking = new WebVersionTrackingService();
 
             RegisterProjectDataServices(
@@ -428,10 +429,9 @@ namespace TM.Web.NovelAgentWeb.Support
                 factSnapshotExtractor,
                 guideContextService,
                 contentChunkSearch,
-                chapterEmbeddingIndex,
-                chunkEmbeddingIndex,
                 webEmbeddingService,
                 generationGate,
+                chapterCatalog,
                 generatedContentService,
                 versionTracking);
 
@@ -439,9 +439,9 @@ namespace TM.Web.NovelAgentWeb.Support
                 guideContextService,
                 contentChunkSearch,
                 StoryBibleService,
-                chapterEmbeddingIndex,
-                chunkEmbeddingIndex,
-                webEmbeddingService);
+                chapterEmbeddingIndex: null,
+                chunkEmbeddingIndex: null,
+                embeddingService: webEmbeddingService);
 
             var hardcoreEngine = new HardcoreWritingEngine(
                 storyStateSnapshotService,
@@ -449,11 +449,11 @@ namespace TM.Web.NovelAgentWeb.Support
                 generationGate,
                 generatedContentService,
                 contentChunkSearch,
-                chapterEmbeddingIndex,
-                chunkEmbeddingIndex,
-                webEmbeddingService,
-                versionTracking,
-                settingsManager);
+                chapterEmbeddingIndex: null,
+                chunkEmbeddingIndex: null,
+                embeddingService: webEmbeddingService,
+                versionTrackingService: versionTracking,
+                settingsManager: settingsManager);
 
             Orchestrator = new NovelAgentOrchestrator(
                 new BookConceptDesigner(new GenreDirectionPlanner()),
@@ -461,7 +461,11 @@ namespace TM.Web.NovelAgentWeb.Support
                 new ChapterNoveltyPlanner(),
                 StoryBibleService,
                 storyStateSnapshotService,
-                new ChapterPostGenerationReviewer(),
+                new ChapterPostGenerationReviewer(
+                    generatedContentService,
+                    new WebUnifiedValidationService(),
+                    StoryBibleService,
+                    storyStateSnapshotService),
                 new NovelAgentRewriteLoopService(),
                 new CanonMaintenanceService(StoryBibleService),
                 new ForeshadowLedgerService(StoryBibleService),
@@ -476,12 +480,11 @@ namespace TM.Web.NovelAgentWeb.Support
             ChapterMilestoneStore milestoneStore,
             FactSnapshotExtractor factSnapshotExtractor,
             GuideContextService guideContextService,
-            ContentChunkSearchService contentChunkSearch,
-            ChapterEmbeddingIndex chapterEmbeddingIndex,
-            ChunkEmbeddingIndex chunkEmbeddingIndex,
+            IContentChunkSearchService contentChunkSearch,
             IMicroEmbeddingService embeddingService,
             GenerationGate generationGate,
-            GeneratedContentService generatedContentService,
+            IChapterCatalogService? chapterCatalog,
+            IGeneratedContentService generatedContentService,
             WebVersionTrackingService versionTracking)
         {
             // Register on the workspace's own list (applied per-request via SetRequestContext)
@@ -494,12 +497,11 @@ namespace TM.Web.NovelAgentWeb.Support
             Register(factSnapshotExtractor);
             Register<IGuideContextService>(guideContextService);
             Register(guideContextService);
-            Register(contentChunkSearch);
-            Register(chapterEmbeddingIndex);
-            Register(chunkEmbeddingIndex);
-            Register<IChunkEmbeddingIndex>(chunkEmbeddingIndex);
+            Register<IContentChunkSearchService>(contentChunkSearch);
             Register(embeddingService);
             Register(generationGate);
+            if (chapterCatalog != null)
+                Register<IChapterCatalogService>(chapterCatalog);
             Register(generatedContentService);
             Register(new KeywordChapterIndexService());
             Register(versionTracking);
@@ -515,7 +517,6 @@ namespace TM.Web.NovelAgentWeb.Support
             Register(new DeadlineConstraintService(guideManager));
             Register(new RelationStrengthService());
             Register(new PlotPointsIndexService());
-            Register(new EntityFirstChapterIndex(embeddingService, chunkEmbeddingIndex));
             Register(new LedgerTrimService(guideManager));
         }
 

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -55,7 +56,9 @@ public sealed class AgentToolRegistry
         "SearchCreativeKnowledge",
         "ProcessKnowledgeFile",
         "PlanStoryFoundation",
+        "CommitStoryFoundation",
         "PlanVolumeArc",
+        "CommitVolumeArc",
         "PlanChapter",
         "SelectChapterCandidate",
         "BuildChapterContextPackage",
@@ -75,6 +78,7 @@ public sealed class AgentToolRegistry
         "CommitValidatedChapter",
         "ReviewChapter",
         "RefreshProjectIndexes",
+        "AnalyzeDependencyImpact",
         "ProcessKnowledgeFile",
     };
 
@@ -87,6 +91,7 @@ public sealed class AgentToolRegistry
         Risk = e.Definition.Risk,
         RequiresConfirmation = e.Definition.RequiresConfirmation,
         Parameters = e.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
+        SideEffects = e.Definition.SideEffects,
     }).ToList();
 
     public IReadOnlyList<string> GetToolNamesForPhase(ConversationPhase phase)
@@ -113,6 +118,7 @@ public sealed class AgentToolRegistry
                 Risk = e.Value.Definition.Risk,
                 RequiresConfirmation = e.Value.Definition.RequiresConfirmation,
                 Parameters = e.Value.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
+                SideEffects = e.Value.Definition.SideEffects,
             })
             .ToList();
     }
@@ -138,34 +144,82 @@ public sealed class AgentToolRegistry
             };
         }
 
-        var result = await entry.Handler(call, session, bible, confirmed || IsAutopilotAuthorizedTool(name), ct).ConfigureAwait(false);
-        result.RequiresConfirmation = false;
-        return result;
+        using var ledgerScope = _serviceProvider.GetService<IServiceScopeFactory>()?.CreateScope();
+        var ledger = ledgerScope?.ServiceProvider.GetService<IAgentToolExecutionLedger>();
+        var execution = ledger == null
+            ? null
+            : await ledger.StartAsync(new AgentToolExecutionStart(
+                    session.UserId,
+                    string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+                    session.SessionId,
+                    ResolveRunId(call, session),
+                    session.Phase,
+                    entry.Definition.Risk,
+                    call,
+                    entry.Definition.SideEffects), ct)
+                .ConfigureAwait(false);
+
+        try
+        {
+            var result = await entry.Handler(call, session, bible, confirmed || IsAutopilotAuthorizedTool(name), ct).ConfigureAwait(false);
+            result.RequiresConfirmation = false;
+            if (execution != null)
+            {
+                if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
+                    !string.Equals(execution.ProjectId, session.ActiveProjectId, StringComparison.Ordinal))
+                {
+                    await ledger!.RebindProjectAsync(execution.Id, session.ActiveProjectId, ct).ConfigureAwait(false);
+                }
+
+                await ledger!.CompleteAsync(execution.Id, result, ct).ConfigureAwait(false);
+            }
+            return result;
+        }
+        catch (Exception ex) when (execution != null && ex is not OperationCanceledException)
+        {
+            await ledger!.CompleteAsync(
+                    execution.Id,
+                    new AgentToolExecutionResult
+                    {
+                        Success = false,
+                        Message = ex.Message,
+                        RunId = ResolveRunId(call, session),
+                        Phase = session.Phase
+                    },
+                    ct)
+                .ConfigureAwait(false);
+            throw;
+        }
     }
+
+    private static string? ResolveRunId(AgentToolCall call, AgentSession session) =>
+        call.Arguments.TryGetValue("runId", out var runId) && !string.IsNullOrWhiteSpace(runId)
+            ? runId.Trim()
+            : session.ActiveRunId;
 
     private Dictionary<string, AgentToolEntry> BuildEntries()
     {
         var entries = new[]
         {
-            Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
-            Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
-            Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
-            Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
-            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
-            Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
-            Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
-            Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId" }, "规划卷级弧线，不直接固化。", (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
-            Entry("CommitVolumeArc", "commit", "High", true, new[] { "runId" }, "把卷规划提交到 Story Bible。", (call, session, _, confirmed, ct) => CommitVolumeArcAsync(call, session, confirmed, ct)),
-            Entry("PlanChapter", "planning", "Medium", false, new[] { "creativeBrief", "chapterId", "sourceTurnId" }, "检索项目状态和知识库，生成章节候选。", (call, session, bible, _, ct) => PlanChapterAsync(call, session, bible, ct)),
-            Entry("SelectChapterCandidate", "planning", "Medium", false, new[] { "runId", "candidateTitles" }, "选择章节候选，决定后续正文生成方向。", (call, session, _, confirmed, ct) => SelectChapterCandidateAsync(call, session, confirmed, ct)),
-            Entry("BuildChapterContextPackage", "writing", "Low", false, new[] { "runId" }, "构建章节上下文包，汇总事实快照、蓝图、摘要链和长距离 RAG。", (call, session, _, _, ct) => BuildChapterContextPackageAsync(call, session, ct)),
-            Entry("GenerateChapterWithChanges", "writing", "High", true, new[] { "runId" }, "生成章节正文和 CHANGES，硬门禁通过后才提交成稿。", (call, session, _, confirmed, ct) => GenerateChapterWithChangesAsync(call, session, confirmed, ct)),
-            Entry("ValidateChapterDraft", "gate", "Medium", false, new[] { "runId" }, "校验章节草稿的 CHANGES、事实快照、蓝图和 RAG 连续性。", (call, session, _, _, ct) => ValidateChapterDraftAsync(call, session, ct)),
-            Entry("RepairChapterDraft", "writing", "High", true, new[] { "runId" }, "根据门禁失败项修复章节草稿和 CHANGES。", (call, session, _, confirmed, ct) => RepairChapterDraftAsync(call, session, confirmed, ct)),
-            Entry("CommitValidatedChapter", "commit", "High", true, new[] { "runId" }, "提交已通过门禁的章节成稿，刷新索引并进入书城。", (call, session, _, confirmed, ct) => CommitValidatedChapterAsync(call, session, confirmed, ct)),
-            Entry("RefreshProjectIndexes", "maintenance", "Medium", false, new[] { "runId" }, "刷新章节摘要、事实快照、长距离 RAG 和索引标记。", (call, session, _, _, ct) => RefreshProjectIndexesAsync(call, session, ct)),
-            Entry("AnalyzeDependencyImpact", "maintenance", "Low", false, new[] { "runId" }, "分析结构化设定改动对卷、章节、蓝图和校验摘要的影响。", (call, session, _, _, ct) => AnalyzeDependencyImpactAsync(call, session, ct)),
-            Entry("ReviewChapter", "review", "Medium", false, new[] { "runId" }, "复盘已生成章节并提出账本沉淀。", (call, session, _, _, ct) => ReviewChapterAsync(call, session, ct)),
+            Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", Effects(toolCache: true, sqliteSnapshot: true, sqlite: new[] { "agent_tool_search_snapshots" }), (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
+            Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", Effects(memory: new[] { "session", "project" }, sqlite: new[] { "novel_projects", "agent_sessions" }), (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
+            Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", Effects(memory: new[] { "project" }, sqlite: new[] { "knowledge_base", "knowledge_processing_tasks", "content_documents", "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
+            Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", Effects(), (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
+            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", Effects(memory: new[] { "execution" }, sqlite: new[] { "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
+            Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
+            Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "story_constitutions", "agent_runs", "content_documents" }, vector: new[] { "story_bible" }), (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
+            Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId" }, "规划卷级弧线，不直接固化。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
+            Entry("CommitVolumeArc", "commit", "High", true, new[] { "runId" }, "把卷规划提交到 Story Bible。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "volume_arcs", "agent_runs", "content_documents" }, vector: new[] { "story_bible" }), (call, session, _, confirmed, ct) => CommitVolumeArcAsync(call, session, confirmed, ct)),
+            Entry("PlanChapter", "planning", "Medium", false, new[] { "creativeBrief", "chapterId", "sourceTurnId" }, "检索项目状态和知识库，生成章节候选。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }, vector: new[] { "knowledge", "chapter_context" }), (call, session, bible, _, ct) => PlanChapterAsync(call, session, bible, ct)),
+            Entry("SelectChapterCandidate", "planning", "Medium", false, new[] { "runId", "candidateTitles" }, "选择章节候选，决定后续正文生成方向。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs" }), (call, session, _, confirmed, ct) => SelectChapterCandidateAsync(call, session, confirmed, ct)),
+            Entry("BuildChapterContextPackage", "writing", "Low", false, new[] { "runId" }, "构建章节上下文包，汇总事实快照、蓝图、摘要链和长距离 RAG。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs", "content_documents" }, vector: new[] { "chapter_context" }), (call, session, _, _, ct) => BuildChapterContextPackageAsync(call, session, ct)),
+            Entry("GenerateChapterWithChanges", "writing", "High", true, new[] { "runId" }, "生成章节正文和 CHANGES，硬门禁通过后才提交成稿。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, confirmed, ct) => GenerateChapterWithChangesAsync(call, session, confirmed, ct)),
+            Entry("ValidateChapterDraft", "gate", "Medium", false, new[] { "runId" }, "校验章节草稿的 CHANGES、事实快照、蓝图和 RAG 连续性。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs" }), (call, session, _, _, ct) => ValidateChapterDraftAsync(call, session, ct)),
+            Entry("RepairChapterDraft", "writing", "High", true, new[] { "runId" }, "根据门禁失败项修复章节草稿和 CHANGES。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, confirmed, ct) => RepairChapterDraftAsync(call, session, confirmed, ct)),
+            Entry("CommitValidatedChapter", "commit", "High", true, new[] { "runId" }, "提交已通过门禁的章节成稿，刷新索引并进入书城。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "chapters", "agent_runs", "content_documents" }, vector: new[] { "chapter" }), (call, session, _, confirmed, ct) => CommitValidatedChapterAsync(call, session, confirmed, ct)),
+            Entry("RefreshProjectIndexes", "maintenance", "Medium", false, new[] { "runId" }, "刷新章节摘要、事实快照、长距离 RAG 和索引标记。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "agent_runs", "content_chunks", "content_vector_points" }, vector: new[] { "chapter", "story_bible" }), (call, session, _, _, ct) => RefreshProjectIndexesAsync(call, session, ct)),
+            Entry("AnalyzeDependencyImpact", "maintenance", "Low", false, new[] { "runId" }, "分析结构化设定改动对卷、章节、蓝图和校验摘要的影响。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs" }), (call, session, _, _, ct) => AnalyzeDependencyImpactAsync(call, session, ct)),
+            Entry("ReviewChapter", "review", "Medium", false, new[] { "runId" }, "复盘已生成章节并提出账本沉淀。", Effects(memory: new[] { "project", "author", "execution" }, sqlite: new[] { "agent_runs", "agent_memory_events" }), (call, session, _, _, ct) => ReviewChapterAsync(call, session, ct)),
         };
         return entries.ToDictionary(e => e.Definition.Name, StringComparer.OrdinalIgnoreCase);
     }
@@ -181,6 +235,7 @@ public sealed class AgentToolRegistry
         bool requiresConfirmation,
         IReadOnlyList<string> args,
         string description,
+        AgentToolSideEffectSpec sideEffects,
         Func<AgentToolCall, AgentSession, StoryBibleDocument, bool, CancellationToken, Task<AgentToolExecutionResult>> handler) =>
         new()
         {
@@ -192,8 +247,25 @@ public sealed class AgentToolRegistry
                 Risk = risk,
                 RequiresConfirmation = requiresConfirmation,
                 Arguments = args.ToList(),
+                SideEffects = sideEffects,
             },
             Handler = handler,
+        };
+
+    private static AgentToolSideEffectSpec Effects(
+        bool toolCache = false,
+        bool sqliteSnapshot = false,
+        IReadOnlyList<string>? memory = null,
+        IReadOnlyList<string>? sqlite = null,
+        IReadOnlyList<string>? vector = null) => new()
+        {
+            WritesLedger = true,
+            WritesRedisRecentCache = true,
+            WritesToolSearchCache = toolCache,
+            WritesSqliteSnapshot = sqliteSnapshot,
+            WritesMemoryScopes = memory?.ToList() ?? new List<string>(),
+            WritesSqliteEntities = sqlite?.ToList() ?? new List<string>(),
+            WritesVectorIndexes = vector?.ToList() ?? new List<string>()
         };
 
     private async Task<AgentToolExecutionResult> StartNewNovelProjectAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
@@ -348,7 +420,7 @@ public sealed class AgentToolRegistry
 
     private async Task<AgentToolExecutionResult> QueryProjectStatusAsync(AgentSession session, StoryBibleDocument bible, CancellationToken ct)
     {
-        var materials = await MaterialLibrary.LoadAsync(_workspace, ct).ConfigureAwait(false);
+        var materialCount = await CountProjectMaterialsAsync(session, ct).ConfigureAwait(false);
         var currentRun = AgentRunSelector.SelectCurrentRun(bible);
         var plan = session.WorkingMemory.MissionPlan;
         var lines = new List<string>();
@@ -367,7 +439,7 @@ public sealed class AgentToolRegistry
             lines.Add("Story Bible 尚未固化。");
         else
             lines.Add($"Story Bible：{bible.Constitution.Genre}/{bible.Constitution.SubGenre}；核心钩子：{bible.Constitution.CoreHook}");
-        lines.Add($"素材：{materials.Materials.Count} 份；卷规划：{bible.VolumeArcs.Count}；设定/伏笔/角色账本：{bible.CanonLedger.Count}/{bible.ForeshadowLedger.Count}/{bible.CharacterLedger.Count}");
+        lines.Add($"素材：{materialCount} 份；卷规划：{bible.VolumeArcs.Count}；设定/伏笔/角色账本：{bible.CanonLedger.Count}/{bible.ForeshadowLedger.Count}/{bible.CharacterLedger.Count}");
         if (currentRun != null)
             lines.Add($"当前 Run：{currentRun.Intent}/{currentRun.Status}");
 
@@ -396,7 +468,7 @@ public sealed class AgentToolRegistry
                     result.Hits.Insert(0, hit);
             }
 
-            result.Message = $"创意知识库命中 {result.Hits.Count} 条（DB知识优先，legacy JSON 作为回退）。";
+            result.Message = $"创意知识库命中 {result.Hits.Count} 条（SQLite/Qdrant/Redis 知识通路）。";
         }
 
         var lines = result.Hits.Count == 0
@@ -438,15 +510,38 @@ public sealed class AgentToolRegistry
                 TopK = 8
             }, ct).ConfigureAwait(false);
 
+            foreach (var result in results)
+            {
+                await knowledgeService.IncrementUsageAsync(
+                    result.Id,
+                    session.ActiveProjectId,
+                    session.SessionId,
+                    session.ActiveRunId,
+                    ct).ConfigureAwait(false);
+            }
+
             return results
                 .Select(MapKnowledgeSearchResult)
                 .ToList();
         }
         catch (Exception ex) when (ex is KeyNotFoundException or UnauthorizedAccessException or InvalidOperationException)
         {
-            _logger.LogWarning(ex, "DB knowledge search unavailable for project {ProjectId}; using legacy creative knowledge fallback", session.ActiveProjectId);
+            _logger.LogWarning(ex, "DB knowledge search unavailable for project {ProjectId}; returning an empty knowledge hit set", session.ActiveProjectId);
             return new List<CreativeKnowledgeHit>();
         }
+    }
+
+    private async Task<int> CountProjectMaterialsAsync(AgentSession session, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+            return 0;
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        return await db.Materials
+            .AsNoTracking()
+            .CountAsync(m => m.UserId == session.UserId && m.ProjectId == session.ActiveProjectId, ct)
+            .ConfigureAwait(false);
     }
 
     private static CreativeKnowledgeHit MapKnowledgeSearchResult(KnowledgeSearchResult result)
@@ -1026,9 +1121,9 @@ public sealed class AgentToolRegistry
         }
     }
 
-    private Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
+    private async Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
-        var phaseArg = Arg(call, "phase", "Conversation");
+        var phaseArg = NormalizeToolSearchPhase(Arg(call, "phase", "Conversation"));
 
         IReadOnlyList<string> toolNames;
         if (string.Equals(phaseArg, "All", StringComparison.OrdinalIgnoreCase))
@@ -1057,9 +1152,7 @@ public sealed class AgentToolRegistry
             ? $"阶段「{phaseArg}」没有可用工具。"
             : $"阶段「{phaseArg}」可用工具（{toolList.Count}个）：\n{string.Join("\n", toolList)}";
 
-        // 缓存到Session
-        session.DiscoveredPhase = phaseArg;
-        session.DiscoveredTools = toolNames
+        var discoveredTools = toolNames
             .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
             .Where(def => def != null)
             .Select(def => new ToolSchema
@@ -1071,9 +1164,12 @@ public sealed class AgentToolRegistry
                 Parameters = def.Arguments?.ToDictionary(p => p, _ => "string") ?? new Dictionary<string, string>()
             })
             .ToList();
-        session.LastToolSearchAt = DateTime.UtcNow;
 
-        return Task.FromResult(new AgentToolExecutionResult
+        using var scope = _serviceProvider.CreateScope();
+        var cache = scope.ServiceProvider.GetRequiredService<IToolSearchCacheService>();
+        await cache.SaveAsync(session, phaseArg, discoveredTools, ct).ConfigureAwait(false);
+
+        return new AgentToolExecutionResult
         {
             Success = true,
             Message = message,
@@ -1081,6 +1177,22 @@ public sealed class AgentToolRegistry
             Data = new { Phase = phaseArg, Tools = toolNames },
             Artifact = BuildArtifact("tool_search_result", phaseArg, session.ActiveProjectId ?? string.Empty, string.Empty, $"检索到 {toolList.Count} 个工具。", Array.Empty<string>()),
             Suggestions = Array.Empty<string>(),
-        });
+        };
+    }
+
+    private static string NormalizeToolSearchPhase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "Conversation";
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "planning" => "Planning",
+            "creation" => "Creation",
+            "review" => "Review",
+            "all" => "All",
+            "conversation" => "Conversation",
+            _ => "Conversation"
+        };
     }
 }

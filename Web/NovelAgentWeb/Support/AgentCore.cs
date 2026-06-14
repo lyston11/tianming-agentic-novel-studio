@@ -2,6 +2,8 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -528,9 +530,14 @@ public sealed class AgentWorkingMemory
 
 public sealed class AgentSessionMemory
 {
+    public string CurrentGoal { get; set; } = string.Empty;
+    public List<string> OpenQuestions { get; set; } = new();
     public string ChatSummary { get; set; } = string.Empty;
     public List<string> ShortTermPreferences { get; set; } = new();
+    public List<string> RecentObservations { get; set; } = new();
     public List<string> LastObservations { get; set; } = new();
+    public string? PendingToolName { get; set; }
+    public string? LastIntent { get; set; }
 }
 
 public sealed class AgentProjectMemory
@@ -542,6 +549,8 @@ public sealed class AgentProjectMemory
     public List<string> Constraints { get; set; } = new();
     public List<string> UnresolvedThreads { get; set; } = new();
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
+    public List<string> ImportedKnowledgeIds { get; set; } = new();
+    public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
     public List<string> UsedTropePatterns { get; set; } = new();
 }
 
@@ -559,6 +568,7 @@ public sealed class AgentExecutionMemory
     public List<string> ToolFailurePatterns { get; set; } = new();
     public List<string> RepeatedBlockers { get; set; } = new();
     public List<string> SuccessfulRepairNotes { get; set; } = new();
+    public List<string> KnowledgeProcessingFailures { get; set; } = new();
 }
 
 public sealed class AgentMissionState
@@ -689,6 +699,18 @@ public sealed class AgentToolDefinition
     public string Risk { get; set; } = "Low";
     public bool RequiresConfirmation { get; set; }
     public List<string> Arguments { get; set; } = new();
+    public AgentToolSideEffectSpec SideEffects { get; set; } = new();
+}
+
+public sealed class AgentToolSideEffectSpec
+{
+    public bool WritesLedger { get; set; } = true;
+    public bool WritesRedisRecentCache { get; set; } = true;
+    public bool WritesToolSearchCache { get; set; }
+    public bool WritesSqliteSnapshot { get; set; }
+    public List<string> WritesMemoryScopes { get; set; } = new();
+    public List<string> WritesSqliteEntities { get; set; } = new();
+    public List<string> WritesVectorIndexes { get; set; } = new();
 }
 
 public sealed class ToolSchema
@@ -698,6 +720,7 @@ public sealed class ToolSchema
     public string Risk { get; set; } = "Low";
     public bool RequiresConfirmation { get; set; }
     public Dictionary<string, string> Parameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public AgentToolSideEffectSpec SideEffects { get; set; } = new();
 }
 
 public sealed class AgentToolEntry
@@ -790,7 +813,8 @@ public sealed class AgentObservationBuilder
     private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
 
     private readonly AgentToolRegistry _toolRegistry;
-    private readonly AgentMemoryService _memoryService;
+    private readonly IAgentMemoryContextService _memoryContextService;
+    private readonly IToolSearchCacheService _toolSearchCache;
     private readonly AgentMissionTaskTreeService _taskTreeService;
 
     internal static void SetWorkspace(NovelAgentWorkspace workspace) => _currentWorkspace.Value = workspace;
@@ -798,11 +822,13 @@ public sealed class AgentObservationBuilder
 
     public AgentObservationBuilder(
         AgentToolRegistry toolRegistry,
-        AgentMemoryService memoryService,
+        IAgentMemoryContextService memoryContextService,
+        IToolSearchCacheService toolSearchCache,
         AgentMissionTaskTreeService taskTreeService)
     {
         _toolRegistry = toolRegistry;
-        _memoryService = memoryService;
+        _memoryContextService = memoryContextService;
+        _toolSearchCache = toolSearchCache;
         _taskTreeService = taskTreeService;
     }
 
@@ -823,22 +849,19 @@ public sealed class AgentObservationBuilder
             session.WorkingMemory.MissionPlan.InteractionState = envelope;
         }
         EnsureMissionPlan(session, project, bible, userMessage, turnIntent);
-        await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
+        var memoryContext = await _memoryContextService.BuildAsync(session.UserId, project.Id, session.SessionId, ct).ConfigureAwait(false);
+        ApplyMemoryContext(session, project.Id, memoryContext);
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
-        // Check session cache for tools, otherwise expose only tool_search
-        IReadOnlyList<ToolSchema> availableTools;
+        var toolCachePhase = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
+            ? session.Phase
+            : session.DiscoveredPhase;
+        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCachePhase, ct).ConfigureAwait(false);
+        var availableTools = availableToolLookup.Tools;
 
-        if (!string.IsNullOrWhiteSpace(session.DiscoveredPhase) &&
-            session.DiscoveredTools.Count > 0)
+        if (availableTools == null)
         {
-            // Has cache, expose previously discovered tools
-            availableTools = session.DiscoveredTools;
-        }
-        else
-        {
-            // No cache, expose only tool_search
             var toolSearchEntry = _toolRegistry.Find("tool_search");
             if (toolSearchEntry == null)
             {
@@ -868,8 +891,7 @@ public sealed class AgentObservationBuilder
             Phase = session.Phase,
             ActiveRunId = session.ActiveRunId ?? string.Empty,
             ProjectSummary = AgentProjectSummaryBuilder.Build(bible),
-            RecentMessages = session.ChatHistory
-                .TakeLast(10)
+            RecentMessages = memoryContext.Chat.RecentMessages
                 .Select(t => $"{t.Role}: {t.Content}")
                 .ToList(),
             RecentObservations = session.WorkingMemory.RecentObservations.TakeLast(8).ToList(),
@@ -888,9 +910,60 @@ public sealed class AgentObservationBuilder
                 Risk = t.Risk,
                 RequiresConfirmation = t.RequiresConfirmation,
                 Arguments = t.Parameters.Keys.ToList(),
+                SideEffects = t.SideEffects,
             }).ToList(),
         };
     }
+
+    private static void ApplyMemoryContext(AgentSession session, string projectId, AgentMemoryContextDto memoryContext)
+    {
+        session.WorkingMemory.SessionMemory = MapSession(memoryContext.Session, memoryContext.Chat);
+        session.WorkingMemory.ProjectMemory = MapProject(memoryContext.Project, projectId);
+        session.WorkingMemory.AuthorMemory = MapAuthor(memoryContext.Author);
+        session.WorkingMemory.ExecutionMemory = MapExecution(memoryContext.Execution);
+    }
+
+    private static AgentSessionMemory MapSession(SessionMemory source, ChatMemoryContext chat) => new()
+    {
+        CurrentGoal = source.CurrentGoal,
+        OpenQuestions = new List<string>(source.OpenQuestions),
+        ChatSummary = chat.MetaSummary ?? string.Empty,
+        ShortTermPreferences = new List<string>(source.ShortTermPreferences),
+        RecentObservations = new List<string>(source.RecentObservations),
+        LastObservations = new List<string>(source.RecentObservations),
+        PendingToolName = source.PendingToolName,
+        LastIntent = source.LastIntent
+    };
+
+    private static AgentProjectMemory MapProject(ProjectMemory source, string projectId) => new()
+    {
+        ProjectId = projectId,
+        LongTermGoal = source.LongTermGoal ?? string.Empty,
+        ReaderPromise = source.ReaderPromise ?? string.Empty,
+        Constraints = new List<string>(source.Constraints),
+        UnresolvedThreads = new List<string>(source.UnresolvedThreads),
+        ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
+        ImportedKnowledgeIds = new List<string>(source.ImportedKnowledgeIds),
+        KnowledgeInventory = new List<KnowledgeInventoryItem>(source.KnowledgeInventory),
+        UsedTropePatterns = new List<string>(source.UsedTropePatterns)
+    };
+
+    private static AgentAuthorMemory MapAuthor(AuthorMemory source) => new()
+    {
+        StyleLikes = new List<string>(source.StyleLikes),
+        StyleDislikes = new List<string>(source.StyleDislikes),
+        ConfirmationTolerance = source.ConfirmationTolerance ?? "key_checkpoints",
+        GenreHabits = new List<string>(source.GenreHabits),
+        FavoriteKnowledgeIds = new List<string>(source.FavoriteKnowledgeIds)
+    };
+
+    private static AgentExecutionMemory MapExecution(ExecutionMemory source) => new()
+    {
+        ToolFailurePatterns = new List<string>(source.ToolFailurePatterns),
+        RepeatedBlockers = new List<string>(source.RepeatedBlockers),
+        SuccessfulRepairNotes = new List<string>(source.SuccessfulRepairNotes),
+        KnowledgeProcessingFailures = new List<string>(source.KnowledgeProcessingFailures)
+    };
 
     private async Task<AgentRagContext> BuildRagAsync(
         AgentSession session,
@@ -1583,7 +1656,7 @@ public sealed class AgentPlanner
     {
         var msg = context.UserMessage.Trim().ToLowerInvariant();
 
-        // Legacy pending confirmations are treated as resumable autopilot work.
+        // Pending confirmations remain resumable autopilot work.
         if (context.PendingConfirmation?.ToolCall != null && !msg.Contains("取消") && !msg.Contains("不要") && !msg.Contains("先不"))
         {
             return new AgentAction

@@ -19,17 +19,24 @@ public class NovelAgentDbContext : DbContext
     public DbSet<Character> Characters { get; set; } = null!;
     public DbSet<Material> Materials { get; set; } = null!;
     public DbSet<KnowledgeBase> KnowledgeBases { get; set; } = null!;
+    public DbSet<ContentDocument> ContentDocuments { get; set; } = null!;
+    public DbSet<ContentChunk> ContentChunks { get; set; } = null!;
+    public DbSet<ContentVectorPoint> ContentVectorPoints { get; set; } = null!;
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
+    public DbSet<AgentChatTurn> AgentChatTurns { get; set; } = null!;
+    public DbSet<AgentChatSummary> AgentChatSummaries { get; set; } = null!;
+    public DbSet<AgentMemoryEvent> AgentMemoryEvents { get; set; } = null!;
+    public DbSet<AgentMemoryVersion> AgentMemoryVersions { get; set; } = null!;
+    public DbSet<ProjectKnowledgeUsage> ProjectKnowledgeUsages { get; set; } = null!;
     public DbSet<AgentSession> AgentSessions { get; set; } = null!;
     public DbSet<StoryConstitution> StoryConstitutions { get; set; } = null!;
     public DbSet<VolumeArc> VolumeArcs { get; set; } = null!;
     public DbSet<ForeshadowEntry> ForeshadowEntries { get; set; } = null!;
     public DbSet<WorldSettingEntry> WorldSettingEntries { get; set; } = null!;
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
+    public DbSet<AgentToolExecution> AgentToolExecutions { get; set; } = null!;
+    public DbSet<AgentToolSearchSnapshot> AgentToolSearchSnapshots { get; set; } = null!;
     public DbSet<KnowledgeProcessingTask> KnowledgeProcessingTasks { get; set; } = null!;
-    public DbSet<ContentDocument> ContentDocuments { get; set; } = null!;
-    public DbSet<ContentChunk> ContentChunks { get; set; } = null!;
-    public DbSet<ContentVectorPoint> ContentVectorPoints { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -102,11 +109,8 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("draft");
             entity.Property(e => e.WordCount).HasColumnName("word_count").HasDefaultValue(0);
             entity.Property(e => e.CoverImageUrl).HasColumnName("cover_image_url");
-            entity.Property(e => e.StorageProjectName).HasColumnName("storage_project_name");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-            entity.HasIndex(e => e.StorageProjectName).IsUnique();
 
             entity.HasOne(e => e.User)
                 .WithMany(u => u.NovelProjects)
@@ -142,15 +146,15 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Title).HasColumnName("title").IsRequired();
             entity.Property(e => e.ChapterNumber).HasColumnName("chapter_number");
             entity.Property(e => e.WordCount).HasColumnName("word_count").HasDefaultValue(0);
+            entity.Property(e => e.CurrentDocumentId).HasColumnName("current_document_id");
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("draft");
-            entity.Property(e => e.ContentDocumentId).HasColumnName("content_document_id");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.ProjectId).HasDatabaseName("idx_chapters_project");
             entity.HasIndex(e => e.VolumeId).HasDatabaseName("idx_chapters_volume");
+            entity.HasIndex(e => e.CurrentDocumentId).HasDatabaseName("idx_chapters_current_document");
             entity.HasIndex(e => e.Status).HasDatabaseName("idx_chapters_status");
-            entity.HasIndex(e => e.ContentDocumentId).HasDatabaseName("idx_chapters_content_doc");
 
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.Chapters)
@@ -162,9 +166,9 @@ public class NovelAgentDbContext : DbContext
                 .HasForeignKey(e => e.VolumeId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            entity.HasOne(e => e.ContentDocument)
+            entity.HasOne<ContentDocument>()
                 .WithMany()
-                .HasForeignKey(e => e.ContentDocumentId)
+                .HasForeignKey(e => e.CurrentDocumentId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -243,6 +247,16 @@ public class NovelAgentDbContext : DbContext
                 .WithMany(p => p.Characters)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<Chapter>()
+                .WithMany()
+                .HasForeignKey(e => e.FirstAppearChapter)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne<Chapter>()
+                .WithMany()
+                .HasForeignKey(e => e.LastAppearChapter)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Material entity configuration
@@ -256,14 +270,14 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Title).HasColumnName("title").IsRequired();
             entity.Property(e => e.Category).HasColumnName("category");
             entity.Property(e => e.ContentType).HasColumnName("content_type");
-            entity.Property(e => e.ContentDocumentId).HasColumnName("content_document_id");
             entity.Property(e => e.Tags).HasColumnName("tags");
+            entity.Property(e => e.RawDocumentId).HasColumnName("raw_document_id");
             entity.Property(e => e.VectorChunkCount).HasColumnName("vector_chunk_count").HasDefaultValue(0);
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.UserId).HasDatabaseName("idx_materials_user");
             entity.HasIndex(e => e.ProjectId).HasDatabaseName("idx_materials_project");
-            entity.HasIndex(e => e.ContentDocumentId).HasDatabaseName("idx_materials_content_doc");
+            entity.HasIndex(e => e.RawDocumentId).HasDatabaseName("idx_materials_raw_document");
 
             entity.HasOne(e => e.User)
                 .WithMany(u => u.Materials)
@@ -275,9 +289,9 @@ public class NovelAgentDbContext : DbContext
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasOne(e => e.ContentDocument)
+            entity.HasOne<ContentDocument>()
                 .WithMany()
-                .HasForeignKey(e => e.ContentDocumentId)
+                .HasForeignKey(e => e.RawDocumentId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -287,18 +301,33 @@ public class NovelAgentDbContext : DbContext
             entity.ToTable("knowledge_base");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.SourceProjectId).HasColumnName("project_id");
             entity.Property(e => e.EntryType).HasColumnName("entry_type").IsRequired();
             entity.Property(e => e.Title).HasColumnName("title").IsRequired();
             entity.Property(e => e.Content).HasColumnName("content").IsRequired();
             entity.Property(e => e.UsageCount).HasColumnName("usage_count").HasDefaultValue(0);
             entity.Property(e => e.VectorId).HasColumnName("vector_id").HasMaxLength(100);
+            entity.Property(e => e.SourceType).HasColumnName("source_type").HasMaxLength(50).HasDefaultValue("manual");
+            entity.Property(e => e.SourceUploadTaskId).HasColumnName("source_upload_task_id").HasMaxLength(100);
+            entity.Property(e => e.ChunkIndex).HasColumnName("chunk_index");
+            entity.Property(e => e.ExtractionContext).HasColumnName("extraction_context");
+            entity.Property(e => e.Tags).HasColumnName("tags");
+            entity.Property(e => e.Weight).HasColumnName("weight").HasDefaultValue(5);
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-            entity.HasOne(e => e.Project)
-                .WithMany(p => p.KnowledgeBases)
-                .HasForeignKey(e => e.ProjectId)
+            entity.HasIndex(e => e.UserId).HasDatabaseName("idx_knowledge_base_user");
+            entity.HasIndex(e => e.SourceProjectId).HasDatabaseName("idx_knowledge_base_source_project");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.SourceProject)
+                .WithMany()
+                .HasForeignKey(e => e.SourceProjectId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // AgentMemory entity configuration
@@ -309,8 +338,11 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Id).HasColumnName("id");
             entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
             entity.Property(e => e.MemoryType).HasColumnName("memory_type").IsRequired();
+            entity.Property(e => e.MemoryKey).HasColumnName("memory_key").HasDefaultValue(string.Empty);
             entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => new { e.UserId, e.ProjectId }).HasDatabaseName("idx_memories_user_project");
@@ -323,6 +355,285 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.AgentMemories)
                 .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ContentDocument entity configuration
+        modelBuilder.Entity<ContentDocument>(entity =>
+        {
+            entity.ToTable("content_documents");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SourceType).HasColumnName("source_type").IsRequired();
+            entity.Property(e => e.SourceId).HasColumnName("source_id").IsRequired();
+            entity.Property(e => e.DocumentRole).HasColumnName("document_role").IsRequired();
+            entity.Property(e => e.Title).HasColumnName("title").IsRequired();
+            entity.Property(e => e.MimeType).HasColumnName("mime_type").HasDefaultValue("text/plain");
+            entity.Property(e => e.ContentHash).HasColumnName("content_hash").IsRequired();
+            entity.Property(e => e.Version).HasColumnName("version").HasDefaultValue(1);
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("active");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => new { e.SourceType, e.SourceId, e.Version });
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<NovelProject>()
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ContentChunk entity configuration
+        modelBuilder.Entity<ContentChunk>(entity =>
+        {
+            entity.ToTable("content_chunks");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.DocumentId).HasColumnName("document_id").IsRequired();
+            entity.Property(e => e.ChunkIndex).HasColumnName("chunk_index");
+            entity.Property(e => e.ChunkText).HasColumnName("chunk_text").IsRequired();
+            entity.Property(e => e.TokenCount).HasColumnName("token_count");
+            entity.Property(e => e.CharStart).HasColumnName("char_start");
+            entity.Property(e => e.CharEnd).HasColumnName("char_end");
+            entity.Property(e => e.ContentHash).HasColumnName("content_hash").IsRequired();
+
+            entity.HasAlternateKey(e => new { e.Id, e.DocumentId });
+            entity.HasIndex(e => new { e.DocumentId, e.ChunkIndex }).IsUnique();
+
+            entity.HasOne(e => e.Document)
+                .WithMany(d => d.Chunks)
+                .HasForeignKey(e => e.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ContentVectorPoint entity configuration
+        modelBuilder.Entity<ContentVectorPoint>(entity =>
+        {
+            entity.ToTable("content_vector_points");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.DocumentId).HasColumnName("document_id").IsRequired();
+            entity.Property(e => e.ChunkId).HasColumnName("chunk_id");
+            entity.Property(e => e.QdrantCollection).HasColumnName("qdrant_collection").IsRequired();
+            entity.Property(e => e.QdrantPointId).HasColumnName("qdrant_point_id").IsRequired();
+            entity.Property(e => e.VectorModel).HasColumnName("vector_model").IsRequired();
+            entity.Property(e => e.IndexedAt).HasColumnName("indexed_at");
+            entity.Property(e => e.IndexStatus).HasColumnName("index_status").HasDefaultValue("pending");
+            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+
+            entity.HasIndex(e => e.DocumentId);
+            entity.HasIndex(e => e.ChunkId);
+            entity.HasIndex(e => new { e.ChunkId, e.DocumentId });
+            entity.HasIndex(e => new { e.QdrantCollection, e.QdrantPointId }).IsUnique();
+
+            entity.HasOne(e => e.Document)
+                .WithMany()
+                .HasForeignKey(e => e.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<ContentChunk>()
+                .WithMany()
+                .HasForeignKey(e => new { e.ChunkId, e.DocumentId })
+                .HasPrincipalKey(e => new { e.Id, e.DocumentId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AgentChatTurn entity configuration
+        modelBuilder.Entity<AgentChatTurn>(entity =>
+        {
+            entity.ToTable("agent_chat_turns");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.TurnIndex).HasColumnName("turn_index");
+            entity.Property(e => e.Role).HasColumnName("role").IsRequired();
+            entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.TokenCount).HasColumnName("token_count");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.CompressedIntoSummaryId).HasColumnName("compressed_into_summary_id");
+
+            entity.HasIndex(e => new { e.SessionId, e.TurnIndex }).IsUnique();
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ProjectId);
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<AgentSession>()
+                .WithMany(s => s.ChatTurns)
+                .HasForeignKey(e => e.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<NovelProject>()
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AgentChatSummary entity configuration
+        modelBuilder.Entity<AgentChatSummary>(entity =>
+        {
+            entity.ToTable("agent_chat_summaries");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.StartTurn).HasColumnName("start_turn");
+            entity.Property(e => e.EndTurn).HasColumnName("end_turn");
+            entity.Property(e => e.SummaryType).HasColumnName("summary_type").HasDefaultValue("summary");
+            entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.KeyDecisionsJson).HasColumnName("key_decisions_json");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.SessionId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.SummaryType, e.StartTurn, e.EndTurn })
+                .IsUnique()
+                .HasDatabaseName("IX_agent_chat_summaries_range_global")
+                .HasFilter("project_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.SummaryType, e.StartTurn, e.EndTurn })
+                .IsUnique()
+                .HasDatabaseName("IX_agent_chat_summaries_range_project")
+                .HasFilter("project_id IS NOT NULL");
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<AgentSession>()
+                .WithMany(s => s.ChatSummaries)
+                .HasForeignKey(e => e.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<NovelProject>()
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AgentMemoryEvent entity configuration
+        modelBuilder.Entity<AgentMemoryEvent>(entity =>
+        {
+            entity.ToTable("agent_memory_events");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
+            entity.Property(e => e.RunId).HasColumnName("run_id");
+            entity.Property(e => e.SourceType).HasColumnName("source_type").IsRequired();
+            entity.Property(e => e.TriggerType).HasColumnName("trigger_type").IsRequired();
+            entity.Property(e => e.MemoryScope).HasColumnName("memory_scope").IsRequired();
+            entity.Property(e => e.MemoryKey).HasColumnName("memory_key").IsRequired();
+            entity.Property(e => e.PayloadJson).HasColumnName("payload_json").HasDefaultValue("{}");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ProjectId);
+            entity.HasIndex(e => e.SessionId);
+            entity.HasIndex(e => e.RunId);
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<NovelProject>()
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AgentMemoryVersion entity configuration
+        modelBuilder.Entity<AgentMemoryVersion>(entity =>
+        {
+            entity.ToTable("agent_memory_versions");
+            entity.Property<long>("Id").HasColumnName("id").ValueGeneratedOnAdd();
+            entity.HasKey("Id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
+            entity.Property(e => e.Scope).HasColumnName("scope").IsRequired();
+            entity.Property(e => e.Version).HasColumnName("version");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Scope }).IsUnique();
+            entity.HasIndex(e => new { e.UserId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_scope_global")
+                .IsUnique()
+                .HasFilter("project_id IS NULL AND session_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_project_scope")
+                .IsUnique()
+                .HasFilter("project_id IS NOT NULL AND session_id IS NULL");
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_session_scope")
+                .IsUnique()
+                .HasFilter("project_id IS NULL AND session_id IS NOT NULL");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Scope })
+                .HasDatabaseName("IX_agent_memory_versions_user_project_session_scope_not_null")
+                .IsUnique()
+                .HasFilter("project_id IS NOT NULL AND session_id IS NOT NULL");
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<NovelProject>()
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ProjectKnowledgeUsage entity configuration
+        modelBuilder.Entity<ProjectKnowledgeUsage>(entity =>
+        {
+            entity.ToTable("project_knowledge_usages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.KnowledgeId).HasColumnName("knowledge_id").IsRequired();
+            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("imported");
+            entity.Property(e => e.SourceSessionId).HasColumnName("source_session_id");
+            entity.Property(e => e.SourceRunId).HasColumnName("source_run_id");
+            entity.Property(e => e.FirstSeenAt).HasColumnName("first_seen_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.LastUsedAt).HasColumnName("last_used_at");
+            entity.Property(e => e.UsageCount).HasColumnName("usage_count");
+            entity.Property(e => e.Note).HasColumnName("note");
+
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.KnowledgeId }).IsUnique();
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<KnowledgeBase>()
+                .WithMany()
+                .HasForeignKey(e => e.KnowledgeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -507,6 +818,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("running");
             entity.Property(e => e.InputParams).HasColumnName("input_params");
             entity.Property(e => e.OutputData).HasColumnName("output_data");
+            entity.Property(e => e.OutputDocumentId).HasColumnName("output_document_id");
             entity.Property(e => e.ContextPackageSize).HasColumnName("context_package_size");
             entity.Property(e => e.StartedAt).HasColumnName("started_at");
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
@@ -518,6 +830,7 @@ public class NovelAgentDbContext : DbContext
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.RunType);
+            entity.HasIndex(e => e.OutputDocumentId);
 
             entity.HasOne(e => e.User)
                 .WithMany()
@@ -528,6 +841,65 @@ public class NovelAgentDbContext : DbContext
                 .WithMany(p => p.AgentRuns)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<ContentDocument>()
+                .WithMany()
+                .HasForeignKey(e => e.OutputDocumentId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentToolExecution>(entity =>
+        {
+            entity.ToTable("agent_tool_executions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.RunId).HasColumnName("run_id");
+            entity.Property(e => e.ToolName).HasColumnName("tool_name").IsRequired();
+            entity.Property(e => e.Phase).HasColumnName("phase");
+            entity.Property(e => e.Risk).HasColumnName("risk");
+            entity.Property(e => e.ArgumentsJson).HasColumnName("arguments_json");
+            entity.Property(e => e.ArgumentsHash).HasColumnName("arguments_hash").IsRequired();
+            entity.Property(e => e.SideEffectsJson).HasColumnName("side_effects_json");
+            entity.Property(e => e.Status).HasColumnName("status").IsRequired();
+            entity.Property(e => e.ResultPhase).HasColumnName("result_phase");
+            entity.Property(e => e.ResultMessage).HasColumnName("result_message");
+            entity.Property(e => e.ErrorType).HasColumnName("error_type");
+            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+            entity.Property(e => e.RecommendedNextTool).HasColumnName("recommended_next_tool");
+            entity.Property(e => e.MissingPrerequisite).HasColumnName("missing_prerequisite");
+            entity.Property(e => e.StartedAt).HasColumnName("started_at");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+            entity.Property(e => e.DurationMs).HasColumnName("duration_ms");
+
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.StartedAt })
+                .HasDatabaseName("idx_agent_tool_executions_scope_recent");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.ToolName, e.ArgumentsHash })
+                .HasDatabaseName("idx_agent_tool_executions_dedupe");
+        });
+
+        modelBuilder.Entity<AgentToolSearchSnapshot>(entity =>
+        {
+            entity.ToTable("agent_tool_search_snapshots");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.Phase).HasColumnName("phase").IsRequired();
+            entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+            entity.Property(e => e.ToolsJson).HasColumnName("tools_json").IsRequired();
+            entity.Property(e => e.SourceExecutionId).HasColumnName("source_execution_id");
+            entity.Property(e => e.CachedAt).HasColumnName("cached_at");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Phase, e.Version })
+                .IsUnique()
+                .HasDatabaseName("idx_agent_tool_search_snapshots_scope_version");
+            entity.HasIndex(e => e.ExpiresAt)
+                .HasDatabaseName("idx_agent_tool_search_snapshots_expires_at");
         });
 
         // KnowledgeProcessingTask entity configuration
@@ -539,7 +911,6 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id");
             entity.Property(e => e.FileName).HasColumnName("file_name").IsRequired();
-            entity.Property(e => e.ContentDocumentId).HasColumnName("content_document_id");
             entity.Property(e => e.FileSize).HasColumnName("file_size");
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending");
             entity.Property(e => e.Strategy).HasColumnName("strategy").HasDefaultValue("single_pass");
@@ -548,13 +919,14 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.ProcessedChunks).HasColumnName("processed_chunks").HasDefaultValue(0);
             entity.Property(e => e.ExtractedEntriesCount).HasColumnName("extracted_entries_count").HasDefaultValue(0);
             entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+            entity.Property(e => e.UploadDocumentId).HasColumnName("upload_document_id");
             entity.Property(e => e.StartedAt).HasColumnName("started_at");
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => e.ContentDocumentId).HasDatabaseName("idx_knowledge_tasks_content_doc");
+            entity.HasIndex(e => e.UploadDocumentId);
 
             entity.HasOne(e => e.User)
                 .WithMany()
@@ -566,98 +938,10 @@ public class NovelAgentDbContext : DbContext
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasOne(e => e.ContentDocument)
+            entity.HasOne<ContentDocument>()
                 .WithMany()
-                .HasForeignKey(e => e.ContentDocumentId)
+                .HasForeignKey(e => e.UploadDocumentId)
                 .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // ContentDocument entity configuration
-        modelBuilder.Entity<ContentDocument>(entity =>
-        {
-            entity.ToTable("content_documents");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
-            entity.Property(e => e.ProjectId).HasColumnName("project_id");
-            entity.Property(e => e.SourceType).HasColumnName("source_type").IsRequired();
-            entity.Property(e => e.SourceId).HasColumnName("source_id").IsRequired();
-            entity.Property(e => e.DocumentRole).HasColumnName("document_role").IsRequired();
-            entity.Property(e => e.Title).HasColumnName("title").IsRequired();
-            entity.Property(e => e.MimeType).HasColumnName("mime_type").HasDefaultValue("text/plain");
-            entity.Property(e => e.ContentHash).HasColumnName("content_hash").IsRequired();
-            entity.Property(e => e.Version).HasColumnName("version").HasDefaultValue(1);
-            entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("active");
-            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-            entity.HasIndex(e => new { e.UserId, e.ProjectId }).HasDatabaseName("idx_content_docs_user_project");
-            entity.HasIndex(e => new { e.SourceType, e.SourceId }).IsUnique().HasDatabaseName("idx_content_docs_source");
-            entity.HasIndex(e => e.Status).HasDatabaseName("idx_content_docs_status");
-
-            entity.HasOne(e => e.User)
-                .WithMany()
-                .HasForeignKey(e => e.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.Project)
-                .WithMany()
-                .HasForeignKey(e => e.ProjectId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // ContentChunk entity configuration
-        modelBuilder.Entity<ContentChunk>(entity =>
-        {
-            entity.ToTable("content_chunks");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.DocumentId).HasColumnName("document_id").IsRequired();
-            entity.Property(e => e.ChunkIndex).HasColumnName("chunk_index").IsRequired();
-            entity.Property(e => e.ChunkText).HasColumnName("chunk_text").IsRequired();
-            entity.Property(e => e.TokenCount).HasColumnName("token_count");
-            entity.Property(e => e.CharStart).HasColumnName("char_start");
-            entity.Property(e => e.CharEnd).HasColumnName("char_end");
-            entity.Property(e => e.ContentHash).HasColumnName("content_hash").IsRequired();
-
-            entity.HasIndex(e => new { e.DocumentId, e.ChunkIndex }).IsUnique().HasDatabaseName("idx_content_chunks_doc_index");
-
-            entity.HasOne(e => e.Document)
-                .WithMany(d => d.Chunks)
-                .HasForeignKey(e => e.DocumentId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        // ContentVectorPoint entity configuration
-        modelBuilder.Entity<ContentVectorPoint>(entity =>
-        {
-            entity.ToTable("content_vector_points");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.DocumentId).HasColumnName("document_id").IsRequired();
-            entity.Property(e => e.ChunkId).HasColumnName("chunk_id");
-            entity.Property(e => e.QdrantCollection).HasColumnName("qdrant_collection").IsRequired();
-            entity.Property(e => e.QdrantPointId).HasColumnName("qdrant_point_id").IsRequired();
-            entity.Property(e => e.VectorModel).HasColumnName("vector_model").IsRequired();
-            entity.Property(e => e.IndexedAt).HasColumnName("indexed_at");
-            entity.Property(e => e.IndexStatus).HasColumnName("index_status").HasDefaultValue("pending");
-            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
-
-            entity.HasIndex(e => e.DocumentId).HasDatabaseName("idx_vector_points_doc");
-            entity.HasIndex(e => e.ChunkId).HasDatabaseName("idx_vector_points_chunk");
-            entity.HasIndex(e => new { e.QdrantCollection, e.QdrantPointId }).IsUnique().HasDatabaseName("idx_vector_points_qdrant");
-            entity.HasIndex(e => e.IndexStatus).HasDatabaseName("idx_vector_points_status");
-
-            entity.HasOne(e => e.Document)
-                .WithMany()
-                .HasForeignKey(e => e.DocumentId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.Chunk)
-                .WithMany(c => c.VectorPoints)
-                .HasForeignKey(e => e.ChunkId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
-

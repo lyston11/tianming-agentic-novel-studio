@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Framework.Common.Services;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
@@ -23,28 +24,8 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             try
             {
-                var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-                if (!Directory.Exists(chaptersPath))
-                    return string.Empty;
-
-                var files = Directory.GetFiles(chaptersPath, "*.md", SearchOption.TopDirectoryOnly);
-                if (files.Length == 0)
-                    return string.Empty;
-
-                var latest = string.Empty;
-                foreach (var file in files)
-                {
-                    var id = Path.GetFileNameWithoutExtension(file);
-                    if (string.IsNullOrWhiteSpace(id))
-                        continue;
-
-                    if (string.IsNullOrEmpty(latest) || ChapterParserHelper.CompareChapterId(id, latest) > 0)
-                    {
-                        latest = id;
-                    }
-                }
-
-                return latest;
+                var chapterCatalog = ServiceLocator.TryGet<IChapterCatalogService>();
+                return chapterCatalog?.GetLatestChapterIdAsync().GetAwaiter().GetResult() ?? string.Empty;
             }
             catch
             {

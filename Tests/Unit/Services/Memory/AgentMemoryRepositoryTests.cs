@@ -2,6 +2,7 @@ using Xunit;
 using Moq;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
@@ -117,6 +118,95 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
+    public async Task GetSessionMemoryAsync_IgnoresLegacyUploadedKnowledgeRows()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+        var sessionId = "session789";
+        _dbContext.AgentMemories.Add(new AgentMemory
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = projectId,
+            SessionId = sessionId,
+            MemoryType = "session.recent_uploaded_knowledge_ids",
+            MemoryKey = "recent_uploaded_knowledge_ids",
+            Content = JsonSerializer.Serialize(new List<string> { "knowledge-1" })
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(It.IsAny<string>(), It.IsAny<Func<Task<SessionMemory>>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<SessionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<SessionMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionMemory?)null);
+
+        var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
+
+        Assert.Equal(string.Empty, result.CurrentGoal);
+        Assert.Empty(result.OpenQuestions);
+        Assert.Empty(result.RecentObservations);
+    }
+
+    [Fact]
+    public async Task UpdateSessionMemoryAsync_WritesSessionScopedRowsAndInvalidatesExactCache()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+        var sessionId = "session789";
+        var otherSessionId = "session-other";
+        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+        var updates = new Dictionary<string, object>
+        {
+            ["session.current_goal"] = "finish draft"
+        };
+
+        _dbContext.AgentMemories.Add(new AgentMemory
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = projectId,
+            SessionId = otherSessionId,
+            MemoryType = "session.current_goal",
+            MemoryKey = "current_goal",
+            Content = JsonSerializer.Serialize("other goal")
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                cacheKey,
+                It.IsAny<Func<Task<SessionMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<SessionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<SessionMemory>(cacheKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionMemory?)null);
+
+        await _repository.UpdateSessionMemoryAsync(userId, projectId, sessionId, updates);
+
+        var saved = await _dbContext.AgentMemories.SingleAsync(m =>
+            m.UserId == userId &&
+            m.ProjectId == projectId &&
+            m.SessionId == sessionId &&
+            m.MemoryType == "session.current_goal");
+        Assert.Equal("current_goal", saved.MemoryKey);
+        Assert.Equal(JsonSerializer.Serialize("finish draft"), saved.Content);
+
+        var otherSession = await _dbContext.AgentMemories.SingleAsync(m =>
+            m.UserId == userId &&
+            m.ProjectId == projectId &&
+            m.SessionId == otherSessionId &&
+            m.MemoryType == "session.current_goal");
+        Assert.Equal(JsonSerializer.Serialize("other goal"), otherSession.Content);
+
+        _mockMemoryCache.Verify(x => x.Remove(cacheKey), Times.Once);
+        _mockRedisCache.Verify(x => x.RemoveAsync(cacheKey, It.IsAny<CancellationToken>()), Times.Once);
+
+        var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
+
+        Assert.Equal("finish draft", result.CurrentGoal);
+    }
+
+    [Fact]
     public async Task GetProjectMemoryAsync_DeserializesDataCorrectly_WhenDataExists()
     {
         var userId = "user123";
@@ -194,4 +284,68 @@ public class AgentMemoryRepositoryTests
         _mockMemoryCache.Verify(x => x.Remove(It.IsAny<string>()), Times.Exactly(2));
         _mockRedisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
+
+    [Fact]
+    public async Task UnionMemoryAsync_ConcurrentSqliteCallsPreserveAllListValues()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            setupDb.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        var tasks = Enumerable.Range(0, 16).Select(async i =>
+        {
+            await using var db = new NovelAgentDbContext(options);
+            var repository = CreateRepository(db);
+            await repository.UnionMemoryAsync(
+                "user-1",
+                "project-1",
+                new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["execution.repeated_blockers"] = new[] { $"blocker-{i}" }
+                });
+        });
+
+        await Task.WhenAll(tasks);
+
+        await using var verifyDb = new NovelAgentDbContext(options);
+        var rows = await verifyDb.AgentMemories
+            .Where(m => m.UserId == "user-1" &&
+                        m.ProjectId == "project-1" &&
+                        m.MemoryType == "execution.repeated_blockers")
+            .ToListAsync();
+
+        var row = Assert.Single(rows);
+        Assert.Equal("repeated_blockers", row.MemoryKey);
+        var values = JsonSerializer.Deserialize<List<string>>(row.Content) ?? new();
+        Assert.Equal(16, values.Count);
+        foreach (var expected in Enumerable.Range(0, 16).Select(i => $"blocker-{i}"))
+            Assert.Contains(expected, values);
+    }
+
+    private AgentMemoryRepository CreateRepository(NovelAgentDbContext dbContext) =>
+        new(
+            dbContext,
+            _mockRedisCache.Object,
+            _mockMemoryCache.Object,
+            _mockVectorStore.Object,
+            _mockEmbedding.Object,
+            _mockLogger.Object);
+
+    private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
+    {
+        var connection = new SqliteConnection($"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared");
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static DbContextOptions<NovelAgentDbContext> CreateSqliteOptions(string connectionString) =>
+        new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .Options;
 }

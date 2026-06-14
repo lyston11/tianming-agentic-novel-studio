@@ -95,33 +95,40 @@ public class MemoryCacheService : IMemoryCacheService
     {
         lock (_prefixLock)
         {
-            if (_keysByPrefix.TryGetValue(keyPrefix, out var keys))
-            {
-                foreach (var key in keys.ToList())
-                {
-                    _cache.Remove(key);
-                }
+            var keys = _keysByPrefix.Keys
+                .Where(key => IsPrefixMatch(key, keyPrefix))
+                .ToList();
 
-                _keysByPrefix.TryRemove(keyPrefix, out _);
-                _logger.LogDebug("Removed {Count} cache entries with prefix: {KeyPrefix}", keys.Count, keyPrefix);
+            foreach (var key in keys)
+            {
+                _cache.Remove(key);
+                _keysByPrefix.TryRemove(key, out _);
             }
+
+            _logger.LogDebug("Removed {Count} cache entries with prefix: {KeyPrefix}", keys.Count, keyPrefix);
         }
+    }
+
+    private static bool IsPrefixMatch(string key, string keyPrefix)
+    {
+        if (keyPrefix.EndsWith(':'))
+        {
+            return key.StartsWith(keyPrefix, StringComparison.Ordinal);
+        }
+
+        return key.Length == keyPrefix.Length
+            ? string.Equals(key, keyPrefix, StringComparison.Ordinal)
+            : key.StartsWith(keyPrefix, StringComparison.Ordinal) && key[keyPrefix.Length] == ':';
     }
 
     private void TrackKeyPrefix(string key)
     {
-        // Extract prefix (everything before the first colon)
-        var colonIndex = key.IndexOf(':');
-        if (colonIndex < 0) return;
-
-        var prefix = key.Substring(0, colonIndex);
-
         lock (_prefixLock)
         {
-            if (!_keysByPrefix.TryGetValue(prefix, out var keys))
+            if (!_keysByPrefix.TryGetValue(key, out var keys))
             {
                 keys = new HashSet<string>();
-                _keysByPrefix[prefix] = keys;
+                _keysByPrefix[key] = keys;
             }
 
             keys.Add(key);
@@ -130,21 +137,15 @@ public class MemoryCacheService : IMemoryCacheService
 
     private void RemoveKeyFromPrefixTracking(string key)
     {
-        var colonIndex = key.IndexOf(':');
-        if (colonIndex < 0) return;
-
-        var prefix = key.Substring(0, colonIndex);
-
         lock (_prefixLock)
         {
-            if (_keysByPrefix.TryGetValue(prefix, out var keys))
+            if (_keysByPrefix.TryGetValue(key, out var keys))
             {
                 keys.Remove(key);
 
-                // Clean up empty prefix tracking
                 if (keys.Count == 0)
                 {
-                    _keysByPrefix.TryRemove(prefix, out _);
+                    _keysByPrefix.TryRemove(key, out _);
                 }
             }
         }

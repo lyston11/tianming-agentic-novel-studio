@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Modules.ProjectData.Implementations;
-using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.TaskContexts;
 
@@ -14,17 +13,17 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
     public sealed class StoryStateSnapshotService
     {
         private readonly IGuideContextService _guideContextService;
-        private readonly ContentChunkSearchService _contentChunkSearchService;
+        private readonly IContentChunkSearchService _contentChunkSearchService;
         private readonly StoryBibleService _storyBibleService;
-        private readonly ChapterEmbeddingIndex? _chapterEmbeddingIndex;
+        private readonly IVectorIndex? _chapterEmbeddingIndex;
         private readonly IChunkEmbeddingIndex? _chunkEmbeddingIndex;
         private readonly IMicroEmbeddingService? _embeddingService;
 
         public StoryStateSnapshotService(
             IGuideContextService guideContextService,
-            ContentChunkSearchService contentChunkSearchService,
+            IContentChunkSearchService contentChunkSearchService,
             StoryBibleService storyBibleService,
-            ChapterEmbeddingIndex? chapterEmbeddingIndex = null,
+            IVectorIndex? chapterEmbeddingIndex = null,
             IChunkEmbeddingIndex? chunkEmbeddingIndex = null,
             IMicroEmbeddingService? embeddingService = null)
         {

@@ -10,7 +10,7 @@ namespace TM.Web.NovelAgentWeb.Services.VectorStore;
 /// <summary>
 /// Background service that periodically checks Qdrant health status.
 /// </summary>
-public class QdrantHealthCheck : BackgroundService
+public class QdrantHealthCheck : BackgroundService, IQdrantHealthProbe
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<QdrantHealthCheck> _logger;
@@ -25,9 +25,15 @@ public class QdrantHealthCheck : BackgroundService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
 
-        var qdrantHost = configuration["Qdrant:Host"] ?? "localhost";
-        var qdrantPort = configuration.GetValue<int>("Qdrant:Port", 6333);
-        var qdrantBaseUrl = $"http://{qdrantHost}:{qdrantPort}";
+        var qdrantBaseUrl = configuration["Qdrant:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(qdrantBaseUrl))
+        {
+            var qdrantHost = configuration["Qdrant:Host"] ?? "localhost";
+            var qdrantPort = configuration.GetValue<int>("Qdrant:HttpPort", 6333);
+            qdrantBaseUrl = $"http://{qdrantHost}:{qdrantPort}";
+        }
+
+        qdrantBaseUrl = qdrantBaseUrl.TrimEnd('/');
         _qdrantHealthUrl = $"{qdrantBaseUrl}/healthz";
 
         var intervalSeconds = configuration.GetValue<int>("Qdrant:HealthCheckIntervalSeconds", 60);

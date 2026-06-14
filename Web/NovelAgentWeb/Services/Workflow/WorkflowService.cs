@@ -17,6 +17,7 @@ public class WorkflowService : IWorkflowService
     private readonly ICurrentUserService _currentUserService;
     private readonly IWorkspaceFactory _workspaceFactory;
     private readonly AgentSessionManager _sessionManager;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WorkflowService> _logger;
 
     public WorkflowService(
@@ -24,12 +25,14 @@ public class WorkflowService : IWorkflowService
         ICurrentUserService currentUserService,
         IWorkspaceFactory workspaceFactory,
         AgentSessionManager sessionManager,
+        IServiceScopeFactory scopeFactory,
         ILogger<WorkflowService> logger)
     {
         _db = db;
         _currentUserService = currentUserService;
         _workspaceFactory = workspaceFactory;
         _sessionManager = sessionManager;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -46,7 +49,7 @@ public class WorkflowService : IWorkflowService
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
         try
         {
-            var catalog = new NovelProjectCatalog(workspaceEntry.Workspace);
+            var catalog = new NovelProjectCatalog(workspaceEntry.Workspace, _scopeFactory);
             await catalog.UpsertAsync(MapToCatalogProject(project), makeActive: false, ct);
 
             var workflow = await ProjectWorkflow.BuildAsync(
@@ -263,9 +266,6 @@ public class WorkflowService : IWorkflowService
             CoreHook = project.CoreHook ?? project.StoryConstitution?.CoreHook ?? string.Empty,
             ReaderPromise = project.StoryConstitution?.ReaderPromise ?? string.Empty,
             Status = project.Status,
-            StorageProjectName = string.IsNullOrWhiteSpace(project.StorageProjectName)
-                ? $"AgenticNovelStudio__novel__{project.Id[..Math.Min(project.Id.Length, 8)]}"
-                : project.StorageProjectName,
             CreatedAt = project.CreatedAt,
             UpdatedAt = project.UpdatedAt
         };

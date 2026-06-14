@@ -11,8 +11,5 @@ public class ContentVectorPoint
     public DateTime? IndexedAt { get; set; }
     public string IndexStatus { get; set; } = "pending";
     public string? ErrorMessage { get; set; }
-
-    // Navigation properties
     public ContentDocument Document { get; set; } = null!;
-    public ContentChunk? Chunk { get; set; }
 }

@@ -29,8 +29,7 @@ public sealed record AgentSessionSummary(
     string? ActiveRunId,
     bool IsArchived,
     string UpdatedAt,
-    int MessageCount,
-    AgentWorkingMemorySnapshot Memory);
+    int MessageCount);
 
 public sealed record AgentSessionDetail(
     string SessionId,
@@ -176,11 +175,6 @@ public sealed record WorkflowChapterArtifactSummary(
     IReadOnlyList<string> SourceRunIds,
     int LifecycleRank,
     bool IsCurrent);
-
-public sealed class MaterialLibraryDocument
-{
-    public List<MaterialReference> Materials { get; set; } = new();
-}
 
 public sealed class MaterialReference
 {

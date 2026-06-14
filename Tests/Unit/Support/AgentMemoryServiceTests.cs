@@ -101,42 +101,181 @@ public class AgentMemoryServiceTests
 
         Assert.True(repository.ProjectUpdates.TryGetValue("project.constraints", out var constraints));
         Assert.Contains("保持节奏紧凑", Assert.IsType<List<string>>(constraints));
-        Assert.True(repository.ProjectUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
         Assert.Contains("kb-new", Assert.IsType<List<string>>(knowledgeIds));
-        Assert.True(repository.ProjectUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
         Assert.Contains("ValidateChapterDraft 发现节奏问题", Assert.IsType<List<string>>(blockers));
         Assert.True(repository.AuthorUpdates.TryGetValue("author.style_likes", out var styleLikes));
         Assert.Contains("细腻心理描写", Assert.IsType<List<string>>(styleLikes));
+        Assert.False(repository.ProjectUpdates.ContainsKey("project.referenced_knowledge_ids"));
+        Assert.False(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
     }
 
     [Fact]
-    public async Task PersistAsync_WithNoMemoryUpdate_DoesNotWriteRepository()
+    public async Task PersistAsync_WithNoMemoryUpdate_PersistsRuleBasedExecutionAndAuthorChanges()
     {
         var repository = new RecordingMemoryRepository();
         var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession { UserId = "user-1" };
+        session.WorkingMemory.ExecutionMemory.RepeatedBlockers.Add("ValidateChapterDraft 失败：节奏拖慢");
+        session.WorkingMemory.AuthorMemory.StyleDislikes.Add("文风重复");
 
-        await service.PersistAsync(
-            new AgentSession { UserId = "user-1" },
-            new NovelProjectInfo { Id = "project-1" },
-            new StoryBibleDocument(),
-            new AgentReflection());
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection
+        {
+            QualityGate = new AgentQualityGateReport { Status = "fail", RewriteDecision = "节奏拖慢" }
+        });
 
-        Assert.Empty(repository.ProjectUpdates);
-        Assert.Empty(repository.AuthorUpdates);
-        Assert.Equal(0, repository.UpdateMemoryCallCount);
+        Assert.True(repository.ProjectUnionUpdates.ContainsKey("execution.repeated_blockers"));
+        Assert.True(repository.AuthorUnionUpdates.ContainsKey("author.style_dislikes"));
+        Assert.False(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.style_dislikes"));
+    }
+
+    [Fact]
+    public async Task PersistAsync_WithNoMemoryUpdate_MergesRepositoryListsBeforePersistingRuleBasedChanges()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            ProjectMemory = new ProjectMemory
+            {
+                ReferencedKnowledgeIds = new List<string> { "other-session-knowledge" },
+                UsedTropePatterns = new List<string> { "other-session-pattern" }
+            },
+            AuthorMemory = new AuthorMemory
+            {
+                StyleDislikes = new List<string> { "other-session dislike" }
+            },
+            ExecutionMemory = new ExecutionMemory
+            {
+                RepeatedBlockers = new List<string> { "other-session blocker" },
+                SuccessfulRepairNotes = new List<string> { "other-session repair" }
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession { UserId = "user-1" };
+        session.WorkingMemory.ProjectMemory.ReferencedKnowledgeIds.Add("current-session-knowledge");
+        session.WorkingMemory.ProjectMemory.UsedTropePatterns.Add("current-session-pattern");
+        session.WorkingMemory.AuthorMemory.StyleDislikes.Add("current-session dislike");
+        session.WorkingMemory.ExecutionMemory.RepeatedBlockers.Add("current-session blocker");
+        session.WorkingMemory.ExecutionMemory.SuccessfulRepairNotes.Add("current-session repair");
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
+
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.Contains("other-session blocker", Assert.IsType<List<string>>(blockers));
+        Assert.Contains("current-session blocker", Assert.IsType<List<string>>(blockers));
+
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.successful_repairs", out var repairs));
+        Assert.Contains("other-session repair", Assert.IsType<List<string>>(repairs));
+        Assert.Contains("current-session repair", Assert.IsType<List<string>>(repairs));
+
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.style_dislikes", out var dislikes));
+        Assert.Contains("other-session dislike", Assert.IsType<List<string>>(dislikes));
+        Assert.Contains("current-session dislike", Assert.IsType<List<string>>(dislikes));
+
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
+        Assert.Contains("other-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
+        Assert.Contains("current-session-knowledge", Assert.IsType<List<string>>(knowledgeIds));
+
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.used_trope_patterns", out var tropePatterns));
+        Assert.Contains("other-session-pattern", Assert.IsType<List<string>>(tropePatterns));
+        Assert.Contains("current-session-pattern", Assert.IsType<List<string>>(tropePatterns));
+    }
+
+    [Fact]
+    public async Task PersistAsync_PersistsSessionRuntimeMemoryToSessionMemoryRepository()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+        session.WorkingMemory.CurrentGoal = "推进第一章候选";
+        session.WorkingMemory.OpenQuestions.Add("主角第一次失败的代价是什么？");
+        session.WorkingMemory.UserPreferences.Add("避免现代网络梗");
+        session.WorkingMemory.RecentObservations.Add(new AgentRuntimeObservation
+        {
+            ToolName = "PlanChapter",
+            Message = "生成了三个章节候选",
+            Phase = "chapter_candidates"
+        });
+        session.WorkingMemory.PendingToolCall = new AgentToolCall { Name = "SelectChapterCandidate" };
+        session.WorkingMemory.LastDecision = new AgentDecision { Intent = "select_chapter_candidate" };
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
+
+        Assert.Equal("user-1", repository.LastSessionUserId);
+        Assert.Equal("project-1", repository.LastSessionProjectId);
+        Assert.Equal("session-1", repository.LastSessionId);
+        Assert.True(repository.SessionUpdates.TryGetValue("session.current_goal", out var currentGoal));
+        Assert.Equal("推进第一章候选", Assert.IsType<string>(currentGoal));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.open_questions", out var openQuestions));
+        Assert.Contains("主角第一次失败的代价是什么？", Assert.IsType<List<string>>(openQuestions));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.short_term_preferences", out var preferences));
+        Assert.Contains("避免现代网络梗", Assert.IsType<List<string>>(preferences));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.recent_observations", out var observations));
+        Assert.Contains("PlanChapter: 生成了三个章节候选", Assert.IsType<List<string>>(observations));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.pending_tool_name", out var pendingToolName));
+        Assert.Equal("SelectChapterCandidate", Assert.IsType<string>(pendingToolName));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.last_intent", out var lastIntent));
+        Assert.Equal("select_chapter_candidate", Assert.IsType<string>(lastIntent));
+    }
+
+    [Fact]
+    public async Task HydrateAsync_RestoresSessionMemoryIntoRuntimeWorkingMemory()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            SessionMemory = new SessionMemory
+            {
+                CurrentGoal = "缓存里的当前目标",
+                OpenQuestions = new List<string> { "缓存里的问题" },
+                ShortTermPreferences = new List<string> { "缓存里的偏好" },
+                RecentObservations = new List<string> { "缓存里的观察" },
+                PendingToolName = "PlanChapter",
+                LastIntent = "plan_chapter"
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+
+        await service.HydrateAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument());
+
+        Assert.Equal("缓存里的当前目标", session.WorkingMemory.CurrentGoal);
+        Assert.Contains("缓存里的问题", session.WorkingMemory.OpenQuestions);
+        Assert.Contains("缓存里的偏好", session.WorkingMemory.UserPreferences);
+        Assert.Equal("缓存里的当前目标", session.WorkingMemory.SessionMemory.CurrentGoal);
+        Assert.Equal("PlanChapter", session.WorkingMemory.SessionMemory.PendingToolName);
+        Assert.Equal("plan_chapter", session.WorkingMemory.SessionMemory.LastIntent);
     }
 
     private sealed class RecordingMemoryRepository : IAgentMemoryRepository
     {
         public ProjectMemory ProjectMemory { get; set; } = new();
+        public SessionMemory SessionMemory { get; set; } = new();
         public AuthorMemory AuthorMemory { get; set; } = new();
         public ExecutionMemory ExecutionMemory { get; set; } = new();
         public Dictionary<string, object> ProjectUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> SessionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> ProjectUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> AuthorUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int UpdateMemoryCallCount { get; private set; }
+        public string LastSessionUserId { get; private set; } = string.Empty;
+        public string LastSessionProjectId { get; private set; } = string.Empty;
+        public string LastSessionId { get; private set; } = string.Empty;
 
         public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
             => Task.FromResult(ProjectMemory);
+
+        public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+            => Task.FromResult(SessionMemory);
 
         public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
             => Task.FromResult(AuthorMemory);
@@ -156,6 +295,24 @@ public class AgentMemoryServiceTests
             var target = projectId == null ? AuthorUpdates : ProjectUpdates;
             foreach (var (key, value) in updates)
                 target[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
+        {
+            var target = projectId == null ? AuthorUnionUpdates : ProjectUnionUpdates;
+            foreach (var (key, value) in updates)
+                target[key] = value.ToList();
+            return Task.CompletedTask;
+        }
+
+        public Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
+        {
+            LastSessionUserId = userId;
+            LastSessionProjectId = projectId;
+            LastSessionId = sessionId;
+            foreach (var (key, value) in updates)
+                SessionUpdates[key] = value;
             return Task.CompletedTask;
         }
     }

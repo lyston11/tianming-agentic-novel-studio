@@ -18,19 +18,21 @@ public sealed class ProjectScopedExecutor
 
     public async Task<T> RunProjectAsync<T>(string? projectId, Func<Task<T>> operation, CancellationToken ct = default)
     {
-        var project = !string.IsNullOrWhiteSpace(projectId)
-            ? await _catalog.FindAsync(projectId, ct).ConfigureAwait(false)
-            : null;
-        project ??= await _catalog.GetActiveAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(projectId))
+            throw new InvalidOperationException("No project id was provided for project-scoped execution.");
+
+        var project = await _catalog.FindAsync(projectId, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Project {projectId} not found.");
         return await _catalog.WithProjectAsync(project, operation, ct).ConfigureAwait(false);
     }
 
     public async Task<T> RunSessionAsync<T>(AgentSession session, Func<Task<T>> operation, CancellationToken ct = default)
     {
-        var project = !string.IsNullOrWhiteSpace(session.ActiveProjectId)
-            ? await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false)
-            : null;
-        project ??= await _catalog.GetActiveAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+            throw new InvalidOperationException("No active project in session.");
+
+        var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Project {session.ActiveProjectId} not found.");
         session.ActiveProjectId = project.Id;
         return await _catalog.WithProjectAsync(project, operation, ct).ConfigureAwait(false);
     }

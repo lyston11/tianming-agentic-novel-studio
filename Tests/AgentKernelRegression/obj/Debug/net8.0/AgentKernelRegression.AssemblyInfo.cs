@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AgentKernelRegression")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a295e83d0e3c473ce91b678d3464cedad532e342")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a9428f4e17e5f11bb425d5fe920dfc4809eb2815")]
 [assembly: System.Reflection.AssemblyProductAttribute("AgentKernelRegression")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AgentKernelRegression")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

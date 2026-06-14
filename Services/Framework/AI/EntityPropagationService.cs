@@ -435,10 +435,10 @@ namespace TM.Services.Framework.AI
             var details = new StringBuilder();
             int count = 0;
 
-            TM.Services.Modules.ProjectData.Implementations.GeneratedContentService contentService;
+            TM.Services.Modules.ProjectData.Interfaces.IGeneratedContentService contentService;
             try
             {
-                contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Implementations.GeneratedContentService>();
+                contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Interfaces.IGeneratedContentService>();
             }
             catch (Exception ex)
             {

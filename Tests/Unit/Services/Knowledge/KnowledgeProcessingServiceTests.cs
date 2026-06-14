@@ -8,7 +8,9 @@ using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace Tests.Unit.Services.Knowledge;
@@ -26,7 +28,6 @@ public class KnowledgeProcessingServiceTests : IDisposable
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
     private readonly Mock<ILogger<KnowledgeProcessingService>> _mockLogger;
     private readonly KnowledgeProcessingService _service;
-    private readonly string _tempSettingsPath;
 
     public KnowledgeProcessingServiceTests()
     {
@@ -36,16 +37,8 @@ public class KnowledgeProcessingServiceTests : IDisposable
             .Options;
         _db = new NovelAgentDbContext(options);
 
-        // Create a real UserSettingsManager with temp path
-        _tempSettingsPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempSettingsPath);
-        _settingsManager = new UserSettingsManager(_tempSettingsPath, "test-project", null, null);
-
-        // Write default settings file
-        var settingsDir = Path.Combine(_tempSettingsPath, "Projects", "test-project", "Settings");
-        Directory.CreateDirectory(settingsDir);
-        var settingsFile = Path.Combine(settingsDir, "user_settings.json");
-        File.WriteAllText(settingsFile, System.Text.Json.JsonSerializer.Serialize(new UserSettings
+        _settingsManager = new UserSettingsManager(string.Empty, "test-project", null, null);
+        _settingsManager.SaveAsync(new UserSettings
         {
             LlmProvider = "openai",
             LlmBaseUrl = "https://api.openai.com/v1",
@@ -53,7 +46,7 @@ public class KnowledgeProcessingServiceTests : IDisposable
             LlmApiKey = "test-key",
             LlmTemperature = 0.7,
             LlmMaxTokens = 2000
-        }));
+        }).GetAwaiter().GetResult();
 
         // Setup mocks
         _mockKnowledgeService = new Mock<IKnowledgeService>();
@@ -67,19 +60,14 @@ public class KnowledgeProcessingServiceTests : IDisposable
             _mockEmbedding.Object,
             _settingsManager,
             _mockHttpClientFactory.Object,
-            _mockLogger.Object
+            _mockLogger.Object,
+            new ContentDocumentService(_db)
         );
     }
 
     public void Dispose()
     {
         _db.Dispose();
-
-        // Clean up temp settings directory
-        if (Directory.Exists(_tempSettingsPath))
-        {
-            Directory.Delete(_tempSettingsPath, true);
-        }
 
         GC.SuppressFinalize(this);
     }
@@ -311,20 +299,9 @@ public class KnowledgeProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessFileAsync_ShortFile_UsesSinglePassStrategy()
     {
-        // Arrange: Create a test file with short content
-        var testFilePath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.txt");
+        // Arrange: Create uploaded content in SQLite content documents
         var shortContent = new string('测', 2000); // ~1500 tokens
-        await File.WriteAllTextAsync(testFilePath, shortContent);
-
-        var task = new TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask
-        {
-            Id = Guid.NewGuid().ToString(),
-            ProjectId = "test-project",
-            FilePath = testFilePath,
-            Status = "pending"
-        };
-        _db.KnowledgeProcessingTasks.Add(task);
-        await _db.SaveChangesAsync();
+        var task = await CreateTaskWithUploadContentAsync(shortContent);
 
         // Mock HTTP client
         var mockResponse = new HttpResponseMessage
@@ -352,8 +329,8 @@ public class KnowledgeProcessingServiceTests : IDisposable
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
         // Mock knowledge service
-        _mockKnowledgeService.Setup(x => x.CreateKnowledgeAsync(It.IsAny<CreateKnowledgeRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new KnowledgeResponse { Id = "test-id", ProjectId = "test-project", EntryType = "GenrePrinciple", Title = "Test", Content = "Test", CreatedAt = DateTime.UtcNow });
+        _mockKnowledgeService.Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse { Id = "test-id", UsageProjectId = "test-project", EntryType = "GenrePrinciple", Title = "Test", Content = "Test", CreatedAt = DateTime.UtcNow });
 
         // Act
         var result = await _service.ProcessFileAsync(task.Id);
@@ -366,9 +343,6 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Equal("completed", updatedTask!.Status);
         Assert.Equal("single_pass", updatedTask.Strategy);
         Assert.Equal(1, updatedTask.ExtractedEntriesCount);
-
-        // Cleanup
-        File.Delete(testFilePath);
     }
 
     /// <summary>
@@ -377,20 +351,9 @@ public class KnowledgeProcessingServiceTests : IDisposable
     [Fact]
     public async Task ProcessFileAsync_LongFile_UsesChunkedStrategy()
     {
-        // Arrange: Create a test file with long content (>6000 tokens)
-        var testFilePath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.txt");
+        // Arrange: Create uploaded content in SQLite content documents (>6000 tokens)
         var longContent = new string('测', 10000); // ~7500 tokens
-        await File.WriteAllTextAsync(testFilePath, longContent);
-
-        var task = new TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask
-        {
-            Id = Guid.NewGuid().ToString(),
-            ProjectId = "test-project",
-            FilePath = testFilePath,
-            Status = "pending"
-        };
-        _db.KnowledgeProcessingTasks.Add(task);
-        await _db.SaveChangesAsync();
+        var task = await CreateTaskWithUploadContentAsync(longContent);
 
         // Mock HTTP client with multiple responses (chunked + aggregation)
         var callCount = 0;
@@ -447,8 +410,8 @@ public class KnowledgeProcessingServiceTests : IDisposable
             });
 
         // Mock knowledge service
-        _mockKnowledgeService.Setup(x => x.CreateKnowledgeAsync(It.IsAny<CreateKnowledgeRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new KnowledgeResponse { Id = "test-id", ProjectId = "test-project", EntryType = "GenrePrinciple", Title = "Test", Content = "Test", CreatedAt = DateTime.UtcNow });
+        _mockKnowledgeService.Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse { Id = "test-id", UsageProjectId = "test-project", EntryType = "GenrePrinciple", Title = "Test", Content = "Test", CreatedAt = DateTime.UtcNow });
 
         // Act
         var result = await _service.ProcessFileAsync(task.Id);
@@ -462,9 +425,70 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.True(updatedTask.TotalChunks > 1);
         Assert.Equal(updatedTask.TotalChunks, updatedTask.ProcessedChunks);
         Assert.Equal(100, updatedTask.Progress);
+    }
 
-        // Cleanup
-        File.Delete(testFilePath);
+    [Fact]
+    public async Task ProcessFileAsync_DoesNotRecordProcessedKnowledgeAsProjectImportedMemory()
+    {
+        var shortContent = new string('测', 2000);
+        var task = await CreateTaskWithUploadContentAsync(shortContent);
+        var memoryEvents = new Mock<IAgentMemoryEventService>();
+        var service = new KnowledgeProcessingService(
+            _db,
+            _mockKnowledgeService.Object,
+            _mockEmbedding.Object,
+            _settingsManager,
+            _mockHttpClientFactory.Object,
+            _mockLogger.Object,
+            new ContentDocumentService(_db),
+            memoryEvents.Object);
+
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(@"{
+                ""choices"": [{
+                    ""message"": {
+                        ""content"": ""[{\""title\"":\""测试条目\"",\""category\"":\""GenrePrinciple\"",\""content\"":\""测试内容\"",\""tags\"":[\""测试\""],\""weight\"":5}]""
+                    }
+                }]
+            }", Encoding.UTF8, "application/json")
+        };
+        var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
+        mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(mockResponse);
+        _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient(mockHttpMessageHandler.Object));
+        _mockKnowledgeService
+            .Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse
+            {
+                Id = "test-id",
+                UsageProjectId = "test-project",
+                EntryType = "GenrePrinciple",
+                Title = "Test",
+                Content = "Test",
+                CreatedAt = DateTime.UtcNow
+            });
+
+        await service.ProcessFileAsync(task.Id);
+
+        memoryEvents.Verify(x => x.AppendAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                "project",
+                "imported_knowledge_ids",
+                It.IsAny<object>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     /// <summary>
@@ -485,22 +509,9 @@ public class KnowledgeProcessingServiceTests : IDisposable
     public async Task ProcessFileAsync_MissingLlmSettings_ThrowsException()
     {
         // Arrange
-        var testFilePath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.txt");
-        await File.WriteAllTextAsync(testFilePath, "test content");
+        var task = await CreateTaskWithUploadContentAsync("test content");
 
-        var task = new TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask
-        {
-            Id = Guid.NewGuid().ToString(),
-            ProjectId = "test-project",
-            FilePath = testFilePath,
-            Status = "pending"
-        };
-        _db.KnowledgeProcessingTasks.Add(task);
-        await _db.SaveChangesAsync();
-
-        // Write settings with missing API key
-        var settingsFile = Path.Combine(_tempSettingsPath, "Projects", "test-project", "Settings", "user_settings.json");
-        File.WriteAllText(settingsFile, System.Text.Json.JsonSerializer.Serialize(new UserSettings
+        await _settingsManager.SaveAsync(new UserSettings
         {
             LlmProvider = "openai",
             LlmBaseUrl = "https://api.openai.com/v1",
@@ -508,7 +519,7 @@ public class KnowledgeProcessingServiceTests : IDisposable
             LlmApiKey = "", // Missing
             LlmTemperature = 0.7,
             LlmMaxTokens = 2000
-        }));
+        });
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -517,8 +528,33 @@ public class KnowledgeProcessingServiceTests : IDisposable
         // Verify task marked as failed
         var updatedTask = await _db.KnowledgeProcessingTasks.FindAsync(task.Id);
         Assert.Equal("failed", updatedTask!.Status);
+    }
 
-        // Cleanup
-        File.Delete(testFilePath);
+    private async Task<TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask> CreateTaskWithUploadContentAsync(string content)
+    {
+        var task = new TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = "user-1",
+            ProjectId = "test-project",
+            FileName = "uploaded.txt",
+            FileSize = Encoding.UTF8.GetByteCount(content),
+            Status = "pending",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.KnowledgeProcessingTasks.Add(task);
+        await _db.SaveChangesAsync();
+
+        await new ContentDocumentService(_db).SaveTextAsync(
+            task.UserId,
+            task.ProjectId,
+            "knowledge_upload",
+            task.Id,
+            "upload_raw",
+            task.FileName,
+            content);
+
+        return task;
     }
 }

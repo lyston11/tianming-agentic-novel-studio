@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Framework.Common.Services;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
 namespace TM.Services.Modules.ProjectData.Implementations
@@ -40,25 +42,8 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             try
             {
-                var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-                if (!System.IO.Directory.Exists(chaptersPath))
-                    return 0;
-
-                var volumePrefix = $"vol{volumeNumber}_ch";
-                var chapterFiles = System.IO.Directory.GetFiles(chaptersPath, $"vol{volumeNumber}_ch*.md");
-
-                if (chapterFiles.Length == 0)
-                    return 0;
-
-                var maxChapter = chapterFiles
-                    .Select(f => System.IO.Path.GetFileNameWithoutExtension(f))
-                    .Select(name => ChapterParserHelper.ParseChapterId(name))
-                    .Where(p => p != null)
-                    .Select(p => p!.Value.chapterNumber)
-                    .DefaultIfEmpty(0)
-                    .Max();
-
-                return maxChapter;
+                var chapterCatalog = ServiceLocator.TryGet<IChapterCatalogService>();
+                return chapterCatalog?.GetLastChapterNumberOfVolumeAsync(volumeNumber).GetAwaiter().GetResult() ?? 0;
             }
             catch (Exception ex)
             {

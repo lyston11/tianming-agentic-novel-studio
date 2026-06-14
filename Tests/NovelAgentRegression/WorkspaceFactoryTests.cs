@@ -79,9 +79,9 @@ public class WorkspaceFactoryTests : IDisposable
         envMock.Setup(e => e.ContentRootPath).Returns(Path.GetTempPath());
         services.AddSingleton(envMock.Object);
 
-        // Add UserSettingsManager mock
-        var settingsManagerMock = new Mock<UserSettingsManager>();
-        services.AddSingleton(settingsManagerMock.Object);
+        services.AddSingleton(new UserSettingsManager(
+            Path.GetTempPath(),
+            "WorkspaceFactoryTests"));
 
         _serviceProvider = services.BuildServiceProvider();
     }

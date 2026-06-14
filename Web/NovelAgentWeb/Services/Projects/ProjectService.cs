@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
@@ -7,7 +6,6 @@ using TM.Web.NovelAgentWeb.Models.Common;
 using TM.Web.NovelAgentWeb.Models.Projects;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Caching;
-using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Projects;
 
@@ -20,29 +18,22 @@ public class ProjectService : IProjectService
     private const int DefaultPageSize = 20;
     private static readonly TimeSpan ProjectCacheDuration = TimeSpan.FromMinutes(1);
 
-    private readonly NovelAgentDbContext _context;
-    private readonly IVectorStore _vectorStore;
-    private readonly ILogger<ProjectService> _logger;
-    private readonly IMemoryCacheService _cache;
-    private readonly IConfiguration _configuration;
-    private readonly IWebHostEnvironment _environment;
-    private readonly object _legacyCatalogLock = new();
+        private readonly NovelAgentDbContext _context;
+        private readonly IVectorStore _vectorStore;
+        private readonly ILogger<ProjectService> _logger;
+        private readonly IMemoryCacheService _cache;
 
-    public ProjectService(
-        NovelAgentDbContext context,
-        IVectorStore vectorStore,
-        ILogger<ProjectService> logger,
-        IMemoryCacheService cache,
-        IConfiguration configuration,
-        IWebHostEnvironment environment)
-    {
-        _context = context;
-        _vectorStore = vectorStore;
-        _logger = logger;
-        _cache = cache;
-        _configuration = configuration;
-        _environment = environment;
-    }
+        public ProjectService(
+            NovelAgentDbContext context,
+            IVectorStore vectorStore,
+            ILogger<ProjectService> logger,
+            IMemoryCacheService cache)
+        {
+            _context = context;
+            _vectorStore = vectorStore;
+            _logger = logger;
+            _cache = cache;
+        }
 
     public async Task<PagedResponse<ProjectResponse>> GetUserProjectsAsync(
         string userId,
@@ -51,10 +42,8 @@ public class ProjectService : IProjectService
         int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
-        await EnsureLegacyProjectsForUserAsync(userId, cancellationToken);
-
-        // Validate pagination parameters
-        pageNumber = Math.Max(1, pageNumber);
+            // Validate pagination parameters
+            pageNumber = Math.Max(1, pageNumber);
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
         // Build query with user filter
@@ -88,9 +77,7 @@ public class ProjectService : IProjectService
         bool isAdmin,
         CancellationToken cancellationToken = default)
     {
-        await EnsureLegacyProjectsForUserAsync(userId, cancellationToken);
-
-        var cacheKey = $"project:{projectId}";
+            var cacheKey = BuildProjectCacheKey(projectId, userId, isAdmin);
 
         return await _cache.GetOrSetAsync(
             cacheKey,
@@ -123,14 +110,7 @@ public class ProjectService : IProjectService
         string userId,
         CancellationToken cancellationToken = default)
     {
-        // Generate unique project ID
         var projectId = Guid.NewGuid().ToString();
-
-        // Generate storage project name (for file system operations)
-        // Format: AgenticNovelStudio__novel__{Title}__{shortId}
-        var shortId = projectId.Substring(0, 8);
-        var sanitizedTitle = SanitizeFileName(request.Title);
-        var storageProjectName = $"AgenticNovelStudio__novel__{sanitizedTitle}__{shortId}";
 
         var project = new NovelProject
         {
@@ -143,16 +123,14 @@ public class ProjectService : IProjectService
             Status = "draft",
             WordCount = 0,
             CoverImageUrl = request.CoverImageUrl,
-            StorageProjectName = storageProjectName,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
-        _context.NovelProjects.Add(project);
-        await _context.SaveChangesAsync(cancellationToken);
-        SyncLegacyProject(project, makeActive: true);
+            _context.NovelProjects.Add(project);
+            await _context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Created project {ProjectId} for user {UserId}", projectId, userId);
+            _logger.LogInformation("Created project {ProjectId} for user {UserId}", projectId, userId);
 
         // Initialize Qdrant collection for the user
         try
@@ -218,12 +196,10 @@ public class ProjectService : IProjectService
 
         project.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync(cancellationToken);
-        SyncLegacyProject(project, makeActive: false);
+            await _context.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache
-        var cacheKey = $"project:{projectId}";
-        _cache.Remove(cacheKey);
+        // Invalidate all per-user/admin views for this project.
+        _cache.RemoveByPrefix(BuildProjectCachePrefix(projectId));
 
         _logger.LogInformation("Updated project {ProjectId} by user {UserId} and invalidated cache", projectId, userId);
 
@@ -258,7 +234,6 @@ public class ProjectService : IProjectService
             // Delete project (cascade will handle chapters, foreshadows, etc. via EF Core configuration)
             _context.NovelProjects.Remove(project);
             await _context.SaveChangesAsync(cancellationToken);
-            RemoveLegacyProject(projectId);
 
             // Delete Qdrant vectors for this project
             try
@@ -274,9 +249,8 @@ public class ProjectService : IProjectService
 
             await transaction.CommitAsync(cancellationToken);
 
-            // Invalidate cache
-            var cacheKey = $"project:{projectId}";
-            _cache.Remove(cacheKey);
+            // Invalidate all per-user/admin views for this project.
+            _cache.RemoveByPrefix(BuildProjectCachePrefix(projectId));
 
             _logger.LogInformation("Deleted project {ProjectId} by user {UserId} and invalidated cache", projectId, userId);
         }
@@ -303,129 +277,18 @@ public class ProjectService : IProjectService
             Status = project.Status,
             WordCount = project.WordCount,
             CoverImageUrl = project.CoverImageUrl,
-            StorageProjectName = project.StorageProjectName,
             CreatedAt = project.CreatedAt,
             UpdatedAt = project.UpdatedAt
         };
     }
 
-    /// <summary>
-    /// Sanitize file name by removing invalid characters.
-    /// </summary>
-    private static string SanitizeFileName(string fileName)
-    {
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var sanitized = string.Join("_", fileName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
-        return sanitized.Length > 50 ? sanitized.Substring(0, 50) : sanitized;
-    }
+    private static string BuildProjectCacheKey(string projectId, string userId, bool isAdmin) =>
+        isAdmin
+            ? $"{BuildProjectCachePrefix(projectId)}:admin"
+            : $"{BuildProjectCachePrefix(projectId)}:user:{userId}";
 
-    private async Task EnsureLegacyProjectsForUserAsync(string userId, CancellationToken cancellationToken)
-    {
-        // Legacy migration disabled: do not import old JSON projects for new users
-        // This prevents cross-user data leakage
-        await Task.CompletedTask;
-    }
-
-    private NovelProjectCatalogDocument LoadLegacyCatalog()
-    {
-        var path = GetLegacyCatalogPath();
-        lock (_legacyCatalogLock)
-        {
-            if (!File.Exists(path))
-            {
-                return new NovelProjectCatalogDocument();
-            }
-
-            try
-            {
-                var json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<NovelProjectCatalogDocument>(json, JsonOptions())
-                    ?? new NovelProjectCatalogDocument();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to read legacy project catalog at {Path}", path);
-                return new NovelProjectCatalogDocument();
-            }
-        }
-    }
-
-    private void SaveLegacyCatalog(NovelProjectCatalogDocument document)
-    {
-        var path = GetLegacyCatalogPath();
-        lock (_legacyCatalogLock)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            document.UpdatedAt = DateTime.UtcNow;
-            File.WriteAllText(path, JsonSerializer.Serialize(document, JsonOptions()));
-        }
-    }
-
-    private void SyncLegacyProject(NovelProject project, bool makeActive)
-    {
-        var document = LoadLegacyCatalog();
-        var legacyProject = document.Projects.FirstOrDefault(p =>
-            string.Equals(p.Id, project.Id, StringComparison.OrdinalIgnoreCase));
-
-        if (legacyProject == null)
-        {
-            legacyProject = new NovelProjectInfo { Id = project.Id };
-            document.Projects.Insert(0, legacyProject);
-        }
-
-        legacyProject.Title = project.Title;
-        legacyProject.Genre = project.Genre ?? string.Empty;
-        legacyProject.SubGenre = project.SubGenre ?? string.Empty;
-        legacyProject.CoreHook = project.CoreHook ?? string.Empty;
-        legacyProject.Status = project.Status;
-        legacyProject.StorageProjectName = project.StorageProjectName ?? string.Empty;
-        legacyProject.CreatedAt = project.CreatedAt;
-        legacyProject.UpdatedAt = project.UpdatedAt;
-
-        if (makeActive || string.IsNullOrWhiteSpace(document.ActiveProjectId))
-        {
-            document.ActiveProjectId = project.Id;
-        }
-
-        SaveLegacyCatalog(document);
-    }
-
-    private void RemoveLegacyProject(string projectId)
-    {
-        var document = LoadLegacyCatalog();
-        var removed = document.Projects.RemoveAll(p =>
-            string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
-        if (removed == 0)
-        {
-            return;
-        }
-
-        if (string.Equals(document.ActiveProjectId, projectId, StringComparison.OrdinalIgnoreCase))
-        {
-            document.ActiveProjectId = document.Projects.FirstOrDefault()?.Id ?? string.Empty;
-        }
-
-        SaveLegacyCatalog(document);
-    }
-
-    private string GetLegacyCatalogPath()
-    {
-        var storageRoot = _configuration["NovelAgent:StorageRoot"] ?? Path.Combine(_environment.ContentRootPath, "App_Data");
-        if (!Path.IsPathRooted(storageRoot))
-        {
-            storageRoot = Path.Combine(_environment.ContentRootPath, storageRoot);
-        }
-
-        var projectName = _configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
-        return Path.Combine(storageRoot, "Projects", projectName, "NovelProjects", "projects.json");
-    }
-
-    private static JsonSerializerOptions JsonOptions() => new()
-    {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
-    };
+    private static string BuildProjectCachePrefix(string projectId) =>
+        $"project:{projectId}";
 
     private static string? EmptyToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

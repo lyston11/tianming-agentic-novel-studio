@@ -7,11 +7,14 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Middleware;
 using TM.Web.NovelAgentWeb.Services;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Chapters;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Embedding;
+using TM.Web.NovelAgentWeb.Services.Health;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Materials;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -121,28 +124,16 @@ builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IMemoryCacheService, MemoryCacheService>();
 
-// Distributed cache: Redis is opt-in; local/dev falls back to in-process distributed memory.
-var redisEnabled = builder.Configuration.GetValue("Redis:Enabled", false);
-var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
-var redisInstanceName = builder.Configuration["Redis:InstanceName"];
-
-if (redisEnabled && !string.IsNullOrWhiteSpace(redisConnectionString))
-{
-    builder.Services.AddStackExchangeRedisCache(options =>
-    {
-        options.Configuration = redisConnectionString;
-        options.InstanceName = redisInstanceName ?? "NovelAgent:";
-    });
-}
-else
-{
-    builder.Services.AddDistributedMemoryCache();
-}
-
+builder.Services.AddNovelAgentDistributedCache(builder.Configuration);
 builder.Services.AddSingleton<IDistributedCacheService, RedisCacheService>();
 
 // Agent memory repository with three-tier caching
 builder.Services.AddScoped<IAgentMemoryRepository, AgentMemoryRepository>();
+builder.Services.AddScoped<IAgentMemoryVersionService, AgentMemoryVersionService>();
+builder.Services.AddScoped<IAgentMemoryEventService, AgentMemoryEventService>();
+builder.Services.AddScoped<IChatHistoryRepository, ChatHistoryRepository>();
+builder.Services.AddScoped<IAgentMemoryContextService, AgentMemoryContextService>();
+builder.Services.AddScoped<IToolSearchCacheService, ToolSearchCacheService>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
@@ -162,7 +153,11 @@ builder.Services.AddScoped<IChapterService, ChapterService>();
 // Register Material Service
 builder.Services.AddScoped<IMaterialService, MaterialService>();
 
+// Register Content Document Service
+builder.Services.AddScoped<IContentDocumentService, ContentDocumentService>();
+
 // Register Knowledge Service
+builder.Services.AddScoped<IProjectKnowledgeUsageService, ProjectKnowledgeUsageService>();
 builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
 builder.Services.AddScoped<IKnowledgeProcessingService, KnowledgeProcessingService>();
 
@@ -177,6 +172,8 @@ builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 
 // Register Agent Session Service
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
+builder.Services.AddScoped<IAgentSessionResumeService, AgentSessionResumeService>();
+builder.Services.AddScoped<IAgentToolExecutionLedger, AgentToolExecutionLedger>();
 
 // Register Embedding Service. Stub mode is explicit and reported by /health until a real provider is added.
 builder.Services.AddNovelAgentEmbedding(builder.Configuration, builder.Environment);
@@ -196,9 +193,10 @@ builder.Services.AddScoped<IStoryBibleRepository, StoryBibleRepository>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Dev", policy =>
-        policy.WithOrigins("http://localhost:3000")
+        policy.WithOrigins("http://localhost:3002")
             .AllowAnyHeader()
-            .AllowAnyMethod());
+            .AllowAnyMethod()
+            .AllowCredentials());
 });
 
 // NovelAgentWorkspace and NovelProjectCatalog are now provided dynamically via WorkspaceFactory
@@ -261,16 +259,12 @@ builder.Services.AddScoped<IContentDocumentService, ContentDocumentService>();
 
 // TODO: AgentSchedulerHostedService needs refactoring for multi-user workspace isolation
 // builder.Services.AddHostedService<AgentSchedulerHostedService>();
-builder.Services.AddHostedService<QdrantHealthCheck>();
+builder.Services.AddSingleton<QdrantHealthCheck>();
+builder.Services.AddSingleton<IQdrantHealthProbe>(sp => sp.GetRequiredService<QdrantHealthCheck>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<QdrantHealthCheck>());
+builder.Services.AddSingleton<RuntimeHealthService>();
 
 var app = builder.Build();
-
-// Handle CLI commands
-if (args.Contains("--migrate-memory"))
-{
-    await TM.Web.NovelAgentWeb.Scripts.MigrateMemoryToSqlite.RunAsync(app.Services);
-    return;
-}
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
@@ -287,11 +281,8 @@ app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapGet("/health", (EmbeddingRuntimeStatus embedding) => Results.Ok(new
-{
-    status = "ok",
-    embedding = EmbeddingHealthResponse.From(embedding)
-})).AllowAnonymous();
+app.MapGet("/health", async (RuntimeHealthService health, CancellationToken cancellationToken) =>
+    Results.Ok(await health.CheckAsync(cancellationToken))).AllowAnonymous();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 

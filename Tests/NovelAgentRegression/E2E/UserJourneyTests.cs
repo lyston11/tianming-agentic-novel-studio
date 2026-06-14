@@ -61,7 +61,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Assert.NotNull(user);
             Assert.Equal("journey1user", user.Username);
             Assert.Equal("journey1@test.com", user.Email);
-            Assert.Equal("User", user.Role);
+            Assert.Equal("author", user.Role);
 
             var userSettings = await db.UserSettings.FindAsync(authResponse.User.Id);
             Assert.NotNull(userSettings);
@@ -96,7 +96,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             CoreHook = "A hero's journey to save the world"
         };
 
-        var createProjectResponse = await _client.PostAsJsonAsync("/api/project", createProjectRequest);
+        var createProjectResponse = await _client.PostAsJsonAsync("/api/projects", createProjectRequest);
         Assert.Equal(HttpStatusCode.Created, createProjectResponse.StatusCode);
 
         var projectResponse = await createProjectResponse.Content.ReadFromJsonAsync<ProjectResponse>();
@@ -113,7 +113,6 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Assert.NotNull(project);
             Assert.Equal(authResponse.User.Id, project.UserId);
             Assert.Equal("Journey 1 Novel", project.Title);
-            Assert.NotEmpty(project.StorageProjectName);
         }
 
         // Step 4: Create a chapter in the project
@@ -143,8 +142,13 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Assert.Equal(projectResponse.Id, chapter.ProjectId);
             Assert.Equal("The Beginning", chapter.Title);
             Assert.Equal(1, chapter.ChapterNumber);
-            Assert.NotEmpty(chapter.ContentPath);
             Assert.True(chapter.WordCount > 0);
+            Assert.True(await db.ContentDocuments.AnyAsync(d =>
+                d.UserId == authResponse.User.Id &&
+                d.ProjectId == projectResponse.Id &&
+                d.SourceType == "chapter" &&
+                d.SourceId == chapter.Id &&
+                d.DocumentRole == "chapter_body"));
         }
 
         // Step 5: Retrieve the chapter and verify content
@@ -195,7 +199,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Genre = "Mystery"
         };
 
-        var projectResponse = await _client.PostAsJsonAsync("/api/project", createProjectRequest);
+        var projectResponse = await _client.PostAsJsonAsync("/api/projects", createProjectRequest);
         var project = await projectResponse.Content.ReadFromJsonAsync<ProjectResponse>();
         Assert.NotNull(project);
 
@@ -294,7 +298,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Genre = "Thriller"
         };
 
-        var userAProjectResponse = await userAClient.PostAsJsonAsync("/api/project", userAProjectRequest);
+        var userAProjectResponse = await userAClient.PostAsJsonAsync("/api/projects", userAProjectRequest);
         var userAProject = await userAProjectResponse.Content.ReadFromJsonAsync<ProjectResponse>();
         Assert.NotNull(userAProject);
 
@@ -314,7 +318,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         userBClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", userBAuth.Token);
 
         // Step 3: User B tries to access User A's project - should be FORBIDDEN
-        var userBAccessResponse = await userBClient.GetAsync($"/api/project/{userAProject.Id}");
+        var userBAccessResponse = await userBClient.GetAsync($"/api/projects/{userAProject.Id}");
         Assert.Equal(HttpStatusCode.Forbidden, userBAccessResponse.StatusCode);
 
         // Step 4: Create an Admin user directly in the database
@@ -365,7 +369,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         adminClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
 
         // Step 5: Admin accesses User A's project - should SUCCEED
-        var adminAccessResponse = await adminClient.GetAsync($"/api/project/{userAProject.Id}");
+        var adminAccessResponse = await adminClient.GetAsync($"/api/projects/{userAProject.Id}");
         Assert.Equal(HttpStatusCode.OK, adminAccessResponse.StatusCode);
 
         var adminAccessedProject = await adminAccessResponse.Content.ReadFromJsonAsync<ProjectResponse>();
@@ -374,7 +378,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         Assert.Equal(userAProject.Id, adminAccessedProject.Id);
 
         // Step 6: Admin lists all projects - should see User A's project
-        var adminListResponse = await adminClient.GetAsync("/api/project");
+        var adminListResponse = await adminClient.GetAsync("/api/projects");
         Assert.Equal(HttpStatusCode.OK, adminListResponse.StatusCode);
 
         var adminProjects = await adminListResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -416,7 +420,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
                 Title = $"User A Project {i}",
                 Genre = "Fantasy"
             };
-            var projectResponse = await userAClient.PostAsJsonAsync("/api/project", projectRequest);
+            var projectResponse = await userAClient.PostAsJsonAsync("/api/projects", projectRequest);
             Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
         }
 
@@ -441,11 +445,11 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Title = "User B Project 1",
             Genre = "Sci-Fi"
         };
-        var userBProjectResponse = await userBClient.PostAsJsonAsync("/api/project", userBProjectRequest);
+        var userBProjectResponse = await userBClient.PostAsJsonAsync("/api/projects", userBProjectRequest);
         Assert.Equal(HttpStatusCode.Created, userBProjectResponse.StatusCode);
 
         // User A lists their projects - should see only their 2 projects
-        var userAListResponse = await userAClient.GetAsync("/api/project");
+        var userAListResponse = await userAClient.GetAsync("/api/projects");
         Assert.Equal(HttpStatusCode.OK, userAListResponse.StatusCode);
 
         var userAProjects = await userAListResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -454,7 +458,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         Assert.All(userAItems, p => Assert.StartsWith("User A Project", p.GetProperty("title").GetString()!));
 
         // User B lists their projects - should see only their 1 project
-        var userBListResponse = await userBClient.GetAsync("/api/project");
+        var userBListResponse = await userBClient.GetAsync("/api/projects");
         Assert.Equal(HttpStatusCode.OK, userBListResponse.StatusCode);
 
         var userBProjects = await userBListResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -490,7 +494,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Genre = "Drama"
         };
 
-        var projectResponse = await _client.PostAsJsonAsync("/api/project", projectRequest);
+        var projectResponse = await _client.PostAsJsonAsync("/api/projects", projectRequest);
         var project = await projectResponse.Content.ReadFromJsonAsync<ProjectResponse>();
         Assert.NotNull(project);
 
@@ -551,7 +555,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         var unauthClient = _factory.CreateClient();
 
         // Try to list projects - should return 401
-        var listResponse = await unauthClient.GetAsync("/api/project");
+        var listResponse = await unauthClient.GetAsync("/api/projects");
         Assert.Equal(HttpStatusCode.Unauthorized, listResponse.StatusCode);
 
         // Try to create project - should return 401
@@ -561,11 +565,11 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
             Genre = "Fantasy"
         };
 
-        var createResponse = await unauthClient.PostAsJsonAsync("/api/project", createRequest);
+        var createResponse = await unauthClient.PostAsJsonAsync("/api/projects", createRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, createResponse.StatusCode);
 
         // Try to access a specific project - should return 401
-        var getResponse = await unauthClient.GetAsync("/api/project/some-id");
+        var getResponse = await unauthClient.GetAsync("/api/projects/some-id");
         Assert.Equal(HttpStatusCode.Unauthorized, getResponse.StatusCode);
 
         // Try to create chapter - should return 401

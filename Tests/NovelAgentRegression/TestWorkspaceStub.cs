@@ -8,6 +8,7 @@ namespace TM.Web.NovelAgentWeb.Support;
 public sealed class NovelAgentWorkspace
 {
     public string UserId { get; init; } = "test-user";
+    public string ProjectId { get; init; } = string.Empty;
     public string ProjectName { get; init; } = "TestProject";
     public string StorageRoot { get; init; } = "./test-storage";
     public SemaphoreSlim ProjectContextLock { get; } = new(1, 1);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using TM.Services.Framework.AI.Embedding;
@@ -20,6 +21,15 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RedisCacheDuration = TimeSpan.FromMinutes(10);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MemoryLocks = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> UnionListMemoryTypes = new(StringComparer.Ordinal)
+    {
+        "project.referenced_knowledge_ids",
+        "project.used_trope_patterns",
+        "execution.successful_repairs",
+        "execution.repeated_blockers",
+        "author.style_dislikes"
+    };
 
     public AgentMemoryRepository(
         NovelAgentDbContext context,
@@ -64,12 +74,57 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     Constraints = GetField<List<string>>(rows, "project.constraints") ?? new(),
                     UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new(),
                     ReferencedKnowledgeIds = GetField<List<string>>(rows, "project.referenced_knowledge_ids") ?? new(),
+                    ImportedKnowledgeIds = GetField<List<string>>(rows, "project.imported_knowledge_ids") ?? new(),
+                    KnowledgeInventory = GetField<List<KnowledgeInventoryItem>>(rows, "project.knowledge_inventory") ?? new(),
                     UsedTropePatterns = GetField<List<string>>(rows, "project.used_trope_patterns") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
 
                 _logger.LogDebug("ProjectMemory loaded from database for user {UserId}, project {ProjectId}", userId, projectId);
+                return memory;
+            },
+            MemoryCacheDuration,
+            ct);
+    }
+
+    public async Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+    {
+        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+
+        return await _memoryCache.GetOrSetAsync(
+            cacheKey,
+            async () =>
+            {
+                var cached = await _redisCache.GetAsync<SessionMemory>(cacheKey, ct);
+                if (cached != null)
+                {
+                    _logger.LogDebug("SessionMemory cache hit (Redis) for user {UserId}, project {ProjectId}, session {SessionId}", userId, projectId, sessionId);
+                    return cached;
+                }
+
+                var rows = await _context.AgentMemories
+                    .AsNoTracking()
+                    .Where(m =>
+                        m.UserId == userId &&
+                        m.ProjectId == projectId &&
+                        m.SessionId == sessionId &&
+                        m.MemoryType.StartsWith("session."))
+                    .ToListAsync(ct);
+
+                var memory = new SessionMemory
+                {
+                    CurrentGoal = GetField<string>(rows, "session.current_goal") ?? string.Empty,
+                    OpenQuestions = GetField<List<string>>(rows, "session.open_questions") ?? new(),
+                    ShortTermPreferences = GetField<List<string>>(rows, "session.short_term_preferences") ?? new(),
+                    RecentObservations = GetField<List<string>>(rows, "session.recent_observations") ?? new(),
+                    PendingToolName = GetField<string>(rows, "session.pending_tool_name"),
+                    LastIntent = GetField<string>(rows, "session.last_intent")
+                };
+
+                await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
+
+                _logger.LogDebug("SessionMemory loaded from database for user {UserId}, project {ProjectId}, session {SessionId}", userId, projectId, sessionId);
                 return memory;
             },
             MemoryCacheDuration,
@@ -138,7 +193,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 {
                     ToolFailurePatterns = GetField<List<string>>(rows, "execution.tool_failures") ?? new(),
                     RepeatedBlockers = GetField<List<string>>(rows, "execution.repeated_blockers") ?? new(),
-                    SuccessfulRepairNotes = GetField<List<string>>(rows, "execution.successful_repairs") ?? new()
+                    SuccessfulRepairNotes = GetField<List<string>>(rows, "execution.successful_repairs") ?? new(),
+                    KnowledgeProcessingFailures = GetField<List<string>>(rows, "execution.knowledge_processing_failures") ?? new()
                 };
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
@@ -173,6 +229,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 UserId = userId,
                 ProjectId = projectId,
                 MemoryType = memoryType,
+                MemoryKey = GetMemoryKey(memoryType),
                 Content = json,
                 UpdatedAt = DateTime.UtcNow
             });
@@ -250,6 +307,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                         UserId = userId,
                         ProjectId = projectId,
                         MemoryType = memoryType,
+                        MemoryKey = GetMemoryKey(memoryType),
                         Content = json,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -284,6 +342,202 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
+    public async Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
+    {
+        foreach (var memoryType in updates.Keys)
+        {
+            if (!UnionListMemoryTypes.Contains(memoryType))
+            {
+                throw new ArgumentException($"Memory type does not support list union updates: {memoryType}", nameof(updates));
+            }
+
+            var scope = memoryType.Split('.')[0];
+            if (scope == "author" && projectId != null)
+            {
+                throw new ArgumentException("Author memory union updates must use a null projectId.", nameof(projectId));
+            }
+
+            if (scope is "project" or "execution" && string.IsNullOrWhiteSpace(projectId))
+            {
+                throw new ArgumentException($"{scope} memory union updates require a projectId.", nameof(projectId));
+            }
+        }
+
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var lockKey = $"{userId}:{projectId ?? "<author>"}";
+        var memoryLock = MemoryLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
+        await memoryLock.WaitAsync(ct);
+        try
+        {
+            var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
+            IDbContextTransaction? transaction = null;
+
+            if (!isInMemory)
+            {
+                transaction = await _context.Database.BeginTransactionAsync(ct);
+            }
+
+            try
+            {
+                foreach (var (memoryType, incomingValues) in updates)
+                {
+                    var existing = await _context.AgentMemories
+                        .FirstOrDefaultAsync(m =>
+                            m.UserId == userId &&
+                            m.ProjectId == projectId &&
+                            m.MemoryType == memoryType, ct);
+
+                    var merged = ReadStringList(existing?.Content);
+                    foreach (var value in incomingValues.Select(v => v.Trim()).Where(v => !string.IsNullOrWhiteSpace(v)))
+                    {
+                        if (!merged.Contains(value, StringComparer.OrdinalIgnoreCase))
+                        {
+                            merged.Add(value);
+                        }
+                    }
+
+                    var json = JsonSerializer.Serialize(merged);
+                    var now = DateTime.UtcNow;
+
+                    if (existing != null)
+                    {
+                        existing.Content = json;
+                        existing.MemoryKey = GetMemoryKey(memoryType);
+                        existing.UpdatedAt = now;
+                    }
+                    else
+                    {
+                        _context.AgentMemories.Add(new Data.Entities.AgentMemory
+                        {
+                            Id = Guid.NewGuid().ToString(),
+                            UserId = userId,
+                            ProjectId = projectId,
+                            MemoryType = memoryType,
+                            MemoryKey = GetMemoryKey(memoryType),
+                            Content = json,
+                            CreatedAt = now,
+                            UpdatedAt = now
+                        });
+                    }
+                }
+
+                await _context.SaveChangesAsync(ct);
+
+                if (transaction != null)
+                {
+                    await transaction.CommitAsync(ct);
+                }
+            }
+            catch
+            {
+                if (transaction != null)
+                {
+                    await transaction.RollbackAsync(ct);
+                }
+                throw;
+            }
+            finally
+            {
+                transaction?.Dispose();
+            }
+        }
+        finally
+        {
+            memoryLock.Release();
+        }
+
+        foreach (var memoryType in updates.Keys)
+        {
+            await InvalidateCacheAsync(userId, projectId, memoryType);
+        }
+
+        _logger.LogDebug("Union updated {Count} memory fields for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
+    }
+
+    public async Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
+    {
+        if (updates.Keys.Any(memoryType => !memoryType.StartsWith("session.", StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Session memory updates must use session.* memory types.", nameof(updates));
+        }
+
+        var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
+        IDbContextTransaction? transaction = null;
+
+        if (!isInMemory)
+        {
+            transaction = await _context.Database.BeginTransactionAsync(ct);
+        }
+
+        try
+        {
+            foreach (var (memoryType, value) in updates)
+            {
+                var json = JsonSerializer.Serialize(value);
+
+                var existing = await _context.AgentMemories
+                    .FirstOrDefaultAsync(m =>
+                        m.UserId == userId &&
+                        m.ProjectId == projectId &&
+                        m.SessionId == sessionId &&
+                        m.MemoryType == memoryType, ct);
+
+                if (existing != null)
+                {
+                    existing.Content = json;
+                    existing.MemoryKey = GetMemoryKey(memoryType);
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    _context.AgentMemories.Add(new Data.Entities.AgentMemory
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        UserId = userId,
+                        ProjectId = projectId,
+                        SessionId = sessionId,
+                        MemoryType = memoryType,
+                        MemoryKey = GetMemoryKey(memoryType),
+                        Content = json,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+
+            if (transaction != null)
+            {
+                await transaction.CommitAsync(ct);
+            }
+
+            await InvalidateSessionCacheAsync(userId, projectId, sessionId, ct);
+
+            _logger.LogDebug(
+                "Batch updated {Count} session memory fields for user {UserId}, project {ProjectId}, session {SessionId}",
+                updates.Count,
+                userId,
+                projectId,
+                sessionId);
+        }
+        catch
+        {
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            throw;
+        }
+        finally
+        {
+            transaction?.Dispose();
+        }
+    }
+
     private static T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
     {
         var row = rows.FirstOrDefault(r => r.MemoryType == memoryType);
@@ -295,6 +549,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         return JsonSerializer.Deserialize<T>(row.Content);
     }
 
+    private static List<string> ReadStringList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException("Stored memory content is not a list of strings.", ex);
+        }
+    }
+
     private async Task InvalidateCacheAsync(string userId, string? projectId, string memoryType)
     {
         var scope = memoryType.Split('.')[0];
@@ -304,12 +575,36 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             "project" => $"memory:project:{userId}:{projectId}",
             "author" => $"memory:author:{userId}",
             "execution" => $"memory:execution:{userId}:{projectId}",
+            "session" => null,
             _ => throw new ArgumentException($"Unknown memory type: {memoryType}")
         };
+
+        if (cacheKey == null)
+        {
+            _logger.LogDebug("Skipped session memory cache invalidation without session scope for user {UserId}, project {ProjectId}", userId, projectId);
+            return;
+        }
 
         _memoryCache.Remove(cacheKey);
         await _redisCache.RemoveAsync(cacheKey);
 
         _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
+    }
+
+    private async Task InvalidateSessionCacheAsync(string userId, string projectId, string sessionId, CancellationToken ct)
+    {
+        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+        _memoryCache.Remove(cacheKey);
+        await _redisCache.RemoveAsync(cacheKey, ct);
+
+        _logger.LogDebug("Invalidated cache for key {CacheKey}", cacheKey);
+    }
+
+    private static string GetMemoryKey(string memoryType)
+    {
+        var separator = memoryType.IndexOf('.');
+        return separator >= 0 && separator < memoryType.Length - 1
+            ? memoryType[(separator + 1)..]
+            : memoryType;
     }
 }

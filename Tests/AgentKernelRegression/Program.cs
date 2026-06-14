@@ -1,12 +1,22 @@
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Support;
+using DbKnowledgeBase = TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase;
+using DbNovelProject = TM.Web.NovelAgentWeb.Data.Entities.NovelProject;
+using DbUser = TM.Web.NovelAgentWeb.Data.Entities.User;
 
 namespace TM.Tests.AgentKernelRegression;
 
@@ -16,7 +26,6 @@ internal static class Program
     {
         ("ConversationKernel routes status queries away from creation tools", ConversationKernelRoutesStatusQuery),
         ("ToolPolicy blocks raw userGoal PlanChapter", ToolPolicyBlocksRawUserGoalPlanChapter),
-        ("AgentSession clears removed GenerateChapter pending calls", AgentSessionClearsRemovedLegacyPending),
         ("ToolPolicy preflights confirmed story foundation commit", ToolPolicyPreflightsConfirmedStoryFoundationCommit),
         ("ToolPolicy blocks commit when quality gate still has issues", ToolPolicyBlocksCommitWithQualityIssues),
         ("Scheduler continue uses active blackboard task", SchedulerContinueUsesActiveBlackboardTask),
@@ -24,6 +33,7 @@ internal static class Program
         ("ToolPolicy repairs missing context package before draft generation", ToolPolicyRepairsMissingContextPackageBeforeDraft),
         ("ToolPolicy repairs missing draft before validation", ToolPolicyRepairsMissingDraftBeforeValidation),
         ("ToolPolicy keeps hard boundaries terminal", ToolPolicyKeepsHardBoundariesTerminal),
+        ("ToolPolicy blocks undiscovered tools", ToolPolicyBlocksUndiscoveredTools),
         ("ToolPolicy blocks draft generation when context rebuild is required", ToolPolicyBlocksDraftWhenContextRebuildRequired),
         ("ToolPolicy blocks commit when revalidation is required", ToolPolicyBlocksCommitWhenRevalidationRequired),
         ("Mission blackboard recovery rebuilds scheduler state", MissionBlackboardRecoveryRebuildsSchedulerState),
@@ -41,7 +51,10 @@ internal static class Program
         ("Provider tool calling diagnostics parse mock responses", ProviderToolCallingDiagnosticsParseMockResponses),
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
+        ("Tool registry phase search exposes commit and maintenance tools", ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools),
+        ("Tool registry declares side effects for every tool", ToolRegistryDeclaresSideEffectsForEveryTool),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
+        ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
         ("StartNewNovelProject is idempotent while awaiting foundation", StartNewNovelProjectIsIdempotentWhileAwaitingFoundation),
     };
 
@@ -97,6 +110,11 @@ internal static class Program
         var bible = new StoryBibleDocument();
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+                new AgentToolDefinition { Name = "QueryProjectStatus" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.StatusQuery,
@@ -122,31 +140,6 @@ internal static class Program
                    result.Message.Contains("状态查询", StringComparison.OrdinalIgnoreCase) ||
                    result.Message.Contains("userGoal", StringComparison.OrdinalIgnoreCase),
             "Blocked raw status/userGoal input should be routed to status or explain the hard block.");
-
-        return Task.CompletedTask;
-    }
-
-    private static Task AgentSessionClearsRemovedLegacyPending()
-    {
-        var session = new AgentSession
-        {
-            WorkingMemory = new AgentWorkingMemory
-            {
-                PendingToolCall = new AgentToolCall { Name = "GenerateChapter" },
-                PendingConfirmation = new AgentPendingConfirmation
-                {
-                    ToolCall = new AgentToolCall { Name = "GenerateChapter" },
-                    ImpactSummary = "legacy one-step chapter generation"
-                }
-            }
-        };
-
-        session.NormalizeLegacyState();
-
-        Check.True(session.WorkingMemory.PendingToolCall == null,
-            "Removed GenerateChapter pending tool calls must be cleared, not migrated silently.");
-        Check.True(session.WorkingMemory.PendingConfirmation == null,
-            "Removed GenerateChapter pending confirmations must be cleared, not consumed.");
 
         return Task.CompletedTask;
     }
@@ -499,6 +492,11 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+            },
             MissionPlan = session.WorkingMemory.MissionPlan,
             TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
         };
@@ -556,6 +554,11 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+            },
             MissionPlan = session.WorkingMemory.MissionPlan,
             TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
         };
@@ -611,6 +614,10 @@ internal static class Program
             },
             new AgentObservationContext
             {
+                AvailableTools =
+                {
+                    new AgentToolDefinition { Name = "CommitValidatedChapter" },
+                },
                 MissionPlan = BuildPlanWithChapter("run-hard-boundary", chapter =>
                 {
                     chapter.GateStatus = "validated";
@@ -621,6 +628,59 @@ internal static class Program
             confirmed: false);
         Check.True(unconfirmedCommit.AllowsExecution && unconfirmedCommit.RequiresConfirmation && !unconfirmedCommit.IsRepairable,
             "Confirmation gates must remain confirmation gates, not repairable auto-execution.");
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyBlocksUndiscoveredTools()
+    {
+        var policy = new ToolPolicyEngine();
+        var session = new AgentSession();
+        var bible = new StoryBibleDocument();
+        var context = new AgentObservationContext
+        {
+            AvailableTools =
+            {
+                new AgentToolDefinition
+                {
+                    Name = "tool_search",
+                    Description = "discover tools",
+                    Risk = "Low"
+                }
+            },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.NewProjectSeed, Label = "new_project_seed" },
+            MissionPlan = new AgentMissionPlan()
+        };
+
+        var skippedDiscovery = policy.BeforeCall(
+            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+
+        Check.True(!skippedDiscovery.AllowsExecution && !skippedDiscovery.IsRepairable,
+            "Planner must not execute StartNewNovelProject before tool_search has discovered it.");
+        Check.Contains("tool_search", skippedDiscovery.Message,
+            "Discovery boundary block should instruct the planner to call tool_search.");
+
+        var discovery = policy.BeforeCall(
+            new AgentToolCall { Name = "tool_search", Arguments = { ["phase"] = "Planning" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+        Check.True(discovery.AllowsExecution,
+            "tool_search itself must always pass the discovery boundary.");
+
+        context.AvailableTools.Add(new AgentToolDefinition { Name = "StartNewNovelProject", Risk = "Low" });
+        var discovered = policy.BeforeCall(
+            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+        Check.True(discovered.AllowsExecution,
+            "Once tool_search exposes StartNewNovelProject, policy should allow its normal tool preflight.");
         return Task.CompletedTask;
     }
 
@@ -946,7 +1006,7 @@ internal static class Program
             Reply = "我是天命小说 Agent。",
             Source = "openai_tool_calling"
         };
-        var legacyChat = new AgentAction
+        var noToolChatReply = new AgentAction
         {
             Type = AgentActionType.ChatReply,
             Reply = "我是天命小说 Agent。",
@@ -976,8 +1036,8 @@ internal static class Program
 
         Check.True(AgentRuntime.ShouldReturnUserFacingReply(normalChat),
             "Normal ChatReply text from a provider should return directly.");
-        Check.True(AgentRuntime.ShouldReturnUserFacingReply(legacyChat),
-            "Legacy ChatReply text marked IsNoTool should still return directly.");
+        Check.True(AgentRuntime.ShouldReturnUserFacingReply(noToolChatReply),
+            "ChatReply text marked IsNoTool should still return directly when it is user-facing.");
         Check.True(!AgentRuntime.ShouldReturnUserFacingReply(noAction),
             "No-action fallback without reply should not be treated as chat.");
         Check.True(!AgentRuntime.ShouldReturnUserFacingReply(internalErrorText),
@@ -1144,6 +1204,10 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.CandidateSelection,
@@ -1234,6 +1298,10 @@ internal static class Program
         var session = new AgentSession();
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.StatusQuery,
@@ -1460,6 +1528,92 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools()
+    {
+        var settings = new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
+            "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var registry = CreateToolRegistry(settings);
+            var planning = registry.ListToolSchemasForPhase(ConversationPhase.Planning).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var review = registry.ListToolSchemasForPhase(ConversationPhase.Review).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Check.True(planning.Contains("CommitStoryFoundation"),
+                "Planning phase discovery should include CommitStoryFoundation after foundation candidates are generated.");
+            Check.True(planning.Contains("CommitVolumeArc"),
+                "Planning phase discovery should include CommitVolumeArc after volume plans are generated.");
+            Check.True(review.Contains("AnalyzeDependencyImpact"),
+                "Review phase discovery should include AnalyzeDependencyImpact for maintenance/review flows.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolRegistryDeclaresSideEffectsForEveryTool()
+    {
+        var settings = new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
+            "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var registry = CreateToolRegistry(settings);
+            var tools = registry.ListTools();
+
+            Check.True(tools.Count >= 19, "Registry should expose the full tool set.");
+            Check.True(tools.All(t => t.SideEffects.WritesLedger && t.SideEffects.WritesRedisRecentCache),
+                "Every tool must declare SQLite ledger and Redis recent hot-cache writes.");
+
+            var toolSearch = tools.Single(t => t.Name == "tool_search");
+            Check.True(toolSearch.SideEffects.WritesToolSearchCache && toolSearch.SideEffects.WritesSqliteSnapshot,
+                "tool_search must declare Memory/Redis cache and SQLite snapshot writes.");
+
+            var knowledge = tools.Single(t => t.Name == "ProcessKnowledgeFile");
+            Check.True(knowledge.SideEffects.WritesSqliteEntities.Contains("knowledge_base"),
+                "ProcessKnowledgeFile must declare knowledge_base writes.");
+            Check.True(knowledge.SideEffects.WritesVectorIndexes.Contains("knowledge"),
+                "ProcessKnowledgeFile must declare Qdrant knowledge index writes.");
+
+            var commitChapter = tools.Single(t => t.Name == "CommitValidatedChapter");
+            Check.True(commitChapter.SideEffects.WritesSqliteEntities.Contains("chapters"),
+                "CommitValidatedChapter must declare chapter truth writes.");
+            Check.True(commitChapter.SideEffects.WritesVectorIndexes.Contains("chapter"),
+                "CommitValidatedChapter must declare chapter vector index writes.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+        return Task.CompletedTask;
+    }
+
     private static async Task SearchCreativeKnowledgeReturnsDbKnowledge()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-db-knowledge-" + Guid.NewGuid().ToString("N"));
@@ -1571,6 +1725,64 @@ internal static class Program
         }
     }
 
+    private static async Task KnowledgeUsageRemainsProjectScoped()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        db.Users.Add(new DbUser { Id = "user-scope", Username = "scope", Email = "scope@example.com", PasswordHash = "hash", Role = "author" });
+        db.NovelProjects.Add(new DbNovelProject { Id = "project-a", UserId = "user-scope", Title = "A" });
+        db.NovelProjects.Add(new DbNovelProject { Id = "project-b", UserId = "user-scope", Title = "B" });
+        db.KnowledgeBases.Add(new DbKnowledgeBase
+        {
+            Id = "knowledge-shared",
+            UserId = "user-scope",
+            SourceProjectId = "project-a",
+            EntryType = "ReaderPromise",
+            Title = "胜利代价",
+            Content = "胜利必须付出代价。",
+            SourceType = "upload",
+            Weight = 8
+        });
+        await db.SaveChangesAsync();
+
+        var memoryRepository = new AgentMemoryRepository(
+            db,
+            new NoopDistributedCacheService(),
+            new DirectMemoryCacheService(),
+            new NoopVectorStore(),
+            new FixedEmbeddingService(),
+            NullLogger<AgentMemoryRepository>.Instance);
+        var usageService = new ProjectKnowledgeUsageService(
+            db,
+            new NoopMemoryEventService(),
+            memoryRepository,
+            NullLogger<ProjectKnowledgeUsageService>.Instance);
+        var contextService = new AgentMemoryContextService(new EmptyChatHistoryRepository(), memoryRepository);
+
+        await usageService.MarkReferencedAsync("user-scope", "project-a", "knowledge-shared", "session-a", "run-a");
+        await usageService.MarkImportedAsync("user-scope", "project-b", "knowledge-shared", "session-b", "upload");
+
+        var projectA = await contextService.BuildAsync("user-scope", "project-a", "session-a");
+        var projectB = await contextService.BuildAsync("user-scope", "project-b", "session-b");
+
+        Check.True(projectA.Project.ReferencedKnowledgeIds.Contains("knowledge-shared"),
+            "Project A should remember that the knowledge was referenced.");
+        Check.True(projectB.Project.ImportedKnowledgeIds.Contains("knowledge-shared"),
+            "Project B should remember imported knowledge for its own project.");
+        Check.True(!projectB.Project.ReferencedKnowledgeIds.Contains("knowledge-shared"),
+            "Project B must not inherit Project A referenced knowledge state.");
+        Check.Equal("referenced", projectA.Project.KnowledgeInventory.Single(x => x.KnowledgeId == "knowledge-shared").ProjectUsageStatus,
+            "Project A inventory should carry referenced usage status.");
+        Check.Equal("imported", projectB.Project.KnowledgeInventory.Single(x => x.KnowledgeId == "knowledge-shared").ProjectUsageStatus,
+            "Project B inventory should carry imported usage status.");
+    }
+
     private static AgentMissionPlan BuildPlanWithChapter(string runId, Action<AgentChapterTask> configure)
     {
         var chapter = new AgentChapterTask
@@ -1643,6 +1855,9 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
     public Task<KnowledgeResponse> CreateKnowledgeAsync(CreateKnowledgeRequest request, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
+    public Task<KnowledgeResponse> CreateExtractedKnowledgeAsync(CreateExtractedKnowledgeRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
     public Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
@@ -1661,8 +1876,114 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
         return Task.FromResult(new List<KnowledgeSearchResult> { _result });
     }
 
-    public Task IncrementUsageAsync(string knowledgeId, CancellationToken ct = default) =>
-        throw new NotSupportedException();
+    public Task IncrementUsageAsync(
+        string knowledgeId,
+        string projectId,
+        string? sessionId = null,
+        string? runId = null,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+}
+
+internal sealed class NoopDistributedCacheService : IDistributedCacheService
+{
+    public Task<T?> GetAsync<T>(string key, CancellationToken ct = default) where T : class =>
+        Task.FromResult<T?>(null);
+
+    public Task SetAsync<T>(string key, T value, TimeSpan? expiration = null, CancellationToken ct = default) where T : class =>
+        Task.CompletedTask;
+
+    public Task RemoveAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RemoveByPrefixAsync(string keyPrefix, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> ExistsAsync(string key, CancellationToken ct = default) => Task.FromResult(false);
+}
+
+internal sealed class DirectMemoryCacheService : IMemoryCacheService
+{
+    public async Task<T?> GetOrSetAsync<T>(
+        string key,
+        Func<Task<T>> factory,
+        TimeSpan expiration,
+        CancellationToken cancellationToken = default)
+    {
+        return await factory();
+    }
+
+    public T? Get<T>(string key) => default;
+    public void Set<T>(string key, T value, TimeSpan expiration) { }
+    public void Remove(string key) { }
+    public void RemoveByPrefix(string keyPrefix) { }
+}
+
+internal sealed class NoopVectorStore : IVectorStore
+{
+    public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<List<SearchResult>> SearchSimilarAsync(
+        string userId,
+        float[] queryVector,
+        int topK = 10,
+        Dictionary<string, object>? filters = null,
+        CancellationToken ct = default) =>
+        Task.FromResult(new List<SearchResult>());
+
+    public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
+    public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) => Task.FromResult<CollectionInfo?>(null);
+    public Task DeleteVectorsByFilterAsync(string userId, Dictionary<string, object> filters, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+internal sealed class FixedEmbeddingService : IMicroEmbeddingService
+{
+    public int Dimension => 3;
+    public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(new[] { 1f, 0f, 0f });
+
+    public Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(texts.Select(_ => new[] { 1f, 0f, 0f }).ToArray());
+
+    public void ReleaseSession() { }
+    public bool IsModelReady() => true;
+}
+
+internal sealed class NoopMemoryEventService : IAgentMemoryEventService
+{
+    public Task AppendAsync(
+        string userId,
+        string? projectId,
+        string? sessionId,
+        string? runId,
+        string sourceType,
+        string triggerType,
+        string memoryScope,
+        string memoryKey,
+        object payload,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+}
+
+internal sealed class EmptyChatHistoryRepository : IChatHistoryRepository
+{
+    public Task AppendAsync(string userId, string? projectId, string sessionId, string role, string content, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task SaveSummaryAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        int startTurn,
+        int endTurn,
+        string summaryType,
+        string content,
+        IReadOnlyList<string> keyDecisions,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task<ChatPromptWindowDto> GetPromptWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
+        Task.FromResult(new ChatPromptWindowDto(null, Array.Empty<ChatHistorySummaryDto>(), Array.Empty<ChatHistoryTurnDto>()));
+
+    public Task<IReadOnlyList<ChatHistoryTurnDto>> GetHotWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChatHistoryTurnDto>>(Array.Empty<ChatHistoryTurnDto>());
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

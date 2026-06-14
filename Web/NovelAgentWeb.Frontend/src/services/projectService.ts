@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import type { NovelProjectInfo } from '../api/types';
 
 export interface ProjectResponse {
   id: string;
@@ -10,7 +11,6 @@ export interface ProjectResponse {
   status: string;
   wordCount: number;
   coverImageUrl: string | null;
-  storageProjectName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +33,20 @@ export interface UserStats {
   storageUsedMb: number;
 }
 
+export function toNovelProjectInfo(project: ProjectResponse): NovelProjectInfo {
+  return {
+    id: project.id,
+    title: project.title,
+    genre: project.genre ?? '',
+    subGenre: project.subGenre ?? '',
+    coreHook: project.coreHook ?? '',
+    readerPromise: '',
+    status: project.status,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
+}
+
 export const projectService = {
   /**
    * Get paginated projects for the current user.
@@ -43,7 +57,7 @@ export const projectService = {
     pageSize: number = 20
   ): Promise<PagedResponse<ProjectResponse>> {
     return api<PagedResponse<ProjectResponse>>(
-      `/project?pageNumber=${pageNumber}&pageSize=${pageSize}`
+      `/projects?pageNumber=${pageNumber}&pageSize=${pageSize}`
     );
   },
 
@@ -54,7 +68,7 @@ export const projectService = {
    */
   async listProjects(): Promise<ProjectResponse[]> {
     const response = await api<PagedResponse<ProjectResponse>>(
-      '/project?pageNumber=1&pageSize=1000'
+      '/projects?pageNumber=1&pageSize=1000'
     );
     return response.items;
   },
@@ -66,7 +80,7 @@ export const projectService = {
   async getUserStats(): Promise<UserStats> {
     // Get all projects to calculate stats
     const response = await api<PagedResponse<ProjectResponse>>(
-      '/project?pageNumber=1&pageSize=1000'
+      '/projects?pageNumber=1&pageSize=1000'
     );
 
     const totalWordCount = response.items.reduce(

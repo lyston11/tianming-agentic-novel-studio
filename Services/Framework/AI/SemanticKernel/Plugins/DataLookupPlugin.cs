@@ -146,7 +146,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
         {
             try
             {
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
                 var totalWords = chapters.Sum(c => c.WordCount);
                 return $"已生成章节数：{chapters.Count} 章\n总字数：{totalWords:N0} 字";
@@ -166,7 +166,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
         {
             try
             {
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
 
                 var page = chapters
@@ -198,7 +198,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
         {
             try
             {
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
                 var generatedIds = chapters.Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
 

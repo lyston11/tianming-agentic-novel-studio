@@ -56,8 +56,7 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
 
     public async Task<WorkspaceEntry> AcquireAsync(string userId, string projectId, CancellationToken cancellationToken = default)
     {
-        // Workspace is per-user, not per-project. Projects are managed by LLM during conversation.
-        var cacheKey = GetCacheKey(userId, "_workspace");
+        var cacheKey = GetCacheKey(userId, projectId);
 
         // Fast path: cache hit
         if (_cache.TryGetValue(cacheKey, out var entry))
@@ -86,13 +85,12 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
                 await EvictOldestIdleWorkspaceAsync();
             }
 
-            // Create new Workspace instance (no project binding at this level)
-            var workspace = await CreateWorkspaceAsync(userId, "_workspace", cancellationToken);
+            var workspace = await CreateWorkspaceAsync(userId, projectId, cancellationToken);
 
             entry = new WorkspaceEntry
             {
                 UserId = userId,
-                ProjectId = "_workspace",
+                ProjectId = projectId,
                 Workspace = workspace
             };
 
@@ -280,6 +278,17 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
 
+        if (!projectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
+        {
+            var projectExists = await db.NovelProjects
+                .AsNoTracking()
+                .AnyAsync(p => p.Id == projectId && p.UserId == userId, cancellationToken);
+            if (!projectExists)
+            {
+                throw new InvalidOperationException($"Project {projectId} not found for user {userId}");
+            }
+        }
+
         // Get required services
         var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var env = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
@@ -290,16 +299,20 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         var embeddingService = scope.ServiceProvider.GetService<IMicroEmbeddingService>();
         var currentUserService = scope.ServiceProvider.GetService<ICurrentUserService>();
         var memoryRepository = scope.ServiceProvider.GetService<IAgentMemoryRepository>();
+        var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
 
         // Create Workspace instance (no project binding)
         var workspace = new NovelAgentWorkspace(
             env,
             config,
             settingsManager,
+            userId,
+            projectId,
             vectorStore,
             embeddingService,
             currentUserService,
-            memoryRepository) { UserId = userId };
+            memoryRepository,
+            scopeFactory);
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;

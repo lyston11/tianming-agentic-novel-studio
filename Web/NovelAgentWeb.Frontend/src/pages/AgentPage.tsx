@@ -3,14 +3,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   createAgentSession,
   createSseConnection,
-  getAgentSession,
   listAgentSessions,
+  resumeAgentSession,
   sendChat,
   updateAgentSession,
 } from '../api';
 import type {
   AgentChatResponse,
   AgentRuntimeStep,
+  AgentSessionResumeResponse,
   AgentSessionSummary,
   AgentSseEvent,
   NovelAgentRun,
@@ -18,6 +19,7 @@ import type {
 import { useAgentStore } from '../stores/useAgentStore';
 import { useAppStore } from '../stores/useAppStore';
 import { useChatStore } from '../stores/useChatStore';
+import { useProjectStore } from '../stores/useProjectStore';
 import '../styles/agent.css';
 
 function formatSessionTime(value: string) {
@@ -30,10 +32,9 @@ function formatSessionTime(value: string) {
 }
 
 function sessionPreview(session: AgentSessionSummary) {
-  if (session.memory?.mission?.pendingUserDecision) return session.memory.mission.pendingUserDecision;
-  if (session.memory?.mission?.currentGoal) return session.memory.mission.currentGoal;
-  if (session.memory?.currentGoal) return session.memory.currentGoal;
-  if (session.memory?.lastIntent) return session.memory.lastIntent;
+  if (session.activeRunId) return `运行中 · ${session.activeRunId.slice(0, 8)}`;
+  if (session.messageCount > 0) return `${session.messageCount} 条消息`;
+  if (session.activeProjectId) return '已绑定项目';
   return session.phase || '新会话';
 }
 
@@ -97,6 +98,14 @@ function runtimeStepSummary(step: AgentRuntimeStep) {
   return step.stopReason || 'Runtime step';
 }
 
+function mergeResumeMemory(resume: AgentSessionResumeResponse) {
+  return {
+    ...resume.memory,
+    missionPlan: resume.memory?.missionPlan ?? resume.missionPlan,
+    pendingConfirmation: resume.memory?.pendingConfirmation ?? resume.pendingConfirmation ?? null,
+  };
+}
+
 export default function AgentPage() {
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
@@ -109,6 +118,7 @@ export default function AgentPage() {
     y: number;
   } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const lastResumedSessionIdRef = useRef('');
 
   const {
     messages,
@@ -120,13 +130,18 @@ export default function AgentPage() {
     setSending,
   } = useChatStore();
   const addLog = useAppStore((s) => s.addLog);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
   const {
     sessionId,
+    resumeState,
     setSessionId,
     setActiveRun,
     addSseEvent,
     setConnected,
+    setResumeState,
     clearEvents,
+    clearResumeState,
   } = useAgentStore();
 
   const reloadSessions = useCallback(async () => {
@@ -150,33 +165,64 @@ export default function AgentPage() {
     queryClient.invalidateQueries({ queryKey: ['runs'] });
   }, [queryClient]);
 
+  const applySessionResume = useCallback((detail: AgentSessionResumeResponse) => {
+    const memory = mergeResumeMemory(detail);
+    lastResumedSessionIdRef.current = detail.sessionId;
+    setSessionId(detail.sessionId);
+    if (detail.activeProjectId) setCurrentProjectId(detail.activeProjectId);
+    setActiveRun(null);
+    clearEvents();
+    setResumeState({
+      pendingToolCall: detail.pendingToolCall ?? null,
+      pendingConfirmation: detail.pendingConfirmation ?? memory.pendingConfirmation ?? null,
+      discoveredPhase: detail.discoveredPhase ?? null,
+      discoveredTools: detail.discoveredTools ?? [],
+      toolSearchCacheVersion: detail.toolSearchCacheVersion ?? null,
+      lastToolSearchAt: detail.lastToolSearchAt ?? null,
+      toolSearchCacheFresh: detail.toolSearchCacheFresh,
+      toolSearchCacheSource: detail.toolSearchCacheSource,
+      recentToolExecutions: detail.recentToolExecutions ?? [],
+    });
+    loadSessionMessages(detail.sessionId, detail.messages, memory);
+  }, [clearEvents, loadSessionMessages, setActiveRun, setCurrentProjectId, setResumeState, setSessionId]);
+
+  const resumeCurrentSession = useCallback(async (id: string) => {
+    try {
+      setSessionLoadError('');
+      const detail = await resumeAgentSession(id);
+      applySessionResume(detail);
+    } catch (err) {
+      lastResumedSessionIdRef.current = '';
+      setSessionLoadError(err instanceof Error ? err.message : '会话恢复失败');
+    }
+  }, [applySessionResume]);
+
   const selectSession = useCallback(async (id: string) => {
     try {
       setSessionLoadError('');
-      const detail = await getAgentSession(id);
-      setSessionId(detail.sessionId);
-      setActiveRun(null);
-      clearEvents();
-      loadSessionMessages(detail.sessionId, detail.messages, detail.memory);
+      const detail = await resumeAgentSession(id);
+      applySessionResume(detail);
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '会话详情加载失败');
     }
-  }, [clearEvents, loadSessionMessages, setActiveRun, setSessionId]);
+  }, [applySessionResume]);
 
   const createNewSession = useCallback(async () => {
     try {
       setSessionLoadError('');
       setSessionMenu(null);
-      const detail = await createAgentSession();
+      const detail = await createAgentSession(currentProjectId);
       setSessionId(detail.sessionId);
+      if (detail.activeProjectId) setCurrentProjectId(detail.activeProjectId);
       setActiveRun(null);
+      clearResumeState();
       clearEvents();
       loadSessionMessages(detail.sessionId, detail.messages, detail.memory);
       await reloadSessions();
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '新建会话失败');
     }
-  }, [clearEvents, loadSessionMessages, reloadSessions, setActiveRun, setSessionId]);
+  }, [clearEvents, clearResumeState, currentProjectId, loadSessionMessages, reloadSessions, setActiveRun, setCurrentProjectId, setSessionId]);
 
   const renameSession = useCallback(async (target: AgentSessionSummary) => {
     setSessionMenu(null);
@@ -216,6 +262,13 @@ export default function AgentPage() {
   }, [reloadSessions]);
 
   useEffect(() => {
+    if (!sessionId) return;
+    if (lastResumedSessionIdRef.current === sessionId) return;
+    lastResumedSessionIdRef.current = sessionId;
+    void resumeCurrentSession(sessionId);
+  }, [resumeCurrentSession, sessionId]);
+
+  useEffect(() => {
     if (!sessionMenu) return;
     const close = () => setSessionMenu(null);
     window.addEventListener('click', close);
@@ -232,11 +285,26 @@ export default function AgentPage() {
     if (sessionId) return;
     if (!sessionsLoaded) return;
     if (sessions.length > 0) {
-      void selectSession(sessions[0].sessionId);
+      const preferred = currentProjectId
+        ? sessions.find((item) => item.activeProjectId === currentProjectId)
+        : null;
+      void selectSession((preferred ?? sessions[0]).sessionId);
       return;
     }
     void createNewSession();
-  }, [createNewSession, selectSession, sessionId, sessions, sessionsLoaded]);
+  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
+
+  useEffect(() => {
+    if (!sessionId || !sessionsLoaded || !currentProjectId) return;
+    const active = sessions.find((item) => item.sessionId === sessionId);
+    if (active?.activeProjectId === currentProjectId) return;
+    const matching = sessions.find((item) => item.activeProjectId === currentProjectId);
+    if (matching) {
+      void selectSession(matching.sessionId);
+      return;
+    }
+    void createNewSession();
+  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -309,6 +377,11 @@ export default function AgentPage() {
       const res: AgentChatResponse = await sendChat({ message: msg, sessionId });
       console.log('sendChat response:', { replyLength: res.reply.length, reply: res.reply });
       addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace);
+      setResumeState({
+        ...resumeState,
+        pendingToolCall: null,
+        pendingConfirmation: res.pendingConfirmation ?? res.memory?.pendingConfirmation ?? null,
+      });
       await reloadSessions();
       invalidateAgentState();
       addLog(`Agent: ${res.phase}`);
@@ -324,6 +397,10 @@ export default function AgentPage() {
     e.preventDefault();
     void submitMessage(input);
   };
+
+  const resumedToolCacheSummary = resumeState.discoveredTools.length > 0
+    ? `${resumeState.discoveredPhase || '当前阶段'} · ${resumeState.discoveredTools.length} 个工具 · ${resumeState.recentToolExecutions.length} 条执行记录 · 工具缓存已恢复`
+    : '';
 
   return (
     <div className="agent-command-center">
@@ -377,6 +454,23 @@ export default function AgentPage() {
       <main className="agent-main-stage">
         <section className="agent-chat-panel">
           <div className="chat-thread">
+            {(resumeState.pendingConfirmation || resumedToolCacheSummary) && (
+              <div className="agent-message agent">
+                <div className="message-meta">恢复状态</div>
+                {resumeState.pendingConfirmation && (
+                  <div className="agent-confirmation-line">
+                    <strong>待确认：{resumeState.pendingConfirmation.toolCall?.name || '写入动作'}</strong>
+                    <span>{resumeState.pendingConfirmation.impactSummary}</span>
+                  </div>
+                )}
+                {resumedToolCacheSummary && (
+                  <div className="agent-memory-line">
+                    <span>{resumedToolCacheSummary}</span>
+                    {resumeState.lastToolSearchAt && <span>{formatSessionTime(resumeState.lastToolSearchAt)}</span>}
+                  </div>
+                )}
+              </div>
+            )}
             {messages.map((msg) => (
               <div key={msg.id} className={`agent-message ${msg.role}`}>
                 <div className="message-meta">{msg.role === 'user' ? '你' : 'Agent'}</div>

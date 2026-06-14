@@ -41,11 +41,6 @@ public class ChapterResponse
     public required int WordCount { get; set; }
 
     /// <summary>
-    /// Relative path to the chapter content file.
-    /// </summary>
-    public required string ContentPath { get; set; }
-
-    /// <summary>
     /// Chapter content in Markdown format (only included in GetById).
     /// </summary>
     public string? Content { get; set; }

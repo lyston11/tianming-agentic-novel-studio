@@ -334,7 +334,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
 
                 try
                 {
-                    var contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Implementations.GeneratedContentService>();
+                    var contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Interfaces.IGeneratedContentService>();
                     var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
                     foreach (var info in chapters)
                     {
@@ -365,7 +365,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 try
                 {
                     var summaryStore = ServiceLocator.Get<TM.Services.Modules.ProjectData.Implementations.ChapterSummaryStore>();
-                    var contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Implementations.GeneratedContentService>();
+                    var contentService = ServiceLocator.Get<TM.Services.Modules.ProjectData.Interfaces.IGeneratedContentService>();
                     var chapters = await contentService.GetGeneratedChaptersAsync().ConfigureAwait(false);
                     foreach (var info in chapters)
                     {

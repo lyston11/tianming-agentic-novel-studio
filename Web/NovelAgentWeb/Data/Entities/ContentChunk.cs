@@ -10,8 +10,5 @@ public class ContentChunk
     public int CharStart { get; set; }
     public int CharEnd { get; set; }
     public string ContentHash { get; set; } = null!;
-
-    // Navigation properties
     public ContentDocument Document { get; set; } = null!;
-    public ICollection<ContentVectorPoint> VectorPoints { get; set; } = new List<ContentVectorPoint>();
 }

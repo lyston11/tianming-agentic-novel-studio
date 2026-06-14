@@ -4,13 +4,12 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
-    public sealed class ContentChunkSearchService
+    public sealed class ContentChunkSearchService : IContentChunkSearchService
     {
-        public sealed record Hit(string ChapterId, int Position, string Content, double Score);
-
         private const int FallbackChapterCacheSize = 12;
         private readonly Dictionary<string, List<ChapterChunk>> _fallbackChunkCache = new();
         private readonly LinkedList<string> _fallbackLru = new();
@@ -32,24 +31,24 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        public async Task<List<Hit>> SearchAsync(string query, int topK = 5)
+        public async Task<List<ContentChunkHit>> SearchAsync(string query, int topK = 5)
         {
             var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
             if (!Directory.Exists(chaptersPath))
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             if (topK <= 0)
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             if (string.IsNullOrWhiteSpace(query))
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             var queryTerms = query.Split(new[] { ' ', '，', ',', '、' }, StringSplitOptions.RemoveEmptyEntries);
             if (queryTerms.Length == 0)
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             var mdFiles = Directory.GetFiles(chaptersPath, "*.md", SearchOption.TopDirectoryOnly);
-            var topResults = new List<Hit>(topK);
+            var topResults = new List<ContentChunkHit>(topK);
 
             foreach (var file in mdFiles)
             {
@@ -76,7 +75,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     if (topResults.Count == topK && score <= topResults[topResults.Count - 1].Score)
                         continue;
 
-                    var result = new Hit(chunk.ChapterId, chunk.Position, chunk.Content, score);
+                    var result = new ContentChunkHit(chunk.ChapterId, chunk.Position, chunk.Content, score);
 
                     var insertIndex = 0;
                     while (insertIndex < topResults.Count && topResults[insertIndex].Score >= result.Score)
@@ -91,15 +90,15 @@ namespace TM.Services.Modules.ProjectData.Implementations
             return topResults;
         }
 
-        public async Task<List<Hit>> SearchByChapterAsync(string chapterId, int topK = 2)
+        public async Task<List<ContentChunkHit>> SearchByChapterAsync(string chapterId, int topK = 2)
         {
             if (string.IsNullOrEmpty(chapterId) || topK <= 0)
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
             var filePath = Path.Combine(chaptersPath, $"{chapterId}.md");
             if (!File.Exists(filePath))
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             List<ChapterChunk> chunks;
             try
@@ -109,13 +108,13 @@ namespace TM.Services.Modules.ProjectData.Implementations
             catch (Exception ex)
             {
                 TM.App.Log($"[ContentChunkSearch] 按章读取失败 {chapterId}: {ex.Message}");
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
             }
 
-            var results = new List<Hit>(Math.Min(topK, chunks.Count));
+            var results = new List<ContentChunkHit>(Math.Min(topK, chunks.Count));
             foreach (var chunk in chunks.Take(topK))
             {
-                results.Add(new Hit(chunk.ChapterId, chunk.Position, chunk.Content, 1.0));
+                results.Add(new ContentChunkHit(chunk.ChapterId, chunk.Position, chunk.Content, 1.0));
             }
             return results;
         }
@@ -140,14 +139,14 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        public async Task<List<Hit>> SearchByChapterPositionAsync(
+        public async Task<List<ContentChunkHit>> SearchByChapterPositionAsync(
             string chapterId, int startPosition, int windowSize = 1, CancellationToken ct = default)
         {
             if (string.IsNullOrEmpty(chapterId) || startPosition < 0 || windowSize <= 0)
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
 
             var filePath = Path.Combine(StoragePathHelper.GetProjectChaptersPath(), $"{chapterId}.md");
-            if (!File.Exists(filePath)) return new List<Hit>();
+            if (!File.Exists(filePath)) return new List<ContentChunkHit>();
 
             List<ChapterChunk> chunks;
             try
@@ -157,19 +156,19 @@ namespace TM.Services.Modules.ProjectData.Implementations
             catch (Exception ex)
             {
                 TM.App.Log($"[ContentChunkSearch] 按位置读取失败 {chapterId} pos={startPosition}: {ex.Message}");
-                return new List<Hit>();
+                return new List<ContentChunkHit>();
             }
 
             return chunks.Where(c => c.Position >= startPosition).Take(windowSize)
-                .Select(c => new Hit(c.ChapterId, c.Position, c.Content, 1.0)).ToList();
+                .Select(c => new ContentChunkHit(c.ChapterId, c.Position, c.Content, 1.0)).ToList();
         }
 
-        public async Task<IReadOnlyList<Hit>> GetChunksAsync(string chapterId, CancellationToken ct = default)
+        public async Task<IReadOnlyList<ContentChunkHit>> GetChunksAsync(string chapterId, CancellationToken ct = default)
         {
-            if (string.IsNullOrEmpty(chapterId)) return Array.Empty<Hit>();
+            if (string.IsNullOrEmpty(chapterId)) return Array.Empty<ContentChunkHit>();
 
             var filePath = Path.Combine(StoragePathHelper.GetProjectChaptersPath(), $"{chapterId}.md");
-            if (!File.Exists(filePath)) return Array.Empty<Hit>();
+            if (!File.Exists(filePath)) return Array.Empty<ContentChunkHit>();
 
             List<ChapterChunk> chunks;
             try
@@ -179,10 +178,10 @@ namespace TM.Services.Modules.ProjectData.Implementations
             catch (Exception ex)
             {
                 TM.App.Log($"[ContentChunkSearch] GetChunks 读取失败 {chapterId}: {ex.Message}");
-                return Array.Empty<Hit>();
+                return Array.Empty<ContentChunkHit>();
             }
 
-            return chunks.Select(c => new Hit(c.ChapterId, c.Position, c.Content, 1.0)).ToList();
+            return chunks.Select(c => new ContentChunkHit(c.ChapterId, c.Position, c.Content, 1.0)).ToList();
         }
 
         public void InvalidateCache()

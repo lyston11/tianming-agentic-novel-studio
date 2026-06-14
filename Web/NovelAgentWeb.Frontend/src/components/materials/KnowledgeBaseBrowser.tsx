@@ -48,6 +48,24 @@ function getShortContent(entry: CreativeKnowledgeEntry) {
   return `${entry.content.slice(0, 160)}...`;
 }
 
+function usageLabel(status?: string) {
+  if (status === 'referenced') return '本项目已引用';
+  if (status === 'imported') return '本项目已导入';
+  return '未用于本项目';
+}
+
+function formatUsageTime(value?: string | null) {
+  if (!value) return '暂无';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '暂无';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 interface KnowledgeBaseBrowserProps {
   projectId: string;
   actions?: ReactNode;
@@ -92,6 +110,9 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
         source: '',
         usageCount: e.usageCount,
         createdAt: e.createdAt,
+        projectUsageStatus: e.projectUsageStatus,
+        projectUsageCount: e.projectUsageCount,
+        projectLastUsedAt: e.projectLastUsedAt,
       };
     }),
     [rawEntries]
@@ -224,6 +245,9 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
                     >
                       {getCategoryLabel(entry.category)}
                     </span>
+                    <span className={`knowledge-usage ${entry.projectUsageStatus ?? 'none'}`}>
+                      {usageLabel(entry.projectUsageStatus)}
+                    </span>
                   </div>
                   <div className="knowledge-title">{entry.title}</div>
                   <div className="knowledge-content">{getShortContent(entry)}</div>
@@ -242,6 +266,9 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
                   style={{ color: CATEGORY_COLORS[selectedEntry.category] ?? 'var(--muted)' }}
                 >
                   {getCategoryLabel(selectedEntry.category)}
+                </span>
+                <span className={`knowledge-usage ${selectedEntry.projectUsageStatus ?? 'none'}`}>
+                  {usageLabel(selectedEntry.projectUsageStatus)}
                 </span>
               </div>
               {editingId === selectedEntry.id ? (
@@ -272,6 +299,20 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
                 <>
                   <h3>{selectedEntry.title}</h3>
                   <p>{selectedEntry.content}</p>
+                  <dl className="knowledge-detail-meta">
+                    <div>
+                      <dt>项目状态</dt>
+                      <dd>{usageLabel(selectedEntry.projectUsageStatus)}</dd>
+                    </div>
+                    <div>
+                      <dt>本项目引用次数</dt>
+                      <dd>{selectedEntry.projectUsageCount ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>最近引用</dt>
+                      <dd>{formatUsageTime(selectedEntry.projectLastUsedAt)}</dd>
+                    </div>
+                  </dl>
 
                   <div className="knowledge-detail-actions">
                     <button className="ink-button" onClick={() => startEditing(selectedEntry)}>

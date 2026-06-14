@@ -11,6 +11,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="NovelAgentRegression" />
     <InternalsVisibleTo Include="AgentKernelRegression" />
+    <InternalsVisibleTo Include="Unit" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +31,8 @@
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\CommercialRhythmChecker.cs" Link="NovelAgent\Services\CommercialRhythmChecker.cs" />
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\HardcoreWritingEngine.cs" Link="NovelAgent\Services\HardcoreWritingEngine.cs" />
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\NovelAgentOrchestrator.cs" Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
+    <Compile Remove="..\..\Services\Framework\AI\NovelAgent\Services\ChapterPostGenerationReviewer.cs" />
+    <Compile Remove="..\..\Services\Framework\AI\NovelAgent\Services\NovelAgentRewriteLoopService.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,11 +45,6 @@
     <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs" Link="Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs" />
     <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Guides\**\*.cs" Link="Services\Modules\ProjectData\Implementations\Guides\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Remove="..\..\Services\Modules\ProjectData\Implementations\Guides\MilestoneCondenser.cs" />
-    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ContentChunkSearchService.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\ContentChunkSearchService.cs" />
-    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\FileBasedVectorIndex.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\FileBasedVectorIndex.cs" />
-    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ChapterEmbeddingIndex.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\ChapterEmbeddingIndex.cs" />
-    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\ChunkEmbeddingIndex.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\ChunkEmbeddingIndex.cs" />
-    <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\EntityFirstChapterIndex.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\EntityFirstChapterIndex.cs" />
     <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\KeywordChapterIndexService.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\KeywordChapterIndexService.cs" />
     <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Indexing\PlotPointsIndexService.cs" Link="Services\Modules\ProjectData\Implementations\Indexing\PlotPointsIndexService.cs" />
     <Compile Include="..\..\Services\Modules\ProjectData\Implementations\Tracking\**\*.cs" Link="Services\Modules\ProjectData\Implementations\Tracking\%(RecursiveDir)%(Filename)%(Extension)" />

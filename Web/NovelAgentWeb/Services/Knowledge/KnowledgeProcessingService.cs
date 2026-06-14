@@ -1,10 +1,12 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Content;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
@@ -22,27 +24,30 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly NovelAgentDbContext _db;
     private readonly IKnowledgeService _knowledgeService;
     private readonly IMicroEmbeddingService _embedding;
-    private readonly IContentDocumentService _contentDocumentService;
     private readonly UserSettingsManager _settingsManager;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<KnowledgeProcessingService> _logger;
+    private readonly IAgentMemoryEventService? _memoryEvents;
+    private readonly IContentDocumentService _contentDocuments;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
         IKnowledgeService knowledgeService,
         IMicroEmbeddingService embedding,
-        IContentDocumentService contentDocumentService,
         UserSettingsManager settingsManager,
         IHttpClientFactory httpClientFactory,
-        ILogger<KnowledgeProcessingService> logger)
+        ILogger<KnowledgeProcessingService> logger,
+        IContentDocumentService contentDocuments,
+        IAgentMemoryEventService? memoryEvents = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
         _embedding = embedding;
-        _contentDocumentService = contentDocumentService;
         _settingsManager = settingsManager;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _memoryEvents = memoryEvents;
+        _contentDocuments = contentDocuments;
     }
 
     /// <summary>
@@ -60,12 +65,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 
         try
         {
-            var content = await _contentDocumentService.GetDocumentContentBySourceAsync(
-                "knowledge_upload", task.Id, ct);
-
-            if (string.IsNullOrEmpty(content))
-                throw new InvalidOperationException($"No content found for task {taskId}");
-
+            var content = await _contentDocuments.GetTextAsync(task.UserId, task.ProjectId, "knowledge_upload", task.Id, "upload_raw", ct);
             var tokenCount = EstimateTokenCount(content);
 
             List<ExtractedKnowledgeEntryDto> entries;
@@ -606,9 +606,10 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         List<ExtractedKnowledgeEntryDto> entries,
         CancellationToken ct)
     {
+        var createdIds = new List<string>();
         foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
         {
-            await _knowledgeService.CreateKnowledgeAsync(new CreateKnowledgeRequest
+            var created = await _knowledgeService.CreateExtractedKnowledgeAsync(new CreateExtractedKnowledgeRequest
             {
                 ProjectId = task.ProjectId,
                 EntryType = entry.Category,
@@ -616,11 +617,27 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 Content = entry.Content,
                 Tags = entry.Tags,
                 Weight = entry.Weight,
-                SourceType = "extracted",
-                SourceFileId = task.Id,
+                SourceUploadTaskId = task.Id,
                 ChunkIndex = index,
                 ExtractionContext = entry.OriginalText
             }, ct);
+            createdIds.Add(created.Id);
+        }
+
+        if (_memoryEvents != null && createdIds.Count > 0)
+        {
+            await _memoryEvents.AppendAsync(
+                task.UserId,
+                task.ProjectId,
+                null,
+                null,
+                "knowledge_processed",
+                "file_processed",
+                "knowledge",
+                "processed_knowledge_ids",
+                new { taskId = task.Id, knowledgeIds = createdIds },
+                ct);
         }
     }
+
 }
