@@ -46,7 +46,7 @@ public static class EmbeddingServiceCollectionExtensions
                 IsDegraded = true,
                 UsesDeterministicStub = true,
                 RealEmbeddingsRequired = requireRealEmbeddings,
-                Warning = "Semantic RAG is using deterministic hash vectors for local/test compatibility. Similarity scores are not model-quality embeddings."
+                Warning = "Semantic RAG is using deterministic hash vectors for local/test mode. Similarity scores are not model-quality embeddings."
             };
         }
 

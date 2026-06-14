@@ -25,17 +25,20 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private readonly IMicroEmbeddingService? _embeddingService;
         private readonly ICurrentUserService? _currentUserService;
         private readonly IAgentMemoryRepository? _memoryRepository;
+        private readonly string? _projectId;
 
         public CreativeKnowledgeBaseService(
             IVectorStore? vectorStore = null,
             IMicroEmbeddingService? embeddingService = null,
             ICurrentUserService? currentUserService = null,
-            IAgentMemoryRepository? memoryRepository = null)
+            IAgentMemoryRepository? memoryRepository = null,
+            string? projectId = null)
         {
             _vectorStore = vectorStore;
             _embeddingService = embeddingService;
             _currentUserService = currentUserService;
             _memoryRepository = memoryRepository;
+            _projectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId.Trim();
 
             try
             {
@@ -52,7 +55,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
         public string GetStoragePath()
         {
-            return StoragePathHelper.GetFilePath("Services", StorageSubPath, KnowledgeFileName);
+            return "sqlite-qdrant://creative-knowledge-base";
         }
 
         public async Task<CreativeKnowledgeBaseDocument> LoadAsync(CancellationToken ct = default)
@@ -64,21 +67,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 if (_cache != null) return Clone(_cache);
 
-                var path = GetStoragePath();
-                if (!File.Exists(path))
-                {
-                    _cache = BuildSeedDocument();
-                    await SaveWithoutLockAsync(_cache, ct).ConfigureAwait(false);
-                    return Clone(_cache);
-                }
-
-                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    bufferSize: 4096, useAsync: true);
-                _cache = await JsonSerializer.DeserializeAsync<CreativeKnowledgeBaseDocument>(stream, JsonHelper.CnDefault, ct)
-                    .ConfigureAwait(false) ?? BuildSeedDocument();
+                _cache = BuildSeedDocument();
                 Normalize(_cache);
                 EnsureSeedEntries(_cache);
-                await SaveWithoutLockAsync(_cache, ct).ConfigureAwait(false);
                 return Clone(_cache);
             }
             catch (Exception ex)
@@ -113,7 +104,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 // Get current user context
                 var userId = _currentUserService.GetUserId();
-                var projectId = StoragePathHelper.CurrentProjectName;
+                var projectId = _projectId;
 
                 if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(projectId))
                 {
@@ -128,6 +119,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 // Search Qdrant with filter for knowledge entries
                 var filters = new Dictionary<string, object>
                 {
+                    { "project_id", projectId },
                     { "source_type", "knowledge" }
                 };
 
@@ -428,18 +420,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         {
             if (_cache != null) return _cache;
 
-            var path = GetStoragePath();
-            if (!File.Exists(path))
-            {
-                _cache = BuildSeedDocument();
-                await SaveWithoutLockAsync(_cache, ct).ConfigureAwait(false);
-                return _cache;
-            }
-
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                bufferSize: 4096, useAsync: true);
-            _cache = await JsonSerializer.DeserializeAsync<CreativeKnowledgeBaseDocument>(stream, JsonHelper.CnDefault, ct)
-                .ConfigureAwait(false) ?? BuildSeedDocument();
+            _cache = BuildSeedDocument();
             Normalize(_cache);
             EnsureSeedEntries(_cache);
             return _cache;
@@ -447,20 +428,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
         private async Task SaveWithoutLockAsync(CreativeKnowledgeBaseDocument document, CancellationToken ct)
         {
+            await Task.CompletedTask.ConfigureAwait(false);
             Normalize(document);
-            var path = GetStoragePath();
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(dir))
-                Directory.CreateDirectory(dir);
-
-            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            await using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None,
-                             bufferSize: 4096, useAsync: true))
-            {
-                await JsonSerializer.SerializeAsync(stream, document, JsonHelper.CnDefault, ct).ConfigureAwait(false);
-            }
-
-            File.Move(tmp, path, overwrite: true);
             _cache = Clone(document);
         }
 

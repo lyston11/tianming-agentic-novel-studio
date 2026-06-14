@@ -165,13 +165,30 @@ public sealed class AgentWorkingMemory
     public string? SelectedChapterCandidateId { get; set; }
     public string? LastBuiltContextRunId { get; set; }
     public string? CurrentGoal { get; set; }
+    public List<string> OpenQuestions { get; set; } = new();
+    public List<AgentRuntimeObservation> RecentObservations { get; set; } = new();
     public AgentSessionMemory? SessionMemory { get; set; }
     public AgentProjectMemory? ProjectMemory { get; set; }
     public AgentAuthorMemory? AuthorMemory { get; set; }
     public AgentExecutionMemory? ExecutionMemory { get; set; }
     public List<string> UserPreferences { get; set; } = new();
-    public object? PendingToolCall { get; set; }
+    public AgentToolCall? PendingToolCall { get; set; }
+    public AgentDecision? LastDecision { get; set; }
     public AgentMissionPlan MissionPlan { get; set; } = new();
+}
+
+public sealed class AgentRuntimeObservation
+{
+    public string ObservationType { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string Phase { get; set; } = string.Empty;
+    public bool Success { get; set; }
+}
+
+public sealed class AgentDecision
+{
+    public string Intent { get; set; } = "free_chat";
 }
 
 // Memory layer types for AgentMemoryService
@@ -183,7 +200,6 @@ public sealed class AgentSessionMemory
     public List<string> ShortTermPreferences { get; set; } = new();
     public List<string> RecentObservations { get; set; } = new();
     public List<string> LastObservations { get; set; } = new();
-    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
     public string? PendingToolName { get; set; }
     public string? LastIntent { get; set; }
 }

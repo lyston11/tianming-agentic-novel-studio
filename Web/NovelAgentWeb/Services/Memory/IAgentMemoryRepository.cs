@@ -76,7 +76,6 @@ public class SessionMemory
     public List<string> OpenQuestions { get; set; } = new();
     public List<string> ShortTermPreferences { get; set; } = new();
     public List<string> RecentObservations { get; set; } = new();
-    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
     public string? PendingToolName { get; set; }
     public string? LastIntent { get; set; }
 }

@@ -50,6 +50,34 @@ public sealed class SemanticSearchService
         }
     }
 
+    public async Task<List<SemanticSearchResult>> SearchKnowledgeAsync(
+        string userId, string query, int topK = 10, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("User ID required", nameof(userId));
+        if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("Query required", nameof(query));
+
+        try
+        {
+            var queryVector = await _embedding.EncodeAsync(query, EmbeddingMode.Query, ct);
+            var filters = new Dictionary<string, object> { ["source_type"] = "knowledge" };
+            var results = await _vectorStore.SearchSimilarAsync(userId, queryVector, topK, filters, ct);
+
+            return results.Select(r => new SemanticSearchResult
+            {
+                ChunkId = r.SourceId ?? r.Id,
+                Content = r.Content ?? "",
+                Score = r.Score,
+                EntityType = r.SourceType ?? "",
+                EntityId = r.SourceId ?? "",
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Knowledge semantic search failed for user {UserId}", userId);
+            return new List<SemanticSearchResult>();
+        }
+    }
+
     public async Task<List<SemanticSearchResult>> DetectSimilarPatternsAsync(
         string userId, string projectId, string pattern, float threshold = 0.85f, CancellationToken ct = default)
     {

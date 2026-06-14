@@ -17,7 +17,6 @@ public sealed class MissionBlackboardRecoveryService
         var beforeRun = plan.CurrentRunId;
         var beforeTaskCount = plan.SchedulerState?.Tasks.Count ?? 0;
 
-        session.NormalizeLegacyState();
         RestoreActiveRun(session, bible);
         _taskTreeService.Sync(session, project, bible);
 

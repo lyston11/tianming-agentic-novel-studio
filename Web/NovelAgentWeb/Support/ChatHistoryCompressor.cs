@@ -8,6 +8,11 @@ namespace TM.Web.NovelAgentWeb.Support;
 /// </summary>
 public class ChatHistoryCompressor
 {
+    private const int RecentMessageCount = 5;
+    private const int SummaryTurnInterval = 10;
+    private const int MetaSummaryTurnThreshold = 30;
+    private const int SummarySnippetLength = 80;
+
     private readonly ILogger<ChatHistoryCompressor> _logger;
     private readonly IChatHistoryRepository _chatHistory;
 
@@ -41,21 +46,37 @@ public class ChatHistoryCompressor
 
         var layered = new LayeredChatHistory
         {
-            RecentMessages = chatHistory.TakeLast(5).Select(MapToChatMessage).ToList()
+            RecentMessages = chatHistory.TakeLast(RecentMessageCount).Select(MapToChatMessage).ToList()
         };
 
-        // Generate summaries every 10 turns (Task 14 will implement)
-        if (turnCount >= 10)
+        if (turnCount >= SummaryTurnInterval)
         {
             _logger.LogDebug("Chat history has {TurnCount} turns, compression needed", turnCount);
-            // TODO: Generate summaries in Task 14
+            var fullSummaryBlocks = turnCount / SummaryTurnInterval;
+            for (var blockIndex = 0; blockIndex < fullSummaryBlocks; blockIndex++)
+            {
+                var startTurn = blockIndex * SummaryTurnInterval + 1;
+                var endTurn = (blockIndex + 1) * SummaryTurnInterval;
+                var blockMessages = chatHistory
+                    .Skip(blockIndex * SummaryTurnInterval * 2)
+                    .Take(SummaryTurnInterval * 2)
+                    .ToList();
+
+                layered.Summaries.Add(new ChatSummary
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    Content = BuildExtractiveSummary(startTurn, endTurn, blockMessages),
+                    KeyDecisions = ExtractKeyDecisions(blockMessages),
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
         }
 
-        // Generate meta-summary for 30+ turns (Task 14 will implement)
-        if (turnCount >= 30)
+        if (turnCount >= MetaSummaryTurnThreshold && layered.Summaries.Count > 0)
         {
             _logger.LogDebug("Chat history has {TurnCount} turns, meta-summary needed", turnCount);
-            // TODO: Generate meta-summary in Task 14
+            layered.MetaSummary = BuildMetaSummary(turnCount, layered.Summaries);
         }
 
         return Task.FromResult(layered);
@@ -111,5 +132,48 @@ public class ChatHistoryCompressor
             Content = turn.Content,
             CreatedAt = DateTime.UtcNow
         };
+    }
+
+    private static string BuildExtractiveSummary(
+        int startTurn,
+        int endTurn,
+        IReadOnlyList<AgentConversationTurn> messages)
+    {
+        var first = messages.FirstOrDefault(m => !string.IsNullOrWhiteSpace(m.Content))?.Content ?? string.Empty;
+        var last = messages.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Content))?.Content ?? string.Empty;
+        return $"第 {startTurn}-{endTurn} 轮摘要：{Truncate(first)} / {Truncate(last)}";
+    }
+
+    private static string BuildMetaSummary(int turnCount, IReadOnlyList<ChatSummary> summaries)
+    {
+        var coveredRange = $"{summaries.Min(s => s.StartTurn)}-{summaries.Max(s => s.EndTurn)}";
+        var decisions = summaries
+            .SelectMany(s => s.KeyDecisions)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
+        var decisionText = decisions.Count == 0 ? "暂无显式决策" : string.Join("；", decisions);
+        return $"已压缩 {turnCount} 轮对话，覆盖轮次 {coveredRange}。关键决策：{decisionText}";
+    }
+
+    private static List<string> ExtractKeyDecisions(IEnumerable<AgentConversationTurn> messages)
+    {
+        var keywords = new[] { "决定", "确认", "必须", "不要", "需要", "采用", "使用" };
+        return messages
+            .Select(m => m.Content.Trim())
+            .Where(content => !string.IsNullOrWhiteSpace(content) &&
+                              keywords.Any(keyword => content.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            .Select(Truncate)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+    }
+
+    private static string Truncate(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed.Length <= SummarySnippetLength
+            ? trimmed
+            : trimmed[..SummarySnippetLength];
     }
 }

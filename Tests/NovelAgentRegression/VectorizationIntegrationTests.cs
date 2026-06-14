@@ -5,6 +5,7 @@ using Qdrant.Client;
 using Testcontainers.Qdrant;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using Xunit;
@@ -92,6 +93,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
             mockEmbedding,
             chunker,
             collectionManager,
+            new ContentDocumentService(_db),
             _loggerFactory.CreateLogger<MaterialVectorizationService>()
         );
 
@@ -139,9 +141,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeMaterial_CreatesChunksInQdrant()
     {
         // Arrange
-        var material = CreateTestMaterial(_testUserId, _testProjectId, "Test material content with enough text to create chunks. " + string.Join(" ", Enumerable.Range(1, 1000).Select(i => $"word{i}")));
-        _db.Materials.Add(material);
-        await _db.SaveChangesAsync();
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Test material content with enough text to create chunks. " + string.Join(" ", Enumerable.Range(1, 1000).Select(i => $"word{i}")));
 
         // Act
         await _service.VectorizeMaterialAsync(material.Id, _testUserId);
@@ -163,9 +163,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     {
         // Arrange
         var content = "This is a test material with inline content. " + string.Join(" ", Enumerable.Range(1, 500).Select(i => $"word{i}"));
-        var material = CreateTestMaterial(_testUserId, _testProjectId, content);
-        _db.Materials.Add(material);
-        await _db.SaveChangesAsync();
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, content);
 
         // Act
         await _service.VectorizeMaterialAsync(material.Id, _testUserId);
@@ -180,9 +178,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeMaterial_UpdatesVectorChunkCount()
     {
         // Arrange
-        var material = CreateTestMaterial(_testUserId, _testProjectId, "Content with 100 words. " + string.Join(" ", Enumerable.Range(1, 100).Select(i => $"word{i}")));
-        _db.Materials.Add(material);
-        await _db.SaveChangesAsync();
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Content with 100 words. " + string.Join(" ", Enumerable.Range(1, 100).Select(i => $"word{i}")));
 
         Assert.Equal(0, material.VectorChunkCount);
 
@@ -212,9 +208,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeMaterial_WrongUserId_ThrowsKeyNotFoundException()
     {
         // Arrange
-        var material = CreateTestMaterial(_testUserId, _testProjectId, "Test content");
-        _db.Materials.Add(material);
-        await _db.SaveChangesAsync();
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Test content");
 
         var wrongUserId = Guid.NewGuid().ToString();
 
@@ -229,9 +223,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeMaterial_ReVectorization_ReplacesOldVectors()
     {
         // Arrange
-        var material = CreateTestMaterial(_testUserId, _testProjectId, "Initial content. " + string.Join(" ", Enumerable.Range(1, 500).Select(i => $"word{i}")));
-        _db.Materials.Add(material);
-        await _db.SaveChangesAsync();
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Initial content. " + string.Join(" ", Enumerable.Range(1, 500).Select(i => $"word{i}")));
 
         // Act - First vectorization
         await _service.VectorizeMaterialAsync(material.Id, _testUserId);
@@ -255,12 +247,9 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeAllMaterials_VectorizesMultipleMaterials()
     {
         // Arrange
-        var material1 = CreateTestMaterial(_testUserId, _testProjectId, "Material 1 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-        var material2 = CreateTestMaterial(_testUserId, _testProjectId, "Material 2 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-        var material3 = CreateTestMaterial(_testUserId, _testProjectId, "Material 3 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-
-        _db.Materials.AddRange(material1, material2, material3);
-        await _db.SaveChangesAsync();
+        var material1 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 1 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
+        var material2 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 2 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
+        var material3 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 3 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
 
         // Act
         var successCount = await _service.VectorizeAllMaterialsAsync(_testProjectId, _testUserId);
@@ -292,9 +281,8 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     public async Task VectorizeMaterial_CreatesCorrectPayloadInQdrant()
     {
         // Arrange
-        var material = CreateTestMaterial(_testUserId, _testProjectId, "Payload test content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
+        var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Payload test content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
         material.Category = "research";
-        _db.Materials.Add(material);
         await _db.SaveChangesAsync();
 
         // Act
@@ -323,9 +311,9 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         Assert.Contains("Payload test content", point.Payload["content"].StringValue);
     }
 
-    private static Material CreateTestMaterial(string userId, string projectId, string content)
+    private async Task<Material> CreateTestMaterialAsync(string userId, string projectId, string content)
     {
-        return new Material
+        var material = new Material
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
@@ -333,8 +321,19 @@ public class VectorizationIntegrationTests : IAsyncLifetime
             Title = "Test Material",
             Category = "general",
             ContentType = "text/plain",
-            Content = content,
             CreatedAt = DateTime.UtcNow
         };
+
+        _db.Materials.Add(material);
+        await _db.SaveChangesAsync();
+        await new ContentDocumentService(_db).SaveOrReplaceTextAsync(
+            userId,
+            projectId,
+            "material",
+            material.Id,
+            "material_raw",
+            material.Title,
+            content);
+        return material;
     }
 }

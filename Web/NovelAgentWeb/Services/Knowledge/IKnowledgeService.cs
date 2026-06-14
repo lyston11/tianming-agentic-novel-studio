@@ -13,6 +13,11 @@ public interface IKnowledgeService
     Task<KnowledgeResponse> CreateKnowledgeAsync(CreateKnowledgeRequest request, CancellationToken ct = default);
 
     /// <summary>
+    /// Creates a knowledge entry from the server-side upload/extraction pipeline.
+    /// </summary>
+    Task<KnowledgeResponse> CreateExtractedKnowledgeAsync(CreateExtractedKnowledgeRequest request, CancellationToken ct = default);
+
+    /// <summary>
     /// Lists all knowledge entries for a specific project.
     /// </summary>
     Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default);
@@ -38,7 +43,12 @@ public interface IKnowledgeService
     Task<List<KnowledgeSearchResult>> SearchKnowledgeAsync(SearchKnowledgeRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// Increments the usage count for a knowledge entry.
+    /// Records usage of a user-level knowledge entry in the current project context.
     /// </summary>
-    Task IncrementUsageAsync(string knowledgeId, CancellationToken ct = default);
+    Task IncrementUsageAsync(
+        string knowledgeId,
+        string projectId,
+        string? sessionId = null,
+        string? runId = null,
+        CancellationToken ct = default);
 }

@@ -6,8 +6,38 @@ using Xunit;
 
 namespace Tests.Unit.Support;
 
-public class ChatHistoryCompressorTests
-{
+    public class ChatHistoryCompressorTests
+    {
+    [Fact]
+    public async Task CompressAsync_CreatesSummaryWhenTenTurnsAreAvailable()
+    {
+        var compressor = new ChatHistoryCompressor(
+            NullLogger<ChatHistoryCompressor>.Instance,
+            Mock.Of<IChatHistoryRepository>());
+        var history = BuildTurns(10);
+
+        var layered = await compressor.CompressAsync(history, CancellationToken.None);
+
+        Assert.NotEmpty(layered.Summaries);
+        Assert.Contains(layered.Summaries, s => s.StartTurn == 1 && s.EndTurn == 10);
+        Assert.NotEmpty(layered.Summaries[0].Content);
+    }
+
+    [Fact]
+    public async Task CompressAsync_CreatesMetaSummaryWhenThirtyTurnsAreAvailable()
+    {
+        var compressor = new ChatHistoryCompressor(
+            NullLogger<ChatHistoryCompressor>.Instance,
+            Mock.Of<IChatHistoryRepository>());
+        var history = BuildTurns(30);
+
+        var layered = await compressor.CompressAsync(history, CancellationToken.None);
+
+        Assert.NotNull(layered.MetaSummary);
+        Assert.Contains("30", layered.MetaSummary);
+        Assert.True(layered.Summaries.Count >= 3);
+    }
+
     [Fact]
     public async Task CompressAndPersistAsync_SavesSummariesAndMetaSummaryAfterCompression()
     {
@@ -99,5 +129,27 @@ public class ChatHistoryCompressorTests
             List<AgentConversationTurn> chatHistory,
             CancellationToken ct = default) =>
             Task.FromResult(_layered);
+    }
+
+    private static List<AgentConversationTurn> BuildTurns(int turnCount)
+    {
+        var turns = new List<AgentConversationTurn>();
+        for (var i = 1; i <= turnCount; i++)
+        {
+            turns.Add(new AgentConversationTurn
+            {
+                Role = "user",
+                Content = $"第 {i} 轮用户消息，需要记住决定 {i}",
+                CreatedAt = DateTime.UtcNow.AddMinutes(i * 2)
+            });
+            turns.Add(new AgentConversationTurn
+            {
+                Role = "assistant",
+                Content = $"第 {i} 轮助手回复，确认决定 {i}",
+                CreatedAt = DateTime.UtcNow.AddMinutes(i * 2 + 1)
+            });
+        }
+
+        return turns;
     }
 }

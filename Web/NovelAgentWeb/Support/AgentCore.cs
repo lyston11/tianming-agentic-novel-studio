@@ -536,7 +536,6 @@ public sealed class AgentSessionMemory
     public List<string> ShortTermPreferences { get; set; } = new();
     public List<string> RecentObservations { get; set; } = new();
     public List<string> LastObservations { get; set; } = new();
-    public List<string> RecentUploadedKnowledgeIds { get; set; } = new();
     public string? PendingToolName { get; set; }
     public string? LastIntent { get; set; }
 }
@@ -700,6 +699,18 @@ public sealed class AgentToolDefinition
     public string Risk { get; set; } = "Low";
     public bool RequiresConfirmation { get; set; }
     public List<string> Arguments { get; set; } = new();
+    public AgentToolSideEffectSpec SideEffects { get; set; } = new();
+}
+
+public sealed class AgentToolSideEffectSpec
+{
+    public bool WritesLedger { get; set; } = true;
+    public bool WritesRedisRecentCache { get; set; } = true;
+    public bool WritesToolSearchCache { get; set; }
+    public bool WritesSqliteSnapshot { get; set; }
+    public List<string> WritesMemoryScopes { get; set; } = new();
+    public List<string> WritesSqliteEntities { get; set; } = new();
+    public List<string> WritesVectorIndexes { get; set; } = new();
 }
 
 public sealed class ToolSchema
@@ -709,6 +720,7 @@ public sealed class ToolSchema
     public string Risk { get; set; } = "Low";
     public bool RequiresConfirmation { get; set; }
     public Dictionary<string, string> Parameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public AgentToolSideEffectSpec SideEffects { get; set; } = new();
 }
 
 public sealed class AgentToolEntry
@@ -845,7 +857,8 @@ public sealed class AgentObservationBuilder
         var toolCachePhase = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
             ? session.Phase
             : session.DiscoveredPhase;
-        var availableTools = await _toolSearchCache.GetAsync(session, toolCachePhase, ct).ConfigureAwait(false);
+        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCachePhase, ct).ConfigureAwait(false);
+        var availableTools = availableToolLookup.Tools;
 
         if (availableTools == null)
         {
@@ -897,6 +910,7 @@ public sealed class AgentObservationBuilder
                 Risk = t.Risk,
                 RequiresConfirmation = t.RequiresConfirmation,
                 Arguments = t.Parameters.Keys.ToList(),
+                SideEffects = t.SideEffects,
             }).ToList(),
         };
     }
@@ -917,7 +931,6 @@ public sealed class AgentObservationBuilder
         ShortTermPreferences = new List<string>(source.ShortTermPreferences),
         RecentObservations = new List<string>(source.RecentObservations),
         LastObservations = new List<string>(source.RecentObservations),
-        RecentUploadedKnowledgeIds = new List<string>(source.RecentUploadedKnowledgeIds),
         PendingToolName = source.PendingToolName,
         LastIntent = source.LastIntent
     };
@@ -1643,7 +1656,7 @@ public sealed class AgentPlanner
     {
         var msg = context.UserMessage.Trim().ToLowerInvariant();
 
-        // Legacy pending confirmations are treated as resumable autopilot work.
+        // Pending confirmations remain resumable autopilot work.
         if (context.PendingConfirmation?.ToolCall != null && !msg.Contains("取消") && !msg.Contains("不要") && !msg.Contains("先不"))
         {
             return new AgentAction

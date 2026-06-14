@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Tests/AgentKernelRegression/AgentKernelRegression.csproj": {}
+    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Tests/AgentKernelRegression/AgentKernelRegression.csproj": {}
   },
   "projects": {
-    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Tests/AgentKernelRegression/AgentKernelRegression.csproj": {
+    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Tests/AgentKernelRegression/AgentKernelRegression.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Tests/AgentKernelRegression/AgentKernelRegression.csproj",
+        "projectUniqueName": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Tests/AgentKernelRegression/AgentKernelRegression.csproj",
         "projectName": "AgentKernelRegression",
-        "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Tests/AgentKernelRegression/AgentKernelRegression.csproj",
+        "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Tests/AgentKernelRegression/AgentKernelRegression.csproj",
         "packagesPath": "/Users/lyston/.nuget/packages/",
-        "outputPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Tests/AgentKernelRegression/obj/",
+        "outputPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Tests/AgentKernelRegression/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/lyston/.nuget/NuGet/NuGet.Config"
@@ -26,8 +26,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/NovelAgentWeb.csproj": {
-                "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/NovelAgentWeb.csproj"
+              "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/NovelAgentWeb.csproj": {
+                "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/NovelAgentWeb.csproj"
               }
             }
           }
@@ -61,14 +61,14 @@
         }
       }
     },
-    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/NovelAgentWeb.csproj": {
+    "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/NovelAgentWeb.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/NovelAgentWeb.csproj",
+        "projectUniqueName": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/NovelAgentWeb.csproj",
         "projectName": "NovelAgentWeb",
-        "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/NovelAgentWeb.csproj",
+        "projectPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/NovelAgentWeb.csproj",
         "packagesPath": "/Users/lyston/.nuget/packages/",
-        "outputPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb/obj/",
+        "outputPath": "/Users/lyston/PycharmProjects/tianming-agentic-novel-studio/.worktrees/original-design-full-implementation/Web/NovelAgentWeb/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/lyston/.nuget/NuGet/NuGet.Config"
@@ -114,6 +114,10 @@
               "version": "[8.0.0, )"
             },
             "Microsoft.EntityFrameworkCore.Sqlite": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.Extensions.Caching.StackExchangeRedis": {
               "target": "Package",
               "version": "[8.0.0, )"
             },

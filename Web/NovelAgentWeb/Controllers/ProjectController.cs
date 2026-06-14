@@ -11,7 +11,6 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 /// All endpoints require JWT authentication.
 /// </summary>
 [ApiController]
-[Route("api/project")]
 [Route("api/projects")]
 [Authorize]
 public class ProjectController : ControllerBase

@@ -604,7 +604,6 @@ export interface MaterialResponse {
   title: string;
   category: string | null;
   contentType: string | null;
-  filePath: string | null;
   tags: string | null;
   createdAt: string;
   vectorChunkCount: number;
@@ -625,14 +624,14 @@ export interface MaterialContentResponse {
 export interface UploadMaterialResponse {
   id: string;
   title: string;
-  filePath: string;
   category: string | null;
 }
 
 // Knowledge response types
 export interface KnowledgeResponse {
   id: string;
-  projectId: string;
+  usageProjectId: string | null;
+  sourceProjectId: string | null;
   entryType: string;
   title: string;
   content: string;
@@ -653,11 +652,6 @@ export interface KnowledgeSearchResult {
   projectUsageStatus: string;
   projectUsageCount: number;
   projectLastUsedAt: string | null;
-}
-
-export interface KnowledgeSearchResponse {
-  results: KnowledgeSearchResult[];
-  totalCount: number;
 }
 
 // StoryBible response types
@@ -772,7 +766,6 @@ export interface NovelProjectInfo {
   coreHook: string;
   readerPromise: string;
   status: string;
-  storageProjectName: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -931,10 +924,6 @@ export interface WorkflowChapterArtifactSummary {
   isCurrent: boolean;
 }
 
-export interface MaterialLibraryDocument {
-  materials: MaterialReference[];
-}
-
 export interface MaterialReference {
   id: string;
   fileName: string;
@@ -988,8 +977,6 @@ export interface MaterialAnalysisRequest {
 export interface WorkspaceInfo {
   projectName: string;
   storageRoot: string;
-  storyBiblePath: string;
-  creativeKnowledgePath: string;
 }
 
 export interface NovelAgentRunOperationResult {
@@ -1005,7 +992,6 @@ export interface StoryBibleCommitResult {
   requiresConfirmation: boolean;
   riskLevel: NovelToolRiskLevel;
   message: string;
-  storagePath: string;
   document: StoryBibleDocument | null;
 }
 
@@ -1138,6 +1124,38 @@ export interface AgentWorkingMemorySnapshot {
 export interface AgentToolCall {
   name: string;
   arguments: Record<string, string>;
+}
+
+export interface AgentToolSchema {
+  name: string;
+  description: string;
+  risk: string;
+  requiresConfirmation: boolean;
+  parameters: Record<string, string>;
+  sideEffects: AgentToolSideEffectSpec;
+}
+
+export interface AgentToolSideEffectSpec {
+  writesLedger: boolean;
+  writesRedisRecentCache: boolean;
+  writesToolSearchCache: boolean;
+  writesSqliteSnapshot: boolean;
+  writesMemoryScopes: string[];
+  writesSqliteEntities: string[];
+  writesVectorIndexes: string[];
+}
+
+export interface AgentToolExecutionSnapshot {
+  id: string;
+  toolName: string;
+  status: string;
+  runId?: string | null;
+  phase: string;
+  resultPhase: string;
+  resultMessage: string;
+  recommendedNextTool: string;
+  startedAt: string;
+  completedAt?: string | null;
 }
 
 export interface AgentPendingConfirmation {
@@ -1499,6 +1517,21 @@ export interface AgentSessionInfo {
   memory: AgentWorkingMemorySnapshot;
 }
 
+export interface AgentSessionResumeResponse extends AgentSessionInfo {
+  missionPlan: AgentMissionPlan;
+  pendingToolCall?: AgentToolCall | null;
+  pendingConfirmation?: AgentPendingConfirmation | null;
+  hasPendingTool: boolean;
+  hasPendingConfirmation: boolean;
+  discoveredPhase?: string | null;
+  discoveredTools: AgentToolSchema[];
+  toolSearchCacheVersion?: string | null;
+  lastToolSearchAt?: string | null;
+  toolSearchCacheFresh: boolean;
+  toolSearchCacheSource: 'restored' | 'none' | string;
+  recentToolExecutions: AgentToolExecutionSnapshot[];
+}
+
 export interface AgentSessionSummary {
   sessionId: string;
   title: string;
@@ -1508,7 +1541,6 @@ export interface AgentSessionSummary {
   isArchived: boolean;
   updatedAt: string;
   messageCount: number;
-  memory: AgentWorkingMemorySnapshot;
 }
 
 export interface AgentSessionUpdateRequest {

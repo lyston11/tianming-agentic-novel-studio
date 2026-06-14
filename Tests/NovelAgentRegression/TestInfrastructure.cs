@@ -64,13 +64,6 @@ namespace TM.Framework.Common.Helpers.Storage
             return TestStorageRoot;
         }
 
-        public static string GetFilePath(string layer, string subPath, string fileName)
-        {
-            var path = Path.Combine(TestStorageRoot, "Projects", CurrentProjectName, layer, NormalizeSubPath(subPath));
-            Directory.CreateDirectory(path);
-            return Path.Combine(path, fileName);
-        }
-
         public static void Reset(string projectName)
         {
             TestStorageRoot = Path.Combine(Path.GetTempPath(), "tianming-agentic-novel-regression", Guid.NewGuid().ToString("N"));
@@ -78,12 +71,6 @@ namespace TM.Framework.Common.Helpers.Storage
             Directory.CreateDirectory(TestStorageRoot);
         }
 
-        private static string NormalizeSubPath(string subPath)
-        {
-            return string.IsNullOrWhiteSpace(subPath)
-                ? string.Empty
-                : subPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-        }
     }
 }
 

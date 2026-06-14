@@ -121,6 +121,23 @@ public class AgentMemoryVersionServiceTests
     }
 
     [Fact]
+    public void MemoryCacheService_RemoveByPrefix_RemovesOpenEndedPrefixes()
+    {
+        using var innerCache = new MemoryCache(new MemoryCacheOptions());
+        var service = new MemoryCacheService(innerCache, NullLogger<MemoryCacheService>.Instance);
+
+        service.Set("knowledge:search:user-1:project-1:*:5:abc", "project-cache", TimeSpan.FromMinutes(5));
+        service.Set("knowledge:search:user-1:project-2:*:5:def", "other-project-cache", TimeSpan.FromMinutes(5));
+        service.Set("knowledge:search:user-10:project-1:*:5:ghi", "other-user-cache", TimeSpan.FromMinutes(5));
+
+        service.RemoveByPrefix("knowledge:search:user-1:");
+
+        Assert.Null(service.Get<string>("knowledge:search:user-1:project-1:*:5:abc"));
+        Assert.Null(service.Get<string>("knowledge:search:user-1:project-2:*:5:def"));
+        Assert.Equal("other-user-cache", service.Get<string>("knowledge:search:user-10:project-1:*:5:ghi"));
+    }
+
+    [Fact]
     public async Task DistributedCache_RemoveByPrefixAsync_RemovesVersionedPrefixMatches()
     {
         var cache = new PrefixAwareDistributedCache();
@@ -158,6 +175,28 @@ public class AgentMemoryVersionServiceTests
         Assert.False(await distributedCache.ExistsAsync("memory-context:user-1:session-1:project-1:v1"));
         Assert.True(await distributedCache.ExistsAsync("memory-context:user-1:session-1:project-2:v1"));
         Assert.False(await distributedCache.ExistsAsync("toolcache:user-1:session-1:project-1:search:v1"));
+    }
+
+    [Fact]
+    public async Task BumpAsync_ToolExecutionInvalidatesMemoryContextButKeepsToolSearchCache()
+    {
+        await using var db = CreateDbContext();
+        var distributedCache = new PrefixAwareDistributedCache();
+        var memoryCache = new Mock<IMemoryCacheService>();
+        var service = new AgentMemoryVersionService(
+            db,
+            distributedCache,
+            memoryCache.Object);
+
+        await distributedCache.SetAsync("memory-context:user-1:session-1:project-1:v1", new object());
+        await distributedCache.SetAsync("toolcache:user-1:session-1:project-1:Planning:v1", new object());
+
+        await service.BumpAsync("user-1", "project-1", "session-1", "tool_execution");
+
+        Assert.False(await distributedCache.ExistsAsync("memory-context:user-1:session-1:project-1:v1"));
+        Assert.True(await distributedCache.ExistsAsync("toolcache:user-1:session-1:project-1:Planning:v1"));
+        memoryCache.Verify(x => x.RemoveByPrefix("memory-context:user-1:session-1:project-1"), Times.Once);
+        memoryCache.Verify(x => x.RemoveByPrefix("toolcache:user-1:session-1:project-1"), Times.Never);
     }
 
     [Fact]

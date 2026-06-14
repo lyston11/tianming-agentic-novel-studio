@@ -118,27 +118,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         private async Task<List<CreativeMaterialData>> LoadTemplatesAsync()
         {
-            try
-            {
-                var templatePath = StoragePathHelper.GetFilePath(
-                    "Modules",
-                    "Design/Templates/CreativeMaterials",
-                    "creative_materials.json");
-                if (File.Exists(templatePath))
-                {
-                    var json = await File.ReadAllTextAsync(templatePath).ConfigureAwait(false);
-                    var templates = JsonSerializer.Deserialize<List<CreativeMaterialData>>(json, JsonOptions) ?? new List<CreativeMaterialData>();
-                    return templates
-                        .Where(template => template != null
-                            && template.IsEnabled
-                            && !string.IsNullOrWhiteSpace(template.Id))
-                        .ToList();
-                }
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[GuideContextService] 加载创作模板失败: {ex.Message}");
-            }
+            await Task.CompletedTask.ConfigureAwait(false);
             return new List<CreativeMaterialData>();
         }
 
@@ -166,34 +146,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             ServiceLocator.Get<KeywordChapterIndexService>().InvalidateCache();
             ServiceLocator.Get<PlotPointsIndexService>().InvalidateCache();
             _cacheInitialized = false;
-            lock (_chapterIdsCacheLock) { _chapterIdsCachedForPath = string.Empty; }
             TM.App.Log("[GuideContextService] 缓存已清除");
-        }
-
-        private static async System.Threading.Tasks.Task<string[]> GetCachedChapterIdsAsync(string chaptersPath)
-        {
-            lock (_chapterIdsCacheLock)
-            {
-                var now = DateTime.UtcNow;
-                if (_chapterIdsCachedForPath == chaptersPath
-                    && (now - _chapterIdsCachedAt).TotalSeconds < 30
-                    && _cachedChapterIds.Length > 0)
-                    return _cachedChapterIds;
-            }
-
-            var freshIds = await System.Threading.Tasks.Task.Run(() =>
-                System.IO.Directory.Exists(chaptersPath)
-                    ? System.IO.Directory.GetFiles(chaptersPath, "*.md", System.IO.SearchOption.TopDirectoryOnly)
-                          .Select(f => System.IO.Path.GetFileNameWithoutExtension(f)).ToArray()
-                    : Array.Empty<string>()).ConfigureAwait(false);
-
-            lock (_chapterIdsCacheLock)
-            {
-                _cachedChapterIds = freshIds;
-                _chapterIdsCachedForPath = chaptersPath;
-                _chapterIdsCachedAt = DateTime.UtcNow;
-                return _cachedChapterIds;
-            }
         }
 
         #endregion

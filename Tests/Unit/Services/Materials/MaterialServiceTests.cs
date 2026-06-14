@@ -5,6 +5,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Materials;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
@@ -32,6 +33,17 @@ public class MaterialServiceTests
 
         Assert.Equal(new[] { $"{response.Id}:user-1" }, vectorization.Calls);
         Assert.Equal(2, response.VectorChunkCount);
+
+        var material = await db.Materials.SingleAsync(m => m.Id == response.Id);
+        Assert.False(string.IsNullOrWhiteSpace(material.RawDocumentId));
+
+        var storedContent = await new ContentDocumentService(db)
+            .GetTextAsync("user-1", "project-1", "material", response.Id, "material_raw");
+        Assert.Equal("素材内容用于向量化", storedContent);
+        Assert.Equal(material.RawDocumentId, await db.ContentDocuments
+            .Where(d => d.SourceType == "material" && d.SourceId == response.Id)
+            .Select(d => d.Id)
+            .SingleAsync());
     }
 
     [Fact]
@@ -45,11 +57,18 @@ public class MaterialServiceTests
             UserId = "user-1",
             ProjectId = "project-1",
             Title = "素材标题",
-            Content = "素材内容",
             CreatedAt = DateTime.UtcNow,
             VectorChunkCount = 2
         });
         await db.SaveChangesAsync();
+        await new ContentDocumentService(db).SaveTextAsync(
+            "user-1",
+            "project-1",
+            "material",
+            "material-1",
+            "material_raw",
+            "素材标题",
+            "素材内容");
 
         var vectorStore = new RecordingVectorStore();
         var service = CreateService(db, new RecordingMaterialVectorizationService(db), vectorStore);
@@ -68,20 +87,13 @@ public class MaterialServiceTests
         IMaterialVectorizationService vectorization,
         IVectorStore vectorStore)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["NovelAgent:StorageRoot"] = Path.GetTempPath()
-            })
-            .Build();
-
         return new MaterialService(
             db,
             new FixedCurrentUserService("user-1"),
-            configuration,
             vectorization,
             vectorStore,
-            NullLogger<MaterialService>.Instance);
+            NullLogger<MaterialService>.Instance,
+            new ContentDocumentService(db));
     }
 
     private static NovelAgentDbContext CreateDb()

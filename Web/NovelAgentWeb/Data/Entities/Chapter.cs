@@ -8,8 +8,8 @@ public class Chapter
     public string Title { get; set; } = null!;
     public int ChapterNumber { get; set; }
     public int WordCount { get; set; } = 0;
+    public string? CurrentDocumentId { get; set; }
     public string Status { get; set; } = "draft";
-    public string ContentPath { get; set; } = null!;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

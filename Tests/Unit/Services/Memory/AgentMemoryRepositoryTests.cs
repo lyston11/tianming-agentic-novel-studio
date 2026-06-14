@@ -118,7 +118,7 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
-    public async Task GetSessionMemoryAsync_ReadsRedisThenSqliteAndIncludesUploadedKnowledge()
+    public async Task GetSessionMemoryAsync_IgnoresLegacyUploadedKnowledgeRows()
     {
         var userId = "user123";
         var projectId = "proj456";
@@ -142,7 +142,9 @@ public class AgentMemoryRepositoryTests
 
         var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
 
-        Assert.Contains("knowledge-1", result.RecentUploadedKnowledgeIds);
+        Assert.Equal(string.Empty, result.CurrentGoal);
+        Assert.Empty(result.OpenQuestions);
+        Assert.Empty(result.RecentObservations);
     }
 
     [Fact]
@@ -155,7 +157,7 @@ public class AgentMemoryRepositoryTests
         var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
         var updates = new Dictionary<string, object>
         {
-            ["session.recent_uploaded_knowledge_ids"] = new List<string> { "knowledge-1" }
+            ["session.current_goal"] = "finish draft"
         };
 
         _dbContext.AgentMemories.Add(new AgentMemory
@@ -164,9 +166,9 @@ public class AgentMemoryRepositoryTests
             UserId = userId,
             ProjectId = projectId,
             SessionId = otherSessionId,
-            MemoryType = "session.recent_uploaded_knowledge_ids",
-            MemoryKey = "recent_uploaded_knowledge_ids",
-            Content = JsonSerializer.Serialize(new List<string> { "other-session-knowledge" })
+            MemoryType = "session.current_goal",
+            MemoryKey = "current_goal",
+            Content = JsonSerializer.Serialize("other goal")
         });
         await _dbContext.SaveChangesAsync();
 
@@ -185,23 +187,23 @@ public class AgentMemoryRepositoryTests
             m.UserId == userId &&
             m.ProjectId == projectId &&
             m.SessionId == sessionId &&
-            m.MemoryType == "session.recent_uploaded_knowledge_ids");
-        Assert.Equal("recent_uploaded_knowledge_ids", saved.MemoryKey);
-        Assert.Equal(JsonSerializer.Serialize(new List<string> { "knowledge-1" }), saved.Content);
+            m.MemoryType == "session.current_goal");
+        Assert.Equal("current_goal", saved.MemoryKey);
+        Assert.Equal(JsonSerializer.Serialize("finish draft"), saved.Content);
 
         var otherSession = await _dbContext.AgentMemories.SingleAsync(m =>
             m.UserId == userId &&
             m.ProjectId == projectId &&
             m.SessionId == otherSessionId &&
-            m.MemoryType == "session.recent_uploaded_knowledge_ids");
-        Assert.Equal(JsonSerializer.Serialize(new List<string> { "other-session-knowledge" }), otherSession.Content);
+            m.MemoryType == "session.current_goal");
+        Assert.Equal(JsonSerializer.Serialize("other goal"), otherSession.Content);
 
         _mockMemoryCache.Verify(x => x.Remove(cacheKey), Times.Once);
         _mockRedisCache.Verify(x => x.RemoveAsync(cacheKey, It.IsAny<CancellationToken>()), Times.Once);
 
         var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
 
-        Assert.Equal(new List<string> { "knowledge-1" }, result.RecentUploadedKnowledgeIds);
+        Assert.Equal("finish draft", result.CurrentGoal);
     }
 
     [Fact]

@@ -31,8 +31,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var chapter = new Chapter
@@ -40,8 +39,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Chapter 1",
-            ChapterNumber = 1,
-            ContentPath = "/ch1.txt"
+            ChapterNumber = 1
         };
 
         var foreshadow = new Foreshadow
@@ -91,8 +89,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var setupChapter = new Chapter
@@ -100,8 +97,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Setup Chapter",
-            ChapterNumber = 1,
-            ContentPath = "/setup.txt"
+            ChapterNumber = 1
         };
 
         var foreshadow = new Foreshadow
@@ -155,8 +151,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var payoffChapter = new Chapter
@@ -164,8 +159,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Payoff Chapter",
-            ChapterNumber = 10,
-            ContentPath = "/payoff.txt"
+            ChapterNumber = 10
         };
 
         var foreshadow = new Foreshadow
@@ -219,8 +213,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var setupChapter = new Chapter
@@ -228,8 +221,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Setup",
-            ChapterNumber = 1,
-            ContentPath = "/setup.txt"
+            ChapterNumber = 1
         };
 
         var payoffChapter = new Chapter
@@ -237,8 +229,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Payoff",
-            ChapterNumber = 10,
-            ContentPath = "/payoff.txt"
+            ChapterNumber = 10
         };
 
         var foreshadow = new Foreshadow
@@ -288,8 +279,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var chapter = new Chapter
@@ -297,8 +287,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "Chapter",
-            ChapterNumber = 1,
-            ContentPath = "/ch.txt"
+            ChapterNumber = 1
         };
 
         var foreshadow = new Foreshadow
@@ -344,12 +333,11 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
-        var chapter1 = new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Ch1", ChapterNumber = 1, ContentPath = "/ch1.txt" };
-        var chapter2 = new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Ch2", ChapterNumber = 2, ContentPath = "/ch2.txt" };
+        var chapter1 = new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Ch1", ChapterNumber = 1 };
+        var chapter2 = new Chapter { Id = Guid.NewGuid().ToString(), ProjectId = project.Id, Title = "Ch2", ChapterNumber = 2 };
 
         var foreshadow = new Foreshadow
         {
@@ -400,8 +388,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var foreshadows = new[]
@@ -445,8 +432,7 @@ public class ForeshadowRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = user.Id,
-            Title = "Novel",
-            StorageProjectName = "novel"
+            Title = "Novel"
         };
 
         var chapter = new Chapter
@@ -454,8 +440,7 @@ public class ForeshadowRepositoryTests
             Id = Guid.NewGuid().ToString(),
             ProjectId = project.Id,
             Title = "First Appearance",
-            ChapterNumber = 1,
-            ContentPath = "/ch1.txt"
+            ChapterNumber = 1
         };
 
         var character = new Character

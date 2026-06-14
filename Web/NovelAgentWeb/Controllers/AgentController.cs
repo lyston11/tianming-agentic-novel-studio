@@ -22,6 +22,8 @@ public class AgentController : ControllerBase
     private readonly ProjectScopedExecutor _projectScope;
     private readonly IAgentSessionService _agentSessionService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IAgentSessionResumeService _resumeService;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public AgentController(
         AgentRouter router,
@@ -29,7 +31,9 @@ public class AgentController : ControllerBase
         IWorkspaceFactory workspaceFactory,
         ProjectScopedExecutor projectScope,
         IAgentSessionService agentSessionService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IAgentSessionResumeService resumeService,
+        IServiceScopeFactory scopeFactory)
     {
         _router = router;
         _sessionManager = sessionManager;
@@ -37,6 +41,8 @@ public class AgentController : ControllerBase
         _projectScope = projectScope;
         _agentSessionService = agentSessionService;
         _currentUserService = currentUserService;
+        _resumeService = resumeService;
+        _scopeFactory = scopeFactory;
     }
 
     [HttpPost("agent/chat")]
@@ -99,6 +105,20 @@ public class AgentController : ControllerBase
         return Ok(sessions);
     }
 
+    [HttpGet("agent/sessions/{sessionId}/resume")]
+    public async Task<IActionResult> ResumeSession(string sessionId, CancellationToken ct)
+    {
+        try
+        {
+            var session = await _resumeService.ResumeAsync(sessionId, ct);
+            return Ok(session);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpPost("agent/session")]
     public async Task<IActionResult> CreateSession([FromQuery] string? projectId, CancellationToken ct)
     {
@@ -148,6 +168,9 @@ public class AgentController : ControllerBase
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
         try
         {
+            var catalog = new NovelProjectCatalog(workspaceEntry.Workspace, _scopeFactory);
+            workspaceEntry.Workspace.SetRequestContext();
+            ProjectScopedExecutor.SetCatalog(catalog);
             var bible = await _projectScope.RunSessionAsync(session,
                 () => workspaceEntry.Workspace.Orchestrator.GetStoryBibleAsync(ct), ct);
 
@@ -178,6 +201,8 @@ public class AgentController : ControllerBase
         }
         finally
         {
+            ProjectScopedExecutor.ClearCatalog();
+            workspaceEntry.Workspace.ClearRequestContext();
             if (!string.IsNullOrEmpty(projectId))
                 _workspaceFactory.Release(userId, projectId);
         }
@@ -191,8 +216,7 @@ public class AgentController : ControllerBase
         session.ActiveRunId,
         session.IsArchived,
         session.UpdatedAt.ToString("O"),
-        session.ChatHistory.Count,
-        AgentWorkingMemorySnapshot.From(session.WorkingMemory));
+        session.ChatHistory.Count);
 
     private static AgentSessionDetail ToDetail(AgentSession session) => new(
         session.SessionId,
@@ -206,66 +230,7 @@ public class AgentController : ControllerBase
         session.UpdatedAt.ToString("O"),
         session.ChatHistory.Select(turn => new AgentConversationTurnView(
             turn.Role,
-            SanitizeConversationContent(turn, session.WorkingMemory),
+            turn.Content,
             turn.CreatedAt.ToString("O"))).ToList(),
         AgentWorkingMemorySnapshot.From(session.WorkingMemory));
-
-    private static string SanitizeConversationContent(AgentConversationTurn turn, AgentWorkingMemory memory)
-    {
-        if (!string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase))
-            return turn.Content;
-
-        if (!IsLegacyRuntimeGuardMessage(turn.Content))
-            return turn.Content;
-
-        return BuildUserVisibleBlackboardStatus(memory);
-    }
-
-    private static bool IsLegacyRuntimeGuardMessage(string content) =>
-        content.Contains("同一个工具调用已经执行过", StringComparison.Ordinal) ||
-        content.Contains("为了避免重复写入或空转", StringComparison.Ordinal);
-
-    private static string BuildUserVisibleBlackboardStatus(AgentWorkingMemory memory)
-    {
-        var mission = memory.Mission;
-        var plan = memory.MissionPlan;
-
-        if (!string.IsNullOrWhiteSpace(plan.LastUserVisibleState) && !IsTerseBlackboardState(plan.LastUserVisibleState))
-            return plan.LastUserVisibleState;
-
-        if (!string.IsNullOrWhiteSpace(mission.PendingQuestion))
-            return $"《{DisplayOrDefault(plan.ProjectTitle, "当前小说")}》已经在任务黑板里。下一步需要你补充：{mission.PendingQuestion}";
-
-        if (!string.IsNullOrWhiteSpace(mission.PendingUserDecision))
-            return $"《{DisplayOrDefault(plan.ProjectTitle, "当前小说")}》已经在任务黑板里，正在等待：{mission.PendingUserDecision}";
-
-        var activeTask = plan.SchedulerState.Tasks.FirstOrDefault(t =>
-            string.Equals(t.TaskId, plan.SchedulerState.ActiveTaskId, StringComparison.OrdinalIgnoreCase))
-            ?? plan.SchedulerState.Tasks.FirstOrDefault(t =>
-                !string.Equals(t.Status, "done", StringComparison.OrdinalIgnoreCase));
-
-        if (activeTask != null)
-        {
-            var action = !string.IsNullOrWhiteSpace(activeTask.NextAction)
-                ? activeTask.NextAction
-                : activeTask.TaskType;
-            return $"《{DisplayOrDefault(plan.ProjectTitle, "当前小说")}》已经在任务黑板里。当前章节：{DisplayOrDefault(activeTask.ChapterId, "未指定")}；下一步：{DisplayOrDefault(action, "等待继续")}。";
-        }
-
-        if (plan.AllowedNextActions.Count > 0)
-            return $"《{DisplayOrDefault(plan.ProjectTitle, "当前小说")}》已经在任务黑板里。下一步可执行：{string.Join("、", plan.AllowedNextActions.Take(3))}。";
-
-        if (!string.IsNullOrWhiteSpace(plan.LastUserVisibleState))
-            return $"《{DisplayOrDefault(plan.ProjectTitle, "当前小说")}》已经在任务黑板里，当前状态：{plan.LastUserVisibleState}。";
-
-        return "当前任务已经保留在黑板里。你可以让我查询状态、继续推进，或补充新的创作要求。";
-    }
-
-    private static bool IsTerseBlackboardState(string value) =>
-        value.Contains(" / ", StringComparison.Ordinal) ||
-        string.Equals(value, "foundation", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(value, "idle", StringComparison.OrdinalIgnoreCase);
-
-    private static string DisplayOrDefault(string value, string fallback) =>
-        string.IsNullOrWhiteSpace(value) ? fallback : value;
 }

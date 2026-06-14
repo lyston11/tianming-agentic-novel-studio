@@ -26,7 +26,6 @@ internal static class Program
     {
         ("ConversationKernel routes status queries away from creation tools", ConversationKernelRoutesStatusQuery),
         ("ToolPolicy blocks raw userGoal PlanChapter", ToolPolicyBlocksRawUserGoalPlanChapter),
-        ("AgentSession clears removed GenerateChapter pending calls", AgentSessionClearsRemovedLegacyPending),
         ("ToolPolicy preflights confirmed story foundation commit", ToolPolicyPreflightsConfirmedStoryFoundationCommit),
         ("ToolPolicy blocks commit when quality gate still has issues", ToolPolicyBlocksCommitWithQualityIssues),
         ("Scheduler continue uses active blackboard task", SchedulerContinueUsesActiveBlackboardTask),
@@ -34,6 +33,7 @@ internal static class Program
         ("ToolPolicy repairs missing context package before draft generation", ToolPolicyRepairsMissingContextPackageBeforeDraft),
         ("ToolPolicy repairs missing draft before validation", ToolPolicyRepairsMissingDraftBeforeValidation),
         ("ToolPolicy keeps hard boundaries terminal", ToolPolicyKeepsHardBoundariesTerminal),
+        ("ToolPolicy blocks undiscovered tools", ToolPolicyBlocksUndiscoveredTools),
         ("ToolPolicy blocks draft generation when context rebuild is required", ToolPolicyBlocksDraftWhenContextRebuildRequired),
         ("ToolPolicy blocks commit when revalidation is required", ToolPolicyBlocksCommitWhenRevalidationRequired),
         ("Mission blackboard recovery rebuilds scheduler state", MissionBlackboardRecoveryRebuildsSchedulerState),
@@ -51,6 +51,8 @@ internal static class Program
         ("Provider tool calling diagnostics parse mock responses", ProviderToolCallingDiagnosticsParseMockResponses),
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
+        ("Tool registry phase search exposes commit and maintenance tools", ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools),
+        ("Tool registry declares side effects for every tool", ToolRegistryDeclaresSideEffectsForEveryTool),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
         ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
         ("StartNewNovelProject is idempotent while awaiting foundation", StartNewNovelProjectIsIdempotentWhileAwaitingFoundation),
@@ -108,6 +110,11 @@ internal static class Program
         var bible = new StoryBibleDocument();
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+                new AgentToolDefinition { Name = "QueryProjectStatus" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.StatusQuery,
@@ -133,31 +140,6 @@ internal static class Program
                    result.Message.Contains("状态查询", StringComparison.OrdinalIgnoreCase) ||
                    result.Message.Contains("userGoal", StringComparison.OrdinalIgnoreCase),
             "Blocked raw status/userGoal input should be routed to status or explain the hard block.");
-
-        return Task.CompletedTask;
-    }
-
-    private static Task AgentSessionClearsRemovedLegacyPending()
-    {
-        var session = new AgentSession
-        {
-            WorkingMemory = new AgentWorkingMemory
-            {
-                PendingToolCall = new AgentToolCall { Name = "GenerateChapter" },
-                PendingConfirmation = new AgentPendingConfirmation
-                {
-                    ToolCall = new AgentToolCall { Name = "GenerateChapter" },
-                    ImpactSummary = "legacy one-step chapter generation"
-                }
-            }
-        };
-
-        session.NormalizeLegacyState();
-
-        Check.True(session.WorkingMemory.PendingToolCall == null,
-            "Removed GenerateChapter pending tool calls must be cleared, not migrated silently.");
-        Check.True(session.WorkingMemory.PendingConfirmation == null,
-            "Removed GenerateChapter pending confirmations must be cleared, not consumed.");
 
         return Task.CompletedTask;
     }
@@ -510,6 +492,11 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+            },
             MissionPlan = session.WorkingMemory.MissionPlan,
             TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
         };
@@ -567,6 +554,11 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+            },
             MissionPlan = session.WorkingMemory.MissionPlan,
             TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
         };
@@ -622,6 +614,10 @@ internal static class Program
             },
             new AgentObservationContext
             {
+                AvailableTools =
+                {
+                    new AgentToolDefinition { Name = "CommitValidatedChapter" },
+                },
                 MissionPlan = BuildPlanWithChapter("run-hard-boundary", chapter =>
                 {
                     chapter.GateStatus = "validated";
@@ -632,6 +628,59 @@ internal static class Program
             confirmed: false);
         Check.True(unconfirmedCommit.AllowsExecution && unconfirmedCommit.RequiresConfirmation && !unconfirmedCommit.IsRepairable,
             "Confirmation gates must remain confirmation gates, not repairable auto-execution.");
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyBlocksUndiscoveredTools()
+    {
+        var policy = new ToolPolicyEngine();
+        var session = new AgentSession();
+        var bible = new StoryBibleDocument();
+        var context = new AgentObservationContext
+        {
+            AvailableTools =
+            {
+                new AgentToolDefinition
+                {
+                    Name = "tool_search",
+                    Description = "discover tools",
+                    Risk = "Low"
+                }
+            },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.NewProjectSeed, Label = "new_project_seed" },
+            MissionPlan = new AgentMissionPlan()
+        };
+
+        var skippedDiscovery = policy.BeforeCall(
+            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+
+        Check.True(!skippedDiscovery.AllowsExecution && !skippedDiscovery.IsRepairable,
+            "Planner must not execute StartNewNovelProject before tool_search has discovered it.");
+        Check.Contains("tool_search", skippedDiscovery.Message,
+            "Discovery boundary block should instruct the planner to call tool_search.");
+
+        var discovery = policy.BeforeCall(
+            new AgentToolCall { Name = "tool_search", Arguments = { ["phase"] = "Planning" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+        Check.True(discovery.AllowsExecution,
+            "tool_search itself must always pass the discovery boundary.");
+
+        context.AvailableTools.Add(new AgentToolDefinition { Name = "StartNewNovelProject", Risk = "Low" });
+        var discovered = policy.BeforeCall(
+            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            session,
+            bible,
+            context,
+            confirmed: false);
+        Check.True(discovered.AllowsExecution,
+            "Once tool_search exposes StartNewNovelProject, policy should allow its normal tool preflight.");
         return Task.CompletedTask;
     }
 
@@ -957,7 +1006,7 @@ internal static class Program
             Reply = "我是天命小说 Agent。",
             Source = "openai_tool_calling"
         };
-        var legacyChat = new AgentAction
+        var noToolChatReply = new AgentAction
         {
             Type = AgentActionType.ChatReply,
             Reply = "我是天命小说 Agent。",
@@ -987,8 +1036,8 @@ internal static class Program
 
         Check.True(AgentRuntime.ShouldReturnUserFacingReply(normalChat),
             "Normal ChatReply text from a provider should return directly.");
-        Check.True(AgentRuntime.ShouldReturnUserFacingReply(legacyChat),
-            "Legacy ChatReply text marked IsNoTool should still return directly.");
+        Check.True(AgentRuntime.ShouldReturnUserFacingReply(noToolChatReply),
+            "ChatReply text marked IsNoTool should still return directly when it is user-facing.");
         Check.True(!AgentRuntime.ShouldReturnUserFacingReply(noAction),
             "No-action fallback without reply should not be treated as chat.");
         Check.True(!AgentRuntime.ShouldReturnUserFacingReply(internalErrorText),
@@ -1155,6 +1204,10 @@ internal static class Program
         };
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.CandidateSelection,
@@ -1245,6 +1298,10 @@ internal static class Program
         var session = new AgentSession();
         var context = new AgentObservationContext
         {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "PlanChapter" },
+            },
             TurnIntent = new TurnIntent
             {
                 Type = TurnIntentType.StatusQuery,
@@ -1471,6 +1528,92 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools()
+    {
+        var settings = new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
+            "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var registry = CreateToolRegistry(settings);
+            var planning = registry.ListToolSchemasForPhase(ConversationPhase.Planning).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var review = registry.ListToolSchemasForPhase(ConversationPhase.Review).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Check.True(planning.Contains("CommitStoryFoundation"),
+                "Planning phase discovery should include CommitStoryFoundation after foundation candidates are generated.");
+            Check.True(planning.Contains("CommitVolumeArc"),
+                "Planning phase discovery should include CommitVolumeArc after volume plans are generated.");
+            Check.True(review.Contains("AnalyzeDependencyImpact"),
+                "Review phase discovery should include AnalyzeDependencyImpact for maintenance/review flows.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolRegistryDeclaresSideEffectsForEveryTool()
+    {
+        var settings = new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
+            "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var registry = CreateToolRegistry(settings);
+            var tools = registry.ListTools();
+
+            Check.True(tools.Count >= 19, "Registry should expose the full tool set.");
+            Check.True(tools.All(t => t.SideEffects.WritesLedger && t.SideEffects.WritesRedisRecentCache),
+                "Every tool must declare SQLite ledger and Redis recent hot-cache writes.");
+
+            var toolSearch = tools.Single(t => t.Name == "tool_search");
+            Check.True(toolSearch.SideEffects.WritesToolSearchCache && toolSearch.SideEffects.WritesSqliteSnapshot,
+                "tool_search must declare Memory/Redis cache and SQLite snapshot writes.");
+
+            var knowledge = tools.Single(t => t.Name == "ProcessKnowledgeFile");
+            Check.True(knowledge.SideEffects.WritesSqliteEntities.Contains("knowledge_base"),
+                "ProcessKnowledgeFile must declare knowledge_base writes.");
+            Check.True(knowledge.SideEffects.WritesVectorIndexes.Contains("knowledge"),
+                "ProcessKnowledgeFile must declare Qdrant knowledge index writes.");
+
+            var commitChapter = tools.Single(t => t.Name == "CommitValidatedChapter");
+            Check.True(commitChapter.SideEffects.WritesSqliteEntities.Contains("chapters"),
+                "CommitValidatedChapter must declare chapter truth writes.");
+            Check.True(commitChapter.SideEffects.WritesVectorIndexes.Contains("chapter"),
+                "CommitValidatedChapter must declare chapter vector index writes.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+        return Task.CompletedTask;
+    }
+
     private static async Task SearchCreativeKnowledgeReturnsDbKnowledge()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-db-knowledge-" + Guid.NewGuid().ToString("N"));
@@ -1598,7 +1741,8 @@ internal static class Program
         db.KnowledgeBases.Add(new DbKnowledgeBase
         {
             Id = "knowledge-shared",
-            ProjectId = "project-a",
+            UserId = "user-scope",
+            SourceProjectId = "project-a",
             EntryType = "ReaderPromise",
             Title = "胜利代价",
             Content = "胜利必须付出代价。",
@@ -1711,6 +1855,9 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
     public Task<KnowledgeResponse> CreateKnowledgeAsync(CreateKnowledgeRequest request, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
+    public Task<KnowledgeResponse> CreateExtractedKnowledgeAsync(CreateExtractedKnowledgeRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
     public Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
@@ -1729,7 +1876,12 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
         return Task.FromResult(new List<KnowledgeSearchResult> { _result });
     }
 
-    public Task IncrementUsageAsync(string knowledgeId, CancellationToken ct = default) =>
+    public Task IncrementUsageAsync(
+        string knowledgeId,
+        string projectId,
+        string? sessionId = null,
+        string? runId = null,
+        CancellationToken ct = default) =>
         Task.CompletedTask;
 }
 
@@ -1829,6 +1981,9 @@ internal sealed class EmptyChatHistoryRepository : IChatHistoryRepository
 
     public Task<ChatPromptWindowDto> GetPromptWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
         Task.FromResult(new ChatPromptWindowDto(null, Array.Empty<ChatHistorySummaryDto>(), Array.Empty<ChatHistoryTurnDto>()));
+
+    public Task<IReadOnlyList<ChatHistoryTurnDto>> GetHotWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChatHistoryTurnDto>>(Array.Empty<ChatHistoryTurnDto>());
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

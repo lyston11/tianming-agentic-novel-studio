@@ -118,7 +118,6 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     OpenQuestions = GetField<List<string>>(rows, "session.open_questions") ?? new(),
                     ShortTermPreferences = GetField<List<string>>(rows, "session.short_term_preferences") ?? new(),
                     RecentObservations = GetField<List<string>>(rows, "session.recent_observations") ?? new(),
-                    RecentUploadedKnowledgeIds = GetField<List<string>>(rows, "session.recent_uploaded_knowledge_ids") ?? new(),
                     PendingToolName = GetField<string>(rows, "session.pending_tool_name"),
                     LastIntent = GetField<string>(rows, "session.last_intent")
                 };

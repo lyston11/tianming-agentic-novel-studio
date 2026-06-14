@@ -34,7 +34,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 if (string.IsNullOrWhiteSpace(chapterId))
                     return "[错误] 章节ID不能为空";
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 if (!contentService.ChapterExists(chapterId))
                     return $"[错误] 章节 {chapterId} 不存在";
 
@@ -63,7 +63,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 if (string.IsNullOrWhiteSpace(chapterId))
                     return "[错误] 章节ID不能为空";
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 if (!contentService.ChapterExists(chapterId))
                     return $"[错误] 章节 {chapterId} 不存在";
 
@@ -133,7 +133,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 if (string.IsNullOrWhiteSpace(newContent))
                     return "[错误] 新内容不能为空";
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 if (!contentService.ChapterExists(chapterId))
                     return $"[错误] 章节 {chapterId} 不存在，无法编辑";
 
@@ -222,7 +222,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 if (string.IsNullOrWhiteSpace(newContent))
                     return "[错误] 新内容不能为空";
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
                 if (!contentService.ChapterExists(chapterId))
                     return $"[错误] 章节 {chapterId} 不存在";
 

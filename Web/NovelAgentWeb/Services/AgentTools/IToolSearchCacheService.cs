@@ -4,7 +4,7 @@ namespace TM.Web.NovelAgentWeb.Services.AgentTools;
 
 public interface IToolSearchCacheService
 {
-    Task<IReadOnlyList<ToolSchema>?> GetAsync(
+    Task<ToolSearchCacheLookup> GetAsync(
         AgentSession session,
         string phase,
         CancellationToken ct = default);
@@ -14,4 +14,13 @@ public interface IToolSearchCacheService
         string phase,
         IReadOnlyList<ToolSchema> tools,
         CancellationToken ct = default);
+}
+
+public sealed record ToolSearchCacheLookup(
+    IReadOnlyList<ToolSchema>? Tools,
+    string Source)
+{
+    public bool Hit => Tools is { Count: > 0 };
+
+    public static ToolSearchCacheLookup Miss { get; } = new(null, "none");
 }

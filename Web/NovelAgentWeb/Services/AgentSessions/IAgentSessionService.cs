@@ -1,4 +1,3 @@
-using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 
 namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
@@ -44,16 +43,6 @@ public interface IAgentSessionService
     Task<AgentSessionResponse> UpdateSessionAsync(
         string sessionId,
         UpdateAgentSessionRequest request,
-        string userId,
-        bool isAdmin,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Save session state (working memory, chat history, run history).
-    /// </summary>
-    Task SaveSessionStateAsync(
-        string sessionId,
-        string sessionData,
         string userId,
         bool isAdmin,
         CancellationToken cancellationToken = default);

@@ -182,6 +182,79 @@ public class AgentMemoryServiceTests
         Assert.Contains("current-session-pattern", Assert.IsType<List<string>>(tropePatterns));
     }
 
+    [Fact]
+    public async Task PersistAsync_PersistsSessionRuntimeMemoryToSessionMemoryRepository()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+        session.WorkingMemory.CurrentGoal = "推进第一章候选";
+        session.WorkingMemory.OpenQuestions.Add("主角第一次失败的代价是什么？");
+        session.WorkingMemory.UserPreferences.Add("避免现代网络梗");
+        session.WorkingMemory.RecentObservations.Add(new AgentRuntimeObservation
+        {
+            ToolName = "PlanChapter",
+            Message = "生成了三个章节候选",
+            Phase = "chapter_candidates"
+        });
+        session.WorkingMemory.PendingToolCall = new AgentToolCall { Name = "SelectChapterCandidate" };
+        session.WorkingMemory.LastDecision = new AgentDecision { Intent = "select_chapter_candidate" };
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
+
+        Assert.Equal("user-1", repository.LastSessionUserId);
+        Assert.Equal("project-1", repository.LastSessionProjectId);
+        Assert.Equal("session-1", repository.LastSessionId);
+        Assert.True(repository.SessionUpdates.TryGetValue("session.current_goal", out var currentGoal));
+        Assert.Equal("推进第一章候选", Assert.IsType<string>(currentGoal));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.open_questions", out var openQuestions));
+        Assert.Contains("主角第一次失败的代价是什么？", Assert.IsType<List<string>>(openQuestions));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.short_term_preferences", out var preferences));
+        Assert.Contains("避免现代网络梗", Assert.IsType<List<string>>(preferences));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.recent_observations", out var observations));
+        Assert.Contains("PlanChapter: 生成了三个章节候选", Assert.IsType<List<string>>(observations));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.pending_tool_name", out var pendingToolName));
+        Assert.Equal("SelectChapterCandidate", Assert.IsType<string>(pendingToolName));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.last_intent", out var lastIntent));
+        Assert.Equal("select_chapter_candidate", Assert.IsType<string>(lastIntent));
+    }
+
+    [Fact]
+    public async Task HydrateAsync_RestoresSessionMemoryIntoRuntimeWorkingMemory()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            SessionMemory = new SessionMemory
+            {
+                CurrentGoal = "缓存里的当前目标",
+                OpenQuestions = new List<string> { "缓存里的问题" },
+                ShortTermPreferences = new List<string> { "缓存里的偏好" },
+                RecentObservations = new List<string> { "缓存里的观察" },
+                PendingToolName = "PlanChapter",
+                LastIntent = "plan_chapter"
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+
+        await service.HydrateAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument());
+
+        Assert.Equal("缓存里的当前目标", session.WorkingMemory.CurrentGoal);
+        Assert.Contains("缓存里的问题", session.WorkingMemory.OpenQuestions);
+        Assert.Contains("缓存里的偏好", session.WorkingMemory.UserPreferences);
+        Assert.Equal("缓存里的当前目标", session.WorkingMemory.SessionMemory.CurrentGoal);
+        Assert.Equal("PlanChapter", session.WorkingMemory.SessionMemory.PendingToolName);
+        Assert.Equal("plan_chapter", session.WorkingMemory.SessionMemory.LastIntent);
+    }
+
     private sealed class RecordingMemoryRepository : IAgentMemoryRepository
     {
         public ProjectMemory ProjectMemory { get; set; } = new();
@@ -190,9 +263,13 @@ public class AgentMemoryServiceTests
         public ExecutionMemory ExecutionMemory { get; set; } = new();
         public Dictionary<string, object> ProjectUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> SessionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> ProjectUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int UpdateMemoryCallCount { get; private set; }
+        public string LastSessionUserId { get; private set; } = string.Empty;
+        public string LastSessionProjectId { get; private set; } = string.Empty;
+        public string LastSessionId { get; private set; } = string.Empty;
 
         public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
             => Task.FromResult(ProjectMemory);
@@ -230,6 +307,13 @@ public class AgentMemoryServiceTests
         }
 
         public Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
-            => Task.CompletedTask;
+        {
+            LastSessionUserId = userId;
+            LastSessionProjectId = projectId;
+            LastSessionId = sessionId;
+            foreach (var (key, value) in updates)
+                SessionUpdates[key] = value;
+            return Task.CompletedTask;
+        }
     }
 }

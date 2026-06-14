@@ -9,6 +9,13 @@ using TM.Services.Framework.AI.NovelAgent.Models;
 
 namespace TM.Services.Framework.AI.NovelAgent.Services
 {
+    public interface IStoryBibleDocumentStore
+    {
+        Task<StoryBibleDocument?> LoadAsync(CancellationToken ct = default);
+
+        Task SaveAsync(StoryBibleDocument document, CancellationToken ct = default);
+    }
+
     public sealed class StoryBibleService
     {
         private const string StorageSubPath = "Framework/AI/NovelAgent";
@@ -17,10 +24,19 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private const int MaxRevisions = 200;
 
         private readonly SemaphoreSlim _ioLock = new(1, 1);
+        private readonly IStoryBibleDocumentStore? _documentStore;
+        private readonly string _storageIdentity;
         private StoryBibleDocument? _cache;
 
-        public StoryBibleService()
+        public StoryBibleService(
+            IStoryBibleDocumentStore? documentStore = null,
+            string storageIdentity = "sqlite-redis://story-bible")
         {
+            _documentStore = documentStore;
+            _storageIdentity = string.IsNullOrWhiteSpace(storageIdentity)
+                ? "sqlite-redis://story-bible"
+                : storageIdentity;
+
             try
             {
                 StoragePathHelper.CurrentProjectChanged += (_, _) =>
@@ -36,7 +52,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
         public string GetStoragePath()
         {
-            return StoragePathHelper.GetFilePath("Services", StorageSubPath, StoryBibleFileName);
+            return _storageIdentity;
         }
 
         public async Task<StoryBibleDocument> LoadAsync(CancellationToken ct = default)
@@ -48,17 +64,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 if (_cache != null) return Clone(_cache);
 
-                var path = GetStoragePath();
-                if (!File.Exists(path))
-                {
-                    _cache = new StoryBibleDocument();
-                    return Clone(_cache);
-                }
-
-                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    bufferSize: 4096, useAsync: true);
-                _cache = await JsonSerializer.DeserializeAsync<StoryBibleDocument>(stream, JsonHelper.CnDefault, ct)
-                    .ConfigureAwait(false) ?? new StoryBibleDocument();
+                _cache = _documentStore == null
+                    ? new StoryBibleDocument()
+                    : await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
                 Normalize(_cache);
                 return Clone(_cache);
             }
@@ -636,17 +644,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         {
             if (_cache != null) return _cache;
 
-            var path = GetStoragePath();
-            if (!File.Exists(path))
-            {
-                _cache = new StoryBibleDocument();
-                return _cache;
-            }
-
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                bufferSize: 4096, useAsync: true);
-            _cache = await JsonSerializer.DeserializeAsync<StoryBibleDocument>(stream, JsonHelper.CnDefault, ct)
-                .ConfigureAwait(false) ?? new StoryBibleDocument();
+            _cache = _documentStore == null
+                ? new StoryBibleDocument()
+                : await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
             Normalize(_cache);
             return _cache;
         }
@@ -654,19 +654,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private async Task SaveWithoutLockAsync(StoryBibleDocument document, CancellationToken ct)
         {
             Normalize(document);
-            var path = GetStoragePath();
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(dir))
-                Directory.CreateDirectory(dir);
-
-            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            await using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None,
-                             bufferSize: 4096, useAsync: true))
-            {
-                await JsonSerializer.SerializeAsync(stream, document, JsonHelper.CnDefault, ct).ConfigureAwait(false);
-            }
-
-            File.Move(tmp, path, overwrite: true);
+            if (_documentStore != null)
+                await _documentStore.SaveAsync(Clone(document), ct).ConfigureAwait(false);
             _cache = Clone(document);
         }
 

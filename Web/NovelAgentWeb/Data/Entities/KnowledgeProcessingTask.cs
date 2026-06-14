@@ -6,7 +6,6 @@ public class KnowledgeProcessingTask
     public string UserId { get; set; } = string.Empty;
     public string? ProjectId { get; set; }
     public string FileName { get; set; } = string.Empty;
-    public string FilePath { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string Status { get; set; } = "pending";
     public string Strategy { get; set; } = "single_pass";
@@ -15,6 +14,7 @@ public class KnowledgeProcessingTask
     public int ProcessedChunks { get; set; }
     public int ExtractedEntriesCount { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? UploadDocumentId { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

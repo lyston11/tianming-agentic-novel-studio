@@ -7,28 +7,32 @@ using TM.Web.NovelAgentWeb.Services.Caching;
 
 namespace TM.Web.NovelAgentWeb.Services.Memory;
 
-public class ChatHistoryRepository : IChatHistoryRepository
-{
-    private static readonly TimeSpan HotWindowTtl = TimeSpan.FromMinutes(10);
-    private const int HotWindowSize = 20;
-    private const int MaxAppendAttempts = 3;
+    public class ChatHistoryRepository : IChatHistoryRepository
+    {
+        private static readonly TimeSpan HotWindowTtl = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan SummaryCacheTtl = TimeSpan.FromMinutes(10);
+        private const int HotWindowSize = 20;
+        private const int MaxAppendAttempts = 3;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SessionLocks = new(StringComparer.Ordinal);
 
     private readonly NovelAgentDbContext _context;
     private readonly IDistributedCacheService _redisCache;
     private readonly IMemoryCacheService _memoryCache;
     private readonly ILogger<ChatHistoryRepository> _logger;
+    private readonly IAgentMemoryVersionService? _versions;
 
     public ChatHistoryRepository(
         NovelAgentDbContext context,
         IDistributedCacheService redisCache,
         IMemoryCacheService memoryCache,
-        ILogger<ChatHistoryRepository> logger)
+        ILogger<ChatHistoryRepository> logger,
+        IAgentMemoryVersionService? versions = null)
     {
         _context = context;
         _redisCache = redisCache;
         _memoryCache = memoryCache;
         _logger = logger;
+        _versions = versions;
     }
 
     public async Task AppendAsync(
@@ -50,7 +54,8 @@ public class ChatHistoryRepository : IChatHistoryRepository
                 {
                     await EnsureSessionExistsAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
                     await AppendTurnOnceAsync(userId, projectId, sessionId, role, trimmed, ct);
-                    await WriteHotWindowAsync(userId, sessionId, ct);
+                    await WriteHotWindowAsync(userId, projectId, sessionId, ct);
+                    await BumpChatVersionAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
                     return;
                 }
                 catch (DbUpdateException) when (attempt < MaxAppendAttempts)
@@ -90,6 +95,8 @@ public class ChatHistoryRepository : IChatHistoryRepository
         {
             UpdateSummary(existing, trimmedContent, keyDecisionsJson);
             await _context.SaveChangesAsync(ct);
+            await InvalidateSummaryCacheAsync(userId, normalizedProjectId, sessionId, ct);
+            await BumpChatVersionAsync(userId, normalizedProjectId, sessionId, ct).ConfigureAwait(false);
             return;
         }
 
@@ -123,6 +130,9 @@ public class ChatHistoryRepository : IChatHistoryRepository
             UpdateSummary(concurrentExisting, trimmedContent, keyDecisionsJson);
             await _context.SaveChangesAsync(ct);
         }
+
+        await InvalidateSummaryCacheAsync(userId, normalizedProjectId, sessionId, ct);
+        await BumpChatVersionAsync(userId, normalizedProjectId, sessionId, ct).ConfigureAwait(false);
     }
 
     public async Task<ChatPromptWindowDto> GetPromptWindowAsync(
@@ -132,6 +142,45 @@ public class ChatHistoryRepository : IChatHistoryRepository
         CancellationToken ct = default)
     {
         var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
+        var summaryCache = await LoadSummaryCacheAsync(userId, normalizedProjectId, sessionId, ct)
+            .ConfigureAwait(false);
+        var recentMessages = await LoadRecentTurnsFromHotCacheAsync(userId, normalizedProjectId, sessionId, ct)
+            .ConfigureAwait(false);
+
+        return new ChatPromptWindowDto(summaryCache.MetaSummary, summaryCache.Summaries, recentMessages);
+    }
+
+    public async Task<IReadOnlyList<ChatHistoryTurnDto>> GetHotWindowAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        CancellationToken ct = default) =>
+        await LoadRecentTurnsFromHotCacheAsync(
+                userId,
+                string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+                sessionId,
+                ct)
+            .ConfigureAwait(false);
+
+    private async Task<ChatPromptSummaryCache> LoadSummaryCacheAsync(
+        string userId,
+        string? normalizedProjectId,
+        string sessionId,
+        CancellationToken ct)
+    {
+        var cacheKey = BuildSummaryCacheKey(userId, normalizedProjectId, sessionId);
+        var memoryCached = _memoryCache.Get<ChatPromptSummaryCache>(cacheKey);
+        if (memoryCached != null)
+            return memoryCached;
+
+        var redisCached = await _redisCache.GetAsync<ChatPromptSummaryCache>(cacheKey, ct)
+            .ConfigureAwait(false);
+        if (redisCached != null)
+        {
+            _memoryCache.Set(cacheKey, redisCached, SummaryCacheTtl);
+            return redisCached;
+        }
+
         var summariesQuery = _context.AgentChatSummaries
             .AsNoTracking()
             .Where(s => s.UserId == userId && s.ProjectId == normalizedProjectId && s.SessionId == sessionId);
@@ -158,9 +207,10 @@ public class ChatHistoryRepository : IChatHistoryRepository
                 DeserializeKeyDecisions(s.KeyDecisionsJson)))
             .ToList();
 
-        var recentMessages = await LoadRecentTurnsAsync(userId, sessionId, ct);
-
-        return new ChatPromptWindowDto(metaSummary, summaries, recentMessages);
+        var cache = new ChatPromptSummaryCache(metaSummary, summaries);
+        _memoryCache.Set(cacheKey, cache, SummaryCacheTtl);
+        await _redisCache.SetAsync(cacheKey, cache, SummaryCacheTtl, ct).ConfigureAwait(false);
+        return cache;
     }
 
     private async Task AppendTurnOnceAsync(
@@ -252,10 +302,11 @@ public class ChatHistoryRepository : IChatHistoryRepository
         summary.CreatedAt = DateTime.UtcNow;
     }
 
-    private async Task WriteHotWindowAsync(string userId, string sessionId, CancellationToken ct)
+    private async Task WriteHotWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct)
     {
-        var hotWindow = await LoadRecentTurnsAsync(userId, sessionId, ct);
-        var key = AgentMemoryKeys.ChatHot(userId, sessionId);
+        var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
+        var hotWindow = await LoadRecentTurnsAsync(userId, normalizedProjectId, sessionId, ct);
+        var key = AgentMemoryKeys.ChatHot(userId, sessionId, normalizedProjectId);
 
         await _redisCache.SetAsync(key, hotWindow, HotWindowTtl, ct);
         _memoryCache.Set(key, hotWindow, HotWindowTtl);
@@ -263,11 +314,60 @@ public class ChatHistoryRepository : IChatHistoryRepository
         _logger.LogDebug("Updated chat hot window for user {UserId}, session {SessionId}", userId, sessionId);
     }
 
-    private async Task<List<ChatHistoryTurnDto>> LoadRecentTurnsAsync(string userId, string sessionId, CancellationToken ct)
+    private async Task<List<ChatHistoryTurnDto>> LoadRecentTurnsFromHotCacheAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        CancellationToken ct)
     {
+        var key = AgentMemoryKeys.ChatHot(userId, sessionId, projectId);
+        var memoryCached = _memoryCache.Get<List<ChatHistoryTurnDto>>(key);
+        if (memoryCached != null)
+            return memoryCached;
+
+        var redisCached = await _redisCache.GetAsync<List<ChatHistoryTurnDto>>(key, ct)
+            .ConfigureAwait(false);
+        if (redisCached != null)
+        {
+            _memoryCache.Set(key, redisCached, HotWindowTtl);
+            return redisCached;
+        }
+
+        var turns = await LoadRecentTurnsAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
+        _memoryCache.Set(key, turns, HotWindowTtl);
+        await _redisCache.SetAsync(key, turns, HotWindowTtl, ct).ConfigureAwait(false);
+        return turns;
+    }
+
+    private async Task InvalidateSummaryCacheAsync(
+        string userId,
+        string? normalizedProjectId,
+        string sessionId,
+        CancellationToken ct)
+    {
+        var cacheKey = BuildSummaryCacheKey(userId, normalizedProjectId, sessionId);
+        _memoryCache.Remove(cacheKey);
+        await _redisCache.RemoveAsync(cacheKey, ct).ConfigureAwait(false);
+    }
+
+    private Task BumpChatVersionAsync(string userId, string? projectId, string sessionId, CancellationToken ct) =>
+        _versions == null
+            ? Task.CompletedTask
+            : _versions.BumpAsync(userId, string.IsNullOrWhiteSpace(projectId) ? null : projectId, sessionId, "chat", ct);
+
+    private static string BuildSummaryCacheKey(string userId, string? projectId, string sessionId) =>
+        $"chat:{userId}:{sessionId}:{(string.IsNullOrWhiteSpace(projectId) ? "*" : projectId)}:summaries";
+
+    private async Task<List<ChatHistoryTurnDto>> LoadRecentTurnsAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        CancellationToken ct)
+    {
+        var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
         var turns = await _context.AgentChatTurns
             .AsNoTracking()
-            .Where(t => t.UserId == userId && t.SessionId == sessionId)
+            .Where(t => t.UserId == userId && t.ProjectId == normalizedProjectId && t.SessionId == sessionId)
             .OrderByDescending(t => t.TurnIndex)
             .Take(HotWindowSize)
             .OrderBy(t => t.TurnIndex)
@@ -295,4 +395,8 @@ public class ChatHistoryRepository : IChatHistoryRepository
 
     private static int EstimateTokenCount(string content) =>
         string.IsNullOrWhiteSpace(content) ? 0 : Math.Max(1, content.Length / 2);
+
+    private sealed record ChatPromptSummaryCache(
+        string? MetaSummary,
+        List<ChatHistorySummaryDto> Summaries);
 }

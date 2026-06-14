@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -28,24 +29,6 @@ public sealed class AgentSession
     public DateTime? LastToolSearchAt { get; set; }
     public string? ToolSearchCacheVersion { get; set; }
 
-    public void NormalizeLegacyState()
-    {
-        if (IsRemovedLegacyTool(WorkingMemory.PendingToolCall))
-            WorkingMemory.PendingToolCall = null;
-        if (IsRemovedLegacyTool(WorkingMemory.PendingConfirmation?.ToolCall))
-            WorkingMemory.PendingConfirmation = null;
-        WorkingMemory.PendingToolCall = null;
-        WorkingMemory.PendingConfirmation = null;
-        if (string.Equals(Phase, "awaiting_confirmation", StringComparison.OrdinalIgnoreCase))
-            Phase = "idle";
-        if (string.Equals(WorkingMemory.MissionPlan.Status, "awaiting_confirmation", StringComparison.OrdinalIgnoreCase))
-            WorkingMemory.MissionPlan.Status = string.Empty;
-        if (string.Equals(WorkingMemory.MissionPlan.Stage, "awaiting_confirmation", StringComparison.OrdinalIgnoreCase))
-            WorkingMemory.MissionPlan.Stage = string.Empty;
-    }
-
-    private static bool IsRemovedLegacyTool(AgentToolCall? call) =>
-        call != null && string.Equals(call.Name, "GenerateChapter", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class AgentConversationTurn
@@ -60,13 +43,16 @@ public sealed class AgentSessionManager
     private readonly ConcurrentDictionary<string, Channel<AgentSseEvent>> _channels = new();
     private readonly TM.Web.NovelAgentWeb.Data.NovelAgentDbContext _db;
     private readonly TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService _currentUser;
+    private readonly IChatHistoryRepository? _chatHistory;
 
     public AgentSessionManager(
         TM.Web.NovelAgentWeb.Data.NovelAgentDbContext db,
-        TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService currentUser)
+        TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService currentUser,
+        IChatHistoryRepository? chatHistory = null)
     {
         _db = db;
         _currentUser = currentUser;
+        _chatHistory = chatHistory;
     }
 
     public async Task<AgentSession> GetOrCreateSessionAsync(string? sessionId = null, CancellationToken ct = default)
@@ -76,9 +62,7 @@ public sealed class AgentSessionManager
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             // New session: no projectId, LLM will decide later
-            var session = new AgentSession { UserId = userId, ActiveProjectId = string.Empty };
-            NormalizeLegacyPending(session);
-            return session;
+            return new AgentSession { UserId = userId, ActiveProjectId = string.Empty };
         }
 
         var entity = await _db.AgentSessions
@@ -86,12 +70,11 @@ public sealed class AgentSessionManager
 
         if (entity == null)
         {
-            var session = new AgentSession { SessionId = sessionId, UserId = userId, ActiveProjectId = string.Empty };
-            NormalizeLegacyPending(session);
-            return session;
+            return new AgentSession { SessionId = sessionId, UserId = userId, ActiveProjectId = string.Empty };
         }
 
         var result = DeserializeSession(entity);
+        await HydrateChatHistoryAsync(result, ct).ConfigureAwait(false);
 
         // Clean stale projectId: if project no longer exists, clear it
         if (!string.IsNullOrWhiteSpace(result.ActiveProjectId))
@@ -102,7 +85,6 @@ public sealed class AgentSessionManager
                 result.ActiveProjectId = string.Empty;
         }
 
-        NormalizeLegacyPending(result);
         return result;
     }
 
@@ -111,7 +93,12 @@ public sealed class AgentSessionManager
         var userId = _currentUser.GetUserId();
         var entity = await _db.AgentSessions
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId, ct);
-        return entity == null ? null : DeserializeSession(entity);
+        if (entity == null)
+            return null;
+
+        var session = DeserializeSession(entity);
+        await HydrateChatHistoryAsync(session, ct).ConfigureAwait(false);
+        return session;
     }
 
     public async Task<IReadOnlyList<AgentSession>> ListSessionsAsync(CancellationToken ct = default)
@@ -121,13 +108,14 @@ public sealed class AgentSessionManager
             .Where(s => s.UserId == userId && !s.IsArchived)
             .OrderByDescending(s => s.UpdatedAt)
             .ToListAsync(ct);
-        return entities.Select(DeserializeSession).ToList();
+        var sessions = entities.Select(DeserializeSession).ToList();
+        foreach (var session in sessions)
+            await HydrateChatHistoryAsync(session, ct).ConfigureAwait(false);
+        return sessions;
     }
 
     public async Task SaveSessionAsync(AgentSession session, CancellationToken ct = default)
     {
-        NormalizeLegacyPending(session);
-
         var entity = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == session.SessionId, ct);
 
         if (entity == null)
@@ -193,12 +181,10 @@ public sealed class AgentSessionManager
             phase = session.Phase,
             activeRunId = session.ActiveRunId,
             runHistory = session.RunHistory,
-            chatHistory = session.ChatHistory,
-            workingMemory = session.WorkingMemory,
+            runtimeState = RuntimeSessionStateData.From(session.WorkingMemory),
             toolSearchCache = new
             {
                 discoveredPhase = session.DiscoveredPhase,
-                discoveredTools = session.DiscoveredTools,
                 lastToolSearchAt = session.LastToolSearchAt,
                 version = session.ToolSearchCacheVersion
             }
@@ -220,10 +206,8 @@ public sealed class AgentSessionManager
             ActiveRunId = data?.ActiveRunId,
             IsArchived = entity.IsArchived,
             RunHistory = data?.RunHistory ?? new(),
-            ChatHistory = data?.ChatHistory ?? new(),
-            WorkingMemory = data?.WorkingMemory ?? new(),
+            WorkingMemory = data?.RuntimeState?.ToWorkingMemory() ?? new(),
             DiscoveredPhase = data?.ToolSearchCache?.DiscoveredPhase,
-            DiscoveredTools = data?.ToolSearchCache?.DiscoveredTools ?? new(),
             LastToolSearchAt = data?.ToolSearchCache?.LastToolSearchAt,
             ToolSearchCacheVersion = data?.ToolSearchCache?.Version,
             CreatedAt = entity.CreatedAt,
@@ -238,9 +222,26 @@ public sealed class AgentSessionManager
         WriteIndented = false,
     };
 
-    private static void NormalizeLegacyPending(AgentSession session)
+    private async Task HydrateChatHistoryAsync(AgentSession session, CancellationToken ct)
     {
-        session.NormalizeLegacyState();
+        if (_chatHistory == null)
+            return;
+
+        var turns = await _chatHistory.GetHotWindowAsync(
+                session.UserId,
+                string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+                session.SessionId,
+                ct)
+            .ConfigureAwait(false);
+
+        session.ChatHistory = turns
+            .Select(turn => new AgentConversationTurn
+            {
+                Role = turn.Role,
+                Content = turn.Content,
+                CreatedAt = turn.CreatedAt
+            })
+            .ToList();
     }
 
     private class SessionData
@@ -248,16 +249,97 @@ public sealed class AgentSessionManager
         public string Phase { get; set; } = "idle";
         public string? ActiveRunId { get; set; }
         public List<string> RunHistory { get; set; } = new();
-        public List<AgentConversationTurn> ChatHistory { get; set; } = new();
-        public AgentWorkingMemory WorkingMemory { get; set; } = new();
+        public RuntimeSessionStateData? RuntimeState { get; set; }
         public ToolSearchCache? ToolSearchCache { get; set; }
+    }
+
+    private sealed class RuntimeSessionStateData
+    {
+        public AgentToolCall? PendingToolCall { get; set; }
+        public AgentPendingConfirmation? PendingConfirmation { get; set; }
+        public AgentDecision? LastDecision { get; set; }
+        public MissionPointerData MissionPointer { get; set; } = new();
+
+        public static RuntimeSessionStateData From(AgentWorkingMemory memory) => new()
+        {
+            PendingToolCall = memory.PendingToolCall,
+            PendingConfirmation = memory.PendingConfirmation,
+            LastDecision = memory.LastDecision,
+            MissionPointer = MissionPointerData.From(memory.MissionPlan)
+        };
+
+        public AgentWorkingMemory ToWorkingMemory()
+        {
+            var memory = new AgentWorkingMemory
+            {
+                PendingToolCall = PendingToolCall,
+                PendingConfirmation = PendingConfirmation,
+                LastDecision = LastDecision,
+            };
+            MissionPointer.ApplyTo(memory.MissionPlan);
+            return memory;
+        }
+    }
+
+    private sealed class MissionPointerData
+    {
+        public string MissionId { get; set; } = string.Empty;
+        public string ProjectId { get; set; } = string.Empty;
+        public string CurrentRunId { get; set; } = string.Empty;
+        public string Stage { get; set; } = "idle";
+        public string Status { get; set; } = "idle";
+        public string ActiveTaskId { get; set; } = string.Empty;
+        public string ActiveChapterId { get; set; } = string.Empty;
+        public string ActiveTurnId { get; set; } = string.Empty;
+        public string ActiveToolTransactionId { get; set; } = string.Empty;
+        public string ArtifactCursor { get; set; } = string.Empty;
+
+        public static MissionPointerData From(AgentMissionPlan? plan)
+        {
+            if (plan == null)
+                return new MissionPointerData();
+
+            return new MissionPointerData
+            {
+                MissionId = plan.MissionId,
+                ProjectId = plan.ProjectId,
+                CurrentRunId = plan.CurrentRunId,
+                Stage = plan.Stage,
+                Status = plan.Status,
+                ActiveTaskId = plan.SchedulerState?.ActiveTaskId ?? string.Empty,
+                ActiveChapterId = FirstNonEmpty(plan.ActiveChapterId, plan.SchedulerState?.ActiveChapterId),
+                ActiveTurnId = plan.ActiveTurnId,
+                ActiveToolTransactionId = plan.ActiveToolTransactionId,
+                ArtifactCursor = FirstNonEmpty(plan.ActiveArtifactCursor, plan.ArtifactCursor)
+            };
+        }
+
+        public void ApplyTo(AgentMissionPlan plan)
+        {
+            if (!string.IsNullOrWhiteSpace(MissionId))
+                plan.MissionId = MissionId;
+            plan.ProjectId = ProjectId ?? string.Empty;
+            plan.CurrentRunId = CurrentRunId ?? string.Empty;
+            plan.Stage = string.IsNullOrWhiteSpace(Stage) ? "idle" : Stage;
+            plan.Status = string.IsNullOrWhiteSpace(Status) ? "idle" : Status;
+            plan.ActiveChapterId = ActiveChapterId ?? string.Empty;
+            plan.ActiveTurnId = ActiveTurnId ?? string.Empty;
+            plan.ActiveToolTransactionId = ActiveToolTransactionId ?? string.Empty;
+            plan.ArtifactCursor = ArtifactCursor ?? string.Empty;
+            plan.ActiveArtifactCursor = ArtifactCursor ?? string.Empty;
+            plan.SchedulerState.ActiveTaskId = ActiveTaskId ?? string.Empty;
+            plan.SchedulerState.ActiveChapterId = ActiveChapterId ?? string.Empty;
+            plan.SchedulerState.ActiveRunId = CurrentRunId ?? string.Empty;
+        }
     }
 
     private class ToolSearchCache
     {
         public string? DiscoveredPhase { get; set; }
-        public List<ToolSchema> DiscoveredTools { get; set; } = new();
         public DateTime? LastToolSearchAt { get; set; }
         public string? Version { get; set; }
     }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
 }

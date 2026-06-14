@@ -10,9 +10,8 @@ public class Material
     public string Title { get; set; } = null!;
     public string? Category { get; set; }
     public string? ContentType { get; set; }
-    public string? Content { get; set; }
-    public string? FilePath { get; set; }
     public string? Tags { get; set; }
+    public string? RawDocumentId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [Column("vector_chunk_count")]

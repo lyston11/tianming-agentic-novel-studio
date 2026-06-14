@@ -11,7 +11,6 @@ public class NovelProject
     public string Status { get; set; } = "draft";
     public int WordCount { get; set; } = 0;
     public string? CoverImageUrl { get; set; }
-    public string? StorageProjectName { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
@@ -23,7 +22,6 @@ public class NovelProject
     public ICollection<Foreshadow> Foreshadows { get; set; } = new List<Foreshadow>();
     public ICollection<Character> Characters { get; set; } = new List<Character>();
     public ICollection<Material> Materials { get; set; } = new List<Material>();
-    public ICollection<KnowledgeBase> KnowledgeBases { get; set; } = new List<KnowledgeBase>();
     public ICollection<AgentMemory> AgentMemories { get; set; } = new List<AgentMemory>();
     public ICollection<AgentSession> AgentSessions { get; set; } = new List<AgentSession>();
     public ICollection<ForeshadowEntry> ForeshadowEntries { get; set; } = new List<ForeshadowEntry>();

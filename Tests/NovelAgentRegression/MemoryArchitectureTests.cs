@@ -205,37 +205,4 @@ public sealed class MemoryArchitectureTests
         }
     }
 
-    [Fact]
-    public async Task LoadRuntimeContextAsync_LoadsThreeTiers()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), "test-memory-" + Guid.NewGuid().ToString("N"));
-        var workspace = TestNovelAgentWorkspaceFactory.Create(tempDir);
-        TestNovelAgentWorkspaceFactory.BindWorkspace(workspace);
-        var service = new AgentMemoryService(
-            new TestAgentMemoryRepository(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentMemoryService>.Instance);
-        var session = new SessionContext { SessionId = "s1", ActiveProjectId = "proj1" };
-        var project = new NovelProjectInfo { Id = "proj1", Title = "测试小说", StorageProjectName = "test-novel" };
-
-        try
-        {
-            var context = await service.LoadRuntimeContextAsync(session, project, CancellationToken.None).ConfigureAwait(false);
-
-            Assert.NotNull(context.User);
-            Assert.NotNull(context.ActiveProject);
-            Assert.NotNull(context.Session);
-            Assert.Equal("default", context.User.UserId);
-            Assert.Equal(project, context.ActiveProject);
-            Assert.Equal(session, context.Session);
-        }
-        finally
-        {
-            TestNovelAgentWorkspaceFactory.ClearWorkspace();
-            // Dispose SemaphoreSlim to prevent resource leak
-            workspace.ProjectContextLock.Dispose();
-
-            // Cleanup temp directory
-            try { Directory.Delete(tempDir, true); } catch { }
-        }
-    }
 }

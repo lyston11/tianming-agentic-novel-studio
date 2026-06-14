@@ -3,11 +3,12 @@ import type {
   AgentChatRequest,
   AgentChatResponse,
   AgentSessionInfo,
+  AgentSessionResumeResponse,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
   CharacterResponse,
   KnowledgeResponse,
-  KnowledgeSearchResponse,
+  KnowledgeSearchResult,
   MaterialContentResponse,
   MaterialListResponse,
   MaterialResponse,
@@ -63,16 +64,16 @@ export const deleteMaterialById = (id: string) =>
   api<void>(`/materials/${id}`, { method: 'DELETE' });
 
 // Knowledge API (new multi-user endpoints)
-export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; category?: string }) =>
-  post<KnowledgeSearchResponse>('/knowledge/search', req);
+export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; entryType?: string }) =>
+  post<KnowledgeSearchResult[]>('/knowledge/search', req);
 
-export const listKnowledgeEntries = (projectId: string, category?: string) =>
-  get<KnowledgeResponse[]>(`/knowledge?projectId=${encodeURIComponent(projectId)}${category ? `&category=${encodeURIComponent(category)}` : ''}`);
+export const listKnowledgeEntries = (projectId: string) =>
+  get<KnowledgeResponse[]>(`/knowledge?projectId=${encodeURIComponent(projectId)}`);
 
-export const createKnowledgeEntry = (req: { projectId: string; title: string; content: string; category: string; tags?: string; sourceType?: string; sourceId?: string }) =>
+export const createKnowledgeEntry = (req: { projectId: string; title: string; content: string; entryType: string; tags?: string[] }) =>
   post<KnowledgeResponse>('/knowledge', req);
 
-export const updateKnowledgeEntryById = (id: string, req: { title?: string; content?: string; category?: string; tags?: string }) =>
+export const updateKnowledgeEntryById = (id: string, req: { title?: string; content?: string }) =>
   api<KnowledgeResponse>(`/knowledge/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
@@ -154,6 +155,9 @@ export const createAgentSession = (projectId?: string | null) =>
 
 export const getAgentSession = (sessionId: string) =>
   get<AgentSessionInfo>(`/agent/session/${sessionId}`);
+
+export const resumeAgentSession = (sessionId: string) =>
+  get<AgentSessionResumeResponse>(`/agent/sessions/${encodeURIComponent(sessionId)}/resume`);
 
 export const listAgentSessions = () =>
   get<AgentSessionSummary[]>('/agent/sessions');

@@ -1,6 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 
@@ -62,10 +60,9 @@ public sealed class LlmPreset
 
 public sealed class UserSettingsManager
 {
-    private readonly string _settingsPath;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IHttpContextAccessor? _httpContextAccessor;
-    private UserSettings? _legacyCached;
+    private UserSettings? _fallbackSettings;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public UserSettingsManager(
@@ -74,9 +71,6 @@ public sealed class UserSettingsManager
         IServiceScopeFactory? scopeFactory = null,
         IHttpContextAccessor? httpContextAccessor = null)
     {
-        var dir = Path.Combine(storageRoot, "Projects", projectName, "Settings");
-        Directory.CreateDirectory(dir);
-        _settingsPath = Path.Combine(dir, "user_settings.json");
         _scopeFactory = scopeFactory;
         _httpContextAccessor = httpContextAccessor;
     }
@@ -89,23 +83,14 @@ public sealed class UserSettingsManager
             return databaseSettings;
         }
 
-        if (_legacyCached != null) return _legacyCached;
+        if (_fallbackSettings != null) return _fallbackSettings;
         await _lock.WaitAsync(ct);
         try
         {
-            if (_legacyCached != null) return _legacyCached;
-            if (!File.Exists(_settingsPath))
-            {
-                _legacyCached = new UserSettings();
-                return _legacyCached;
-            }
-            var json = await File.ReadAllTextAsync(_settingsPath, ct);
-            _legacyCached = JsonSerializer.Deserialize<UserSettings>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-            }) ?? new UserSettings();
-            Normalize(_legacyCached);
-            return _legacyCached;
+            if (_fallbackSettings != null) return _fallbackSettings;
+            _fallbackSettings = new UserSettings();
+            Normalize(_fallbackSettings);
+            return _fallbackSettings;
         }
         finally { _lock.Release(); }
     }
@@ -116,13 +101,13 @@ public sealed class UserSettingsManager
         try
         {
             Normalize(settings);
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
+            if (await TrySaveDatabaseSettingsAsync(settings, ct).ConfigureAwait(false))
             {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            });
-            await File.WriteAllTextAsync(_settingsPath, json, ct);
-            _legacyCached = settings;
+                _fallbackSettings = null;
+                return settings;
+            }
+
+            _fallbackSettings = settings;
             return settings;
         }
         finally { _lock.Release(); }
@@ -131,7 +116,7 @@ public sealed class UserSettingsManager
     public Task<UserSettings> ResetAsync(CancellationToken ct = default) =>
         SaveAsync(new UserSettings(), ct);
 
-    public void InvalidateCache() => _legacyCached = null;
+    public void InvalidateCache() => _fallbackSettings = null;
 
     private async Task<UserSettings?> TryLoadDatabaseSettingsAsync(CancellationToken ct)
     {
@@ -174,6 +159,49 @@ public sealed class UserSettingsManager
 
         Normalize(settings);
         return settings;
+    }
+
+    private async Task<bool> TrySaveDatabaseSettingsAsync(UserSettings settings, CancellationToken ct)
+    {
+        var userId = TryGetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(userId) || _scopeFactory == null)
+        {
+            return false;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var entity = await db.UserSettings
+            .FirstOrDefaultAsync(s => s.UserId == userId, ct)
+            .ConfigureAwait(false);
+
+        if (entity == null)
+        {
+            entity = new TM.Web.NovelAgentWeb.Data.Entities.UserSettings
+            {
+                UserId = userId
+            };
+            db.UserSettings.Add(entity);
+        }
+
+        entity.LlmProvider = settings.LlmProvider;
+        entity.LlmApiKeyEncrypted = settings.LlmApiKey;
+        entity.LlmBaseUrl = settings.LlmBaseUrl;
+        entity.LlmModel = settings.LlmModel;
+        entity.LlmTemperature = (float)settings.LlmTemperature;
+        entity.LlmMaxTokens = settings.LlmMaxTokens;
+        entity.EmbeddingProvider = settings.EmbeddingProvider;
+        entity.EmbeddingModel = settings.EmbeddingModel;
+        entity.AgentDefaultRisk = settings.AgentDefaultRisk;
+        entity.AgentAutoContinue = settings.AgentAutoContinue;
+        entity.AgentMaxAutoSteps = settings.AgentMaxAutoSteps;
+        entity.DefaultGenre = settings.DefaultGenre;
+        entity.DefaultChapterWordCount = settings.DefaultChapterWordCount;
+        entity.Theme = settings.Theme;
+        entity.Language = settings.Language;
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return true;
     }
 
     private string? TryGetCurrentUserId()

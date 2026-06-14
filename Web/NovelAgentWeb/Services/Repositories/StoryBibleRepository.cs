@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Services.Repositories;
 
@@ -11,26 +13,64 @@ namespace TM.Web.NovelAgentWeb.Services.Repositories;
 /// </summary>
 public class StoryBibleRepository : IStoryBibleRepository
 {
+    private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan RedisCacheDuration = TimeSpan.FromMinutes(10);
+
     private readonly NovelAgentDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IDistributedCacheService _redisCache;
+    private readonly IMemoryCacheService _memoryCache;
     private readonly ILogger<StoryBibleRepository> _logger;
+    private readonly IAgentMemoryVersionService? _versions;
 
     public StoryBibleRepository(
         NovelAgentDbContext context,
         ICurrentUserService currentUserService,
-        ILogger<StoryBibleRepository> logger)
+        IDistributedCacheService redisCache,
+        IMemoryCacheService memoryCache,
+        ILogger<StoryBibleRepository> logger,
+        IAgentMemoryVersionService? versions = null)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _redisCache = redisCache;
+        _memoryCache = memoryCache;
         _logger = logger;
+        _versions = versions;
     }
 
     public async Task<StoryBible> LoadStoryBibleAsync(string projectId, CancellationToken cancellationToken = default)
     {
         var userId = _currentUserService.GetUserId();
+        var cacheKey = StoryBibleCacheKey(userId, projectId);
 
+        return await _memoryCache.GetOrSetAsync(
+            cacheKey,
+            async () =>
+            {
+                var cached = await _redisCache.GetAsync<StoryBible>(cacheKey, cancellationToken);
+                if (cached != null)
+                {
+                    _logger.LogDebug("StoryBible cache hit (Redis) for user {UserId}, project {ProjectId}", userId, projectId);
+                    return cached;
+                }
+
+                var storyBible = await LoadStoryBibleFromSqliteAsync(userId, projectId, cancellationToken);
+                await _redisCache.SetAsync(cacheKey, storyBible, RedisCacheDuration, cancellationToken);
+                return storyBible;
+            },
+            MemoryCacheDuration,
+            cancellationToken) ?? new StoryBible();
+    }
+
+    private async Task<StoryBible> LoadStoryBibleFromSqliteAsync(
+        string userId,
+        string projectId,
+        CancellationToken cancellationToken)
+    {
         // Verify project ownership
         var project = await _context.NovelProjects
+            .AsNoTracking()
             .Where(p => p.Id == projectId && p.UserId == userId)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -43,29 +83,34 @@ public class StoryBibleRepository : IStoryBibleRepository
 
         // Load constitution (one-to-one with project)
         storyBible.Constitution = await _context.StoryConstitutions
+            .AsNoTracking()
             .Where(c => c.ProjectId == projectId && c.UserId == userId)
             .FirstOrDefaultAsync(cancellationToken);
 
         // Load volume arcs
         storyBible.VolumeArcs = await _context.VolumeArcs
+            .AsNoTracking()
             .Where(v => v.ProjectId == projectId && v.UserId == userId)
             .OrderBy(v => v.VolumeNumber)
             .ToListAsync(cancellationToken);
 
         // Load characters
         storyBible.Characters = await _context.Characters
+            .AsNoTracking()
             .Where(c => c.ProjectId == projectId && c.UserId == userId)
             .OrderBy(c => c.Name)
             .ToListAsync(cancellationToken);
 
         // Load foreshadow entries
         storyBible.ForeshadowEntries = await _context.ForeshadowEntries
+            .AsNoTracking()
             .Where(f => f.ProjectId == projectId && f.UserId == userId)
             .OrderBy(f => f.PlantedInChapter)
             .ToListAsync(cancellationToken);
 
         // Load world settings
         storyBible.WorldSettings = await _context.WorldSettingEntries
+            .AsNoTracking()
             .Where(w => w.ProjectId == projectId && w.UserId == userId)
             .OrderBy(w => w.Category)
             .ThenBy(w => w.Title)
@@ -73,6 +118,7 @@ public class StoryBibleRepository : IStoryBibleRepository
 
         // Load agent runs
         storyBible.AgentRuns = await _context.AgentRuns
+            .AsNoTracking()
             .Where(a => a.ProjectId == projectId && a.UserId == userId)
             .OrderByDescending(a => a.CreatedAt)
             .ToListAsync(cancellationToken);
@@ -129,6 +175,7 @@ public class StoryBibleRepository : IStoryBibleRepository
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, constitution.ProjectId, cancellationToken);
     }
 
     public async Task SaveVolumeArcAsync(VolumeArc volumeArc, CancellationToken cancellationToken = default)
@@ -170,6 +217,7 @@ public class StoryBibleRepository : IStoryBibleRepository
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, volumeArc.ProjectId, cancellationToken);
     }
 
     public async Task SaveCharacterAsync(Character character, CancellationToken cancellationToken = default)
@@ -210,6 +258,7 @@ public class StoryBibleRepository : IStoryBibleRepository
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, character.ProjectId, cancellationToken);
     }
 
     public async Task PlantForeshadowAsync(ForeshadowEntry foreshadow, CancellationToken cancellationToken = default)
@@ -235,6 +284,7 @@ public class StoryBibleRepository : IStoryBibleRepository
 
         _context.ForeshadowEntries.Add(foreshadow);
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, foreshadow.ProjectId, cancellationToken);
 
         _logger.LogInformation("Planted new Foreshadow '{Title}' in chapter {Chapter} for project {ProjectId}",
             foreshadow.Title, foreshadow.PlantedInChapter, foreshadow.ProjectId);
@@ -260,6 +310,7 @@ public class StoryBibleRepository : IStoryBibleRepository
         foreshadow.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, foreshadow.ProjectId, cancellationToken);
 
         _logger.LogInformation("Resolved Foreshadow '{Title}' (ID: {ForeshadowId}) in chapter {Chapter}",
             foreshadow.Title, foreshadowId, resolvedInChapter);
@@ -312,6 +363,7 @@ public class StoryBibleRepository : IStoryBibleRepository
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await InvalidateStoryBibleAsync(userId, worldSetting.ProjectId, cancellationToken);
     }
 
     public async Task SaveAgentRunAsync(AgentRun agentRun, CancellationToken cancellationToken = default)
@@ -352,5 +404,38 @@ public class StoryBibleRepository : IStoryBibleRepository
         }
 
         await _context.SaveChangesAsync(cancellationToken);
+        await RefreshAgentRunCacheAsync(userId, agentRun, cancellationToken);
+        await InvalidateStoryBibleAsync(userId, agentRun.ProjectId, cancellationToken);
     }
+
+    private async Task InvalidateStoryBibleAsync(
+        string userId,
+        string projectId,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = StoryBibleCacheKey(userId, projectId);
+        _memoryCache.Remove(cacheKey);
+        await _redisCache.RemoveAsync(cacheKey, cancellationToken);
+        if (_versions != null)
+        {
+            await _versions.BumpAsync(userId, projectId, null, "story_bible", cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task RefreshAgentRunCacheAsync(
+        string userId,
+        AgentRun agentRun,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = AgentRunCacheKey(userId, agentRun.ProjectId, agentRun.Id);
+        _memoryCache.Set(cacheKey, agentRun, MemoryCacheDuration);
+        await _redisCache.SetAsync(cacheKey, agentRun, RedisCacheDuration, cancellationToken);
+    }
+
+    private static string StoryBibleCacheKey(string userId, string projectId) =>
+        $"storybible:{userId}:{projectId}";
+
+    private static string AgentRunCacheKey(string userId, string projectId, string runId) =>
+        $"agentrun:{userId}:{projectId}:{runId}";
 }

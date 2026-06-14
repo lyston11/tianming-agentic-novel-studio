@@ -13,4 +13,44 @@ public interface IContentDocumentService
         string title,
         string content,
         CancellationToken ct = default);
+
+    Task<ContentDocument> SaveOrReplaceTextAsync(
+        string userId,
+        string? projectId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        string title,
+        string content,
+        CancellationToken ct = default);
+
+    Task<string> GetTextAsync(
+        string userId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        CancellationToken ct = default);
+
+    Task<string> GetTextAsync(
+        string userId,
+        string? projectId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        CancellationToken ct = default);
+
+    Task DeleteBySourceAsync(
+        string userId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        CancellationToken ct = default);
+
+    Task DeleteBySourceAsync(
+        string userId,
+        string? projectId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        CancellationToken ct = default);
 }

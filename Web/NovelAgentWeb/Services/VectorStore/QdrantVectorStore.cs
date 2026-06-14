@@ -94,7 +94,7 @@ public class QdrantVectorStore : IVectorStore
         _logger.LogInformation("Upserted {Count} vectors to {Collection}", vectors.Count, collectionName);
     }
 
-#pragma warning disable CS0612 // Current Qdrant server image expects legacy Vector.Data for unnamed dense vectors.
+#pragma warning disable CS0612 // Current Qdrant server image expects Vector.Data for unnamed dense vectors.
     private static Vectors CreateUnnamedVector(float[] values)
     {
         var vector = new Vector();

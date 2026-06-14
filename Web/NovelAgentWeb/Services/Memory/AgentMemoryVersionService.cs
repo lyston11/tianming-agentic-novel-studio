@@ -30,7 +30,7 @@ public class AgentMemoryVersionService : IAgentMemoryVersionService
 
         if (projectId != null && sessionId != null)
         {
-            await InvalidateContextCachesAsync(userId, projectId, sessionId, ct);
+            await InvalidateContextCachesAsync(userId, projectId, sessionId, scope, ct);
         }
 
         return version;
@@ -53,15 +53,18 @@ public class AgentMemoryVersionService : IAgentMemoryVersionService
             : string.Join("|", rows.Select(r => $"{r.Scope}:{r.ProjectId ?? "*"}:{r.SessionId ?? "*"}={r.Version}"));
     }
 
-    private async Task InvalidateContextCachesAsync(string userId, string projectId, string sessionId, CancellationToken ct)
+    private async Task InvalidateContextCachesAsync(string userId, string projectId, string sessionId, string scope, CancellationToken ct)
     {
         var memoryContextPrefix = $"memory-context:{userId}:{sessionId}:{projectId}";
         var toolCachePrefix = $"toolcache:{userId}:{sessionId}:{projectId}";
 
         _memoryCache.RemoveByPrefix(memoryContextPrefix);
-        _memoryCache.RemoveByPrefix(toolCachePrefix);
-
         await _distributedCache.RemoveByPrefixAsync(memoryContextPrefix, ct);
+
+        if (string.Equals(scope, "tool_execution", StringComparison.Ordinal))
+            return;
+
+        _memoryCache.RemoveByPrefix(toolCachePrefix);
         await _distributedCache.RemoveByPrefixAsync(toolCachePrefix, ct);
     }
 

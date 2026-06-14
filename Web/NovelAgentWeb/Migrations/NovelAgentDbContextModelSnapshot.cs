@@ -348,11 +348,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("completed_at");
 
-                    b.Property<string>("ContextPackagePath")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("context_package_path");
-
                     b.Property<int?>("ContextPackageSize")
                         .HasColumnType("INTEGER")
                         .HasColumnName("context_package_size");
@@ -367,11 +362,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("duration_ms");
 
-                    b.Property<string>("GateReportPath")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("gate_report_path");
-
                     b.Property<string>("InputParams")
                         .HasColumnType("TEXT")
                         .HasColumnName("input_params");
@@ -379,6 +369,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<string>("OutputData")
                         .HasColumnType("TEXT")
                         .HasColumnName("output_data");
+
+                    b.Property<string>("OutputDocumentId")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("output_document_id");
 
                     b.Property<string>("ProjectId")
                         .IsRequired()
@@ -422,6 +417,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("user_id");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OutputDocumentId");
 
                     b.HasIndex("ProjectId");
 
@@ -487,6 +484,178 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("agent_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArgumentsHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("arguments_hash");
+
+                    b.Property<string>("ArgumentsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("arguments_json");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ErrorMessage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("ErrorType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_type");
+
+                    b.Property<string>("MissingPrerequisite")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("missing_prerequisite");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("phase");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RecommendedNextTool")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("recommended_next_tool");
+
+                    b.Property<string>("ResultMessage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("result_message");
+
+                    b.Property<string>("ResultPhase")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("result_phase");
+
+                    b.Property<string>("Risk")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("risk");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SideEffectsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("side_effects_json");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tool_name");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ProjectId", "ToolName", "ArgumentsHash")
+                        .HasDatabaseName("idx_agent_tool_executions_dedupe");
+
+                    b.HasIndex("UserId", "ProjectId", "SessionId", "StartedAt")
+                        .HasDatabaseName("idx_agent_tool_executions_scope_recent");
+
+                    b.ToTable("agent_tool_executions", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentToolSearchSnapshot", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CachedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cached_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("phase");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourceExecutionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_execution_id");
+
+                    b.Property<string>("ToolsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tools_json");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("idx_agent_tool_search_snapshots_expires_at");
+
+                    b.HasIndex("UserId", "ProjectId", "SessionId", "Phase", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("idx_agent_tool_search_snapshots_scope_version");
+
+                    b.ToTable("agent_tool_search_snapshots", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Chapter", b =>
                 {
                     b.Property<string>("Id")
@@ -497,16 +666,15 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("chapter_number");
 
-                    b.Property<string>("ContentPath")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("content_path");
-
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("CurrentDocumentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("current_document_id");
 
                     b.Property<string>("ProjectId")
                         .IsRequired()
@@ -542,6 +710,9 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("word_count");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CurrentDocumentId")
+                        .HasDatabaseName("idx_chapters_current_document");
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_chapters_project");
@@ -1064,15 +1235,19 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("extraction_context");
 
-                    b.Property<string>("ProjectId")
-                        .IsRequired()
+                    b.Property<string>("SourceProjectId")
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
-                    b.Property<string>("SourceFileId")
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("SourceUploadTaskId")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT")
-                        .HasColumnName("source_file_id");
+                        .HasColumnName("source_upload_task_id");
 
                     b.Property<string>("SourceType")
                         .IsRequired()
@@ -1110,7 +1285,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProjectId");
+                    b.HasIndex("SourceProjectId")
+                        .HasDatabaseName("idx_knowledge_base_source_project");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("idx_knowledge_base_user");
 
                     b.ToTable("knowledge_base", (string)null);
                 });
@@ -1146,11 +1325,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("file_name");
 
-                    b.Property<string>("FilePath")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("file_path");
-
                     b.Property<long>("FileSize")
                         .HasColumnType("INTEGER")
                         .HasColumnName("file_size");
@@ -1174,6 +1348,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("started_at");
+
+                    b.Property<string>("UploadDocumentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("upload_document_id");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1204,6 +1382,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("Status");
 
+                    b.HasIndex("UploadDocumentId");
+
                     b.HasIndex("UserId");
 
                     b.ToTable("knowledge_processing_tasks", (string)null);
@@ -1219,10 +1399,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("category");
 
-                    b.Property<string>("Content")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("content");
-
                     b.Property<string>("ContentType")
                         .HasColumnType("TEXT")
                         .HasColumnName("content_type");
@@ -1233,13 +1409,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-                    b.Property<string>("FilePath")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("file_path");
-
                     b.Property<string>("ProjectId")
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
+
+                    b.Property<string>("RawDocumentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("raw_document_id");
 
                     b.Property<string>("Tags")
                         .HasColumnType("TEXT")
@@ -1265,6 +1441,9 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_materials_project");
+
+                    b.HasIndex("RawDocumentId")
+                        .HasDatabaseName("idx_materials_raw_document");
 
                     b.HasIndex("UserId")
                         .HasDatabaseName("idx_materials_user");
@@ -1303,10 +1482,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasDefaultValue("draft")
                         .HasColumnName("status");
 
-                    b.Property<string>("StorageProjectName")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("storage_project_name");
-
                     b.Property<string>("SubGenre")
                         .HasColumnType("TEXT")
                         .HasColumnName("sub_genre");
@@ -1334,9 +1509,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("word_count");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("StorageProjectName")
-                        .IsUnique();
 
                     b.HasIndex("UserId");
 
@@ -1969,6 +2141,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentRun", b =>
                 {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("OutputDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany("AgentRuns")
                         .HasForeignKey("ProjectId")
@@ -2006,6 +2183,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Chapter", b =>
                 {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("CurrentDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany("Chapters")
                         .HasForeignKey("ProjectId")
@@ -2129,17 +2311,29 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase", b =>
                 {
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
-                        .WithMany("KnowledgeBases")
-                        .HasForeignKey("ProjectId")
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "SourceProject")
+                        .WithMany()
+                        .HasForeignKey("SourceProjectId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Project");
+                    b.Navigation("SourceProject");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask", b =>
                 {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("UploadDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany()
                         .HasForeignKey("ProjectId")
@@ -2158,6 +2352,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Material", b =>
                 {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("RawDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany("Materials")
                         .HasForeignKey("ProjectId")
@@ -2323,8 +2522,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("ForeshadowEntries");
 
                     b.Navigation("Foreshadows");
-
-                    b.Navigation("KnowledgeBases");
 
                     b.Navigation("Materials");
 

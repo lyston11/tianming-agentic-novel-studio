@@ -299,16 +299,20 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         var embeddingService = scope.ServiceProvider.GetService<IMicroEmbeddingService>();
         var currentUserService = scope.ServiceProvider.GetService<ICurrentUserService>();
         var memoryRepository = scope.ServiceProvider.GetService<IAgentMemoryRepository>();
+        var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
 
         // Create Workspace instance (no project binding)
         var workspace = new NovelAgentWorkspace(
             env,
             config,
             settingsManager,
+            userId,
+            projectId,
             vectorStore,
             embeddingService,
             currentUserService,
-            memoryRepository) { UserId = userId };
+            memoryRepository,
+            scopeFactory);
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;

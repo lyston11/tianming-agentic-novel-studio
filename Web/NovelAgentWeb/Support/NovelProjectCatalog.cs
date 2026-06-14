@@ -1,55 +1,79 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Data;
+using DbNovelProject = TM.Web.NovelAgentWeb.Data.Entities.NovelProject;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class NovelProjectCatalog
 {
-    private const string DefaultProjectId = "default";
     private readonly NovelAgentWorkspace _workspace;
-    private readonly object _fileLock = new();
-    private readonly string _catalogPath;
+    private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly object _memoryLock = new();
+    private readonly NovelProjectCatalogDocument _memoryDocument = new();
 
-    public NovelProjectCatalog(NovelAgentWorkspace workspace)
+    public NovelProjectCatalog(NovelAgentWorkspace workspace, IServiceScopeFactory? scopeFactory = null)
     {
         _workspace = workspace;
-        var dir = Path.Combine(workspace.StorageRoot, "Projects", workspace.ProjectName, "NovelProjects");
-        Directory.CreateDirectory(dir);
-        _catalogPath = Path.Combine(dir, "projects.json");
+        _scopeFactory = scopeFactory;
     }
 
     public async Task<NovelProjectCatalogDocument> GetAsync(CancellationToken ct = default)
     {
-        var document = LoadDocument();
-        if (document.Projects.Count == 0)
-        {
-            var current = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
-            document.Projects.Add(BuildDefaultProject(current));
-            document.ActiveProjectId = DefaultProjectId;
-            SaveDocument(document);
-        }
+        if (_scopeFactory == null)
+            return GetMemoryDocument();
 
-        if (string.IsNullOrWhiteSpace(document.ActiveProjectId) ||
-            document.Projects.All(p => !string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase)))
-        {
-            document.ActiveProjectId = document.Projects[0].Id;
-            SaveDocument(document);
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var projects = await db.NovelProjects
+            .AsNoTracking()
+            .Where(p => p.UserId == _workspace.UserId)
+            .OrderByDescending(p => p.UpdatedAt)
+            .ThenBy(p => p.Title)
+            .Select(p => MapToInfo(p))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
 
-        return document;
+        return new NovelProjectCatalogDocument
+        {
+            ActiveProjectId = ResolveActiveProjectId(projects),
+            Projects = projects,
+            UpdatedAt = projects.Count == 0 ? DateTime.UtcNow : projects.Max(p => p.UpdatedAt)
+        };
     }
 
     public async Task<NovelProjectInfo> GetActiveAsync(CancellationToken ct = default)
     {
         var document = await GetAsync(ct).ConfigureAwait(false);
-        return document.Projects.First(p => string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
+        if (document.Projects.Count == 0)
+            throw new InvalidOperationException("未找到小说项目，请先创建新小说。");
+
+        var active = document.Projects.FirstOrDefault(p =>
+            string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
+        return active ?? document.Projects[0];
     }
 
     public async Task<NovelProjectInfo?> FindAsync(string projectId, CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        return document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(projectId))
+            return null;
+
+        if (_scopeFactory == null)
+        {
+            var document = GetMemoryDocument();
+            return document.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var project = await db.NovelProjects
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == _workspace.UserId, ct)
+            .ConfigureAwait(false);
+        return project == null ? null : MapToInfo(project);
     }
 
     public async Task<NovelProjectInfo> UpsertAsync(
@@ -57,53 +81,44 @@ public sealed class NovelProjectCatalog
         bool makeActive = false,
         CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        var project = document.Projects.FirstOrDefault(p =>
-            string.Equals(p.Id, source.Id, StringComparison.OrdinalIgnoreCase));
+        if (_scopeFactory == null)
+            return UpsertMemory(source, makeActive);
 
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var project = await db.NovelProjects
+            .FirstOrDefaultAsync(p => p.Id == source.Id && p.UserId == _workspace.UserId, ct)
+            .ConfigureAwait(false);
+
+        var now = DateTime.UtcNow;
         if (project == null)
         {
-            project = new NovelProjectInfo { Id = source.Id };
-            document.Projects.Insert(0, project);
+            project = new DbNovelProject
+            {
+                Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id,
+                UserId = _workspace.UserId,
+                CreatedAt = source.CreatedAt == default ? now : source.CreatedAt
+            };
+            db.NovelProjects.Add(project);
         }
 
-        project.Title = FirstNonEmpty(source.Title, project.Title, "未命名小说");
-        project.Genre = FirstNonEmpty(source.Genre, project.Genre);
-        project.SubGenre = FirstNonEmpty(source.SubGenre, project.SubGenre);
-        project.CoreHook = FirstNonEmpty(source.CoreHook, project.CoreHook);
-        project.ReaderPromise = FirstNonEmpty(source.ReaderPromise, project.ReaderPromise);
-        project.Status = FirstNonEmpty(source.Status, project.Status, "Drafting");
-        project.StorageProjectName = FirstNonEmpty(source.StorageProjectName, project.StorageProjectName, _workspace.ProjectName);
-        project.CreatedAt = source.CreatedAt == default ? project.CreatedAt : source.CreatedAt;
-        project.UpdatedAt = source.UpdatedAt == default ? DateTime.UtcNow : source.UpdatedAt;
-
-        if (makeActive || string.IsNullOrWhiteSpace(document.ActiveProjectId))
-        {
-            document.ActiveProjectId = project.Id;
-        }
-
-        SaveDocument(document);
-        return project;
+        ApplyInfo(project, source, now);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return MapToInfo(project);
     }
 
     public async Task<NovelProjectInfo> ActivateAsync(string projectId, CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        var project = document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
+        var project = await FindAsync(projectId, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"小说项目不存在：{projectId}");
 
-        document.ActiveProjectId = project.Id;
-        project.UpdatedAt = DateTime.UtcNow;
-        SaveDocument(document);
-
-        await _workspace.ProjectContextLock.WaitAsync(ct).ConfigureAwait(false);
-        try
+        if (_scopeFactory == null)
         {
-            StoragePathHelper.CurrentProjectName = project.StorageProjectName;
-        }
-        finally
-        {
-            _workspace.ProjectContextLock.Release();
+            lock (_memoryLock)
+            {
+                _memoryDocument.ActiveProjectId = project.Id;
+                _memoryDocument.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         return project;
@@ -111,29 +126,41 @@ public sealed class NovelProjectCatalog
 
     public async Task<NovelProjectDeleteResult> DeleteAsync(string projectId, CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        var project = document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (_scopeFactory == null)
+            return DeleteMemory(projectId);
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var projects = await db.NovelProjects
+            .Where(p => p.UserId == _workspace.UserId)
+            .OrderByDescending(p => p.UpdatedAt)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var project = projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
         if (project == null)
-            return new NovelProjectDeleteResult(false, "小说项目不存在。", document.ActiveProjectId);
+            return new NovelProjectDeleteResult(false, "小说项目不存在。", ResolveActiveProjectId(projects.Select(MapToInfo).ToList()));
+        if (projects.Count <= 1)
+            return new NovelProjectDeleteResult(false, "至少需要保留一本小说。", project.Id);
 
-        if (document.Projects.Count <= 1)
-            return new NovelProjectDeleteResult(false, "至少需要保留一本小说。", document.ActiveProjectId);
-
-        document.Projects.Remove(project);
-        if (string.Equals(document.ActiveProjectId, project.Id, StringComparison.OrdinalIgnoreCase))
-            document.ActiveProjectId = document.Projects[0].Id;
-
-        SaveDocument(document);
-        var active = document.Projects.First(p => string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
-        await ActivateAsync(active.Id, ct).ConfigureAwait(false);
-
-        return new NovelProjectDeleteResult(true, $"已从书架移除「{project.Title}」。原始工程文件仍保留在本地存储中。", document.ActiveProjectId);
+        db.NovelProjects.Remove(project);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        var remaining = projects
+            .Where(p => !string.Equals(p.Id, project.Id, StringComparison.OrdinalIgnoreCase))
+            .Select(MapToInfo)
+            .ToList();
+        return new NovelProjectDeleteResult(true, $"已从书架移除「{project.Title}」。", ResolveActiveProjectId(remaining));
     }
 
     public async Task<NovelProjectInfo?> UpdateAsync(string projectId, NovelProjectUpdateRequest request, CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        var project = document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        if (_scopeFactory == null)
+            return UpdateMemory(projectId, request);
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var project = await db.NovelProjects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == _workspace.UserId, ct)
+            .ConfigureAwait(false);
         if (project == null)
             return null;
 
@@ -141,17 +168,16 @@ public sealed class NovelProjectCatalog
             project.Title = request.Title.Trim();
         if (!string.IsNullOrWhiteSpace(request.Status))
             project.Status = request.Status.Trim();
-
         project.UpdatedAt = DateTime.UtcNow;
-        SaveDocument(document);
-        return project;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return MapToInfo(project);
     }
 
     public async Task<NovelProjectInfo> CreateAsync(NovelProjectCreateRequest request, CancellationToken ct = default)
     {
-        var document = await GetAsync(ct).ConfigureAwait(false);
         var title = FirstNonEmpty(request.Title, GuessTitle(request.Seed), "未命名新书");
         var id = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
         var project = new NovelProjectInfo
         {
             Id = id,
@@ -159,27 +185,11 @@ public sealed class NovelProjectCatalog
             Genre = request.Genre ?? string.Empty,
             CoreHook = request.Seed ?? string.Empty,
             Status = "Drafting",
-            StorageProjectName = $"{_workspace.ProjectName}__novel__{Slugify(title)}__{id[..8]}",
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            CreatedAt = now,
+            UpdatedAt = now,
         };
 
-        document.Projects.Insert(0, project);
-        document.ActiveProjectId = project.Id;
-        SaveDocument(document);
-
-        await _workspace.ProjectContextLock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            StoragePathHelper.CurrentProjectName = project.StorageProjectName;
-            Directory.CreateDirectory(Path.Combine(_workspace.StorageRoot, "Projects", project.StorageProjectName));
-        }
-        finally
-        {
-            _workspace.ProjectContextLock.Release();
-        }
-
-        return project;
+        return await UpsertAsync(project, makeActive: true, ct).ConfigureAwait(false);
     }
 
     public async Task<NovelProjectInfo?> UpdateFromCurrentStoryBibleAsync(string? projectId, CancellationToken ct = default)
@@ -187,83 +197,155 @@ public sealed class NovelProjectCatalog
         if (string.IsNullOrWhiteSpace(projectId))
             return null;
 
-        var document = await GetAsync(ct).ConfigureAwait(false);
-        var project = document.Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+        var project = await FindAsync(projectId, ct).ConfigureAwait(false);
         if (project == null)
             return null;
 
         var bible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
         ApplyBibleMetadata(project, bible);
         project.UpdatedAt = DateTime.UtcNow;
-        SaveDocument(document);
-        return project;
+        return await UpsertAsync(project, makeActive: false, ct).ConfigureAwait(false);
     }
 
     public async Task<T> WithProjectAsync<T>(NovelProjectInfo project, Func<Task<T>> operation, CancellationToken ct = default)
     {
-        await _workspace.ProjectContextLock.WaitAsync(ct).ConfigureAwait(false);
-        var previous = StoragePathHelper.CurrentProjectName;
-        try
+        ct.ThrowIfCancellationRequested();
+        return await operation().ConfigureAwait(false);
+    }
+
+    private NovelProjectCatalogDocument GetMemoryDocument()
+    {
+        lock (_memoryLock)
         {
-            StoragePathHelper.CurrentProjectName = project.StorageProjectName;
-            return await operation().ConfigureAwait(false);
-        }
-        finally
-        {
-            StoragePathHelper.CurrentProjectName = previous;
-            _workspace.ProjectContextLock.Release();
+            return CloneDocument(_memoryDocument);
         }
     }
 
-    public NovelProjectCatalogDocument LoadDocument()
+    private NovelProjectInfo UpsertMemory(NovelProjectInfo source, bool makeActive)
     {
-        lock (_fileLock)
+        lock (_memoryLock)
         {
-            if (!File.Exists(_catalogPath))
-                return new NovelProjectCatalogDocument();
-
-            try
+            var now = DateTime.UtcNow;
+            var project = _memoryDocument.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, source.Id, StringComparison.OrdinalIgnoreCase));
+            if (project == null)
             {
-                var json = File.ReadAllText(_catalogPath);
-                return JsonSerializer.Deserialize<NovelProjectCatalogDocument>(json, JsonOptions()) ?? new NovelProjectCatalogDocument();
+                project = new NovelProjectInfo { Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id };
+                _memoryDocument.Projects.Insert(0, project);
             }
-            catch
-            {
-                return new NovelProjectCatalogDocument();
-            }
+
+            CopyInfo(project, source, now);
+            if (makeActive || string.IsNullOrWhiteSpace(_memoryDocument.ActiveProjectId))
+                _memoryDocument.ActiveProjectId = project.Id;
+            _memoryDocument.UpdatedAt = now;
+            return CloneInfo(project);
         }
     }
 
-    private void SaveDocument(NovelProjectCatalogDocument document)
+    private NovelProjectDeleteResult DeleteMemory(string projectId)
     {
-        lock (_fileLock)
+        lock (_memoryLock)
         {
-            document.UpdatedAt = DateTime.UtcNow;
-            var json = JsonSerializer.Serialize(document, JsonOptions());
-            File.WriteAllText(_catalogPath, json);
+            var project = _memoryDocument.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+            if (project == null)
+                return new NovelProjectDeleteResult(false, "小说项目不存在。", _memoryDocument.ActiveProjectId);
+            if (_memoryDocument.Projects.Count <= 1)
+                return new NovelProjectDeleteResult(false, "至少需要保留一本小说。", _memoryDocument.ActiveProjectId);
+
+            _memoryDocument.Projects.Remove(project);
+            if (string.Equals(_memoryDocument.ActiveProjectId, project.Id, StringComparison.OrdinalIgnoreCase))
+                _memoryDocument.ActiveProjectId = _memoryDocument.Projects[0].Id;
+            _memoryDocument.UpdatedAt = DateTime.UtcNow;
+            return new NovelProjectDeleteResult(true, $"已从书架移除「{project.Title}」。", _memoryDocument.ActiveProjectId);
         }
     }
 
-    private static JsonSerializerOptions JsonOptions() => new()
+    private NovelProjectInfo? UpdateMemory(string projectId, NovelProjectUpdateRequest request)
     {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
+        lock (_memoryLock)
+        {
+            var project = _memoryDocument.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+            if (project == null)
+                return null;
+            if (!string.IsNullOrWhiteSpace(request.Title))
+                project.Title = request.Title.Trim();
+            if (!string.IsNullOrWhiteSpace(request.Status))
+                project.Status = request.Status.Trim();
+            project.UpdatedAt = DateTime.UtcNow;
+            _memoryDocument.UpdatedAt = project.UpdatedAt;
+            return CloneInfo(project);
+        }
+    }
+
+    private string ResolveActiveProjectId(IReadOnlyList<NovelProjectInfo> projects)
+    {
+        if (projects.Count == 0)
+            return string.Empty;
+        if (!string.IsNullOrWhiteSpace(_workspace.ProjectId) &&
+            !_workspace.ProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase) &&
+            projects.Any(p => string.Equals(p.Id, _workspace.ProjectId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return _workspace.ProjectId;
+        }
+
+        return projects[0].Id;
+    }
+
+    private static void ApplyInfo(DbNovelProject target, NovelProjectInfo source, DateTime now)
+    {
+        target.Title = FirstNonEmpty(source.Title, target.Title, "未命名小说");
+        target.Genre = EmptyToNull(FirstNonEmpty(source.Genre, target.Genre));
+        target.SubGenre = EmptyToNull(FirstNonEmpty(source.SubGenre, target.SubGenre));
+        target.CoreHook = EmptyToNull(FirstNonEmpty(source.CoreHook, target.CoreHook));
+        target.Status = FirstNonEmpty(source.Status, target.Status, "Drafting");
+        target.UpdatedAt = source.UpdatedAt == default ? now : source.UpdatedAt;
+    }
+
+    private static NovelProjectInfo MapToInfo(DbNovelProject project) => new()
+    {
+        Id = project.Id,
+        Title = project.Title,
+        Genre = project.Genre ?? string.Empty,
+        SubGenre = project.SubGenre ?? string.Empty,
+        CoreHook = project.CoreHook ?? string.Empty,
+        ReaderPromise = string.Empty,
+        Status = project.Status,
+        CreatedAt = project.CreatedAt,
+        UpdatedAt = project.UpdatedAt
     };
 
-    private NovelProjectInfo BuildDefaultProject(StoryBibleDocument bible)
+    private static NovelProjectCatalogDocument CloneDocument(NovelProjectCatalogDocument source) => new()
     {
-        var project = new NovelProjectInfo
-        {
-            Id = DefaultProjectId,
-            Title = "当前小说",
-            StorageProjectName = _workspace.ProjectName,
-            Status = "Drafting",
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-        };
-        ApplyBibleMetadata(project, bible);
-        return project;
+        ActiveProjectId = source.ActiveProjectId,
+        Projects = source.Projects.Select(CloneInfo).ToList(),
+        UpdatedAt = source.UpdatedAt
+    };
+
+    private static NovelProjectInfo CloneInfo(NovelProjectInfo source) => new()
+    {
+        Id = source.Id,
+        Title = source.Title,
+        Genre = source.Genre,
+        SubGenre = source.SubGenre,
+        CoreHook = source.CoreHook,
+        ReaderPromise = source.ReaderPromise,
+        Status = source.Status,
+        CreatedAt = source.CreatedAt,
+        UpdatedAt = source.UpdatedAt
+    };
+
+    private static void CopyInfo(NovelProjectInfo target, NovelProjectInfo source, DateTime now)
+    {
+        target.Title = FirstNonEmpty(source.Title, target.Title, "未命名小说");
+        target.Genre = FirstNonEmpty(source.Genre, target.Genre);
+        target.SubGenre = FirstNonEmpty(source.SubGenre, target.SubGenre);
+        target.CoreHook = FirstNonEmpty(source.CoreHook, target.CoreHook);
+        target.ReaderPromise = FirstNonEmpty(source.ReaderPromise, target.ReaderPromise);
+        target.Status = FirstNonEmpty(source.Status, target.Status, "Drafting");
+        target.CreatedAt = source.CreatedAt == default ? target.CreatedAt : source.CreatedAt;
+        target.UpdatedAt = source.UpdatedAt == default ? now : source.UpdatedAt;
     }
 
     private static void ApplyBibleMetadata(NovelProjectInfo project, StoryBibleDocument bible)
@@ -305,13 +387,8 @@ public sealed class NovelProjectCatalog
         return text.Length <= 18 ? text : string.Empty;
     }
 
-    private static string Slugify(string value)
-    {
-        var slug = Regex.Replace(value.Trim().ToLowerInvariant(), "[^\\p{L}\\p{Nd}]+", "-").Trim('-');
-        if (string.IsNullOrWhiteSpace(slug))
-            slug = "novel";
-        return slug.Length > 32 ? slug[..32] : slug;
-    }
+    private static string? EmptyToNull(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
@@ -333,7 +410,6 @@ public sealed class NovelProjectInfo
     public string CoreHook { get; set; } = string.Empty;
     public string ReaderPromise { get; set; } = string.Empty;
     public string Status { get; set; } = "Drafting";
-    public string StorageProjectName { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -13,20 +13,21 @@ public sealed class AgentMemoryService
     private const int MaxForbiddenDirections = 8;
     private const int MaxUnresolvedThreads = 12;
     private const int MaxShortTermPreferences = 24;
+    private const int MaxSessionObservations = 24;
     private const int MaxRepeatedBlockers = 24;
     private const int MaxSuccessfulRepairNotes = 24;
     private const int MaxStyleDislikes = 32;
     private const int PreferenceSedimentationThreshold = 3;
 
-    public AgentMemoryService(IAgentMemoryRepository repository, ILogger<AgentMemoryService> logger)
+    public AgentMemoryService(
+        IAgentMemoryRepository repository,
+        ILogger<AgentMemoryService> logger,
+        IAgentMemoryEventService? memoryEvents = null)
     {
         _repository = repository;
         _logger = logger;
+        _memoryEvents = memoryEvents;
     }
-
-    // Compatibility stubs for workspace isolation pattern (no longer needed with DI)
-    internal static void SetWorkspace(NovelAgentWorkspace workspace) { }
-    internal static void ClearWorkspace() { }
 
     public async Task HydrateAsync(AgentSession session, NovelProjectInfo project, StoryBibleDocument bible, CancellationToken ct = default)
     {
@@ -38,6 +39,7 @@ public sealed class AgentMemoryService
         session.WorkingMemory.SessionMemory = sessionMem != null
             ? MapToAgentSessionMemory(sessionMem, transientSessionMemory)
             : transientSessionMemory;
+        ApplySessionMemoryToRuntime(session.WorkingMemory);
 
         var projectMem = await _repository.GetProjectMemoryAsync(userId, project.Id, ct);
         session.WorkingMemory.ProjectMemory = projectMem != null ? MapToAgentProjectMemory(projectMem, project.Id) : BuildProjectMemory(project, bible);
@@ -60,6 +62,7 @@ public sealed class AgentMemoryService
         ApplyReflection(session, reflection);
 
         await ApplyMemoryUpdateAsync(session, project.Id, reflection?.MissionPatch.MemoryUpdate, ct);
+        await PersistSessionMemoryAsync(session, project.Id, reflection, ct);
     }
 
     /// <summary>
@@ -192,20 +195,113 @@ public sealed class AgentMemoryService
             projectId);
     }
 
-    public Task<AgentRuntimeContext> LoadRuntimeContextAsync(
-        SessionContext session,
-        NovelProjectInfo project,
-        CancellationToken ct)
+    private readonly IAgentMemoryEventService? _memoryEvents;
+
+    private async Task PersistSessionMemoryAsync(AgentSession session, string projectId, AgentReflection? reflection, CancellationToken ct)
     {
-        // Legacy method - not used, kept for compatibility
-        return Task.FromResult(new AgentRuntimeContext
+        if (string.IsNullOrWhiteSpace(session.UserId) ||
+            string.IsNullOrWhiteSpace(projectId) ||
+            string.IsNullOrWhiteSpace(session.SessionId))
         {
-            User = new UserProfile { UserId = "default" },
-            ActiveProject = project,
-            Session = session,
-            Mission = new AgentMissionState(),
-            MissionPlan = new AgentMissionPlan(),
-        });
+            return;
+        }
+
+        SyncRuntimeToSessionMemory(session.WorkingMemory);
+        var memory = session.WorkingMemory.SessionMemory;
+        var updates = new Dictionary<string, object>
+        {
+            ["session.current_goal"] = memory.CurrentGoal,
+            ["session.open_questions"] = memory.OpenQuestions.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            ["session.short_term_preferences"] = memory.ShortTermPreferences.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            ["session.recent_observations"] = memory.RecentObservations.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            ["session.pending_tool_name"] = memory.PendingToolName ?? string.Empty,
+            ["session.last_intent"] = memory.LastIntent ?? string.Empty,
+        };
+
+        await _repository.UpdateSessionMemoryAsync(session.UserId, projectId, session.SessionId, updates, ct)
+            .ConfigureAwait(false);
+
+        if (_memoryEvents != null)
+        {
+            await _memoryEvents.AppendAsync(
+                    session.UserId,
+                    projectId,
+                    session.SessionId,
+                    session.ActiveRunId,
+                    sourceType: "agent_runtime",
+                    triggerType: reflection == null ? "runtime_session_memory" : "reflection_session_memory",
+                    memoryScope: "session",
+                    memoryKey: "runtime",
+                    payload: new
+                    {
+                        currentGoal = memory.CurrentGoal,
+                        pendingToolName = memory.PendingToolName,
+                        lastIntent = memory.LastIntent,
+                        openQuestionCount = memory.OpenQuestions.Count,
+                        observationCount = memory.RecentObservations.Count
+                    },
+                    ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static void ApplySessionMemoryToRuntime(AgentWorkingMemory memory)
+    {
+        var session = memory.SessionMemory;
+        memory.CurrentGoal = FirstNonEmpty(memory.CurrentGoal, session.CurrentGoal);
+        CopyDistinct(memory.OpenQuestions, session.OpenQuestions);
+        CopyDistinct(memory.UserPreferences, session.ShortTermPreferences);
+
+        foreach (var item in Clean(session.RecentObservations))
+        {
+            if (memory.RecentObservations.Any(o => string.Equals(o.Message, item, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            memory.RecentObservations.Add(new AgentRuntimeObservation
+            {
+                ObservationType = "session_memory",
+                Message = item,
+                Phase = "memory_restore",
+                Success = true
+            });
+        }
+
+        if (memory.RecentObservations.Count > MaxSessionObservations)
+            memory.RecentObservations.RemoveRange(0, memory.RecentObservations.Count - MaxSessionObservations);
+    }
+
+    private static void SyncRuntimeToSessionMemory(AgentWorkingMemory memory)
+    {
+        memory.SessionMemory ??= new AgentSessionMemory();
+        var session = memory.SessionMemory;
+
+        session.CurrentGoal = FirstNonEmpty(memory.CurrentGoal, session.CurrentGoal);
+        CopyDistinct(session.OpenQuestions, memory.OpenQuestions);
+        CopyDistinct(session.ShortTermPreferences, memory.UserPreferences);
+        foreach (var observation in memory.RecentObservations.Select(FormatObservation).Where(o => !string.IsNullOrWhiteSpace(o)))
+            AddUnique(session.RecentObservations, observation);
+
+        session.PendingToolName = memory.PendingToolCall?.Name;
+        session.LastIntent = memory.LastDecision?.Intent ?? session.LastIntent;
+
+        Trim(session.OpenQuestions, MaxUnresolvedThreads);
+        Trim(session.ShortTermPreferences, MaxShortTermPreferences);
+        Trim(session.RecentObservations, MaxSessionObservations);
+    }
+
+    private static string FormatObservation(AgentRuntimeObservation observation)
+    {
+        var head = FirstNonEmpty(observation.ToolName, observation.ObservationType, "observation");
+        var body = FirstNonEmpty(observation.Message, observation.Phase);
+        return string.IsNullOrWhiteSpace(body)
+            ? head
+            : $"{head}: {TrimText(body, 500)}";
+    }
+
+    private static string TrimText(string value, int maxLength)
+    {
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
     private static AgentProjectMemory BuildProjectMemory(NovelProjectInfo project, StoryBibleDocument bible)
@@ -318,8 +414,6 @@ public sealed class AgentMemoryService
         CopyDistinct(memory.RecentObservations, transient.RecentObservations);
         CopyDistinct(memory.LastObservations, source.RecentObservations);
         CopyDistinct(memory.LastObservations, transient.LastObservations);
-        CopyDistinct(memory.RecentUploadedKnowledgeIds, source.RecentUploadedKnowledgeIds);
-        CopyDistinct(memory.RecentUploadedKnowledgeIds, transient.RecentUploadedKnowledgeIds);
 
         return memory;
     }

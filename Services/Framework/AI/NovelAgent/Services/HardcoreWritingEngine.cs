@@ -13,7 +13,6 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Modules.ProjectData.Implementations;
 using TM.Services.Modules.ProjectData.Implementations.Guides;
-using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.TaskContexts;
@@ -29,8 +28,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private readonly IGuideContextService? _guideContextService;
         private readonly GenerationGate? _generationGate;
         private readonly IGeneratedContentService? _generatedContentService;
-        private readonly ContentChunkSearchService? _contentChunkSearch;
-        private readonly ChapterEmbeddingIndex? _chapterEmbeddingIndex;
+        private readonly IContentChunkSearchService? _contentChunkSearch;
+        private readonly IVectorIndex? _chapterEmbeddingIndex;
         private readonly IChunkEmbeddingIndex? _chunkEmbeddingIndex;
         private readonly IMicroEmbeddingService? _embeddingService;
         private readonly object? _versionTrackingService;
@@ -46,8 +45,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             IGuideContextService guideContextService,
             GenerationGate generationGate,
             IGeneratedContentService generatedContentService,
-            ContentChunkSearchService contentChunkSearch,
-            ChapterEmbeddingIndex chapterEmbeddingIndex,
+            IContentChunkSearchService contentChunkSearch,
+            IVectorIndex? chapterEmbeddingIndex,
             IChunkEmbeddingIndex chunkEmbeddingIndex,
             IMicroEmbeddingService embeddingService,
             object versionTrackingService,

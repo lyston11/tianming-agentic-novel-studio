@@ -17,7 +17,7 @@ public class KnowledgeController : ControllerBase
     private readonly IKnowledgeService _knowledgeService;
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
-    private readonly IContentDocumentService? _contentDocuments;
+    private readonly IContentDocumentService _contentDocuments;
     private readonly ILogger<KnowledgeController> _logger;
 
     public KnowledgeController(
@@ -25,7 +25,7 @@ public class KnowledgeController : ControllerBase
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         ILogger<KnowledgeController> logger,
-        IContentDocumentService? contentDocuments = null)
+        IContentDocumentService contentDocuments)
     {
         _knowledgeService = knowledgeService;
         _db = db;
@@ -169,12 +169,18 @@ public class KnowledgeController : ControllerBase
         }
     }
 
-    [HttpPost("{id}/increment-usage")]
-    public async Task<IActionResult> IncrementUsage(string id, CancellationToken ct)
+    [HttpPost("{id}/usage")]
+    public async Task<IActionResult> IncrementUsage(
+        string id,
+        [FromBody] IncrementKnowledgeUsageRequest request,
+        CancellationToken ct)
     {
+        if (request == null || string.IsNullOrWhiteSpace(request.ProjectId))
+            return BadRequest(new { error = "ProjectId is required" });
+
         try
         {
-            await _knowledgeService.IncrementUsageAsync(id, ct);
+            await _knowledgeService.IncrementUsageAsync(id, request.ProjectId, request.SessionId, request.RunId, ct);
             return NoContent();
         }
         catch (KeyNotFoundException ex)
@@ -202,26 +208,26 @@ public class KnowledgeController : ControllerBase
         {
             if (file == null || file.Length == 0)
                 return BadRequest(new { error = "No file provided" });
+            if (string.IsNullOrWhiteSpace(projectId))
+                return BadRequest(new { error = "projectId is required" });
 
             var userId = _currentUserService.GetUserId();
-            var uploadDir = Path.Combine("App_Data", "KnowledgeUploads", userId);
-            Directory.CreateDirectory(uploadDir);
+            var normalizedProjectId = projectId.Trim();
+            var projectExists = await _db.NovelProjects
+                .AsNoTracking()
+                .AnyAsync(p => p.Id == normalizedProjectId && p.UserId == userId);
+            if (!projectExists)
+                return NotFound(new { error = "Project not found" });
 
             var fileName = Path.GetFileName(file.FileName);
-            var filePath = Path.Combine(uploadDir, Guid.NewGuid().ToString("N") + "_" + fileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await file.CopyToAsync(stream);
-            }
+            var text = await ReadFormFileTextAsync(file);
 
             var task = new Data.Entities.KnowledgeProcessingTask
             {
                 Id = Guid.NewGuid().ToString(),
                 UserId = userId,
-                ProjectId = projectId,
+                ProjectId = normalizedProjectId,
                 FileName = title ?? fileName,
-                FilePath = filePath,
                 FileSize = file.Length,
                 Status = "pending",
                 Strategy = "single_pass",
@@ -232,7 +238,16 @@ public class KnowledgeController : ControllerBase
             _db.KnowledgeProcessingTasks.Add(task);
             await _db.SaveChangesAsync();
 
-            await TrySaveUploadContentDocumentAsync(userId, projectId, task, filePath);
+            var uploadDocument = await _contentDocuments.SaveOrReplaceTextAsync(
+                userId,
+                normalizedProjectId,
+                "knowledge_upload",
+                task.Id,
+                "upload_raw",
+                task.FileName,
+                text);
+            task.UploadDocumentId = uploadDocument.Id;
+            await _db.SaveChangesAsync();
 
             _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
                 task.FileName, task.FileSize, userId, task.Id);
@@ -254,33 +269,6 @@ public class KnowledgeController : ControllerBase
         {
             _logger.LogError(ex, "Failed to upload file");
             return StatusCode(500, new { error = "Failed to upload file" });
-        }
-    }
-
-    private async Task TrySaveUploadContentDocumentAsync(
-        string userId,
-        string? projectId,
-        Data.Entities.KnowledgeProcessingTask task,
-        string filePath)
-    {
-        if (_contentDocuments == null)
-            return;
-
-        try
-        {
-            var text = await System.IO.File.ReadAllTextAsync(filePath);
-            await _contentDocuments.SaveTextAsync(
-                userId,
-                projectId,
-                "knowledge_upload",
-                task.Id,
-                "upload_raw",
-                task.FileName,
-                text);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to save content document for uploaded knowledge task {TaskId}", task.Id);
         }
     }
 
@@ -323,5 +311,14 @@ public class KnowledgeController : ControllerBase
             _logger.LogError(ex, "Failed to get task status for {TaskId}", taskId);
             return StatusCode(500, new { error = "Failed to get task status" });
         }
+    }
+
+    private static async Task<string> ReadFormFileTextAsync(IFormFile file)
+    {
+        using var reader = new StreamReader(file.OpenReadStream());
+        var text = await reader.ReadToEndAsync();
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("Uploaded knowledge content is empty.");
+        return text;
     }
 }

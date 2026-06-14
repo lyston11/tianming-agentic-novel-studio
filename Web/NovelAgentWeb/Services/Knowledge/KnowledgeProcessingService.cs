@@ -28,7 +28,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<KnowledgeProcessingService> _logger;
     private readonly IAgentMemoryEventService? _memoryEvents;
-    private readonly IContentDocumentService? _contentDocuments;
+    private readonly IContentDocumentService _contentDocuments;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
@@ -37,8 +37,8 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         UserSettingsManager settingsManager,
         IHttpClientFactory httpClientFactory,
         ILogger<KnowledgeProcessingService> logger,
-        IAgentMemoryEventService? memoryEvents = null,
-        IContentDocumentService? contentDocuments = null)
+        IContentDocumentService contentDocuments,
+        IAgentMemoryEventService? memoryEvents = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
@@ -65,8 +65,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 
         try
         {
-            var content = await File.ReadAllTextAsync(task.FilePath, ct);
-            await TrySaveUploadContentDocumentAsync(task, content, ct);
+            var content = await _contentDocuments.GetTextAsync(task.UserId, task.ProjectId, "knowledge_upload", task.Id, "upload_raw", ct);
             var tokenCount = EstimateTokenCount(content);
 
             List<ExtractedKnowledgeEntryDto> entries;
@@ -610,7 +609,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         var createdIds = new List<string>();
         foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
         {
-            var created = await _knowledgeService.CreateKnowledgeAsync(new CreateKnowledgeRequest
+            var created = await _knowledgeService.CreateExtractedKnowledgeAsync(new CreateExtractedKnowledgeRequest
             {
                 ProjectId = task.ProjectId,
                 EntryType = entry.Category,
@@ -618,8 +617,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 Content = entry.Content,
                 Tags = entry.Tags,
                 Weight = entry.Weight,
-                SourceType = "extracted",
-                SourceFileId = task.Id,
+                SourceUploadTaskId = task.Id,
                 ChunkIndex = index,
                 ExtractionContext = entry.OriginalText
             }, ct);
@@ -635,43 +633,11 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 null,
                 "knowledge_processed",
                 "file_processed",
-                "project",
-                "imported_knowledge_ids",
+                "knowledge",
+                "processed_knowledge_ids",
                 new { taskId = task.Id, knowledgeIds = createdIds },
                 ct);
         }
     }
 
-    private async Task TrySaveUploadContentDocumentAsync(
-        Data.Entities.KnowledgeProcessingTask task,
-        string content,
-        CancellationToken ct)
-    {
-        if (_contentDocuments == null)
-            return;
-
-        try
-        {
-            var exists = await _db.ContentDocuments.AnyAsync(d =>
-                d.SourceType == "knowledge_upload" &&
-                d.SourceId == task.Id &&
-                d.DocumentRole == "upload_raw", ct);
-            if (exists)
-                return;
-
-            await _contentDocuments.SaveTextAsync(
-                task.UserId,
-                task.ProjectId,
-                "knowledge_upload",
-                task.Id,
-                "upload_raw",
-                task.FileName,
-                content,
-                ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Failed to save content document for knowledge task {TaskId}", task.Id);
-        }
-    }
 }

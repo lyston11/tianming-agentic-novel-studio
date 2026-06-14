@@ -11,7 +11,6 @@ export interface ProjectResponse {
   status: string;
   wordCount: number;
   coverImageUrl: string | null;
-  storageProjectName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,7 +42,6 @@ export function toNovelProjectInfo(project: ProjectResponse): NovelProjectInfo {
     coreHook: project.coreHook ?? '',
     readerPromise: '',
     status: project.status,
-    storageProjectName: project.storageProjectName ?? '',
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   };

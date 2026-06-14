@@ -180,52 +180,22 @@ function stageState(chapter: DraftChapter | null, stage: PipelineStage) {
 }
 
 function buildMissionOnlyCards(sessions: AgentSessionSummary[], books: NovelBookView[]) {
-  return sessions
-    .map((session) => {
-      const plan = session.memory?.missionPlan;
-      const projectId = plan?.projectId || session.activeProjectId;
-      if (!plan || !projectId || books.some((book) => book.projectId === projectId)) return null;
-      return { session, plan, projectId };
-    })
-    .filter(Boolean) as { session: AgentSessionSummary; plan: AgentMissionPlan; projectId: string }[];
+  void sessions;
+  void books;
+  return [] as { session: AgentSessionSummary; plan: AgentMissionPlan; projectId: string }[];
 }
 
 function bookActivityScore(book: NovelBookView, sessions: AgentSessionSummary[]) {
-  const relatedSessions = sessions.filter((session) => {
-    const plan = session.memory?.missionPlan;
-    return session.activeProjectId === book.projectId || plan?.projectId === book.projectId || plan?.bookTaskTree?.projectId === book.projectId;
-  }).filter((session) => !hasSuspectPlanForBook(book, session.memory?.missionPlan));
-  const tasks = relatedSessions.flatMap((session) => session.memory?.missionPlan?.schedulerState?.tasks ?? [])
-    .filter((task) => task.projectId === book.projectId);
-  const runningTasks = tasks.filter((task) => task.status === 'running').length;
-  const waitingTasks = tasks.filter((task) => task.status === 'waiting_confirmation').length;
-  const blockedTasks = tasks.filter((task) => task.status === 'blocked').length;
-  const chapterTasks = relatedSessions.flatMap((session) => missionChapters(session.memory?.missionPlan)).length;
-  const emptyUntitledPenalty = isGenericTitle(normalizeLabel(book.title)) && tasks.length === 0 && chapterTasks === 0 && book.plannedChapterCount === 0 && book.generatedChapterCount === 0
+  const relatedSessions = sessions.filter((session) => session.activeProjectId === book.projectId);
+  const messageCount = relatedSessions.reduce((sum, session) => sum + session.messageCount, 0);
+  const emptyUntitledPenalty = isGenericTitle(normalizeLabel(book.title)) && relatedSessions.length === 0 && book.plannedChapterCount === 0 && book.generatedChapterCount === 0
     ? 500
     : 0;
-  return runningTasks * 2000
-    + waitingTasks * 1800
-    + blockedTasks * 1500
-    + tasks.length * 180
-    + chapterTasks * 70
+  return relatedSessions.length * 120
+    + messageCount * 8
     + book.plannedChapterCount * 35
     + book.generatedChapterCount * 25
     - emptyUntitledPenalty;
-}
-
-function hasSuspectPlanForBook(book: NovelBookView, plan?: AgentMissionPlan | null) {
-  if (!plan) return false;
-  const bookTitle = normalizeLabel(book.title);
-  if (!isGenericTitle(bookTitle)) {
-    const planTitle = normalizeLabel(plan.projectTitle || plan.bookTaskTree?.title);
-    return !!planTitle && planTitle !== bookTitle;
-  }
-
-  const volumeTitles = plan.bookTaskTree?.volumes
-    .map((volume) => normalizeLabel(volume.title))
-    .filter(Boolean) ?? [];
-  return volumeTitles.some((title) => !isGenericTitle(title) && !normalizeLabel(book.coreHook).includes(title));
 }
 
 function normalizeLabel(value?: string | null) {
@@ -250,7 +220,6 @@ function bookToProjectInfo(book: NovelBookView): NovelProjectInfo {
     coreHook: book.coreHook,
     readerPromise: book.readerPromise,
     status: book.status,
-    storageProjectName: '',
     createdAt: book.updatedAt,
     updatedAt: book.updatedAt,
   };
@@ -369,7 +338,6 @@ export default function WorkflowPage() {
   const selectedVolume = volumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? volumes[0];
   const selectedPlan = workflow?.missionPlans?.[0]
     ?? workflow?.sessions?.[0]?.missionPlan
-    ?? agentSessions?.find((session) => session.activeProjectId === currentProjectId)?.memory?.missionPlan
     ?? null;
   const selectedTreeChapters = missionChapters(selectedPlan);
   const selectedTreeChapter = selectedTreeChapters.find((chapter) => chapter.chapterId === selectedChapter?.chapterId) ?? null;

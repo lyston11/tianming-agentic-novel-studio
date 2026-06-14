@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { AgentConversationTurnView, AgentDecisionTrace, AgentRagContext, AgentRuntimeStep, AgentWorkingMemorySnapshot } from '../api/types';
 
 export interface ChatMessage {
@@ -57,86 +56,79 @@ function mapTurn(turn: AgentConversationTurnView, index: number, memory?: AgentW
   };
 }
 
-export const useChatStore = create<ChatState>()(
-  persist(
-    (set) => ({
-      messages: [welcomeMessage],
-      messagesBySession: {},
-      isSending: false,
+export const useChatStore = create<ChatState>((set) => ({
+  messages: [welcomeMessage],
+  messagesBySession: {},
+  isSending: false,
 
-      loadSessionMessages: (sessionId, turns, memory) =>
-        set((state) => {
-          console.log('loadSessionMessages:', { sessionId, turnsCount: turns?.length });
-          if (!turns || turns.length === 0) {
-            const msgs = [welcomeMessage];
-            return {
-              messages: msgs,
-              messagesBySession: { ...state.messagesBySession, [sessionId]: msgs },
-            };
-          }
-          const lastAgentIndex = turns.reduce((last, turn, index) => turn.role === 'assistant' ? index : last, -1);
-          const messages = turns.map((turn, index) => mapTurn(turn, index, memory, index === lastAgentIndex));
-          return {
-            messages,
-            messagesBySession: { ...state.messagesBySession, [sessionId]: messages },
-          };
-        }),
-
-      setCurrentSessionMessages: (sessionId) =>
-        set((state) => ({
-          messages: state.messagesBySession[sessionId] ?? [welcomeMessage],
-        })),
-
-      addUserMessage: (sessionId, content) =>
-        set((state) => {
-          const message: ChatMessage = {
-            id: `user-${Date.now()}`,
-            role: 'user',
-            content,
-            timestamp: new Date(),
-          };
-          const sessionMessages = state.messagesBySession[sessionId] ?? [];
-          console.log('addUserMessage:', { sessionId, content, currentMessages: sessionMessages.length });
-          return {
-            messages: [...state.messages, message],
-            messagesBySession: {
-              ...state.messagesBySession,
-              [sessionId]: [...sessionMessages, message],
-            },
-          };
-        }),
-
-      addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace) =>
-        set((state) => {
-          const message: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              role: 'agent',
-              content,
-              suggestions,
-              runId,
-              phase,
-              decision,
-              rag,
-              memory,
-              runtimeTrace,
-              timestamp: new Date(),
-          };
-          const sessionMessages = state.messagesBySession[sessionId] ?? [];
-          console.log('addAgentMessage:', { sessionId, contentLength: content.length, fullContent: content, preview: content.substring(0, 50), currentMessages: sessionMessages.length });
-          return {
-            messages: [...state.messages, message],
-            messagesBySession: {
-              ...state.messagesBySession,
-              [sessionId]: [...sessionMessages, message],
-            },
-          };
-        }),
-
-      setSending: (sending) => set({ isSending: sending }),
-      clearMessages: () => set({ messages: [welcomeMessage] }),
+  loadSessionMessages: (sessionId, turns, memory) =>
+    set((state) => {
+      console.log('loadSessionMessages:', { sessionId, turnsCount: turns?.length });
+      if (!turns || turns.length === 0) {
+        const msgs = [welcomeMessage];
+        return {
+          messages: msgs,
+          messagesBySession: { ...state.messagesBySession, [sessionId]: msgs },
+        };
+      }
+      const lastAgentIndex = turns.reduce((last, turn, index) => turn.role === 'assistant' ? index : last, -1);
+      const messages = turns.map((turn, index) => mapTurn(turn, index, memory, index === lastAgentIndex));
+      return {
+        messages,
+        messagesBySession: { ...state.messagesBySession, [sessionId]: messages },
+      };
     }),
-    {
-      name: 'chat-storage',
-    }
-  )
-);
+
+  setCurrentSessionMessages: (sessionId) =>
+    set((state) => ({
+      messages: state.messagesBySession[sessionId] ?? [welcomeMessage],
+    })),
+
+  addUserMessage: (sessionId, content) =>
+    set((state) => {
+      const message: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content,
+        timestamp: new Date(),
+      };
+      const sessionMessages = state.messagesBySession[sessionId] ?? [];
+      console.log('addUserMessage:', { sessionId, content, currentMessages: sessionMessages.length });
+      return {
+        messages: [...state.messages, message],
+        messagesBySession: {
+          ...state.messagesBySession,
+          [sessionId]: [...sessionMessages, message],
+        },
+      };
+    }),
+
+  addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace) =>
+    set((state) => {
+      const message: ChatMessage = {
+        id: `agent-${Date.now()}`,
+        role: 'agent',
+        content,
+        suggestions,
+        runId,
+        phase,
+        decision,
+        rag,
+        memory,
+        runtimeTrace,
+        timestamp: new Date(),
+      };
+      const sessionMessages = state.messagesBySession[sessionId] ?? [];
+      console.log('addAgentMessage:', { sessionId, contentLength: content.length, fullContent: content, preview: content.substring(0, 50), currentMessages: sessionMessages.length });
+      return {
+        messages: [...state.messages, message],
+        messagesBySession: {
+          ...state.messagesBySession,
+          [sessionId]: [...sessionMessages, message],
+        },
+      };
+    }),
+
+  setSending: (sending) => set({ isSending: sending }),
+  clearMessages: () => set({ messages: [welcomeMessage] }),
+}));

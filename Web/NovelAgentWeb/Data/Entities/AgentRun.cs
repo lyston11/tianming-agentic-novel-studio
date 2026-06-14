@@ -42,16 +42,12 @@ public sealed class AgentRun
     [Column("output_data")]
     public string? OutputData { get; set; } // JSON serialized output data
 
+    [Column("output_document_id")]
+    [StringLength(50)]
+    public string? OutputDocumentId { get; set; }
+
     [Column("context_package_size")]
     public int? ContextPackageSize { get; set; }
-
-    [Column("context_package_path")]
-    [StringLength(500)]
-    public string? ContextPackagePath { get; set; }
-
-    [Column("gate_report_path")]
-    [StringLength(500)]
-    public string? GateReportPath { get; set; }
 
     [Required]
     [Column("started_at")]

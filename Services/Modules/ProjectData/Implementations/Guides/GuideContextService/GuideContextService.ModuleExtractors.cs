@@ -1,15 +1,12 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.TaskContexts;
 using TM.Services.Modules.ProjectData.Models.Tracking;
-using TM.Services.Modules.ProjectData.Implementations.Indexing;
+using TM.Services.Modules.ProjectData.Interfaces;
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
@@ -365,11 +362,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             try
             {
-                var firstIdx = ServiceLocator.Get<EntityFirstChapterIndex>();
+                var firstIdx = ServiceLocator.Get<IEntityFirstChapterIndex>();
                 await firstIdx.LoadAsync().ConfigureAwait(false);
                 if (firstIdx.Count == 0) return;
 
-                var chunkSearch = ServiceLocator.Get<ContentChunkSearchService>();
+                var chunkSearch = ServiceLocator.Get<IContentChunkSearchService>();
                 int window = Math.Max(1, cfg.FirstDescriptionWindowSize);
                 var snippets = new List<FirstDescriptionSnippet>(context.Characters.Count);
 
@@ -544,10 +541,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             try
             {
-                var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-                if (!Directory.Exists(chaptersPath))
-                    return result;
-
                 IEnumerable<string> allChapterIds;
                 var guide = await GetContentGuideAsync().ConfigureAwait(false);
                 if (guide?.Chapters != null && guide.Chapters.Count > 0)
@@ -556,8 +549,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 }
                 else
                 {
-                    allChapterIds = Directory.GetFiles(chaptersPath, "vol*_ch*.md")
-                        .Select(f => Path.GetFileNameWithoutExtension(f));
+                    return result;
                 }
 
                 var previousChapterFiles = allChapterIds
@@ -569,10 +561,9 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
                 foreach (var chapId in previousChapterFiles)
                 {
-                    var mdPath = Path.Combine(chaptersPath, $"{chapId}.md");
-                    if (!File.Exists(mdPath)) continue;
+                    var fullContent = await LoadChapterContentAsync(chapId).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(fullContent)) continue;
 
-                    var fullContent = await ReadFileHeadAsync(mdPath, 8000).ConfigureAwait(false);
                     var summary = ExtractSampledSummaryFromMd(fullContent, cfg.MdSummaryExtractLength);
                     var parsed = ChapterParserHelper.ParseChapterId(chapId);
                     result.Add(new ChapterSummaryEntry
@@ -626,19 +617,26 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         private async Task<string> LoadChapterTailAsync(string chapterId, int tailLength)
         {
-            var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-            var chapterFile = Path.Combine(chaptersPath, $"{chapterId}.md");
-
-            if (!File.Exists(chapterFile)) return string.Empty;
-
             try
             {
-                var tail = await ReadFileTailAsync(chapterFile, tailLength).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(tail))
+                var fullContent = await LoadChapterContentAsync(chapterId).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(fullContent))
                     return string.Empty;
 
+                var lines = fullContent.Split('\n');
+                var bodyStart = 0;
+                for (var i = 0; i < Math.Min(3, lines.Length); i++)
+                {
+                    if (lines[i].TrimStart().StartsWith('#'))
+                    {
+                        bodyStart = i + 1;
+                        break;
+                    }
+                }
+
+                var tail = string.Join('\n', lines.Skip(bodyStart)).Trim();
                 if (tail.Length <= tailLength)
-                    return tail.Trim();
+                    return tail;
 
                 var startIndex = tail.Length - tailLength;
                 var paragraphStart = tail.IndexOf("\n\n", startIndex, StringComparison.Ordinal);
@@ -656,97 +654,16 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        private static async Task<string> ReadFileHeadAsync(string filePath, int expectedLength)
-        {
-            var bytesToRead = Math.Max(4096, Math.Min(65536, expectedLength * 8 + 2048));
-
-            await using var stream = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite,
-                bufferSize: 4096,
-                useAsync: true);
-
-            if (stream.Length <= bytesToRead)
-            {
-                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-                return await reader.ReadToEndAsync().ConfigureAwait(false);
-            }
-
-            var buffer = ArrayPool<byte>.Shared.Rent(bytesToRead);
-            try
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(0, bytesToRead)).ConfigureAwait(false);
-                if (read <= 0) return string.Empty;
-                return Encoding.UTF8.GetString(buffer, 0, read);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
-        }
-
-        private static async Task<string> ReadFileTailAsync(string filePath, int expectedLength)
-        {
-            var bytesToRead = Math.Max(4096, Math.Min(131072, expectedLength * 8 + 4096));
-
-            await using var stream = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite,
-                bufferSize: 4096,
-                useAsync: true);
-
-            if (stream.Length <= bytesToRead)
-            {
-                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-                var full = await reader.ReadToEndAsync().ConfigureAwait(false);
-
-                var lines = full.Split('\n');
-                var bodyStart = 0;
-                for (int i = 0; i < Math.Min(3, lines.Length); i++)
-                {
-                    if (lines[i].TrimStart().StartsWith('#'))
-                    {
-                        bodyStart = i + 1;
-                        break;
-                    }
-                }
-                var body = string.Join('\n', lines.Skip(bodyStart));
-                return body.Trim();
-            }
-
-            var start = Math.Max(0, stream.Length - bytesToRead - 4);
-            stream.Seek(start, SeekOrigin.Begin);
-
-            var remaining = stream.Length - start;
-            var bufferSize = remaining > int.MaxValue ? int.MaxValue : (int)remaining;
-            var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            try
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(0, bufferSize)).ConfigureAwait(false);
-                if (read <= 0) return string.Empty;
-                return Encoding.UTF8.GetString(buffer, 0, read);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
-        }
-
         private bool HasChapterMd(string chapterId)
         {
             try
             {
-                var chaptersPath = StoragePathHelper.GetProjectChaptersPath();
-                var chapterFile = Path.Combine(chaptersPath, $"{chapterId}.md");
-                return File.Exists(chapterFile);
+                var chapterCatalog = ServiceLocator.TryGet<IChapterCatalogService>();
+                return chapterCatalog?.ChapterExistsAsync(chapterId).GetAwaiter().GetResult() == true;
             }
             catch (Exception ex)
             {
-                TM.App.Log($"[GuideContextService] 检查章节MD失败: {ex.Message}");
+                TM.App.Log($"[GuideContextService] 检查章节正文失败: {ex.Message}");
                 return false;
             }
         }

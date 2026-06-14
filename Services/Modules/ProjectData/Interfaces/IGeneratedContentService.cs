@@ -10,13 +10,11 @@ namespace TM.Services.Modules.ProjectData.Interfaces
 
         Task<string?> GetChapterAsync(string chapterId);
 
-        Task<List<ChapterInfo>> GetGeneratedChaptersAsync();
-
         Task<bool> DeleteChapterAsync(string chapterId);
 
         bool ChapterExists(string chapterId);
 
-        string GetChapterPath(string chapterId);
+        Task<List<ChapterInfo>> GetGeneratedChaptersAsync();
 
         #region 分类（卷）管理
 

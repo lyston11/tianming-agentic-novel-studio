@@ -1,24 +1,25 @@
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
 
 public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
 {
-    private const int MaxRecentUploadedKnowledgeIds = 20;
-
     private readonly NovelAgentDbContext _db;
     private readonly IAgentMemoryEventService _events;
     private readonly IAgentMemoryRepository? _memoryRepository;
     private readonly ILogger<ProjectKnowledgeUsageService> _logger;
+    private readonly IDistributedCacheService? _redisCache;
+    private readonly IMemoryCacheService? _memoryCache;
 
     public ProjectKnowledgeUsageService(
         NovelAgentDbContext db,
         IAgentMemoryEventService events,
         ILogger<ProjectKnowledgeUsageService> logger)
-        : this(db, events, null, logger)
+        : this(db, events, null, logger, null, null)
     {
     }
 
@@ -26,12 +27,16 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
         NovelAgentDbContext db,
         IAgentMemoryEventService events,
         IAgentMemoryRepository? memoryRepository,
-        ILogger<ProjectKnowledgeUsageService> logger)
+        ILogger<ProjectKnowledgeUsageService> logger,
+        IDistributedCacheService? redisCache = null,
+        IMemoryCacheService? memoryCache = null)
     {
         _db = db;
         _events = events;
         _memoryRepository = memoryRepository;
         _logger = logger;
+        _redisCache = redisCache;
+        _memoryCache = memoryCache;
     }
 
     public async Task MarkImportedAsync(
@@ -66,7 +71,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
         await _events.AppendAsync(
             userId,
             projectId,
-            sessionId,
+            null,
             null,
             "knowledge_processed",
             created ? "imported" : "import_seen",
@@ -76,6 +81,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             ct);
 
         await SyncImportedMemoryAsync(userId, projectId, knowledgeId, sessionId, ct);
+        await InvalidateProjectCachesAsync(userId, projectId, sessionId, ct);
         _logger.LogDebug("Marked knowledge {KnowledgeId} imported for project {ProjectId}", knowledgeId, projectId);
     }
 
@@ -121,6 +127,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             ct);
 
         await SyncReferencedMemoryAsync(userId, projectId, ct);
+        await InvalidateProjectCachesAsync(userId, projectId, sessionId, ct);
         _logger.LogDebug("Marked knowledge {KnowledgeId} referenced for project {ProjectId}", knowledgeId, projectId);
     }
 
@@ -167,25 +174,6 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             ["project.imported_knowledge_ids"] = importedIds,
             ["project.knowledge_inventory"] = inventory
         }, ct);
-
-        if (!string.IsNullOrWhiteSpace(sessionId))
-        {
-            var session = await _memoryRepository.GetSessionMemoryAsync(userId, projectId, sessionId, ct);
-            var recent = session.RecentUploadedKnowledgeIds
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (!recent.Contains(knowledgeId, StringComparer.OrdinalIgnoreCase))
-                recent.Add(knowledgeId);
-            if (recent.Count > MaxRecentUploadedKnowledgeIds)
-                recent = recent.TakeLast(MaxRecentUploadedKnowledgeIds).ToList();
-
-            await _memoryRepository.UpdateSessionMemoryAsync(userId, projectId, sessionId, new Dictionary<string, object>
-            {
-                ["session.recent_uploaded_knowledge_ids"] = recent
-            }, ct);
-        }
     }
 
     private async Task SyncReferencedMemoryAsync(string userId, string projectId, CancellationToken ct)
@@ -254,6 +242,45 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
         catch (System.Text.Json.JsonException)
         {
             return new List<string>();
+        }
+    }
+
+    private async Task InvalidateProjectCachesAsync(
+        string userId,
+        string projectId,
+        string? sessionId,
+        CancellationToken ct)
+    {
+        var searchPrefix = $"knowledge:search:{userId}:{projectId}";
+        var inventoryKey = $"knowledge:inventory:{userId}:{projectId}";
+        var projectMemoryKey = $"memory:project:{userId}:{projectId}";
+
+        _memoryCache?.RemoveByPrefix(searchPrefix);
+        _memoryCache?.Remove(inventoryKey);
+        _memoryCache?.Remove(projectMemoryKey);
+
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            _memoryCache?.Remove($"memory:session:{userId}:{sessionId}:{projectId}");
+        }
+
+        if (_redisCache == null)
+            return;
+
+        try
+        {
+            await _redisCache.RemoveByPrefixAsync(searchPrefix, ct).ConfigureAwait(false);
+            await _redisCache.RemoveAsync(inventoryKey, ct).ConfigureAwait(false);
+            await _redisCache.RemoveAsync(projectMemoryKey, ct).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(sessionId))
+            {
+                await _redisCache.RemoveAsync($"memory:session:{userId}:{sessionId}:{projectId}", ct)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to invalidate project knowledge caches for user {UserId}, project {ProjectId}", userId, projectId);
         }
     }
 }

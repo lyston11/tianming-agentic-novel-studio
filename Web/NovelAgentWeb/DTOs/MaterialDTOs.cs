@@ -65,7 +65,6 @@ public class MaterialResponse
     public string Title { get; set; } = null!;
     public string? Category { get; set; }
     public string? ContentType { get; set; }
-    public string? FilePath { get; set; }
     public string? Tags { get; set; }
     public DateTime CreatedAt { get; set; }
     public int VectorChunkCount { get; set; }

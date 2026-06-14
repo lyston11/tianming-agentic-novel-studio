@@ -10,30 +10,27 @@ namespace TM.Web.NovelAgentWeb.Services.Chapters;
 
 /// <summary>
 /// Implementation of chapter CRUD operations with synchronization across
-/// SQLite (metadata), file system (Markdown content), and Qdrant (vectors).
+/// SQLite content documents and Qdrant vectors.
 /// </summary>
 public class ChapterService : IChapterService
 {
     private readonly NovelAgentDbContext _context;
     private readonly IVectorStore _vectorStore;
     private readonly IMicroEmbeddingService _embeddingService;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<ChapterService> _logger;
-    private readonly IContentDocumentService? _contentDocuments;
+    private readonly IContentDocumentService _contentDocuments;
     private const int ChunkSize = 500; // Characters per chunk for embedding
 
     public ChapterService(
         NovelAgentDbContext context,
         IVectorStore vectorStore,
         IMicroEmbeddingService embeddingService,
-        IConfiguration configuration,
         ILogger<ChapterService> logger,
-        IContentDocumentService? contentDocuments = null)
+        IContentDocumentService contentDocuments)
     {
         _context = context;
         _vectorStore = vectorStore;
         _embeddingService = embeddingService;
-        _configuration = configuration;
         _logger = logger;
         _contentDocuments = contentDocuments;
     }
@@ -94,7 +91,6 @@ public class ChapterService : IChapterService
                 ChapterNumber = request.ChapterNumber,
                 Status = request.Status,
                 WordCount = CountWords(request.Content),
-                ContentPath = GetChapterContentPath(project.StorageProjectName, request.ChapterNumber),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -102,10 +98,8 @@ public class ChapterService : IChapterService
             _context.Chapters.Add(chapter);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 2. Write content to file system
-            var fullPath = GetFullContentPath(userId, project.StorageProjectName, chapter.ContentPath);
-            await WriteContentToFileAsync(fullPath, request.Content, cancellationToken);
-            await TrySaveChapterContentDocumentAsync(userId, chapter, request.Content, cancellationToken);
+            // 2. Persist content in SQLite content documents
+            await SaveChapterContentDocumentAsync(userId, chapter, request.Content, cancellationToken);
 
             // 3. Generate and store embeddings in Qdrant
             await GenerateAndStoreEmbeddingsAsync(chapter, request.Content, userId, cancellationToken);
@@ -123,12 +117,6 @@ public class ChapterService : IChapterService
         {
             await transaction.RollbackAsync(cancellationToken);
             _logger.LogError(ex, "Failed to create chapter in project {ProjectId}", request.ProjectId);
-
-            // Clean up file if it was created
-            var fullPath = GetFullContentPath(userId, project.StorageProjectName,
-                GetChapterContentPath(project.StorageProjectName, request.ChapterNumber));
-            DeleteFileIfExists(fullPath);
-
             throw;
         }
     }
@@ -201,10 +189,7 @@ public class ChapterService : IChapterService
                 newContent = request.Content;
                 chapter.WordCount = CountWords(newContent);
 
-                // Write updated content to file system
-                var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-                await WriteContentToFileAsync(fullPath, newContent, cancellationToken);
-                await TrySaveChapterContentDocumentAsync(userId, chapter, newContent, cancellationToken);
+                await SaveChapterContentDocumentAsync(userId, chapter, newContent, cancellationToken);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -225,9 +210,7 @@ public class ChapterService : IChapterService
             _logger.LogInformation("Updated chapter {ChapterId}, content changed: {ContentChanged}",
                 chapterId, contentChanged);
 
-            // Read current content for response
-            var content = newContent ?? await ReadContentFromFileAsync(
-                GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath), cancellationToken);
+            var content = newContent ?? await _contentDocuments.GetTextAsync(userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body", cancellationToken);
 
             return MapToResponse(chapter, content);
         }
@@ -261,9 +244,7 @@ public class ChapterService : IChapterService
             throw new UnauthorizedAccessException("You do not have permission to access this chapter");
         }
 
-        // Read content from file system
-        var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-        var content = await ReadContentFromFileAsync(fullPath, cancellationToken);
+        var content = await _contentDocuments.GetTextAsync(userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body", cancellationToken);
 
         return MapToResponse(chapter, content);
     }
@@ -298,9 +279,8 @@ public class ChapterService : IChapterService
             _context.Chapters.Remove(chapter);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 2. Delete content file
-            var fullPath = GetFullContentPath(userId, chapter.Project.StorageProjectName, chapter.ContentPath);
-            DeleteFileIfExists(fullPath);
+            // 2. Delete content document
+            await _contentDocuments.DeleteBySourceAsync(userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body", cancellationToken);
 
             // 3. Delete vectors from Qdrant
             await DeleteChapterVectorsAsync(userId, chapter.Id, chapter.ProjectId, cancellationToken);
@@ -406,31 +386,23 @@ public class ChapterService : IChapterService
             vectors.Count, chapter.Id);
     }
 
-    private async Task TrySaveChapterContentDocumentAsync(
+    private async Task SaveChapterContentDocumentAsync(
         string userId,
         Chapter chapter,
         string content,
         CancellationToken cancellationToken)
     {
-        if (_contentDocuments == null)
-            return;
-
-        try
-        {
-            await _contentDocuments.SaveTextAsync(
-                userId,
-                chapter.ProjectId,
-                "chapter",
-                chapter.Id,
-                "chapter_body",
-                chapter.Title,
-                content,
-                cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Failed to save content document for chapter {ChapterId}", chapter.Id);
-        }
+        var document = await _contentDocuments.SaveOrReplaceTextAsync(
+            userId,
+            chapter.ProjectId,
+            "chapter",
+            chapter.Id,
+            "chapter_body",
+            chapter.Title,
+            content,
+            cancellationToken);
+        chapter.CurrentDocumentId = document.Id;
+        await _context.SaveChangesAsync(cancellationToken);
     }
 
     private async Task DeleteChapterVectorsAsync(
@@ -523,61 +495,6 @@ public class ChapterService : IChapterService
         return count;
     }
 
-    private string GetChapterContentPath(string storageProjectName, int chapterNumber)
-    {
-        // Return relative path: Chapters/chapter_{number}.md
-        return $"Chapters/chapter_{chapterNumber}.md";
-    }
-
-    private string GetFullContentPath(string userId, string storageProjectName, string contentPath)
-    {
-        // Build full path: App_Data/Users/{userId}/Projects/{projectName}/{contentPath}
-        var storageRoot = _configuration["NovelAgent:StorageRoot"]
-            ?? Path.Combine(AppContext.BaseDirectory, "App_Data");
-
-        return Path.Combine(storageRoot, "Users", userId, "Projects", storageProjectName, contentPath);
-    }
-
-    private async Task WriteContentToFileAsync(string fullPath, string content, CancellationToken cancellationToken)
-    {
-        // Ensure directory exists
-        var directory = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        // Write content to file
-        await File.WriteAllTextAsync(fullPath, content, cancellationToken);
-    }
-
-    private async Task<string> ReadContentFromFileAsync(string fullPath, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(fullPath))
-        {
-            throw new FileNotFoundException($"Chapter content file not found: {fullPath}");
-        }
-
-        return await File.ReadAllTextAsync(fullPath, cancellationToken);
-    }
-
-    private void DeleteFileIfExists(string fullPath)
-    {
-        try
-        {
-            if (File.Exists(fullPath))
-            {
-                File.Delete(fullPath);
-                _logger.LogInformation("Deleted content file: {FilePath}", fullPath);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete content file: {FilePath}", fullPath);
-            // Don't throw - this is cleanup code
-        }
-    }
-
     private ChapterResponse MapToResponse(Chapter chapter, string? content)
     {
         return new ChapterResponse
@@ -589,7 +506,6 @@ public class ChapterService : IChapterService
             ChapterNumber = chapter.ChapterNumber,
             Status = chapter.Status,
             WordCount = chapter.WordCount,
-            ContentPath = chapter.ContentPath,
             Content = content,
             CreatedAt = chapter.CreatedAt,
             UpdatedAt = chapter.UpdatedAt

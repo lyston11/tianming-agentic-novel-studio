@@ -107,11 +107,34 @@ namespace TM.Services.Modules.ProjectData.Interfaces
 
     public record VectorSearchHit(string Key, float Score);
 
+    public sealed record ContentChunkHit(string ChapterId, int Position, string Content, double Score);
+
+    public interface IContentChunkSearchService
+    {
+        Task<List<ContentChunkHit>> SearchAsync(string query, int topK = 5);
+        Task<List<ContentChunkHit>> SearchByChapterAsync(string chapterId, int topK = 2);
+        Task InvalidateChapterAsync(string chapterId);
+        Task<List<ContentChunkHit>> SearchByChapterPositionAsync(
+            string chapterId,
+            int startPosition,
+            int windowSize = 1,
+            CancellationToken ct = default);
+        Task<IReadOnlyList<ContentChunkHit>> GetChunksAsync(string chapterId, CancellationToken ct = default);
+        void InvalidateCache();
+    }
+
     public interface IVectorIndex
     {
         int Count { get; }
+        Task<bool> UpsertAsync(string key, float[] vector, CancellationToken ct = default) => Task.FromResult(true);
+        Task<bool> UpsertBatchAsync(IReadOnlyList<(string Key, float[] Vector)> items, CancellationToken ct = default) => Task.FromResult(true);
+        Task<bool> RemoveAsync(string key, CancellationToken ct = default) => Task.FromResult(true);
         Task<IReadOnlyList<VectorSearchHit>> SearchAsync(float[] queryVector, int topK, CancellationToken ct = default);
+        Task<bool> ExistsAsync(string key, CancellationToken ct = default) => Task.FromResult(false);
+        IReadOnlyCollection<string> GetAllKeys() => Array.Empty<string>();
         Task LoadAsync(CancellationToken ct = default);
+        Task SaveAsync(CancellationToken ct = default) => Task.CompletedTask;
+        void InvalidateCache() { }
     }
 
     public static class ChunkKey
@@ -169,29 +192,42 @@ namespace TM.Services.Framework.AI.Embedding
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
-    public class ContentChunkSearchService
+    using TM.Services.Modules.ProjectData.Interfaces;
+
+    public class ContentChunkSearchService : IContentChunkSearchService
     {
         private readonly Dictionary<(string ChapterId, int Position), string> _chunks = new();
-
-        public sealed record Hit(string ChapterId, int Position, string Content, double Score);
 
         public void AddChunk(string chapterId, int position, string content)
         {
             _chunks[(chapterId, position)] = content;
         }
 
-        public Task<List<Hit>> SearchAsync(string query, int topK = 5)
+        public Task<List<ContentChunkHit>> SearchAsync(string query, int topK = 5)
         {
             var hits = _chunks
                 .Where(kv => kv.Value.Contains(query, StringComparison.OrdinalIgnoreCase)
                     || query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(t => kv.Value.Contains(t, StringComparison.OrdinalIgnoreCase)))
                 .Take(topK)
-                .Select(kv => new Hit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
+                .Select(kv => new ContentChunkHit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
                 .ToList();
             return Task.FromResult(hits);
         }
 
-        public Task<List<Hit>> SearchByChapterPositionAsync(
+        public Task<List<ContentChunkHit>> SearchByChapterAsync(string chapterId, int topK = 2)
+        {
+            var hits = _chunks
+                .Where(kv => string.Equals(kv.Key.ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(kv => kv.Key.Position)
+                .Take(topK)
+                .Select(kv => new ContentChunkHit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
+                .ToList();
+            return Task.FromResult(hits);
+        }
+
+        public Task InvalidateChapterAsync(string chapterId) => Task.CompletedTask;
+
+        public Task<List<ContentChunkHit>> SearchByChapterPositionAsync(
             string chapterId,
             int startPosition,
             int windowSize = 1,
@@ -202,7 +238,17 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     && kv.Key.Position >= startPosition)
                 .OrderBy(kv => kv.Key.Position)
                 .Take(windowSize)
-                .Select(kv => new Hit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
+                .Select(kv => new ContentChunkHit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
+                .ToList();
+            return Task.FromResult(hits);
+        }
+
+        public Task<IReadOnlyList<ContentChunkHit>> GetChunksAsync(string chapterId, CancellationToken ct = default)
+        {
+            IReadOnlyList<ContentChunkHit> hits = _chunks
+                .Where(kv => string.Equals(kv.Key.ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(kv => kv.Key.Position)
+                .Select(kv => new ContentChunkHit(kv.Key.ChapterId, kv.Key.Position, kv.Value, 1))
                 .ToList();
             return Task.FromResult(hits);
         }
@@ -411,10 +457,10 @@ namespace TM.Services.Modules.ProjectData.Implementations.Indexing
                 .ToList());
         }
 
-        public Task UpsertAsync(string chapterId, float[] vector, CancellationToken ct = default)
+        public Task<bool> UpsertAsync(string chapterId, float[] vector, CancellationToken ct = default)
         {
             AddHit(chapterId, vector.Length);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         public Task SaveAsync(CancellationToken ct = default) => Task.CompletedTask;

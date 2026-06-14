@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
-using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Extensions;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
+using TM.Web.NovelAgentWeb.Support;
+using AgentSessionEntity = TM.Web.NovelAgentWeb.Data.Entities.AgentSession;
 
 namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 
@@ -37,12 +39,12 @@ public class AgentSessionService : IAgentSessionService
 
             if (existing != null)
             {
-                return MapToResponse(existing);
+                return await MapToResponseAsync(existing, cancellationToken).ConfigureAwait(false);
             }
         }
 
         // Create new session
-        var session = new AgentSession
+        var session = new AgentSessionEntity
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = userId,
@@ -58,7 +60,7 @@ public class AgentSessionService : IAgentSessionService
 
         _logger.LogInformation("Created new agent session {SessionId} for user {UserId}", session.Id, userId);
 
-        return MapToResponse(session);
+        return await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AgentSessionResponse> GetSessionByIdAsync(
@@ -76,7 +78,7 @@ public class AgentSessionService : IAgentSessionService
             throw new KeyNotFoundException($"Session {sessionId} not found");
         }
 
-        return MapToResponse(session);
+        return await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<List<AgentSessionResponse>> ListUserSessionsAsync(
@@ -97,7 +99,10 @@ public class AgentSessionService : IAgentSessionService
             .OrderByDescending(s => s.UpdatedAt)
             .ToListAsync(cancellationToken);
 
-        return sessions.Select(MapToResponse).ToList();
+        var responses = new List<AgentSessionResponse>();
+        foreach (var session in sessions)
+            responses.Add(await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false));
+        return responses;
     }
 
     public async Task<AgentSessionResponse> UpdateSessionAsync(
@@ -133,31 +138,7 @@ public class AgentSessionService : IAgentSessionService
 
         _logger.LogInformation("Updated agent session {SessionId}", sessionId);
 
-        return MapToResponse(session);
-    }
-
-    public async Task SaveSessionStateAsync(
-        string sessionId,
-        string sessionData,
-        string userId,
-        bool isAdmin,
-        CancellationToken cancellationToken = default)
-    {
-        var session = await _dbContext.AgentSessions
-            .WithUserFilterIfNotAdmin(userId, isAdmin)
-            .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
-
-        if (session == null)
-        {
-            throw new KeyNotFoundException($"Session {sessionId} not found");
-        }
-
-        session.SessionData = sessionData;
-        session.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        _logger.LogDebug("Saved session state for {SessionId}", sessionId);
+        return await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteSessionAsync(
@@ -181,19 +162,65 @@ public class AgentSessionService : IAgentSessionService
         _logger.LogInformation("Deleted agent session {SessionId}", sessionId);
     }
 
-    private static AgentSessionResponse MapToResponse(AgentSession session)
+    private async Task<AgentSessionResponse> MapToResponseAsync(AgentSessionEntity session, CancellationToken ct)
     {
+        var data = DeserializeSessionData(session.SessionData);
+        var projectId = session.ProjectId ?? string.Empty;
+        var messages = await _dbContext.AgentChatTurns
+            .AsNoTracking()
+            .Where(t => t.SessionId == session.Id && t.UserId == session.UserId)
+            .OrderBy(t => t.TurnIndex)
+            .Select(t => new AgentConversationTurn
+            {
+                Role = t.Role,
+                Content = t.Content,
+                CreatedAt = t.CreatedAt
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
         return new AgentSessionResponse
         {
             SessionId = session.Id,
-            UserId = session.UserId,
-            ProjectId = session.ProjectId,
             Title = session.Title,
-            Phase = "idle", // Phase is derived from session data
+            Phase = string.IsNullOrWhiteSpace(data.Phase) ? "idle" : data.Phase,
+            ActiveProjectId = projectId,
+            ActiveRunId = data.ActiveRunId,
             IsArchived = session.IsArchived,
-            SessionData = session.SessionData ?? "{}",
+            RunHistory = data.RunHistory,
             CreatedAt = session.CreatedAt,
-            UpdatedAt = session.UpdatedAt
+            UpdatedAt = session.UpdatedAt,
+            Messages = messages,
+            Memory = new AgentWorkingMemorySnapshot(),
+            MessageCount = messages.Count
         };
+    }
+
+    private static SessionData DeserializeSessionData(string? sessionData)
+    {
+        if (string.IsNullOrWhiteSpace(sessionData))
+            return new SessionData();
+
+        try
+        {
+            return JsonSerializer.Deserialize<SessionData>(sessionData, JsonOptions()) ?? new SessionData();
+        }
+        catch (JsonException)
+        {
+            return new SessionData();
+        }
+    }
+
+    private static JsonSerializerOptions JsonOptions() => new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    private sealed class SessionData
+    {
+        public string Phase { get; set; } = "idle";
+        public string? ActiveRunId { get; set; }
+        public List<string> RunHistory { get; set; } = new();
     }
 }

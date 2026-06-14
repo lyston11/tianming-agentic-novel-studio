@@ -111,6 +111,11 @@ public class MemoryCacheService : IMemoryCacheService
 
     private static bool IsPrefixMatch(string key, string keyPrefix)
     {
+        if (keyPrefix.EndsWith(':'))
+        {
+            return key.StartsWith(keyPrefix, StringComparison.Ordinal);
+        }
+
         return key.Length == keyPrefix.Length
             ? string.Equals(key, keyPrefix, StringComparison.Ordinal)
             : key.StartsWith(keyPrefix, StringComparison.Ordinal) && key[keyPrefix.Length] == ':';

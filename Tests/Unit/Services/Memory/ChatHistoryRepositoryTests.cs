@@ -13,10 +13,12 @@ using Xunit;
 
 namespace Tests.Unit.Services.Memory;
 
-public class ChatHistoryRepositoryTests
-{
-    private const string UnifiedMemoryMigration = "20260613054958_AddUnifiedMemoryPipeline";
-    private const string ChatSummaryRangeUniquenessMigration = "20260613160459_EnforceChatSummaryRangeUniqueness";
+    public class ChatHistoryRepositoryTests
+    {
+        private const string UnifiedMemoryMigration = "20260613054958_AddUnifiedMemoryPipeline";
+        private const string ChatSummaryRangeUniquenessMigration = "20260613160459_EnforceChatSummaryRangeUniqueness";
+        private const string HotWindowKey = "chat:user-1:session-1:project-1:hot";
+        private const string SummaryKey = "chat:user-1:session-1:project-1:summaries";
 
     [Fact]
     public async Task AppendAsync_WritesRedisHotWindowAndSqliteTruth()
@@ -33,10 +35,29 @@ public class ChatHistoryRepositoryTests
         Assert.Equal(1, saved.TurnIndex);
         Assert.Equal("你好", saved.Content);
         redis.Verify(x => x.SetAsync(
-            It.Is<string>(k => k == "chat:user-1:session-1:hot"),
+            It.Is<string>(k => k == HotWindowKey),
             It.IsAny<List<ChatHistoryTurnDto>>(),
             It.IsAny<TimeSpan>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AppendAsync_BumpsChatMemoryVersionForSessionContext()
+    {
+        await using var db = CreateDb();
+        var versions = new Mock<IAgentMemoryVersionService>();
+        versions.Setup(x => x.BumpAsync("user-1", "project-1", "session-1", "chat", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance,
+            versions.Object);
+
+        await repo.AppendAsync("user-1", "project-1", "session-1", "assistant", "恢复记忆", CancellationToken.None);
+
+        versions.Verify(x => x.BumpAsync("user-1", "project-1", "session-1", "chat", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -53,6 +74,136 @@ public class ChatHistoryRepositoryTests
         Assert.Equal("总体摘要", window.MetaSummary);
         Assert.Contains(window.Summaries, s => s.Content == "前十轮摘要");
         Assert.Contains(window.RecentMessages, m => m.Content == "第一条");
+    }
+
+    [Fact]
+    public async Task GetPromptWindowAsync_UsesRedisHotWindowBeforeSqliteRecentTurns()
+    {
+        await using var db = CreateDb();
+        db.AgentChatTurns.Add(new AgentChatTurn
+        {
+            Id = "turn-sqlite",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SessionId = "session-1",
+            TurnIndex = 1,
+            Role = "user",
+            Content = "sqlite old",
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var redis = new Mock<IDistributedCacheService>();
+        var memory = new Mock<IMemoryCacheService>();
+        memory.Setup(x => x.Get<List<ChatHistoryTurnDto>>(HotWindowKey)).Returns((List<ChatHistoryTurnDto>?)null);
+        redis.Setup(x => x.GetAsync<List<ChatHistoryTurnDto>>(HotWindowKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ChatHistoryTurnDto>
+            {
+                new("user", "redis hot", DateTime.UtcNow)
+            });
+
+        var repo = new ChatHistoryRepository(db, redis.Object, memory.Object, NullLogger<ChatHistoryRepository>.Instance);
+
+        var window = await repo.GetPromptWindowAsync("user-1", "project-1", "session-1", CancellationToken.None);
+
+        Assert.DoesNotContain(window.RecentMessages, m => m.Content == "sqlite old");
+        Assert.Contains(window.RecentMessages, m => m.Content == "redis hot");
+        memory.Verify(x => x.Set(HotWindowKey, It.IsAny<List<ChatHistoryTurnDto>>(), It.IsAny<TimeSpan>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetPromptWindowAsync_FiltersHotWindowFallbackByProject()
+    {
+        await using var db = CreateDb();
+        db.AgentChatTurns.AddRange(
+            new AgentChatTurn
+            {
+                Id = "turn-project-1",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                SessionId = "session-1",
+                TurnIndex = 1,
+                Role = "user",
+                Content = "project one memory",
+                CreatedAt = DateTime.UtcNow
+            },
+            new AgentChatTurn
+            {
+                Id = "turn-project-2",
+                UserId = "user-1",
+                ProjectId = "project-2",
+                SessionId = "session-1",
+                TurnIndex = 2,
+                Role = "user",
+                Content = "project two memory",
+                CreatedAt = DateTime.UtcNow
+            });
+        await db.SaveChangesAsync();
+
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance);
+
+        var window = await repo.GetPromptWindowAsync("user-1", "project-1", "session-1", CancellationToken.None);
+
+        Assert.Contains(window.RecentMessages, m => m.Content == "project one memory");
+        Assert.DoesNotContain(window.RecentMessages, m => m.Content == "project two memory");
+    }
+
+    [Fact]
+    public async Task SaveSummaryAsync_InvalidatesSummaryCache()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var memory = new Mock<IMemoryCacheService>();
+        redis.Setup(x => x.RemoveAsync(SummaryKey, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var repo = new ChatHistoryRepository(db, redis.Object, memory.Object, NullLogger<ChatHistoryRepository>.Instance);
+
+        await repo.SaveSummaryAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            1,
+            10,
+            "summary",
+            "摘要",
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        memory.Verify(x => x.Remove(SummaryKey), Times.Once);
+        redis.Verify(x => x.RemoveAsync(SummaryKey, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SaveSummaryAsync_BumpsChatMemoryVersionForCompressedPromptWindow()
+    {
+        await using var db = CreateDb();
+        var versions = new Mock<IAgentMemoryVersionService>();
+        versions.Setup(x => x.BumpAsync("user-1", "project-1", "session-1", "chat", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance,
+            versions.Object);
+
+        await repo.SaveSummaryAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            1,
+            10,
+            "summary",
+            "压缩摘要",
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        versions.Verify(x => x.BumpAsync("user-1", "project-1", "session-1", "chat", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

@@ -51,11 +51,6 @@ public class ProjectResponse
     public string? CoverImageUrl { get; set; }
 
     /// <summary>
-    /// Storage project name (for file system operations).
-    /// </summary>
-    public string? StorageProjectName { get; set; }
-
-    /// <summary>
     /// Project creation timestamp (UTC).
     /// </summary>
     public DateTime CreatedAt { get; set; }

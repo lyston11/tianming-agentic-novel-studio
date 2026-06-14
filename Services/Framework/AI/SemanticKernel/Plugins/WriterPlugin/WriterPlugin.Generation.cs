@@ -62,7 +62,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                     }
                 }
 
-                var contentServiceF2 = ServiceLocator.Get<GeneratedContentService>();
+                var contentServiceF2 = ServiceLocator.Get<IGeneratedContentService>();
                 if (contentServiceF2.ChapterExists(chapterId))
                 {
                     var dupMsg = $"章节 {chapterId} 已存在。如需重新生成请使用 @重写:{chapterId} 指令。";
@@ -220,7 +220,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 TM.App.Log($"[WriterPlugin] 章节生成并保存成功: {chapterId}, 标题: {title}, 字数: {actualWordCount}");
                 GlobalToast.Success("章节已保存", $"「{title}」约 {actualWordCount} 字");
 
-                var persisted = await ServiceLocator.Get<GeneratedContentService>().GetChapterAsync(chapterId).ConfigureAwait(false);
+                var persisted = await ServiceLocator.Get<IGeneratedContentService>().GetChapterAsync(chapterId).ConfigureAwait(false);
                 var displayContent = persisted ?? cleaned;
 
                 CurrentChapterTracker.SetCurrentChapter(chapterId, title);
@@ -288,7 +288,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                     }
                 }
 
-                var contentServiceF2 = ServiceLocator.Get<GeneratedContentService>();
+                var contentServiceF2 = ServiceLocator.Get<IGeneratedContentService>();
                 if (contentServiceF2.ChapterExists(chapterId))
                 {
                     var dupMsg = $"章节 {chapterId} 已存在。如需重新生成请使用 @重写:{chapterId} 指令。";
@@ -436,7 +436,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
                 TM.App.Log($"[WriterPlugin] 章节生成成功: {chapterId}, 字数: {actualWordCount}");
                 GlobalToast.Success("章节已保存", $"「{title}」约 {actualWordCount} 字");
 
-                var persisted = await ServiceLocator.Get<GeneratedContentService>().GetChapterAsync(chapterId).ConfigureAwait(false);
+                var persisted = await ServiceLocator.Get<IGeneratedContentService>().GetChapterAsync(chapterId).ConfigureAwait(false);
                 var displayContent = persisted ?? cleaned;
 
                 CurrentChapterTracker.SetCurrentChapter(chapterId, title);
@@ -504,7 +504,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
             {
                 ct.ThrowIfCancellationRequested();
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
 
                 if (!contentService.ChapterExists(sourceChapterId))
                 {
@@ -545,7 +545,7 @@ namespace TM.Services.Framework.AI.SemanticKernel.Plugins
             {
                 ct.ThrowIfCancellationRequested();
 
-                var contentService = ServiceLocator.Get<GeneratedContentService>();
+                var contentService = ServiceLocator.Get<IGeneratedContentService>();
 
                 if (!contentService.ChapterExists(targetChapterId))
                 {

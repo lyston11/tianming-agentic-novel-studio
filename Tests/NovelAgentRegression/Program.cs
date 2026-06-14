@@ -399,7 +399,7 @@ internal static class Program
                                              && s.Status == NovelAgentStepStatus.Completed) == true,
             "Split writing chain should mark GenerateChapterWithChanges completed.");
         Check.True(draft.Run?.Steps.Any(s => s.ToolName == "Writer.GenerateChapter") != true,
-            "Split writing chain must not use the legacy Writer.GenerateChapter step.");
+            "Split writing chain must not use the removed Writer.GenerateChapter step.");
 
         var gate = await orchestrator.ValidateChapterDraftAsync(chapterRun.RunId);
         Check.True(!gate.Success, "Missing CHANGES or blocked draft should fail the hard GenerationGate.");
@@ -482,7 +482,8 @@ internal static class Program
         var persisted = reloaded.CharacterLedger.Single(e => e.CharacterName == "林昼");
         Check.Equal(10, persisted.Importance, "Character importance should be normalized to 1..10.");
         Check.Equal(10, persisted.Psychology.StressLevel, "Character stress level should be normalized to 1..10.");
-        Check.True(File.Exists(service.GetStoragePath()), "Story Bible file should exist on disk.");
+        Check.Contains("sqlite-redis://", service.GetStoragePath(),
+            "Story Bible runtime identity should point at the SQLite/Redis store, not a disk file.");
     }
 
     private static async Task CharacterLedgerImportsLowRiskReviewEntriesAsync()
