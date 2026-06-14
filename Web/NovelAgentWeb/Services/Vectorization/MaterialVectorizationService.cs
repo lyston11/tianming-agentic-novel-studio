@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Web.NovelAgentWeb.Services.Vectorization;
@@ -12,6 +13,7 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
     private readonly IMicroEmbeddingService _embedding;
     private readonly IMaterialChunker _chunker;
     private readonly IQdrantCollectionManager _collectionManager;
+    private readonly IContentDocumentService _contentDocumentService;
     private readonly ILogger<MaterialVectorizationService> _logger;
 
     public MaterialVectorizationService(
@@ -20,6 +22,7 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
         IMicroEmbeddingService embedding,
         IMaterialChunker chunker,
         IQdrantCollectionManager collectionManager,
+        IContentDocumentService contentDocumentService,
         ILogger<MaterialVectorizationService> logger)
     {
         _db = db;
@@ -27,6 +30,7 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
         _embedding = embedding;
         _chunker = chunker;
         _collectionManager = collectionManager;
+        _contentDocumentService = contentDocumentService;
         _logger = logger;
     }
 
@@ -40,26 +44,20 @@ public sealed class MaterialVectorizationService : IMaterialVectorizationService
 
         await _collectionManager.EnsureUserCollectionAsync(userId, ct);
 
-        // Read content
-        string content;
-        if (!string.IsNullOrEmpty(material.FilePath))
-            content = await File.ReadAllTextAsync(material.FilePath, ct);
-        else if (!string.IsNullOrEmpty(material.Content))
-            content = material.Content;
-        else
+        var content = await _contentDocumentService.GetDocumentContentBySourceAsync(
+            "material", material.Id, ct);
+
+        if (string.IsNullOrEmpty(content))
             throw new InvalidOperationException($"Material {materialId} has no content");
 
-        // Chunk
         var chunks = _chunker.ChunkText(content, materialId);
 
-        // Delete existing vectors for this material
         await _vectorStore.DeleteVectorsByFilterAsync(userId, new Dictionary<string, object>
         {
             ["source_type"] = "material",
             ["source_id"] = materialId
         }, ct);
 
-        // Build vectors
         var vectors = new List<VectorData>();
         foreach (var chunk in chunks)
         {

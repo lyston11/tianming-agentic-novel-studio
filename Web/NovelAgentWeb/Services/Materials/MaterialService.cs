@@ -3,19 +3,17 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 
 namespace TM.Web.NovelAgentWeb.Services.Materials;
 
-/// <summary>
-/// Service for managing materials (reference documents and source content).
-/// </summary>
 public class MaterialService : IMaterialService
 {
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
-    private readonly IConfiguration _configuration;
+    private readonly IContentDocumentService _contentDocumentService;
     private readonly IMaterialVectorizationService _vectorization;
     private readonly IVectorStore _vectorStore;
     private readonly ILogger<MaterialService> _logger;
@@ -23,14 +21,14 @@ public class MaterialService : IMaterialService
     public MaterialService(
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
-        IConfiguration configuration,
+        IContentDocumentService contentDocumentService,
         IMaterialVectorizationService vectorization,
         IVectorStore vectorStore,
         ILogger<MaterialService> logger)
     {
         _db = db;
         _currentUserService = currentUserService;
-        _configuration = configuration;
+        _contentDocumentService = contentDocumentService;
         _vectorization = vectorization;
         _vectorStore = vectorStore;
         _logger = logger;
@@ -41,40 +39,37 @@ public class MaterialService : IMaterialService
     {
         var userId = _currentUserService.GetUserId();
 
-        // Verify project ownership
         var project = await _db.NovelProjects
             .FirstOrDefaultAsync(p => p.Id == request.ProjectId && p.UserId == userId, ct);
 
         if (project == null)
             throw new KeyNotFoundException($"Project {request.ProjectId} not found");
 
-        // Save file to disk
-        var storageRoot = _configuration["NovelAgent:StorageRoot"] ?? "App_Data";
-        var materialsDir = Path.Combine(storageRoot, "Users", userId, "Projects", request.ProjectId, "Materials");
-        Directory.CreateDirectory(materialsDir);
-
-        var safeFileName = Path.GetFileName(request.File.FileName);
-        var filePath = Path.Combine(materialsDir, safeFileName);
-
-        using (var stream = new FileStream(filePath, FileMode.Create))
+        string content;
+        using (var reader = new StreamReader(request.File.OpenReadStream()))
         {
-            await request.File.CopyToAsync(stream, ct);
+            content = await reader.ReadToEndAsync(ct);
         }
 
-        // Create material entity
         var material = new Material
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
             ProjectId = request.ProjectId,
             Title = request.Title,
-            FilePath = filePath,
             Category = request.Category,
             Tags = request.Tags,
             CreatedAt = DateTime.UtcNow
         };
 
         _db.Materials.Add(material);
+        await _db.SaveChangesAsync(ct);
+
+        var contentDoc = await _contentDocumentService.SaveTextAsync(
+            userId, request.ProjectId, "material", material.Id, "material_raw",
+            material.Title, content, ct);
+
+        material.ContentDocumentId = contentDoc.Id;
         await _db.SaveChangesAsync(ct);
 
         await TryVectorizeMaterialAsync(material.Id, userId, ct);
@@ -100,7 +95,6 @@ public class MaterialService : IMaterialService
             UserId = userId,
             ProjectId = request.ProjectId,
             Title = request.Title,
-            Content = request.Content,
             ContentType = request.ContentType,
             Category = request.Category,
             Tags = request.Tags,
@@ -108,6 +102,13 @@ public class MaterialService : IMaterialService
         };
 
         _db.Materials.Add(material);
+        await _db.SaveChangesAsync(ct);
+
+        var contentDoc = await _contentDocumentService.SaveTextAsync(
+            userId, request.ProjectId, "material", material.Id, "material_raw",
+            material.Title, request.Content, ct);
+
+        material.ContentDocumentId = contentDoc.Id;
         await _db.SaveChangesAsync(ct);
 
         await TryVectorizeMaterialAsync(material.Id, userId, ct);
@@ -150,19 +151,11 @@ public class MaterialService : IMaterialService
         if (material == null)
             throw new KeyNotFoundException($"Material {materialId} not found");
 
-        string content;
-        if (!string.IsNullOrEmpty(material.FilePath) && File.Exists(material.FilePath))
-        {
-            content = await File.ReadAllTextAsync(material.FilePath, ct);
-        }
-        else if (!string.IsNullOrEmpty(material.Content))
-        {
-            content = material.Content;
-        }
-        else
-        {
+        var content = await _contentDocumentService.GetDocumentContentBySourceAsync(
+            "material", material.Id, ct);
+
+        if (string.IsNullOrEmpty(content))
             throw new InvalidOperationException($"Material {materialId} has no content available");
-        }
 
         return new MaterialContentResponse
         {
@@ -193,7 +186,6 @@ public class MaterialService : IMaterialService
             material.Tags = request.Tags;
 
         await _db.SaveChangesAsync(ct);
-        await TryVectorizeMaterialAsync(material.Id, userId, ct);
 
         _logger.LogInformation("Updated material {MaterialId}", materialId);
 
@@ -211,19 +203,7 @@ public class MaterialService : IMaterialService
 
         await TryDeleteMaterialVectorsAsync(userId, material, ct);
 
-        // Delete file if exists
-        if (!string.IsNullOrEmpty(material.FilePath) && File.Exists(material.FilePath))
-        {
-            try
-            {
-                File.Delete(material.FilePath);
-                _logger.LogInformation("Deleted file for material {MaterialId}", materialId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete file for material {MaterialId}", materialId);
-            }
-        }
+        await _contentDocumentService.DeleteDocumentBySourceAsync("material", material.Id, ct);
 
         _db.Materials.Remove(material);
         await _db.SaveChangesAsync(ct);
@@ -282,7 +262,7 @@ public class MaterialService : IMaterialService
             Title = material.Title,
             Category = material.Category,
             ContentType = material.ContentType,
-            FilePath = material.FilePath,
+            FilePath = material.ContentDocumentId ?? "",
             Tags = material.Tags,
             CreatedAt = material.CreatedAt,
             VectorChunkCount = material.VectorChunkCount

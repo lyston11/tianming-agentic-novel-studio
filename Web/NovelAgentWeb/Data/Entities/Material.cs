@@ -10,8 +10,7 @@ public class Material
     public string Title { get; set; } = null!;
     public string? Category { get; set; }
     public string? ContentType { get; set; }
-    public string? Content { get; set; }
-    public string? FilePath { get; set; }
+    public string? ContentDocumentId { get; set; }
     public string? Tags { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -21,4 +20,5 @@ public class Material
     // Navigation properties
     public User User { get; set; } = null!;
     public NovelProject? Project { get; set; }
+    public ContentDocument? ContentDocument { get; set; }
 }
