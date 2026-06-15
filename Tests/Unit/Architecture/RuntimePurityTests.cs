@@ -295,6 +295,39 @@ public class RuntimePurityTests
     }
 
     [Fact]
+    public void AgentRuntime_AllowsProjectlessMetaToolsBeforeProjectResolution()
+    {
+        var root = FindRepositoryRoot();
+        var runtimePath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentRuntime.cs");
+        var text = File.ReadAllText(runtimePath);
+
+        Assert.Contains("CanExecuteWithoutProject", text, StringComparison.Ordinal);
+        Assert.Contains("\"tool_search\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"ResolveNovelProject\"", text, StringComparison.Ordinal);
+        Assert.Contains("BuildProjectlessReflectContext", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkspaceUsageAudit_DoesNotRequireProjectIdForAgentManagedEndpoints()
+    {
+        var root = FindRepositoryRoot();
+        var middlewarePath = Path.Combine(root, "Web", "NovelAgentWeb", "Middleware", "WorkspaceUsageAuditMiddleware.cs");
+        var text = File.ReadAllText(middlewarePath);
+
+        Assert.Contains("IsAgentManagedWorkspaceEndpoint", text, StringComparison.Ordinal);
+        Assert.Contains("path.StartsWith(\"/api/agent\"", text, StringComparison.Ordinal);
+
+        var methodStart = text.IndexOf("private bool IsWorkspaceEndpoint", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "IsWorkspaceEndpoint must exist.");
+        var methodEnd = text.IndexOf("private async Task<string?> ExtractProjectIdAsync", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart, "IsWorkspaceEndpoint body boundary must be findable.");
+        var methodBody = text[methodStart..methodEnd];
+
+        Assert.Contains("IsAgentManagedWorkspaceEndpoint(path)", methodBody, StringComparison.Ordinal);
+        Assert.Contains("return false", methodBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProjectScopedExecutor_DoesNotFallbackSessionScopeToActiveProject()
     {
         var root = FindRepositoryRoot();

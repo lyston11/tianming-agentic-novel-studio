@@ -43,7 +43,16 @@ public class WorkspaceUsageAuditMiddleware
 
     private bool IsWorkspaceEndpoint(string path)
     {
+        if (IsAgentManagedWorkspaceEndpoint(path))
+            return false;
+
         return WorkspaceEndpoints.Any(endpoint => path.StartsWith(endpoint, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsAgentManagedWorkspaceEndpoint(string path)
+    {
+        // Agent endpoints resolve workspace from session state and LLM tool decisions.
+        return path.StartsWith("/api/agent", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<string?> ExtractProjectIdAsync(HttpContext context)

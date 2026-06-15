@@ -250,16 +250,12 @@ public sealed class AgentRuntime
             }
             else
             {
-                // No project - build minimal context for casual chat
-                lastContext = new AgentObservationContext
+                lastContext = BuildProjectlessReflectContext(session, userMessage, new AgentObservationContext
                 {
-                    UserMessage = userMessage,
                     TurnIntent = userTurn.Intent,
                     UserTurn = userTurn,
-                    MissionPlan = session.WorkingMemory.MissionPlan ?? new AgentMissionPlan(),
-                    AvailableTools = BuildToolSearchOnlyContext(),
-                    AnchorPrompt = $"Step {step}/{maxSteps}. No active project. User can ask to create a new novel or switch to existing project.",
-                };
+                });
+                lastContext.AnchorPrompt = $"Step {step}/{maxSteps}. No active project. User can ask to create a new novel or switch to existing project.";
             }
 
             trace.Add(new AgentRuntimeStep
@@ -424,7 +420,7 @@ public sealed class AgentRuntime
             // Execute tool
             await EmitAsync(session, AgentSseEventType.AgentActing, $"正在执行：{action.ToolCall.Name}", ct, action.ToolCall);
             confirmed = IsAutopilotAuthorizedAction(action, session);
-            var result = IsProjectResolutionTool(action.ToolCall.Name)
+            var result = CanExecuteWithoutProject(action.ToolCall.Name)
                 ? await _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct).ConfigureAwait(false)
                 : await WithSessionProjectAsync(session,
                     () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct), ct).ConfigureAwait(false);
@@ -481,12 +477,14 @@ public sealed class AgentRuntime
 
                     // Break the loop as before
                     await EmitAsync(session, AgentSseEventType.AgentReflecting, "正在根据失败观察重新判断...", ct).ConfigureAwait(false);
-                    var failReflectContext = await WithSessionProjectAsync(session,
-                        async () =>
-                        {
-                            var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
-                            return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, userTurn.Intent, ct).ConfigureAwait(false);
-                        }, ct).ConfigureAwait(false);
+                    var failReflectContext = project != null && !string.IsNullOrWhiteSpace(session.ActiveProjectId)
+                        ? await WithSessionProjectAsync(session,
+                            async () =>
+                            {
+                                var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
+                                return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, userTurn.Intent, ct).ConfigureAwait(false);
+                            }, ct).ConfigureAwait(false)
+                        : BuildProjectlessReflectContext(session, userMessage, lastContext);
                     var failReflection = await _reflectionEngine.ReflectAsync(failReflectContext, failureObservation, ct).ConfigureAwait(false);
                     ApplyReflection(session, failReflection);
                     await SyncMissionPlanAsync(session, project, result, action, failReflection, ct).ConfigureAwait(false);
@@ -521,12 +519,14 @@ public sealed class AgentRuntime
 
             // Reflect
             await EmitAsync(session, AgentSseEventType.AgentReflecting, "正在反思...", ct, observation);
-            var reflectContext = await WithSessionProjectAsync(session,
-                async () =>
-                {
-                    var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
-                    return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, userTurn.Intent, ct).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
+            var reflectContext = project != null && !string.IsNullOrWhiteSpace(session.ActiveProjectId)
+                ? await WithSessionProjectAsync(session,
+                    async () =>
+                    {
+                        var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
+                        return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, userTurn.Intent, ct).ConfigureAwait(false);
+                    }, ct).ConfigureAwait(false)
+                : BuildProjectlessReflectContext(session, userMessage, lastContext);
             var reflection = await _reflectionEngine.ReflectAsync(reflectContext, observation, ct).ConfigureAwait(false);
             lastReflection = reflection;
             ApplyReflection(session, reflection);
@@ -782,8 +782,60 @@ public sealed class AgentRuntime
         action.ToolCall?.Name is "CommitStoryFoundation" or "CommitVolumeArc" or
             "GenerateChapterWithChanges" or "RepairChapterDraft" or "CommitValidatedChapter";
 
-    private static bool IsProjectResolutionTool(string toolName) =>
-        toolName is "ResolveNovelProject";
+    private static bool CanExecuteWithoutProject(string toolName) =>
+        string.Equals(toolName, "tool_search", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(toolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase);
+
+    private static AgentObservationContext BuildProjectlessReflectContext(
+        AgentSession session,
+        string userMessage,
+        AgentObservationContext? currentContext)
+    {
+        var turnIntent = currentContext?.TurnIntent ?? GetCurrentTurnIntent(session, userMessage);
+        var userTurn = currentContext?.UserTurn ?? session.WorkingMemory.MissionPlan.InteractionState ?? new UserTurnEnvelope
+        {
+            Intent = turnIntent,
+            CreativeBrief = turnIntent.CreativeBrief,
+        };
+
+        var recentMessages = currentContext?.RecentMessages?.Count > 0
+            ? currentContext.RecentMessages.ToList()
+            : session.ChatHistory
+                .TakeLast(8)
+                .Select(t => $"{t.Role}: {t.Content}")
+                .ToList();
+
+        var recentObservations = currentContext?.RecentObservations?.Count > 0
+            ? currentContext.RecentObservations.ToList()
+            : session.WorkingMemory.RecentObservations.TakeLast(8).ToList();
+
+        var availableTools = currentContext?.AvailableTools?.Count > 0
+            ? currentContext.AvailableTools.ToList()
+            : BuildToolSearchOnlyContext();
+
+        return new AgentObservationContext
+        {
+            UserMessage = userMessage,
+            TurnIntent = turnIntent,
+            UserTurn = userTurn,
+            Phase = session.Phase,
+            ActiveRunId = session.ActiveRunId ?? string.Empty,
+            RecentMessages = recentMessages,
+            RecentObservations = recentObservations,
+            Rag = currentContext?.Rag ?? new AgentRagContext(),
+            MissionPlan = session.WorkingMemory.MissionPlan ?? currentContext?.MissionPlan ?? new AgentMissionPlan(),
+            MissionState = session.WorkingMemory.Mission ?? currentContext?.MissionState ?? new AgentMissionState(),
+            SessionMemory = session.WorkingMemory.SessionMemory ?? currentContext?.SessionMemory ?? new AgentSessionMemory(),
+            ProjectMemory = session.WorkingMemory.ProjectMemory ?? currentContext?.ProjectMemory ?? new AgentProjectMemory(),
+            AuthorMemory = session.WorkingMemory.AuthorMemory ?? currentContext?.AuthorMemory ?? new AgentAuthorMemory(),
+            ExecutionMemory = session.WorkingMemory.ExecutionMemory ?? currentContext?.ExecutionMemory ?? new AgentExecutionMemory(),
+            PendingConfirmation = session.WorkingMemory.PendingConfirmation,
+            AvailableTools = availableTools,
+            AnchorPrompt = FirstNonEmpty(
+                currentContext?.AnchorPrompt,
+                "No active project. User can chat freely, ask for capabilities, or ask the Agent to create or bind a novel project."),
+        };
+    }
 
     // ═══════════════════════════════════════════════════════════════
     //  Helper methods
@@ -1021,12 +1073,7 @@ public sealed class AgentRuntime
         }
         else
         {
-            reflectContext = new AgentObservationContext
-            {
-                UserMessage = userMessage,
-                TurnIntent = GetCurrentTurnIntent(session, userMessage),
-                MissionPlan = session.WorkingMemory.MissionPlan ?? new AgentMissionPlan(),
-            };
+            reflectContext = BuildProjectlessReflectContext(session, userMessage, context);
         }
 
         var reflection = await _reflectionEngine.ReflectAsync(reflectContext, observation, ct).ConfigureAwait(false);
