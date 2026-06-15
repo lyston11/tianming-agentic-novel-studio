@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="../buildMultiTargeting/NovelAgentWeb.props" />
-</Project>
