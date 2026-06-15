@@ -325,6 +325,108 @@ public class AgentMemoryServiceTests
         Assert.Equal("plan_chapter", session.WorkingMemory.SessionMemory.LastIntent);
     }
 
+    [Fact]
+    public async Task HydrateProjectlessAsync_RestoresSessionAuthorAndExecutionMemory()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            SessionMemory = new SessionMemory
+            {
+                CurrentGoal = "先闲聊确认设定偏好",
+                OpenQuestions = new List<string> { "用户是否想从旧项目继续？" },
+                ShortTermPreferences = new List<string> { "不要自动绑定项目" },
+                RecentObservations = new List<string> { "用户强调由 Agent 决策项目" },
+                PendingToolName = "QueryWorkspaceState",
+                LastIntent = "workspace_question"
+            },
+            AuthorMemory = new AuthorMemory
+            {
+                StyleDislikes = new List<string> { "硬规则路由" },
+                ConfirmationTolerance = "auto_low_risk"
+            },
+            ExecutionMemory = new ExecutionMemory
+            {
+                RepeatedBlockers = new List<string> { "No active project in session" },
+                ToolFailurePatterns = new List<string> { "projectless status query should use workspace state" }
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+
+        await service.HydrateProjectlessAsync(session);
+
+        Assert.Equal("先闲聊确认设定偏好", session.WorkingMemory.CurrentGoal);
+        Assert.Contains("不要自动绑定项目", session.WorkingMemory.UserPreferences);
+        Assert.Contains("硬规则路由", session.WorkingMemory.AuthorMemory.StyleDislikes);
+        Assert.Equal("auto_low_risk", session.WorkingMemory.AuthorMemory.ConfirmationTolerance);
+        Assert.Contains("No active project in session", session.WorkingMemory.ExecutionMemory.RepeatedBlockers);
+        Assert.Contains("projectless status query should use workspace state", session.WorkingMemory.ExecutionMemory.ToolFailurePatterns);
+        Assert.DoesNotContain("No active project in session", session.WorkingMemory.ProjectMemory.Constraints);
+    }
+
+    [Fact]
+    public async Task PersistProjectlessAsync_PersistsSessionAuthorAndExecutionMemoryButSkipsProjectMemory()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+        session.WorkingMemory.CurrentGoal = "理解用户想先聊天还是开书";
+        session.WorkingMemory.UserPreferences.Add("低风险工具自动执行");
+
+        var reflection = new AgentReflection
+        {
+            MissionPatch = new AgentMissionPatch
+            {
+                MemoryUpdate = new AgentMemoryUpdate
+                {
+                    SessionMemory = new SessionMemoryUpdate
+                    {
+                        ExtractedPreferences = new List<string> { "由大模型自己决定项目绑定" }
+                    },
+                    ProjectMemory = new ProjectMemoryUpdate
+                    {
+                        NewConstraints = new List<string> { "不应写入无项目阶段" }
+                    },
+                    AuthorMemory = new AuthorMemoryUpdate
+                    {
+                        StyleDislikes = new List<string> { "死规则关键词路由" }
+                    },
+                    ExecutionMemory = new ExecutionMemoryUpdate
+                    {
+                        ToolFailure = "No active project in session",
+                        ToolFailurePatterns = new List<string> { "无项目状态查询误走项目工具" }
+                    }
+                }
+            }
+        };
+
+        await service.PersistProjectlessAsync(session, reflection);
+
+        Assert.Equal("user-1", repository.LastSessionUserId);
+        Assert.Equal("projectless", repository.LastSessionProjectId);
+        Assert.Equal("session-1", repository.LastSessionId);
+        Assert.True(repository.SessionUpdates.TryGetValue("session.current_goal", out var currentGoal));
+        Assert.Equal("理解用户想先聊天还是开书", Assert.IsType<string>(currentGoal));
+        Assert.True(repository.SessionUpdates.TryGetValue("session.short_term_preferences", out var preferences));
+        Assert.Contains("由大模型自己决定项目绑定", Assert.IsType<List<string>>(preferences));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.style_dislikes", out var dislikes));
+        Assert.Contains("死规则关键词路由", Assert.IsType<List<string>>(dislikes));
+        Assert.True(repository.ProjectlessExecutionUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
+        Assert.Contains("No active project in session", Assert.IsType<List<string>>(blockers));
+        Assert.True(repository.ProjectlessExecutionUnionUpdates.TryGetValue("execution.tool_failures", out var failures));
+        Assert.Contains("无项目状态查询误走项目工具", Assert.IsType<List<string>>(failures));
+        Assert.Empty(repository.ProjectUpdates);
+        Assert.Empty(repository.ProjectUnionUpdates);
+    }
+
     private sealed class RecordingMemoryRepository : IAgentMemoryRepository
     {
         public ProjectMemory ProjectMemory { get; set; } = new();
@@ -336,6 +438,7 @@ public class AgentMemoryServiceTests
         public Dictionary<string, object> SessionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> ProjectUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, object> ProjectlessExecutionUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int UpdateMemoryCallCount { get; private set; }
         public string LastSessionUserId { get; private set; } = string.Empty;
         public string LastSessionProjectId { get; private set; } = string.Empty;
@@ -370,7 +473,11 @@ public class AgentMemoryServiceTests
 
         public Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
         {
-            var target = projectId == null ? AuthorUnionUpdates : ProjectUnionUpdates;
+            var target = projectId == null
+                ? AuthorUnionUpdates
+                : string.Equals(projectId, "projectless", StringComparison.OrdinalIgnoreCase)
+                    ? ProjectlessExecutionUnionUpdates
+                    : ProjectUnionUpdates;
             foreach (var (key, value) in updates)
                 target[key] = value.ToList();
             return Task.CompletedTask;

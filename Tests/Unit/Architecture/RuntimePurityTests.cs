@@ -304,7 +304,79 @@ public class RuntimePurityTests
         Assert.Contains("CanExecuteWithoutProject", text, StringComparison.Ordinal);
         Assert.Contains("\"tool_search\"", text, StringComparison.Ordinal);
         Assert.Contains("\"ResolveNovelProject\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"QueryWorkspaceState\"", text, StringComparison.Ordinal);
         Assert.Contains("BuildProjectlessReflectContext", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentPlanner_ReceivesProductSpaceMemoryAndToolSemanticsWithoutSuppressingToolUse()
+    {
+        var root = FindRepositoryRoot();
+        var corePath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentCore.cs");
+        var text = File.ReadAllText(corePath);
+
+        Assert.Contains("ProductSpace", text, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceState", text, StringComparison.Ordinal);
+        Assert.Contains("memory_layers", text, StringComparison.Ordinal);
+        Assert.Contains("product_space", text, StringComparison.Ordinal);
+        Assert.Contains("workspace_state", text, StringComparison.Ordinal);
+        Assert.Contains("DomainSurface", text, StringComparison.Ordinal);
+        Assert.Contains("OutputKind", text, StringComparison.Ordinal);
+        Assert.Contains("ReadsFrom", text, StringComparison.Ordinal);
+        Assert.Contains("WritesTo", text, StringComparison.Ordinal);
+        Assert.Contains("UserVisibleWhere", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOT QueryProjectStatus tool", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Use chat_reply for greetings, questions, status queries", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentToolRegistry_ExposesWorkspaceStateToolAndSemanticContracts()
+    {
+        var root = FindRepositoryRoot();
+        var registryPath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentToolRegistry.cs");
+        var text = File.ReadAllText(registryPath);
+
+        Assert.Contains("\"QueryWorkspaceState\"", text, StringComparison.Ordinal);
+        Assert.Contains("QueryWorkspaceStateAsync", text, StringComparison.Ordinal);
+        Assert.Contains("DomainSurface", text, StringComparison.Ordinal);
+        Assert.Contains("OutputKind", text, StringComparison.Ordinal);
+        Assert.Contains("ReadsFrom", text, StringComparison.Ordinal);
+        Assert.Contains("WritesTo", text, StringComparison.Ordinal);
+        Assert.Contains("UserVisibleWhere", text, StringComparison.Ordinal);
+        Assert.Contains("novel_projects", text, StringComparison.Ordinal);
+        Assert.Contains("knowledge_base", text, StringComparison.Ordinal);
+        Assert.Contains("agent_runs", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentMemoryService_HydratesAndPersistsProjectlessMemory()
+    {
+        var root = FindRepositoryRoot();
+        var runtimePath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentRuntime.cs");
+        var memoryPath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentMemoryService.cs");
+        var runtime = File.ReadAllText(runtimePath);
+        var memory = File.ReadAllText(memoryPath);
+
+        Assert.Contains("HydrateProjectlessAsync", memory, StringComparison.Ordinal);
+        Assert.Contains("PersistProjectlessAsync", memory, StringComparison.Ordinal);
+        Assert.Contains("await _memoryService.HydrateProjectlessAsync(session, ct)", runtime, StringComparison.Ordinal);
+        Assert.Contains("PersistProjectlessAsync(session", runtime, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentRuntime_ProjectlessObservationUsesDiscoveredToolCache()
+    {
+        var root = FindRepositoryRoot();
+        var runtimePath = Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentRuntime.cs");
+        var text = File.ReadAllText(runtimePath);
+        var methodStart = text.IndexOf("private static AgentObservationContext BuildProjectlessReflectContext", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "BuildProjectlessReflectContext must exist.");
+        var methodEnd = text.IndexOf("// ═══════════════════════════════════════════════════════════════", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart, "BuildProjectlessReflectContext body boundary must be findable.");
+        var methodBody = text[methodStart..methodEnd];
+
+        Assert.Contains("session.DiscoveredTools.Count > 0", methodBody, StringComparison.Ordinal);
+        Assert.Contains("ToAgentToolDefinition", methodBody, StringComparison.Ordinal);
     }
 
     [Fact]

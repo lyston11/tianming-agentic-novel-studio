@@ -44,6 +44,7 @@ public sealed class AgentToolRegistry
 
     private static readonly string[] ConversationTools = new[]
     {
+        "QueryWorkspaceState",
         "QueryProjectStatus",
         "ResolveNovelProject",
         "ProcessKnowledgeFile",
@@ -51,6 +52,7 @@ public sealed class AgentToolRegistry
 
     private static readonly string[] PlanningTools = new[]
     {
+        "QueryWorkspaceState",
         "QueryProjectStatus",
         "ResolveNovelProject",
         "SearchCreativeKnowledge",
@@ -66,6 +68,7 @@ public sealed class AgentToolRegistry
 
     private static readonly string[] CreationTools = new[]
     {
+        "QueryWorkspaceState",
         "QueryProjectStatus",
         "GenerateChapterWithChanges",
         "RepairChapterDraft",
@@ -74,6 +77,7 @@ public sealed class AgentToolRegistry
 
     private static readonly string[] ReviewTools = new[]
     {
+        "QueryWorkspaceState",
         "QueryProjectStatus",
         "CommitValidatedChapter",
         "ReviewChapter",
@@ -92,6 +96,7 @@ public sealed class AgentToolRegistry
         RequiresConfirmation = e.Definition.RequiresConfirmation,
         Parameters = e.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
         SideEffects = e.Definition.SideEffects,
+        Semantic = e.Definition.Semantic,
     }).ToList();
 
     public IReadOnlyList<string> GetToolNamesForPhase(ConversationPhase phase)
@@ -119,6 +124,7 @@ public sealed class AgentToolRegistry
                 RequiresConfirmation = e.Value.Definition.RequiresConfirmation,
                 Parameters = e.Value.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
                 SideEffects = e.Value.Definition.SideEffects,
+                Semantic = e.Value.Definition.Semantic,
             })
             .ToList();
     }
@@ -202,6 +208,7 @@ public sealed class AgentToolRegistry
         var entries = new[]
         {
             Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", Effects(toolCache: true, sqliteSnapshot: true, sqlite: new[] { "agent_tool_search_snapshots" }), (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
+            Entry("QueryWorkspaceState", "workspace", "Low", false, Array.Empty<string>(), "只读查询当前用户可见的工作台真实状态：小说书城项目、知识库条目、创作工作流 Run、当前会话绑定情况。不会创建、绑定或切换项目。", Effects(), (call, session, _, _, ct) => QueryWorkspaceStateAsync(session, ct)),
             Entry("ResolveNovelProject", "project", "Low", false, new[] { "mode", "projectId", "projectTitle", "title", "genre", "seed" }, "由 Agent 决策绑定已有小说或创建新小说。mode 可选 bind_existing/create_new/auto；绑定不创建新书，创建会切换当前会话上下文。", Effects(memory: new[] { "session", "project" }, sqlite: new[] { "novel_projects", "agent_sessions" }), (call, session, _, _, ct) => ResolveNovelProjectAsync(call, session, ct)),
             Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", Effects(memory: new[] { "project" }, sqlite: new[] { "knowledge_base", "knowledge_processing_tasks", "content_documents", "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", Effects(), (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
@@ -228,6 +235,182 @@ public sealed class AgentToolRegistry
         name is "CommitStoryFoundation" or "CommitVolumeArc" or
             "GenerateChapterWithChanges" or "RepairChapterDraft" or "CommitValidatedChapter";
 
+    private async Task<AgentToolExecutionResult> QueryWorkspaceStateAsync(AgentSession session, CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+
+        var currentUser = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == session.UserId)
+            .Select(u => new { u.Id, u.Username, u.Role })
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var isAdmin = string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+
+        var projectQuery = db.NovelProjects.AsNoTracking();
+        if (!isAdmin)
+            projectQuery = projectQuery.Where(p => p.UserId == session.UserId);
+
+        var visibleProjects = await projectQuery
+            .OrderByDescending(p => p.UpdatedAt)
+            .Take(20)
+            .Select(p => new AgentWorkspaceProjectState
+            {
+                Id = p.Id,
+                Title = p.Title,
+                OwnerUserId = p.UserId,
+                OwnerUsername = db.Users
+                    .Where(u => u.Id == p.UserId)
+                    .Select(u => u.Username)
+                    .FirstOrDefault() ?? string.Empty,
+                IsOwnedByCurrentUser = p.UserId == session.UserId,
+                Status = p.Status,
+                Genre = p.Genre ?? string.Empty,
+                WordCount = p.WordCount,
+                VolumeCount = p.Volumes.Count,
+                ChapterCount = p.Chapters.Count,
+                CommittedChapterCount = p.Chapters.Count(c =>
+                    c.Status == "committed" ||
+                    c.Status == "published" ||
+                    c.Status == "completed"),
+                UpdatedAt = p.UpdatedAt
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var knowledgeQuery = db.KnowledgeBases.AsNoTracking();
+        if (!isAdmin)
+            knowledgeQuery = knowledgeQuery.Where(k => k.UserId == session.UserId);
+
+        var knowledgeTotal = await knowledgeQuery.CountAsync(ct).ConfigureAwait(false);
+        var knowledgeCounts = await knowledgeQuery
+            .GroupBy(k => k.EntryType)
+            .Select(g => new AgentWorkspaceKnowledgeTypeCount
+            {
+                EntryType = g.Key,
+                Count = g.Count()
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.EntryType)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var recentKnowledge = await knowledgeQuery
+            .OrderByDescending(k => k.CreatedAt)
+            .Take(10)
+            .Select(k => new AgentWorkspaceKnowledgeItem
+            {
+                Id = k.Id,
+                Title = k.Title,
+                EntryType = k.EntryType,
+                OwnerUserId = k.UserId,
+                SourceProjectId = k.SourceProjectId ?? string.Empty,
+                CreatedAt = k.CreatedAt
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var runQuery = db.AgentRuns.AsNoTracking();
+        if (!isAdmin)
+            runQuery = runQuery.Where(r => r.UserId == session.UserId);
+
+        var activeRunCount = await runQuery
+            .CountAsync(r => r.Status == "running" || r.Status == "pending" || r.Status == "in_progress", ct)
+            .ConfigureAwait(false);
+        var recentRuns = await runQuery
+            .OrderByDescending(r => r.UpdatedAt)
+            .Take(10)
+            .Select(r => new AgentWorkspaceRunState
+            {
+                Id = r.Id,
+                ProjectId = r.ProjectId,
+                RunType = r.RunType,
+                Status = r.Status,
+                TargetChapterId = r.TargetChapterId ?? string.Empty,
+                UpdatedAt = r.UpdatedAt
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var state = new AgentWorkspaceState
+        {
+            CurrentSession = new AgentCurrentSessionState
+            {
+                SessionId = session.SessionId,
+                ActiveProjectId = session.ActiveProjectId ?? string.Empty,
+                Phase = session.Phase,
+                HasActiveProject = !string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
+                    !session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase)
+            },
+            VisibleProjects = visibleProjects,
+            KnowledgeBase = new AgentWorkspaceKnowledgeState
+            {
+                TotalCount = knowledgeTotal,
+                CountsByType = knowledgeCounts,
+                RecentItems = recentKnowledge
+            },
+            Workflow = new AgentWorkspaceWorkflowState
+            {
+                ActiveRunCount = activeRunCount,
+                RecentRunCount = recentRuns.Count,
+                RecentRuns = recentRuns
+            },
+            Notes = new List<string>
+            {
+                isAdmin
+                    ? "当前用户是 admin：可只读查看全站项目和知识库，但不会自动绑定或操作其他用户项目。"
+                    : "当前只展示当前用户拥有的项目、知识库和工作流。",
+                "QueryWorkspaceState 是只读快照，不会改变当前会话的 ActiveProjectId。",
+                "绑定已有项目或创建新项目必须由 Agent 另行决策并调用 ResolveNovelProject。"
+            }
+        };
+
+        return new AgentToolExecutionResult
+        {
+            Success = true,
+            Message = BuildWorkspaceStateMessage(state),
+            Phase = session.Phase,
+            Data = state,
+            Artifact = BuildArtifact(
+                "workspace_state",
+                "workspace",
+                session.ActiveProjectId ?? string.Empty,
+                string.Empty,
+                "已读取小说书城、知识库和创作工作流状态。",
+                state.VisibleProjects.Select(p => $"{p.Title} ({p.Id})").ToArray()),
+            Suggestions = new[]
+            {
+                "根据书城状态决定是否绑定已有项目",
+                "查看知识库条目",
+                "继续当前创作工作流"
+            }
+        };
+    }
+
+    private static string BuildWorkspaceStateMessage(AgentWorkspaceState state)
+    {
+        var projectLines = state.VisibleProjects.Count == 0
+            ? "小说书城：当前可见项目 0 个。"
+            : "小说书城：\n" + string.Join("\n", state.VisibleProjects.Select(p =>
+                $"• {p.Title}（{p.Status}，owner={p.OwnerUsername}/{p.OwnerUserId}，chapters={p.ChapterCount}，committed={p.CommittedChapterCount}，owned_by_current_user={p.IsOwnedByCurrentUser}）"));
+        var knowledgeTypes = state.KnowledgeBase.CountsByType.Count == 0
+            ? "无分类"
+            : string.Join("，", state.KnowledgeBase.CountsByType.Select(x => $"{x.EntryType}:{x.Count}"));
+        var workflowLines = state.Workflow.RecentRuns.Count == 0
+            ? "创作工作流：最近无 Run。"
+            : "创作工作流最近 Run：\n" + string.Join("\n", state.Workflow.RecentRuns.Select(r =>
+                $"• {r.RunType}/{r.Status} project={r.ProjectId} run={r.Id}"));
+
+        return string.Join("\n\n", new[]
+        {
+            $"当前会话：activeProjectId={state.CurrentSession.ActiveProjectId}，phase={state.CurrentSession.Phase}，hasActiveProject={state.CurrentSession.HasActiveProject}",
+            projectLines,
+            $"知识库：共 {state.KnowledgeBase.TotalCount} 条；分类：{knowledgeTypes}。",
+            workflowLines,
+            string.Join("\n", state.Notes)
+        });
+    }
+
     private static AgentToolEntry Entry(
         string name,
         string category,
@@ -248,9 +431,121 @@ public sealed class AgentToolRegistry
                 RequiresConfirmation = requiresConfirmation,
                 Arguments = args.ToList(),
                 SideEffects = sideEffects,
+                Semantic = BuildDefaultSemantic(name, category, sideEffects),
             },
             Handler = handler,
         };
+
+    private static AgentToolSemanticSpec BuildDefaultSemantic(string name, string category, AgentToolSideEffectSpec sideEffects)
+    {
+        var readsFrom = new List<string>();
+        var writesTo = new List<string>();
+        var domainSurface = category switch
+        {
+            "meta" => "Agent Runtime",
+            "workspace" => "小说书城 / 创作工作流 / 知识库 / 记忆系统",
+            "project" => "小说书城",
+            "knowledge" or "rag" => "知识库",
+            "blackboard" => "创作工作流",
+            "planning" or "writing" or "gate" => "创作工作流",
+            "commit" => "小说书城 / Story Bible",
+            "review" => "记忆系统 / 创作工作流",
+            "maintenance" => "知识库 / 索引维护",
+            _ => "Agent Runtime"
+        };
+        var outputKind = category switch
+        {
+            "meta" => "capability_catalog",
+            "workspace" => "read_only_workspace_snapshot",
+            "project" => "project_binding_or_creation",
+            "knowledge" => "knowledge_ingestion_process_result",
+            "rag" => "retrieval_context",
+            "blackboard" => "project_workflow_state",
+            "planning" => "workflow_process_artifact",
+            "writing" => "workflow_process_artifact",
+            "gate" => "workflow_gate_report",
+            "commit" => "canonical_project_or_chapter_state",
+            "review" => "reflection_memory_update",
+            "maintenance" => "index_maintenance_result",
+            _ => "runtime_result"
+        };
+
+        switch (category)
+        {
+            case "meta":
+                readsFrom.AddRange(new[] { "agent_tool_registry", "tool_search_cache" });
+                break;
+            case "workspace":
+                readsFrom.AddRange(new[] { "novel_projects", "knowledge_base", "agent_runs", "volumes", "chapters", "agent_sessions" });
+                break;
+            case "project":
+                readsFrom.AddRange(new[] { "novel_projects", "agent_sessions", "session_memory" });
+                break;
+            case "knowledge":
+            case "rag":
+                readsFrom.AddRange(new[] { "knowledge_base", "project_knowledge_usages", "content_chunks", "content_vector_points", "project_memory" });
+                break;
+            case "blackboard":
+                readsFrom.AddRange(new[] { "mission_blackboard", "story_bible", "agent_runs", "tool_execution_ledger" });
+                break;
+            case "planning":
+            case "writing":
+            case "gate":
+                readsFrom.AddRange(new[] { "story_bible", "project_memory", "author_memory", "execution_memory", "knowledge_base", "agent_runs" });
+                break;
+            case "commit":
+                readsFrom.AddRange(new[] { "agent_runs", "content_documents", "story_bible" });
+                break;
+            case "review":
+                readsFrom.AddRange(new[] { "agent_runs", "content_documents", "execution_memory", "author_memory" });
+                break;
+            case "maintenance":
+                readsFrom.AddRange(new[] { "chapters", "story_bible", "content_chunks", "content_vector_points" });
+                break;
+        }
+
+        writesTo.AddRange(sideEffects.WritesMemoryScopes.Select(scope => $"{scope}_memory"));
+        writesTo.AddRange(sideEffects.WritesSqliteEntities);
+        writesTo.AddRange(sideEffects.WritesVectorIndexes.Select(index => $"vector:{index}"));
+        if (sideEffects.WritesLedger) writesTo.Add("agent_tool_execution_ledger");
+        if (sideEffects.WritesToolSearchCache) writesTo.Add("tool_search_cache");
+        if (sideEffects.WritesRedisRecentCache) writesTo.Add("recent_runtime_cache");
+
+        if (writesTo.Count == 0 || string.Equals(name, "QueryWorkspaceState", StringComparison.OrdinalIgnoreCase))
+        {
+            writesTo.Clear();
+            writesTo.Add("none_read_only");
+        }
+
+        return new AgentToolSemanticSpec
+        {
+            DomainSurface = domainSurface,
+            OutputKind = outputKind,
+            ReadsFrom = readsFrom.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            WritesTo = writesTo.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            UserVisibleWhere = category switch
+            {
+                "workspace" => "Agent 对话中的工作台快照；不会改变书城或会话绑定",
+                "project" => "当前 Agent 会话和小说书城项目列表",
+                "knowledge" or "rag" => "知识库、项目知识引用和 Agent 对话",
+                "planning" or "writing" or "gate" => "创作工作流 Run 和 Agent 对话",
+                "commit" => "小说书城、Story Bible、章节列表和 Agent 对话",
+                "review" => "记忆系统、复盘记录和 Agent 对话",
+                "maintenance" => "索引状态、知识库检索效果和 Agent 对话",
+                _ => "Agent 对话"
+            },
+            ResultSemantics = category switch
+            {
+                "workspace" => "返回当前可见真实状态，帮助模型理解书城、知识库、工作流和会话绑定；结果不是项目绑定决策。",
+                "planning" => "返回候选或计划，属于过程产物，需后续 commit 才会成为最终项目状态。",
+                "writing" => "返回草稿或上下文包，属于过程产物，需门禁和 commit 后才进入书城。",
+                "gate" => "返回校验报告，决定是否修复或提交，报告本身不是最终章节。",
+                "commit" => "把已选择/已通过门禁的产物固化为最终项目状态。",
+                "rag" => "返回检索上下文，供推理使用，不直接改变最终作品。",
+                _ => "返回工具执行结果，模型需要结合当前任务判断下一步。"
+            }
+        };
+    }
 
     private static AgentToolSideEffectSpec Effects(
         bool toolCache = false,
@@ -1245,7 +1540,7 @@ public sealed class AgentToolRegistry
         var toolList = toolNames
             .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
             .Where(def => def != null)
-            .Select(def => $"• {def!.Name}（{def.Description}）")
+            .Select(def => $"• {def!.Name}（{def.Description}；空间={def.Semantic.DomainSurface}；产物={def.Semantic.OutputKind}；可见位置={def.Semantic.UserVisibleWhere}）")
             .ToList();
 
         var message = toolList.Count == 0
@@ -1261,7 +1556,9 @@ public sealed class AgentToolRegistry
                 Description = def.Description,
                 Risk = def.Risk,
                 RequiresConfirmation = def.RequiresConfirmation,
-                Parameters = def.Arguments?.ToDictionary(p => p, _ => "string") ?? new Dictionary<string, string>()
+                Parameters = def.Arguments?.ToDictionary(p => p, _ => "string") ?? new Dictionary<string, string>(),
+                SideEffects = def.SideEffects,
+                Semantic = def.Semantic
             })
             .ToList();
 

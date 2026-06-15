@@ -216,6 +216,10 @@ public sealed class AgentRuntime
                 () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
             await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
         }
+        else
+        {
+            await _memoryService.HydrateProjectlessAsync(session, ct).ConfigureAwait(false);
+        }
         trace.Add(new AgentRuntimeStep
         {
             StepIndex = 0,
@@ -773,7 +777,16 @@ public sealed class AgentRuntime
             Description = "搜索指定阶段的可用工具。",
             Risk = "Low",
             RequiresConfirmation = false,
-            Arguments = new List<string> { "phase" }
+            Arguments = new List<string> { "phase" },
+            Semantic = new AgentToolSemanticSpec
+            {
+                DomainSurface = "Agent Runtime",
+                OutputKind = "capability_catalog",
+                ReadsFrom = new List<string> { "agent_tool_registry", "tool_search_cache" },
+                WritesTo = new List<string> { "agent_tool_search_snapshots", "tool_search_cache" },
+                UserVisibleWhere = "Agent 对话中的工具发现结果",
+                ResultSemantics = "返回某个阶段可用工具及其语义，帮助模型自主选择下一步。"
+            }
         }
     };
 
@@ -784,6 +797,7 @@ public sealed class AgentRuntime
 
     private static bool CanExecuteWithoutProject(string toolName) =>
         string.Equals(toolName, "tool_search", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(toolName, "QueryWorkspaceState", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(toolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase);
 
     private static AgentObservationContext BuildProjectlessReflectContext(
@@ -809,7 +823,9 @@ public sealed class AgentRuntime
             ? currentContext.RecentObservations.ToList()
             : session.WorkingMemory.RecentObservations.TakeLast(8).ToList();
 
-        var availableTools = currentContext?.AvailableTools?.Count > 0
+        var availableTools = session.DiscoveredTools.Count > 0
+            ? session.DiscoveredTools.Select(ToAgentToolDefinition).ToList()
+            : currentContext?.AvailableTools?.Count > 0
             ? currentContext.AvailableTools.ToList()
             : BuildToolSearchOnlyContext();
 
@@ -831,11 +847,24 @@ public sealed class AgentRuntime
             ExecutionMemory = session.WorkingMemory.ExecutionMemory ?? currentContext?.ExecutionMemory ?? new AgentExecutionMemory(),
             PendingConfirmation = session.WorkingMemory.PendingConfirmation,
             AvailableTools = availableTools,
+            ProductSpace = currentContext?.ProductSpace ?? AgentProductSpaceCatalog.Create(),
+            WorkspaceState = currentContext?.WorkspaceState ?? AgentWorkspaceState.Hint(session),
             AnchorPrompt = FirstNonEmpty(
                 currentContext?.AnchorPrompt,
                 "No active project. User can chat freely, ask for capabilities, or ask the Agent to create or bind a novel project."),
         };
     }
+
+    private static AgentToolDefinition ToAgentToolDefinition(ToolSchema schema) => new()
+    {
+        Name = schema.Name,
+        Description = schema.Description,
+        Risk = schema.Risk,
+        RequiresConfirmation = schema.RequiresConfirmation,
+        Arguments = schema.Parameters.Keys.ToList(),
+        SideEffects = schema.SideEffects,
+        Semantic = schema.Semantic,
+    };
 
     // ═══════════════════════════════════════════════════════════════
     //  Helper methods
@@ -980,14 +1009,15 @@ public sealed class AgentRuntime
         AgentReflection? reflection,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) ||
-            session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
         try
         {
+            if (string.IsNullOrWhiteSpace(session.ActiveProjectId) ||
+                session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
+            {
+                await _memoryService.PersistProjectlessAsync(session, reflection, ct).ConfigureAwait(false);
+                return;
+            }
+
             var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
             if (project == null)
                 return;
@@ -1043,6 +1073,22 @@ public sealed class AgentRuntime
 
         var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
         await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) ||
+            session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await _memoryService.PersistProjectlessAsync(session, reflection, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist projectless reflection memory for session {SessionId}", session.SessionId);
+            }
+        }
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, result.Suggestions, action, context, trace);
     }

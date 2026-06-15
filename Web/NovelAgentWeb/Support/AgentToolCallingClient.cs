@@ -117,7 +117,7 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
             function = new
             {
                 name = tool.Name,
-                description = $"{tool.Description} Risk={tool.Risk}; Autopilot=true",
+                description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; Autopilot=true",
                 parameters = new
                 {
                     type = "object",
@@ -137,7 +137,7 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
         return new
         {
             name = tool.Name,
-            description = $"{tool.Description} Risk={tool.Risk}; Autopilot=true",
+            description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; Autopilot=true",
             input_schema = new
             {
                 type = "object",
@@ -151,7 +151,10 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
     {
         var payload = new
         {
-            instruction = "Use a native tool call when a tool is needed. For chat/clarify/final replies, call QueryProjectStatus only when status is needed; otherwise answer in text if your provider supports it. Never put raw user text into userGoal.",
+            instruction = "Use a native tool call when a tool is needed. For real workspace/library/knowledge/workflow facts use QueryWorkspaceState; for active project status use QueryProjectStatus. Otherwise answer in text if your provider supports it. Never put raw user text into userGoal.",
+            product_space = context.ProductSpace,
+            memory_layers = context.ProductSpace.MemoryLayers,
+            workspace_state = context.WorkspaceState,
             user_turn = context.UserTurn,
             user_message = context.UserMessage,
             project = new { context.ProjectId, context.ProjectTitle, context.Phase, context.ActiveRunId },

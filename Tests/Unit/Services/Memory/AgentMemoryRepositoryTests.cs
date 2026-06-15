@@ -453,6 +453,64 @@ public class AgentMemoryRepositoryTests
             Assert.Contains(expected, values);
     }
 
+    [Fact]
+    public async Task UnionMemoryAsync_ProjectlessExecutionUsesNullProjectIdAndReadsBack()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            await setupDb.SaveChangesAsync();
+        }
+
+        await using (var db = new NovelAgentDbContext(options))
+        {
+            var repository = CreateRepository(db);
+            await repository.UnionMemoryAsync(
+                "user-1",
+                AgentMemoryScopes.ProjectlessProjectId,
+                new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["execution.repeated_blockers"] = new[] { "No active project in session" }
+                });
+        }
+
+        await using (var verifyDb = new NovelAgentDbContext(options))
+        {
+            var row = await verifyDb.AgentMemories.SingleAsync(m =>
+                m.UserId == "user-1" &&
+                m.ProjectId == null &&
+                m.MemoryType == "execution.repeated_blockers");
+            Assert.Equal("repeated_blockers", row.MemoryKey);
+            var values = JsonSerializer.Deserialize<List<string>>(row.Content) ?? new();
+            Assert.Contains("No active project in session", values);
+        }
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<ExecutionMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<ExecutionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<ExecutionMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExecutionMemory?)null);
+        _mockRedisCache.Setup(x => x.SetAsync(
+                It.IsAny<string>(),
+                It.IsAny<ExecutionMemory>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await using (var readDb = new NovelAgentDbContext(options))
+        {
+            var repository = CreateRepository(readDb);
+            var memory = await repository.GetExecutionMemoryAsync("user-1", AgentMemoryScopes.ProjectlessProjectId);
+            Assert.Contains("No active project in session", memory.RepeatedBlockers);
+        }
+    }
+
     private AgentMemoryRepository CreateRepository(NovelAgentDbContext dbContext) =>
         new(
             dbContext,

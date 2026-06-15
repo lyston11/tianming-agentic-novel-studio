@@ -58,6 +58,37 @@ public sealed class AgentMemoryService
         MergeSessionPreferences(session);
     }
 
+    public async Task HydrateProjectlessAsync(AgentSession session, CancellationToken ct = default)
+    {
+        var userId = session.UserId;
+        session.WorkingMemory.SessionMemory ??= new AgentSessionMemory();
+        var transientSessionMemory = session.WorkingMemory.SessionMemory;
+
+        var sessionMem = await _repository.GetSessionMemoryAsync(
+                userId,
+                AgentMemoryScopes.ProjectlessProjectId,
+                session.SessionId,
+                ct)
+            .ConfigureAwait(false);
+        session.WorkingMemory.SessionMemory = sessionMem != null
+            ? MapToAgentSessionMemory(sessionMem, transientSessionMemory)
+            : transientSessionMemory;
+        ApplySessionMemoryToRuntime(session.WorkingMemory);
+
+        var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct).ConfigureAwait(false);
+        session.WorkingMemory.AuthorMemory = authorMem != null ? MapToAgentAuthorMemory(authorMem) : new AgentAuthorMemory();
+
+        var executionMem = await _repository.GetExecutionMemoryAsync(
+                userId,
+                AgentMemoryScopes.ProjectlessProjectId,
+                ct)
+            .ConfigureAwait(false);
+        session.WorkingMemory.ExecutionMemory = executionMem != null ? MapToAgentExecutionMemory(executionMem) : new AgentExecutionMemory();
+        session.WorkingMemory.ProjectMemory ??= new AgentProjectMemory();
+
+        MergeSessionPreferences(session);
+    }
+
     public async Task PersistAsync(AgentSession session, NovelProjectInfo project, StoryBibleDocument bible, AgentReflection? reflection = null, CancellationToken ct = default)
     {
         session.WorkingMemory.ProjectMemory ??= BuildProjectMemory(project, bible);
@@ -69,6 +100,19 @@ public sealed class AgentMemoryService
 
         await ApplyMemoryUpdateAsync(session, project.Id, reflection?.MissionPatch.MemoryUpdate, ct);
         await PersistSessionMemoryAsync(session, project.Id, reflection, ct);
+    }
+
+    public async Task PersistProjectlessAsync(AgentSession session, AgentReflection? reflection = null, CancellationToken ct = default)
+    {
+        session.WorkingMemory.SessionMemory ??= new AgentSessionMemory();
+        session.WorkingMemory.ProjectMemory ??= new AgentProjectMemory();
+        session.WorkingMemory.AuthorMemory ??= new AgentAuthorMemory();
+        session.WorkingMemory.ExecutionMemory ??= new AgentExecutionMemory();
+
+        ApplyReflection(session, reflection);
+
+        await ApplyProjectlessMemoryUpdateAsync(session, reflection?.MissionPatch.MemoryUpdate, ct).ConfigureAwait(false);
+        await PersistSessionMemoryAsync(session, AgentMemoryScopes.ProjectlessProjectId, reflection, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -235,6 +279,126 @@ public sealed class AgentMemoryService
             projectId);
     }
 
+    private async Task ApplyProjectlessMemoryUpdateAsync(AgentSession session, AgentMemoryUpdate? update, CancellationToken ct)
+    {
+        var userId = session.UserId;
+        var working = session.WorkingMemory;
+        working.SessionMemory ??= new AgentSessionMemory();
+        working.AuthorMemory ??= new AgentAuthorMemory();
+        working.ExecutionMemory ??= new AgentExecutionMemory();
+
+        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct).ConfigureAwait(false) ?? new AuthorMemory();
+        var currentExecutionMemory = await _repository.GetExecutionMemoryAsync(
+                userId,
+                AgentMemoryScopes.ProjectlessProjectId,
+                ct)
+            .ConfigureAwait(false) ?? new ExecutionMemory();
+
+        var authorUpdates = new Dictionary<string, object>();
+        var executionUnionUpdates = new Dictionary<string, IReadOnlyList<string>>();
+        var authorUnionUpdates = new Dictionary<string, IReadOnlyList<string>>();
+
+        if (update?.SessionMemory != null)
+        {
+            if (!string.IsNullOrWhiteSpace(update.SessionMemory.ChatSummary))
+                working.SessionMemory.ChatSummary = update.SessionMemory.ChatSummary.Trim();
+
+            foreach (var preference in Clean(update.SessionMemory.ExtractedPreferences))
+            {
+                AddUnique(working.SessionMemory.ShortTermPreferences, preference);
+                AddUnique(working.UserPreferences, preference);
+            }
+
+            Trim(working.SessionMemory.ShortTermPreferences, MaxShortTermPreferences);
+        }
+
+        if (update?.AuthorMemory != null)
+        {
+            foreach (var item in Clean(update.AuthorMemory.StyleLikes))
+                AddUnique(working.AuthorMemory.StyleLikes, item);
+            foreach (var item in Clean(update.AuthorMemory.StyleDislikes))
+                AddUnique(working.AuthorMemory.StyleDislikes, item);
+            if (!string.IsNullOrWhiteSpace(update.AuthorMemory.ConfirmationTolerance))
+                working.AuthorMemory.ConfirmationTolerance = update.AuthorMemory.ConfirmationTolerance.Trim();
+            foreach (var item in Clean(update.AuthorMemory.GenreHabits))
+                AddUnique(working.AuthorMemory.GenreHabits, item);
+            foreach (var item in Clean(update.AuthorMemory.FavoriteKnowledgeIds))
+                AddUnique(working.AuthorMemory.FavoriteKnowledgeIds, item);
+        }
+
+        if (update?.ExecutionMemory != null)
+        {
+            if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolSuccess))
+                AddUnique(working.ExecutionMemory.SuccessfulRepairNotes, update.ExecutionMemory.ToolSuccess.Trim());
+            if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolFailure))
+                AddUnique(working.ExecutionMemory.RepeatedBlockers, update.ExecutionMemory.ToolFailure.Trim());
+            foreach (var item in Clean(update.ExecutionMemory.ToolFailurePatterns))
+                AddUnique(working.ExecutionMemory.ToolFailurePatterns, item);
+            foreach (var item in Clean(update.ExecutionMemory.KnowledgeProcessingFailures))
+                AddUnique(working.ExecutionMemory.KnowledgeProcessingFailures, item);
+        }
+
+        MergeCurrentThenWorking(working.ExecutionMemory.SuccessfulRepairNotes, currentExecutionMemory.SuccessfulRepairNotes);
+        MergeCurrentThenWorking(working.ExecutionMemory.RepeatedBlockers, currentExecutionMemory.RepeatedBlockers);
+        MergeCurrentThenWorking(working.ExecutionMemory.ToolFailurePatterns, currentExecutionMemory.ToolFailurePatterns);
+        MergeCurrentThenWorking(working.ExecutionMemory.KnowledgeProcessingFailures, currentExecutionMemory.KnowledgeProcessingFailures);
+        MergeCurrentThenWorking(working.AuthorMemory.StyleDislikes, currentAuthorMemory.StyleDislikes);
+        MergeCurrentThenWorking(working.AuthorMemory.GenreHabits, currentAuthorMemory.GenreHabits);
+        MergeCurrentThenWorking(working.AuthorMemory.FavoriteKnowledgeIds, currentAuthorMemory.FavoriteKnowledgeIds);
+
+        Trim(working.ExecutionMemory.RepeatedBlockers, MaxRepeatedBlockers);
+        Trim(working.ExecutionMemory.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
+        Trim(working.ExecutionMemory.ToolFailurePatterns, MaxToolFailurePatterns);
+        Trim(working.ExecutionMemory.KnowledgeProcessingFailures, MaxKnowledgeProcessingFailures);
+        Trim(working.AuthorMemory.StyleDislikes, MaxStyleDislikes);
+        Trim(working.AuthorMemory.GenreHabits, MaxGenreHabits);
+        Trim(working.AuthorMemory.FavoriteKnowledgeIds, MaxFavoriteKnowledgeIds);
+
+        var hasExplicitUpdate = update != null;
+        if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
+            authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (hasExplicitUpdate && !string.IsNullOrWhiteSpace(working.AuthorMemory.ConfirmationTolerance))
+            authorUpdates["author.confirmation_tolerance"] = working.AuthorMemory.ConfirmationTolerance;
+        if (hasExplicitUpdate && working.AuthorMemory.GenreHabits.Count > 0)
+            authorUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (hasExplicitUpdate && working.AuthorMemory.FavoriteKnowledgeIds.Count > 0)
+            authorUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.AuthorMemory.StyleDislikes.Count > 0)
+            authorUnionUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (working.ExecutionMemory.SuccessfulRepairNotes.Count > 0)
+            executionUnionUpdates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.RepeatedBlockers.Count > 0)
+            executionUnionUpdates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.ToolFailurePatterns.Count > 0)
+            executionUnionUpdates["execution.tool_failures"] = working.ExecutionMemory.ToolFailurePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.KnowledgeProcessingFailures.Count > 0)
+            executionUnionUpdates["execution.knowledge_processing_failures"] = working.ExecutionMemory.KnowledgeProcessingFailures.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (authorUpdates.Count > 0)
+        {
+            await _repository.UpdateMemoryAsync(userId, null, authorUpdates, ct).ConfigureAwait(false);
+        }
+
+        if (executionUnionUpdates.Count > 0)
+        {
+            await _repository.UnionMemoryAsync(userId, AgentMemoryScopes.ProjectlessProjectId, executionUnionUpdates, ct)
+                .ConfigureAwait(false);
+        }
+
+        if (authorUnionUpdates.Count > 0)
+        {
+            await _repository.UnionMemoryAsync(userId, null, authorUnionUpdates, ct).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation(
+            "Applied {ExecutionCount} projectless execution, {AuthorCount} author, and {AuthorUnionCount} author union memory updates for user {UserId}",
+            executionUnionUpdates.Count,
+            authorUpdates.Count,
+            authorUnionUpdates.Count,
+            userId);
+    }
+
     private readonly IAgentMemoryEventService? _memoryEvents;
 
     private async Task PersistSessionMemoryAsync(AgentSession session, string projectId, AgentReflection? reflection, CancellationToken ct)
@@ -265,7 +429,7 @@ public sealed class AgentMemoryService
         {
             await _memoryEvents.AppendAsync(
                     session.UserId,
-                    projectId,
+                    AgentMemoryScopes.ToStoreProjectId(projectId),
                     session.SessionId,
                     session.ActiveRunId,
                     sourceType: "agent_runtime",

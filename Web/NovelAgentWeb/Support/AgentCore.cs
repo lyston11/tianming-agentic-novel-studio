@@ -648,6 +648,8 @@ public sealed class AgentMissionStateSnapshot
 public sealed class AgentObservationContext
 {
     public string UserMessage { get; set; } = string.Empty;
+    public AgentProductSpaceMap ProductSpace { get; set; } = AgentProductSpaceCatalog.Create();
+    public AgentWorkspaceState? WorkspaceState { get; set; }
     public TurnIntent TurnIntent { get; set; } = new();
     public UserTurnEnvelope UserTurn { get; set; } = new();
     public string ProjectId { get; set; } = string.Empty;
@@ -700,6 +702,17 @@ public sealed class AgentToolDefinition
     public bool RequiresConfirmation { get; set; }
     public List<string> Arguments { get; set; } = new();
     public AgentToolSideEffectSpec SideEffects { get; set; } = new();
+    public AgentToolSemanticSpec Semantic { get; set; } = new();
+}
+
+public sealed class AgentToolSemanticSpec
+{
+    public string DomainSurface { get; set; } = string.Empty;
+    public string OutputKind { get; set; } = string.Empty;
+    public List<string> ReadsFrom { get; set; } = new();
+    public List<string> WritesTo { get; set; } = new();
+    public string UserVisibleWhere { get; set; } = string.Empty;
+    public string ResultSemantics { get; set; } = string.Empty;
 }
 
 public sealed class AgentToolSideEffectSpec
@@ -721,6 +734,7 @@ public sealed class ToolSchema
     public bool RequiresConfirmation { get; set; }
     public Dictionary<string, string> Parameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public AgentToolSideEffectSpec SideEffects { get; set; } = new();
+    public AgentToolSemanticSpec Semantic { get; set; } = new();
 }
 
 public sealed class AgentToolEntry
@@ -911,7 +925,10 @@ public sealed class AgentObservationBuilder
                 RequiresConfirmation = t.RequiresConfirmation,
                 Arguments = t.Parameters.Keys.ToList(),
                 SideEffects = t.SideEffects,
+                Semantic = t.Semantic,
             }).ToList(),
+            ProductSpace = AgentProductSpaceCatalog.Create(),
+            WorkspaceState = AgentWorkspaceState.Hint(session),
         };
     }
 
@@ -1280,7 +1297,7 @@ public sealed class AgentPlanner
     private static string BuildActionSystemPrompt(IReadOnlyList<AgentToolDefinition> tools)
     {
         var toolLines = string.Join("\n", tools.Select(t =>
-            $"- {t.Name}: {t.Description} [Risk={t.Risk}]"));
+            $"- {t.Name}: {t.Description} [Risk={t.Risk}; Surface={t.Semantic.DomainSurface}; Output={t.Semantic.OutputKind}; Visible={t.Semantic.UserVisibleWhere}]"));
 
         return "# Stable Layer - Identity & Rules\n\n" +
             "你是天命小说助手，一个专门帮助用户创作长篇小说的 AI 助手。\n" +
@@ -1288,16 +1305,16 @@ public sealed class AgentPlanner
             "你的职责是帮助用户构思故事、规划章节、生成内容、管理创作进度。用自然、温暖的方式与用户对话。\n\n" +
             $"## Available Tools ({tools.Count})\n{toolLines}\n\n" +
             "## Decision Principles\n" +
-            "1. Prioritize natural conversation. Use chat_reply for greetings, questions, status queries, and casual chat.\n" +
-            "2. Use tool calls only when user explicitly requests an action (e.g., '开始写章节', '生成草稿', '提交章节').\n" +
-            "3. For status queries like '进度如何' or '现在到哪了', use chat_reply with project context, NOT QueryProjectStatus tool.\n" +
-            "4. Project management: Call ResolveNovelProject when user wants to bind an existing novel or create a new novel. Let the tool decide bind_existing/create_new/auto from the user's intent. For casual greetings or questions, use chat_reply to explain you can help create novels.\n" +
+            "1. 你拥有 product_space、memory_layers、workspace_state_hint 和工具语义地图；请基于这些信息自己决策，不要依赖关键词路由。\n" +
+            "2. 自然问候、开放闲聊可直接 chat_reply；涉及真实系统状态、小说书城、知识库、工作流进度、工具产物位置时，不要凭空猜测，可自主调用只读状态工具。\n" +
+            "3. 区分过程产物和最终产物：Plan/Generate/Validate/Repair 产物属于创作工作流；Commit 后才成为书城或 Story Bible 的最终可见结果。\n" +
+            "4. Project management: Call ResolveNovelProject when user wants the Agent to bind an existing novel or create a new novel. Let the tool decide bind_existing/create_new/auto from the user's intent; casual chat must not auto-bind a project.\n" +
             "5. Use clarify when creative info is missing for an explicit action request.\n" +
             "6. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
             "7. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
             "8. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
             "9. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
-            "10. Use SearchCreativeKnowledge when more knowledge is needed.\n" +
+            "10. Use SearchCreativeKnowledge when more knowledge is needed for creative reasoning, and QueryWorkspaceState when you need current workbench/library/knowledge/workflow facts.\n" +
             "11. Read anchor_context for working_memory, task_state, history context.\n" +
             "12. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
             "## 工具发现机制\n\n" +
@@ -1314,7 +1331,8 @@ public sealed class AgentPlanner
             "- Review: 提交章节、复盘\n" +
             "- All: 查看所有可用工具\n\n" +
             "**示例**：\n" +
-            "- 用户说\"你好\" → 缓存里已有 tool_search，不需要其他工具 → 用 chat_reply\n" +
+            "- 用户说\"你好\" → 如果只是在问候，可用 chat_reply\n" +
+            "- 用户问\"书城里有哪些项目\"、\"知识库有什么\"、\"工作流跑到哪\" → 需要真实状态，可先发现并调用 QueryWorkspaceState\n" +
             "- 用户说\"创建新小说\"或\"继续某本书\" → 需要 ResolveNovelProject → 如果缓存里没有，调用 tool_search(phase=\"Planning\")\n" +
             "- 正在规划阶段，用户说\"开始写\" → 需要生成工具 → 调用 tool_search(phase=\"Creation\")\n\n" +
             "## 任务执行原则\n" +
@@ -1344,6 +1362,9 @@ public sealed class AgentPlanner
         {
             user_message = context.UserMessage,
             anchor_context = string.IsNullOrWhiteSpace(context.AnchorPrompt) ? null : context.AnchorPrompt,
+            product_space = context.ProductSpace,
+            memory_layers = context.ProductSpace.MemoryLayers,
+            workspace_state = context.WorkspaceState,
             project = new
             {
                 id = context.ProjectId,

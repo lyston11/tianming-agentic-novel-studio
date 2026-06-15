@@ -176,7 +176,9 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default)
     {
-        var cacheKey = $"memory:execution:{userId}:{projectId}";
+        var storeProjectId = AgentMemoryScopes.ToStoreProjectId(projectId);
+        var cacheProjectId = AgentMemoryScopes.ToExecutionCacheProjectId(projectId);
+        var cacheKey = $"memory:execution:{userId}:{cacheProjectId}";
 
         return await _memoryCache.GetOrSetAsync(
             cacheKey,
@@ -191,7 +193,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
                 var rows = await _context.AgentMemories
                     .AsNoTracking()
-                    .Where(m => m.UserId == userId && m.ProjectId == projectId && m.SessionId == null && m.MemoryType.StartsWith("execution."))
+                    .Where(m => m.UserId == userId && m.ProjectId == storeProjectId && m.SessionId == null && m.MemoryType.StartsWith("execution."))
                     .ToListAsync(ct);
 
                 var memory = new ExecutionMemory
@@ -204,7 +206,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
                 await _redisCache.SetAsync(cacheKey, memory, RedisCacheDuration, ct);
 
-                _logger.LogDebug("ExecutionMemory loaded from database for user {UserId}, project {ProjectId}", userId, projectId);
+                _logger.LogDebug("ExecutionMemory loaded from database for user {UserId}, project {ProjectId}", userId, cacheProjectId);
                 return memory;
             },
             MemoryCacheDuration,
@@ -344,6 +346,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task UnionMemoryAsync(string userId, string? projectId, Dictionary<string, IReadOnlyList<string>> updates, CancellationToken ct = default)
     {
+        var storeProjectId = AgentMemoryScopes.ToStoreProjectId(projectId);
+        var lockProjectId = AgentMemoryScopes.IsProjectless(projectId) ? AgentMemoryScopes.ProjectlessProjectId : projectId;
         foreach (var memoryType in updates.Keys)
         {
             if (!UnionListMemoryTypes.Contains(memoryType))
@@ -357,9 +361,9 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 throw new ArgumentException("Author memory union updates must use a null projectId.", nameof(projectId));
             }
 
-            if (scope is "project" or "execution" && string.IsNullOrWhiteSpace(projectId))
+            if (scope == "project" && string.IsNullOrWhiteSpace(storeProjectId))
             {
-                throw new ArgumentException($"{scope} memory union updates require a projectId.", nameof(projectId));
+                throw new ArgumentException("Project memory union updates require a projectId.", nameof(projectId));
             }
         }
 
@@ -368,7 +372,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             return;
         }
 
-        var lockKey = $"{userId}:{projectId ?? "<author>"}";
+        var lockKey = $"{userId}:{lockProjectId ?? "<global>"}";
         var memoryLock = MemoryLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
         await memoryLock.WaitAsync(ct);
         try
@@ -388,7 +392,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     var existing = await _context.AgentMemories
                         .FirstOrDefaultAsync(m =>
                             m.UserId == userId &&
-                            m.ProjectId == projectId &&
+                            m.ProjectId == storeProjectId &&
                             m.SessionId == null &&
                             m.MemoryType == memoryType, ct);
 
@@ -416,7 +420,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                         {
                             Id = Guid.NewGuid().ToString(),
                             UserId = userId,
-                            ProjectId = projectId,
+                            ProjectId = storeProjectId,
                             MemoryType = memoryType,
                             MemoryKey = GetMemoryKey(memoryType),
                             Content = json,
@@ -458,7 +462,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
         await RecordMemoryWritesAsync(
             userId,
-            projectId,
+            storeProjectId,
             null,
             updates.Keys,
             "union_update",
