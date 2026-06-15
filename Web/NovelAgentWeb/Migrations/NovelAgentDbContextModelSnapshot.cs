@@ -203,6 +203,21 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("UserId", "ProjectId")
                         .HasDatabaseName("idx_memories_user_project");
 
+                    b.HasIndex("UserId", "MemoryType")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memories_user_type_global")
+                        .HasFilter("project_id IS NULL AND session_id IS NULL");
+
+                    b.HasIndex("UserId", "ProjectId", "MemoryType")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memories_user_project_type")
+                        .HasFilter("project_id IS NOT NULL AND session_id IS NULL");
+
+                    b.HasIndex("UserId", "SessionId", "MemoryType")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_memories_user_session_type")
+                        .HasFilter("session_id IS NOT NULL");
+
                     b.ToTable("agent_memories", (string)null);
                 });
 

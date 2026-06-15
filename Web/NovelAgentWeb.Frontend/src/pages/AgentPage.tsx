@@ -130,7 +130,6 @@ export default function AgentPage() {
     setSending,
   } = useChatStore();
   const addLog = useAppStore((s) => s.addLog);
-  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
   const {
     sessionId,
@@ -211,9 +210,8 @@ export default function AgentPage() {
     try {
       setSessionLoadError('');
       setSessionMenu(null);
-      const detail = await createAgentSession(currentProjectId);
+      const detail = await createAgentSession();
       setSessionId(detail.sessionId);
-      if (detail.activeProjectId) setCurrentProjectId(detail.activeProjectId);
       setActiveRun(null);
       clearResumeState();
       clearEvents();
@@ -222,7 +220,7 @@ export default function AgentPage() {
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '新建会话失败');
     }
-  }, [clearEvents, clearResumeState, currentProjectId, loadSessionMessages, reloadSessions, setActiveRun, setCurrentProjectId, setSessionId]);
+  }, [clearEvents, clearResumeState, loadSessionMessages, reloadSessions, setActiveRun, setSessionId]);
 
   const renameSession = useCallback(async (target: AgentSessionSummary) => {
     setSessionMenu(null);
@@ -285,26 +283,11 @@ export default function AgentPage() {
     if (sessionId) return;
     if (!sessionsLoaded) return;
     if (sessions.length > 0) {
-      const preferred = currentProjectId
-        ? sessions.find((item) => item.activeProjectId === currentProjectId)
-        : null;
-      void selectSession((preferred ?? sessions[0]).sessionId);
+      void selectSession(sessions[0].sessionId);
       return;
     }
     void createNewSession();
-  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
-
-  useEffect(() => {
-    if (!sessionId || !sessionsLoaded || !currentProjectId) return;
-    const active = sessions.find((item) => item.sessionId === sessionId);
-    if (active?.activeProjectId === currentProjectId) return;
-    const matching = sessions.find((item) => item.activeProjectId === currentProjectId);
-    if (matching) {
-      void selectSession(matching.sessionId);
-      return;
-    }
-    void createNewSession();
-  }, [createNewSession, currentProjectId, selectSession, sessionId, sessions, sessionsLoaded]);
+  }, [createNewSession, selectSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
     if (!sessionId) return;

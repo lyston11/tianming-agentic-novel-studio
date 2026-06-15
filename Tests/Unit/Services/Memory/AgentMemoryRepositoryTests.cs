@@ -154,7 +154,7 @@ public class AgentMemoryRepositoryTests
         var projectId = "proj456";
         var sessionId = "session789";
         var otherSessionId = "session-other";
-        var cacheKey = $"memory:session:{userId}:{sessionId}:{projectId}";
+        var cacheKey = $"memory:session:{userId}:{sessionId}";
         var updates = new Dictionary<string, object>
         {
             ["session.current_goal"] = "finish draft"
@@ -164,7 +164,7 @@ public class AgentMemoryRepositoryTests
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
-            ProjectId = projectId,
+            ProjectId = null,
             SessionId = otherSessionId,
             MemoryType = "session.current_goal",
             MemoryKey = "current_goal",
@@ -185,7 +185,7 @@ public class AgentMemoryRepositoryTests
 
         var saved = await _dbContext.AgentMemories.SingleAsync(m =>
             m.UserId == userId &&
-            m.ProjectId == projectId &&
+            m.ProjectId == null &&
             m.SessionId == sessionId &&
             m.MemoryType == "session.current_goal");
         Assert.Equal("current_goal", saved.MemoryKey);
@@ -193,7 +193,7 @@ public class AgentMemoryRepositoryTests
 
         var otherSession = await _dbContext.AgentMemories.SingleAsync(m =>
             m.UserId == userId &&
-            m.ProjectId == projectId &&
+            m.ProjectId == null &&
             m.SessionId == otherSessionId &&
             m.MemoryType == "session.current_goal");
         Assert.Equal(JsonSerializer.Serialize("other goal"), otherSession.Content);
@@ -202,6 +202,38 @@ public class AgentMemoryRepositoryTests
         _mockRedisCache.Verify(x => x.RemoveAsync(cacheKey, It.IsAny<CancellationToken>()), Times.Once);
 
         var result = await _repository.GetSessionMemoryAsync(userId, projectId, sessionId);
+
+        Assert.Equal("finish draft", result.CurrentGoal);
+    }
+
+    [Fact]
+    public async Task GetSessionMemoryAsync_UsesSessionScopeAcrossProjectChanges()
+    {
+        var userId = "user123";
+        var sessionId = "session789";
+
+        _dbContext.AgentMemories.Add(new AgentMemory
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = null,
+            SessionId = sessionId,
+            MemoryType = "session.current_goal",
+            MemoryKey = "current_goal",
+            Content = JsonSerializer.Serialize("finish draft")
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                "memory:session:user123:session789",
+                It.IsAny<Func<Task<SessionMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<SessionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<SessionMemory>("memory:session:user123:session789", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionMemory?)null);
+
+        var result = await _repository.GetSessionMemoryAsync(userId, "project-after-binding", sessionId);
 
         Assert.Equal("finish draft", result.CurrentGoal);
     }
@@ -283,6 +315,99 @@ public class AgentMemoryRepositoryTests
 
         _mockMemoryCache.Verify(x => x.Remove(It.IsAny<string>()), Times.Exactly(2));
         _mockRedisCache.Verify(x => x.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task UpdateMemoryAsync_BumpsVersionAndWritesAuditEvents()
+    {
+        var versions = new AgentMemoryVersionService(_dbContext, _mockRedisCache.Object, _mockMemoryCache.Object);
+        var repository = new AgentMemoryRepository(
+            _dbContext,
+            _mockRedisCache.Object,
+            _mockMemoryCache.Object,
+            _mockVectorStore.Object,
+            _mockEmbedding.Object,
+            _mockLogger.Object,
+            versions);
+
+        await repository.UpdateMemoryAsync(
+            "user-1",
+            "project-1",
+            new Dictionary<string, object>
+            {
+                ["project.constraints"] = new List<string> { "不要现代科技" }
+            });
+
+        var version = await _dbContext.AgentMemoryVersions.SingleAsync();
+        Assert.Equal("user-1", version.UserId);
+        Assert.Equal("project-1", version.ProjectId);
+        Assert.Null(version.SessionId);
+        Assert.Equal("project", version.Scope);
+        Assert.Equal(1, version.Version);
+
+        var memoryEvent = await _dbContext.AgentMemoryEvents.SingleAsync();
+        Assert.Equal("project", memoryEvent.MemoryScope);
+        Assert.Equal("project.constraints", memoryEvent.MemoryKey);
+        Assert.Equal("memory_repository", memoryEvent.SourceType);
+    }
+
+    [Fact]
+    public async Task UpdateSessionMemoryAsync_BumpsProjectlessSessionVersion()
+    {
+        var versions = new AgentMemoryVersionService(_dbContext, _mockRedisCache.Object, _mockMemoryCache.Object);
+        var repository = new AgentMemoryRepository(
+            _dbContext,
+            _mockRedisCache.Object,
+            _mockMemoryCache.Object,
+            _mockVectorStore.Object,
+            _mockEmbedding.Object,
+            _mockLogger.Object,
+            versions);
+
+        await repository.UpdateSessionMemoryAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            new Dictionary<string, object>
+            {
+                ["session.current_goal"] = "继续地基规划"
+            });
+
+        var version = await _dbContext.AgentMemoryVersions.SingleAsync();
+        Assert.Equal("user-1", version.UserId);
+        Assert.Null(version.ProjectId);
+        Assert.Equal("session-1", version.SessionId);
+        Assert.Equal("session", version.Scope);
+        Assert.Equal(1, version.Version);
+    }
+
+    [Fact]
+    public async Task UpdateMemoryAsync_VectorizesProjectGoalFieldsFromBatchUpdates()
+    {
+        _mockEmbedding
+            .Setup(x => x.EncodeAsync(It.IsAny<string>(), EmbeddingMode.Passage, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new float[] { 0.1f, 0.2f });
+        _mockVectorStore
+            .Setup(x => x.UpsertVectorsAsync("user-1", It.IsAny<List<VectorData>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _repository.UpdateMemoryAsync(
+            "user-1",
+            "project-1",
+            new Dictionary<string, object>
+            {
+                ["project.long_term_goal"] = "新目标",
+                ["project.reader_promise"] = "读者承诺"
+            });
+
+        _mockVectorStore.Verify(x => x.UpsertVectorsAsync(
+                "user-1",
+                It.Is<List<VectorData>>(vectors =>
+                    vectors.Count == 2 &&
+                    vectors.Any(v => v.ProjectId == "project-1" && v.SourceId == "project.long_term_goal" && v.Content == "新目标") &&
+                    vectors.Any(v => v.ProjectId == "project-1" && v.SourceId == "project.reader_promise" && v.Content == "读者承诺")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

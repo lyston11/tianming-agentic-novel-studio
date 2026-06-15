@@ -16,7 +16,11 @@ public sealed class AgentMemoryService
     private const int MaxSessionObservations = 24;
     private const int MaxRepeatedBlockers = 24;
     private const int MaxSuccessfulRepairNotes = 24;
+    private const int MaxToolFailurePatterns = 24;
+    private const int MaxKnowledgeProcessingFailures = 24;
     private const int MaxStyleDislikes = 32;
+    private const int MaxGenreHabits = 24;
+    private const int MaxFavoriteKnowledgeIds = 32;
     private const int PreferenceSedimentationThreshold = 3;
 
     public AgentMemoryService(
@@ -43,6 +47,7 @@ public sealed class AgentMemoryService
 
         var projectMem = await _repository.GetProjectMemoryAsync(userId, project.Id, ct);
         session.WorkingMemory.ProjectMemory = projectMem != null ? MapToAgentProjectMemory(projectMem, project.Id) : BuildProjectMemory(project, bible);
+        ApplyProjectBaseline(session.WorkingMemory.ProjectMemory, BuildProjectMemory(project, bible));
 
         var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct);
         session.WorkingMemory.AuthorMemory = authorMem != null ? MapToAgentAuthorMemory(authorMem) : new AgentAuthorMemory();
@@ -58,6 +63,7 @@ public sealed class AgentMemoryService
         session.WorkingMemory.ProjectMemory ??= BuildProjectMemory(project, bible);
         session.WorkingMemory.AuthorMemory ??= new AgentAuthorMemory();
         session.WorkingMemory.ExecutionMemory ??= new AgentExecutionMemory();
+        ApplyProjectBaseline(session.WorkingMemory.ProjectMemory, BuildProjectMemory(project, bible));
 
         ApplyReflection(session, reflection);
 
@@ -120,6 +126,12 @@ public sealed class AgentMemoryService
                 AddUnique(working.AuthorMemory.StyleLikes, item);
             foreach (var item in Clean(update.AuthorMemory.StyleDislikes))
                 AddUnique(working.AuthorMemory.StyleDislikes, item);
+            if (!string.IsNullOrWhiteSpace(update.AuthorMemory.ConfirmationTolerance))
+                working.AuthorMemory.ConfirmationTolerance = update.AuthorMemory.ConfirmationTolerance.Trim();
+            foreach (var item in Clean(update.AuthorMemory.GenreHabits))
+                AddUnique(working.AuthorMemory.GenreHabits, item);
+            foreach (var item in Clean(update.AuthorMemory.FavoriteKnowledgeIds))
+                AddUnique(working.AuthorMemory.FavoriteKnowledgeIds, item);
         }
 
         if (update?.ExecutionMemory != null)
@@ -128,6 +140,10 @@ public sealed class AgentMemoryService
                 AddUnique(working.ExecutionMemory.SuccessfulRepairNotes, update.ExecutionMemory.ToolSuccess.Trim());
             if (!string.IsNullOrWhiteSpace(update.ExecutionMemory.ToolFailure))
                 AddUnique(working.ExecutionMemory.RepeatedBlockers, update.ExecutionMemory.ToolFailure.Trim());
+            foreach (var item in Clean(update.ExecutionMemory.ToolFailurePatterns))
+                AddUnique(working.ExecutionMemory.ToolFailurePatterns, item);
+            foreach (var item in Clean(update.ExecutionMemory.KnowledgeProcessingFailures))
+                AddUnique(working.ExecutionMemory.KnowledgeProcessingFailures, item);
         }
 
         foreach (var id in Clean(update?.UsedKnowledgeIds))
@@ -139,15 +155,29 @@ public sealed class AgentMemoryService
         MergeCurrentThenWorking(working.ProjectMemory.UsedTropePatterns, currentProjectMemory.UsedTropePatterns);
         MergeCurrentThenWorking(working.ExecutionMemory.SuccessfulRepairNotes, currentExecutionMemory.SuccessfulRepairNotes);
         MergeCurrentThenWorking(working.ExecutionMemory.RepeatedBlockers, currentExecutionMemory.RepeatedBlockers);
+        MergeCurrentThenWorking(working.ExecutionMemory.ToolFailurePatterns, currentExecutionMemory.ToolFailurePatterns);
+        MergeCurrentThenWorking(working.ExecutionMemory.KnowledgeProcessingFailures, currentExecutionMemory.KnowledgeProcessingFailures);
         MergeCurrentThenWorking(working.AuthorMemory.StyleDislikes, currentAuthorMemory.StyleDislikes);
+        MergeCurrentThenWorking(working.AuthorMemory.GenreHabits, currentAuthorMemory.GenreHabits);
+        MergeCurrentThenWorking(working.AuthorMemory.FavoriteKnowledgeIds, currentAuthorMemory.FavoriteKnowledgeIds);
 
         Trim(working.ProjectMemory.UnresolvedThreads, MaxUnresolvedThreads);
         Trim(working.ExecutionMemory.RepeatedBlockers, MaxRepeatedBlockers);
         Trim(working.ExecutionMemory.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
+        Trim(working.ExecutionMemory.ToolFailurePatterns, MaxToolFailurePatterns);
+        Trim(working.ExecutionMemory.KnowledgeProcessingFailures, MaxKnowledgeProcessingFailures);
         Trim(working.AuthorMemory.StyleDislikes, MaxStyleDislikes);
+        Trim(working.AuthorMemory.GenreHabits, MaxGenreHabits);
+        Trim(working.AuthorMemory.FavoriteKnowledgeIds, MaxFavoriteKnowledgeIds);
 
         var hasExplicitUpdate = update != null;
 
+        if (!string.IsNullOrWhiteSpace(working.ProjectMemory.LongTermGoal) &&
+            !string.Equals(working.ProjectMemory.LongTermGoal, currentProjectMemory.LongTermGoal, StringComparison.Ordinal))
+            updates["project.long_term_goal"] = working.ProjectMemory.LongTermGoal;
+        if (!string.IsNullOrWhiteSpace(working.ProjectMemory.ReaderPromise) &&
+            !string.Equals(working.ProjectMemory.ReaderPromise, currentProjectMemory.ReaderPromise, StringComparison.Ordinal))
+            updates["project.reader_promise"] = working.ProjectMemory.ReaderPromise;
         if (hasExplicitUpdate && working.ProjectMemory.Constraints.Count > 0)
             updates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.ProjectMemory.UnresolvedThreads.Count > 0)
@@ -160,8 +190,18 @@ public sealed class AgentMemoryService
             unionUpdates["execution.successful_repairs"] = working.ExecutionMemory.SuccessfulRepairNotes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ExecutionMemory.RepeatedBlockers.Count > 0)
             unionUpdates["execution.repeated_blockers"] = working.ExecutionMemory.RepeatedBlockers.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.ToolFailurePatterns.Count > 0)
+            unionUpdates["execution.tool_failures"] = working.ExecutionMemory.ToolFailurePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (working.ExecutionMemory.KnowledgeProcessingFailures.Count > 0)
+            unionUpdates["execution.knowledge_processing_failures"] = working.ExecutionMemory.KnowledgeProcessingFailures.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
             authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (hasExplicitUpdate && !string.IsNullOrWhiteSpace(working.AuthorMemory.ConfirmationTolerance))
+            authorUpdates["author.confirmation_tolerance"] = working.AuthorMemory.ConfirmationTolerance;
+        if (hasExplicitUpdate && working.AuthorMemory.GenreHabits.Count > 0)
+            authorUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (hasExplicitUpdate && working.AuthorMemory.FavoriteKnowledgeIds.Count > 0)
+            authorUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.AuthorMemory.StyleDislikes.Count > 0)
             authorUnionUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -322,6 +362,16 @@ public sealed class AgentMemoryService
                 .Take(MaxUnresolvedThreads));
         }
         return memory;
+    }
+
+    private static void ApplyProjectBaseline(AgentProjectMemory target, AgentProjectMemory baseline)
+    {
+        target.ProjectId = FirstNonEmpty(target.ProjectId, baseline.ProjectId);
+        target.LongTermGoal = FirstNonEmpty(target.LongTermGoal, baseline.LongTermGoal);
+        target.ReaderPromise = FirstNonEmpty(target.ReaderPromise, baseline.ReaderPromise);
+        target.Tone = FirstNonEmpty(target.Tone, baseline.Tone);
+        CopyDistinct(target.Constraints, baseline.Constraints);
+        CopyDistinct(target.UnresolvedThreads, baseline.UnresolvedThreads);
     }
 
     private static void MergeSessionPreferences(AgentSession session)

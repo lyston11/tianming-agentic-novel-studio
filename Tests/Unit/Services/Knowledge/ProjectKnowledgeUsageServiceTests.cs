@@ -46,7 +46,7 @@ public class ProjectKnowledgeUsageServiceTests
             .Returns(Task.CompletedTask);
         redis.Setup(x => x.RemoveAsync("memory:project:user-1:project-a", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        redis.Setup(x => x.RemoveAsync("memory:session:user-1:session-a:project-a", It.IsAny<CancellationToken>()))
+        redis.Setup(x => x.RemoveAsync("memory:session:user-1:session-a", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var service = new ProjectKnowledgeUsageService(
             db,
@@ -61,7 +61,7 @@ public class ProjectKnowledgeUsageServiceTests
         memory.Verify(x => x.RemoveByPrefix("knowledge:search:user-1:project-a"), Times.Once);
         memory.Verify(x => x.Remove("knowledge:inventory:user-1:project-a"), Times.Once);
         memory.Verify(x => x.Remove("memory:project:user-1:project-a"), Times.Once);
-        memory.Verify(x => x.Remove("memory:session:user-1:session-a:project-a"), Times.Once);
+        memory.Verify(x => x.Remove("memory:session:user-1:session-a"), Times.Once);
         redis.Verify(x => x.RemoveByPrefixAsync("knowledge:search:user-1:project-b", It.IsAny<CancellationToken>()), Times.Never);
         memory.Verify(x => x.RemoveByPrefix("knowledge:search:user-1:project-b"), Times.Never);
     }

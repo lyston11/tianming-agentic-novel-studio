@@ -261,7 +261,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
 
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            _memoryCache?.Remove($"memory:session:{userId}:{sessionId}:{projectId}");
+            _memoryCache?.Remove($"memory:session:{userId}:{sessionId}");
         }
 
         if (_redisCache == null)
@@ -274,7 +274,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             await _redisCache.RemoveAsync(projectMemoryKey, ct).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(sessionId))
             {
-                await _redisCache.RemoveAsync($"memory:session:{userId}:{sessionId}:{projectId}", ct)
+                await _redisCache.RemoveAsync($"memory:session:{userId}:{sessionId}", ct)
                     .ConfigureAwait(false);
             }
         }

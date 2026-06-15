@@ -1,3 +1,4 @@
+using System.Reflection;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
@@ -51,5 +52,23 @@ public class AgentRuntimeTests
         Assert.DoesNotContain(lines, line => line == "A: session fallback 1");
         Assert.Contains("U: session fallback 2", lines);
         Assert.Contains("A: session fallback 11", lines);
+    }
+
+    [Fact]
+    public void BuildStatusSummary_HandlesMissingStoryBibleWhenSessionHasNoProject()
+    {
+        var method = typeof(AgentRuntime).GetMethod("BuildStatusSummary", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var session = new AgentSession();
+        string? summary = null;
+
+        var exception = Record.Exception(() =>
+        {
+            summary = Assert.IsType<string>(method!.Invoke(null, new object?[] { session, null }));
+        });
+
+        Assert.Null(exception);
+        Assert.Contains("尚未绑定项目", summary);
     }
 }

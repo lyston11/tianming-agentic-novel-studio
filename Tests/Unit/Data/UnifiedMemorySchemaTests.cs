@@ -232,6 +232,90 @@ public class UnifiedMemorySchemaTests
     }
 
     [Fact]
+    public async Task AgentMemories_EnforceLogicalUniquenessWhenScopeColumnsAreNull()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "A" });
+        await db.SaveChangesAsync();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "author-1",
+            UserId = "user-1",
+            MemoryType = "author.style_likes",
+            MemoryKey = "style_likes",
+            Content = "[]"
+        });
+        await db.SaveChangesAsync();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "author-2",
+            UserId = "user-1",
+            MemoryType = "author.style_likes",
+            MemoryKey = "style_likes",
+            Content = "[]"
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        db.ChangeTracker.Clear();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "project-1-row",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            MemoryType = "project.constraints",
+            MemoryKey = "constraints",
+            Content = "[]"
+        });
+        await db.SaveChangesAsync();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "project-2-row",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            MemoryType = "project.constraints",
+            MemoryKey = "constraints",
+            Content = "[]"
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        db.ChangeTracker.Clear();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "session-1-row",
+            UserId = "user-1",
+            SessionId = "session-1",
+            MemoryType = "session.current_goal",
+            MemoryKey = "current_goal",
+            Content = "\"目标\""
+        });
+        await db.SaveChangesAsync();
+
+        db.AgentMemories.Add(new AgentMemory
+        {
+            Id = "session-2-row",
+            UserId = "user-1",
+            SessionId = "session-1",
+            MemoryType = "session.current_goal",
+            MemoryKey = "current_goal",
+            Content = "\"目标\""
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Fact]
     public async Task AgentSession_DeleteCascadesToChatTurnsAndSummaries()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

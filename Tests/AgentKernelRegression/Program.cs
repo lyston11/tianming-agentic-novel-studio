@@ -55,7 +55,7 @@ internal static class Program
         ("Tool registry declares side effects for every tool", ToolRegistryDeclaresSideEffectsForEveryTool),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
         ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
-        ("StartNewNovelProject is idempotent while awaiting foundation", StartNewNovelProjectIsIdempotentWhileAwaitingFoundation),
+        ("ResolveNovelProject is idempotent while awaiting foundation", ResolveNovelProjectIsIdempotentWhileAwaitingFoundation),
     };
 
     public static async Task<int> Main()
@@ -652,14 +652,14 @@ internal static class Program
         };
 
         var skippedDiscovery = policy.BeforeCall(
-            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            new AgentToolCall { Name = "ResolveNovelProject", Arguments = { ["mode"] = "create_new", ["seed"] = "玄幻学院流" } },
             session,
             bible,
             context,
             confirmed: false);
 
         Check.True(!skippedDiscovery.AllowsExecution && !skippedDiscovery.IsRepairable,
-            "Planner must not execute StartNewNovelProject before tool_search has discovered it.");
+            "Planner must not execute ResolveNovelProject before tool_search has discovered it.");
         Check.Contains("tool_search", skippedDiscovery.Message,
             "Discovery boundary block should instruct the planner to call tool_search.");
 
@@ -672,15 +672,15 @@ internal static class Program
         Check.True(discovery.AllowsExecution,
             "tool_search itself must always pass the discovery boundary.");
 
-        context.AvailableTools.Add(new AgentToolDefinition { Name = "StartNewNovelProject", Risk = "Low" });
+        context.AvailableTools.Add(new AgentToolDefinition { Name = "ResolveNovelProject", Risk = "Low" });
         var discovered = policy.BeforeCall(
-            new AgentToolCall { Name = "StartNewNovelProject", Arguments = { ["seed"] = "玄幻学院流" } },
+            new AgentToolCall { Name = "ResolveNovelProject", Arguments = { ["mode"] = "create_new", ["seed"] = "玄幻学院流" } },
             session,
             bible,
             context,
             confirmed: false);
         Check.True(discovered.AllowsExecution,
-            "Once tool_search exposes StartNewNovelProject, policy should allow its normal tool preflight.");
+            "Once tool_search exposes ResolveNovelProject, policy should allow its normal tool preflight.");
         return Task.CompletedTask;
     }
 
@@ -947,7 +947,7 @@ internal static class Program
             },
             new AgentRuntimeObservation
             {
-                ToolName = "StartNewNovelProject",
+                ToolName = "ResolveNovelProject",
                 Success = true,
                 Phase = "awaiting_user_foundation",
                 Message = "已创建新小说，现在先把地基问清楚。"
@@ -981,7 +981,7 @@ internal static class Program
             new AgentRuntimeObservation
             {
                 ObservationType = "runtime_observation",
-                ToolName = "StartNewNovelProject",
+                ToolName = "ResolveNovelProject",
                 Success = false,
                 Phase = "runtime_repeated_tool_observation",
                 Message = "本轮已有同名同参数工具结果。运行时没有重复执行写入动作；请基于已有 observation 继续反思或回复。"
@@ -1677,7 +1677,7 @@ internal static class Program
         }
     }
 
-    private static async Task StartNewNovelProjectIsIdempotentWhileAwaitingFoundation()
+    private static async Task ResolveNovelProjectIsIdempotentWhileAwaitingFoundation()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-start-project-" + Guid.NewGuid().ToString("N"));
         var settings = new UserSettingsManager(root, "AgentKernelRegression");
@@ -1693,9 +1693,10 @@ internal static class Program
         var session = new AgentSession { SessionId = "session-idempotent" };
         var call = new AgentToolCall
         {
-            Name = "StartNewNovelProject",
+            Name = "ResolveNovelProject",
             Arguments =
             {
+                ["mode"] = "create_new",
                 ["seed"] = "写一本斗罗大陆风格的玄幻学院流小说",
                 ["genre"] = "玄幻"
             }
@@ -1711,10 +1712,10 @@ internal static class Program
             var second = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
             var countAfterSecond = (await catalog.GetAsync()).Projects.Count;
 
-            Check.True(first.Success, "First StartNewNovelProject call should create the project.");
-            Check.True(second.Success, "Idempotent StartNewNovelProject call should return existing project state.");
+            Check.True(first.Success, "First ResolveNovelProject call should create the project.");
+            Check.True(second.Success, "Idempotent ResolveNovelProject call should return existing project state.");
             Check.Equal(countAfterFirst, countAfterSecond,
-                "Second StartNewNovelProject call while awaiting foundation must not create another project.");
+                "Second ResolveNovelProject call while awaiting foundation must not create another project.");
             Check.Equal("existing_novel_project", second.Artifact?.ArtifactType ?? string.Empty,
                 "Second call should return an existing-project artifact.");
         }

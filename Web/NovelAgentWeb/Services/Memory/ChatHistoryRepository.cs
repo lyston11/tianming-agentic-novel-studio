@@ -183,7 +183,11 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
 
         var summariesQuery = _context.AgentChatSummaries
             .AsNoTracking()
-            .Where(s => s.UserId == userId && s.ProjectId == normalizedProjectId && s.SessionId == sessionId);
+            .Where(s =>
+                s.UserId == userId &&
+                s.SessionId == sessionId &&
+                (s.ProjectId == normalizedProjectId ||
+                 (normalizedProjectId != null && s.ProjectId == null)));
 
         var metaSummary = await summariesQuery
             .Where(s => s.SummaryType == "meta")
@@ -367,7 +371,11 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
         var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
         var turns = await _context.AgentChatTurns
             .AsNoTracking()
-            .Where(t => t.UserId == userId && t.ProjectId == normalizedProjectId && t.SessionId == sessionId)
+            .Where(t =>
+                t.UserId == userId &&
+                t.SessionId == sessionId &&
+                (t.ProjectId == normalizedProjectId ||
+                 (normalizedProjectId != null && t.ProjectId == null)))
             .OrderByDescending(t => t.TurnIndex)
             .Take(HotWindowSize)
             .OrderBy(t => t.TurnIndex)

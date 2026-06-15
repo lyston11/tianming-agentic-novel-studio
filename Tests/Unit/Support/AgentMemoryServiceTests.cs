@@ -183,6 +183,76 @@ public class AgentMemoryServiceTests
     }
 
     [Fact]
+    public async Task PersistAsync_PersistsAuthorAndExecutionMemoryFieldClosures()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            AuthorMemory = new AuthorMemory
+            {
+                GenreHabits = new List<string> { "旧题材" },
+                FavoriteKnowledgeIds = new List<string> { "kb-old" },
+                ConfirmationTolerance = "key_checkpoints"
+            },
+            ExecutionMemory = new ExecutionMemory
+            {
+                ToolFailurePatterns = new List<string> { "旧工具失败模式" },
+                KnowledgeProcessingFailures = new List<string> { "旧知识处理失败" }
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession { UserId = "user-1" };
+        session.WorkingMemory.AuthorMemory = new AgentAuthorMemory
+        {
+            GenreHabits = new List<string> { "旧题材" },
+            FavoriteKnowledgeIds = new List<string> { "kb-old" },
+            ConfirmationTolerance = "key_checkpoints"
+        };
+        session.WorkingMemory.ExecutionMemory = new AgentExecutionMemory
+        {
+            ToolFailurePatterns = new List<string> { "旧工具失败模式" },
+            KnowledgeProcessingFailures = new List<string> { "旧知识处理失败" }
+        };
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection
+        {
+            MissionPatch = new AgentMissionPatch
+            {
+                MemoryUpdate = new AgentMemoryUpdate
+                {
+                    AuthorMemory = new AuthorMemoryUpdate
+                    {
+                        ConfirmationTolerance = "auto_low_risk",
+                        GenreHabits = new List<string> { "赛博悬疑" },
+                        FavoriteKnowledgeIds = new List<string> { "kb-new" }
+                    },
+                    ExecutionMemory = new ExecutionMemoryUpdate
+                    {
+                        ToolFailurePatterns = new List<string> { "ValidateChapterDraft: continuity" },
+                        KnowledgeProcessingFailures = new List<string> { "knowledge-task-1: missing_llm_settings" }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal("auto_low_risk", session.WorkingMemory.AuthorMemory.ConfirmationTolerance);
+        Assert.Contains("赛博悬疑", session.WorkingMemory.AuthorMemory.GenreHabits);
+        Assert.Contains("kb-new", session.WorkingMemory.AuthorMemory.FavoriteKnowledgeIds);
+        Assert.Contains("ValidateChapterDraft: continuity", session.WorkingMemory.ExecutionMemory.ToolFailurePatterns);
+        Assert.Contains("knowledge-task-1: missing_llm_settings", session.WorkingMemory.ExecutionMemory.KnowledgeProcessingFailures);
+
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.confirmation_tolerance", out var confirmationTolerance));
+        Assert.Equal("auto_low_risk", Assert.IsType<string>(confirmationTolerance));
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.genre_habits", out var genreHabits));
+        Assert.Contains("赛博悬疑", Assert.IsType<List<string>>(genreHabits));
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.favorite_knowledge_ids", out var favoriteKnowledgeIds));
+        Assert.Contains("kb-new", Assert.IsType<List<string>>(favoriteKnowledgeIds));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.tool_failures", out var toolFailures));
+        Assert.Contains("ValidateChapterDraft: continuity", Assert.IsType<List<string>>(toolFailures));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.knowledge_processing_failures", out var knowledgeFailures));
+        Assert.Contains("knowledge-task-1: missing_llm_settings", Assert.IsType<List<string>>(knowledgeFailures));
+    }
+
+    [Fact]
     public async Task PersistAsync_PersistsSessionRuntimeMemoryToSessionMemoryRepository()
     {
         var repository = new RecordingMemoryRepository();

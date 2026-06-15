@@ -118,6 +118,17 @@ namespace Tests.Unit.Services.Memory;
         db.AgentChatTurns.AddRange(
             new AgentChatTurn
             {
+                Id = "turn-unbound",
+                UserId = "user-1",
+                ProjectId = null,
+                SessionId = "session-1",
+                TurnIndex = 0,
+                Role = "user",
+                Content = "unbound session memory",
+                CreatedAt = DateTime.UtcNow
+            },
+            new AgentChatTurn
+            {
                 Id = "turn-project-1",
                 UserId = "user-1",
                 ProjectId = "project-1",
@@ -148,8 +159,62 @@ namespace Tests.Unit.Services.Memory;
 
         var window = await repo.GetPromptWindowAsync("user-1", "project-1", "session-1", CancellationToken.None);
 
+        Assert.Contains(window.RecentMessages, m => m.Content == "unbound session memory");
         Assert.Contains(window.RecentMessages, m => m.Content == "project one memory");
         Assert.DoesNotContain(window.RecentMessages, m => m.Content == "project two memory");
+    }
+
+    [Fact]
+    public async Task GetHotWindowAsync_BridgesUnboundTurnsAfterProjectIsSelected()
+    {
+        await using var db = CreateDb();
+        db.AgentChatTurns.AddRange(
+            new AgentChatTurn
+            {
+                Id = "turn-unbound",
+                UserId = "user-1",
+                ProjectId = null,
+                SessionId = "session-1",
+                TurnIndex = 1,
+                Role = "user",
+                Content = "我想先聊一个新故事方向",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-2)
+            },
+            new AgentChatTurn
+            {
+                Id = "turn-project",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                SessionId = "session-1",
+                TurnIndex = 2,
+                Role = "assistant",
+                Content = "已经切到项目继续规划",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1)
+            },
+            new AgentChatTurn
+            {
+                Id = "turn-other-project",
+                UserId = "user-1",
+                ProjectId = "project-2",
+                SessionId = "session-1",
+                TurnIndex = 3,
+                Role = "assistant",
+                Content = "其他项目的上下文",
+                CreatedAt = DateTime.UtcNow
+            });
+        await db.SaveChangesAsync();
+
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance);
+
+        var turns = await repo.GetHotWindowAsync("user-1", "project-1", "session-1", CancellationToken.None);
+
+        Assert.Contains(turns, t => t.Content == "我想先聊一个新故事方向");
+        Assert.Contains(turns, t => t.Content == "已经切到项目继续规划");
+        Assert.DoesNotContain(turns, t => t.Content == "其他项目的上下文");
     }
 
     [Fact]

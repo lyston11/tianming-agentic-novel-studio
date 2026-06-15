@@ -162,7 +162,7 @@ public class AgentToolExecutionLedgerTests
             RunId: null,
             Phase: "Conversation",
             Risk: "Low",
-            Call: new AgentToolCall { Name = "StartNewNovelProject" }));
+            Call: new AgentToolCall { Name = "ResolveNovelProject" }));
 
         await ledger.RebindProjectAsync(started.Id, "project-2");
         await ledger.CompleteAsync(started.Id, new AgentToolExecutionResult
@@ -177,11 +177,11 @@ public class AgentToolExecutionLedgerTests
 
         var recent = await ledger.GetRecentAsync("user-1", "session-1", "project-2");
         Assert.Single(recent);
-        Assert.Equal("StartNewNovelProject", recent[0].ToolName);
+        Assert.Equal("ResolveNovelProject", recent[0].ToolName);
         redis.Verify(x => x.SetAsync(
                 "tool:recent:user-1:session-1:project-2",
                 It.Is<IReadOnlyList<AgentToolExecutionSnapshot>>(items =>
-                    items.Count == 1 && items[0].ToolName == "StartNewNovelProject"),
+                    items.Count == 1 && items[0].ToolName == "ResolveNovelProject"),
                 TimeSpan.FromMinutes(30),
                 It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);

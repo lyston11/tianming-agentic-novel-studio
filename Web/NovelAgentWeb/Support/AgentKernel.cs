@@ -471,7 +471,7 @@ public sealed class ToolPolicyEngine
         return name switch
         {
             "tool_search" => ToolPolicyResult.Allow(),
-            "QueryProjectStatus" or "SearchCreativeKnowledge" or "StartNewNovelProject" => ToolPolicyResult.Allow(),
+            "QueryProjectStatus" or "SearchCreativeKnowledge" or "ResolveNovelProject" => ToolPolicyResult.Allow(),
             "PlanStoryFoundation" => ToolPolicyResult.Allow(),  // LLM decided, trust it
             "CommitStoryFoundation" => PolicyCommitStoryFoundation(call, session, bible, confirmed),
             "PlanVolumeArc" => PolicyPlanVolumeArc(bible),  // Only structural check

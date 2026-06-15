@@ -29,6 +29,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly ILogger<KnowledgeProcessingService> _logger;
     private readonly IAgentMemoryEventService? _memoryEvents;
     private readonly IContentDocumentService _contentDocuments;
+    private readonly IAgentMemoryRepository? _memoryRepository;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
@@ -38,7 +39,8 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         IHttpClientFactory httpClientFactory,
         ILogger<KnowledgeProcessingService> logger,
         IContentDocumentService contentDocuments,
-        IAgentMemoryEventService? memoryEvents = null)
+        IAgentMemoryEventService? memoryEvents = null,
+        IAgentMemoryRepository? memoryRepository = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
@@ -48,6 +50,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         _logger = logger;
         _memoryEvents = memoryEvents;
         _contentDocuments = contentDocuments;
+        _memoryRepository = memoryRepository;
     }
 
     /// <summary>
@@ -98,7 +101,40 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
             task.Status = "failed";
             task.ErrorMessage = ex.Message;
             await _db.SaveChangesAsync(ct);
+            await RecordProcessingFailureMemoryAsync(task, ex, ct);
             throw;
+        }
+    }
+
+    private async Task RecordProcessingFailureMemoryAsync(
+        Data.Entities.KnowledgeProcessingTask task,
+        Exception exception,
+        CancellationToken ct)
+    {
+        if (_memoryRepository == null || string.IsNullOrWhiteSpace(task.ProjectId))
+        {
+            return;
+        }
+
+        try
+        {
+            var note = $"{task.Id}: {task.FileName}: {exception.Message}";
+            await _memoryRepository.UnionMemoryAsync(
+                    task.UserId,
+                    task.ProjectId,
+                    new Dictionary<string, IReadOnlyList<string>>
+                    {
+                        ["execution.knowledge_processing_failures"] = new[] { note }
+                    },
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception memoryEx) when (memoryEx is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                memoryEx,
+                "Failed to record knowledge processing failure memory for task {TaskId}",
+                task.Id);
         }
     }
 

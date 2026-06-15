@@ -530,6 +530,59 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Equal("failed", updatedTask!.Status);
     }
 
+    [Fact]
+    public async Task ProcessFileAsync_FailureRecordsExecutionMemoryPattern()
+    {
+        var task = await CreateTaskWithUploadContentAsync("test content");
+        var memoryRepository = new Mock<IAgentMemoryRepository>();
+        memoryRepository
+            .Setup(x => x.UnionMemoryAsync(
+                "user-1",
+                "test-project",
+                It.IsAny<Dictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = new KnowledgeProcessingService(
+            _db,
+            _mockKnowledgeService.Object,
+            _mockEmbedding.Object,
+            _settingsManager,
+            _mockHttpClientFactory.Object,
+            _mockLogger.Object,
+            new ContentDocumentService(_db),
+            memoryEvents: null,
+            memoryRepository.Object);
+
+        await _settingsManager.SaveAsync(new UserSettings
+        {
+            LlmProvider = "openai",
+            LlmBaseUrl = "https://api.openai.com/v1",
+            LlmModel = "gpt-4",
+            LlmApiKey = "",
+            LlmTemperature = 0.7,
+            LlmMaxTokens = 2000
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ProcessFileAsync(task.Id));
+
+        memoryRepository.Verify(x => x.UnionMemoryAsync(
+                "user-1",
+                "test-project",
+                It.Is<Dictionary<string, IReadOnlyList<string>>>(updates => HasKnowledgeProcessingFailure(updates, task.Id)),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    private static bool HasKnowledgeProcessingFailure(
+        Dictionary<string, IReadOnlyList<string>> updates,
+        string taskId)
+    {
+        return updates.TryGetValue("execution.knowledge_processing_failures", out var failures) &&
+               failures.Any(f => f.Contains(taskId, StringComparison.Ordinal) &&
+                                 f.Contains("LLM settings are not configured", StringComparison.Ordinal));
+    }
+
     private async Task<TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask> CreateTaskWithUploadContentAsync(string content)
     {
         var task = new TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask

@@ -1291,7 +1291,7 @@ public sealed class AgentPlanner
             "1. Prioritize natural conversation. Use chat_reply for greetings, questions, status queries, and casual chat.\n" +
             "2. Use tool calls only when user explicitly requests an action (e.g., '开始写章节', '生成草稿', '提交章节').\n" +
             "3. For status queries like '进度如何' or '现在到哪了', use chat_reply with project context, NOT QueryProjectStatus tool.\n" +
-            "4. Project management: Call StartNewNovelProject when user wants to create a new novel. For casual greetings or questions, use chat_reply to explain you can help create novels.\n" +
+            "4. Project management: Call ResolveNovelProject when user wants to bind an existing novel or create a new novel. Let the tool decide bind_existing/create_new/auto from the user's intent. For casual greetings or questions, use chat_reply to explain you can help create novels.\n" +
             "5. Use clarify when creative info is missing for an explicit action request.\n" +
             "6. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
             "7. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
@@ -1315,7 +1315,7 @@ public sealed class AgentPlanner
             "- All: 查看所有可用工具\n\n" +
             "**示例**：\n" +
             "- 用户说\"你好\" → 缓存里已有 tool_search，不需要其他工具 → 用 chat_reply\n" +
-            "- 用户说\"创建新小说\" → 需要 StartNewNovelProject → 如果缓存里没有，调用 tool_search(phase=\"Planning\")\n" +
+            "- 用户说\"创建新小说\"或\"继续某本书\" → 需要 ResolveNovelProject → 如果缓存里没有，调用 tool_search(phase=\"Planning\")\n" +
             "- 正在规划阶段，用户说\"开始写\" → 需要生成工具 → 调用 tool_search(phase=\"Creation\")\n\n" +
             "## 任务执行原则\n" +
             "采用'先执行后修正'模式，不要频繁请求用户确认：\n" +
@@ -1441,10 +1441,15 @@ public sealed class AgentPlanner
         ## memoryUpdate.authorMemory
         - styleLikes: 喜欢的写作风格
         - styleDislikes: 反感的风格
+        - confirmationTolerance: 用户对自动执行/确认的偏好（如 auto_low_risk、key_checkpoints）
+        - genreHabits: 常写或偏好的题材习惯
+        - favoriteKnowledgeIds: 用户反复认可或偏好的知识条目ID
 
         ## memoryUpdate.executionMemory
         - toolSuccess: 工具成功经验
         - toolFailure: 工具失败原因
+        - toolFailurePatterns: 可复用的工具失败模式
+        - knowledgeProcessingFailures: 知识文件处理失败经验
 
         注意：无更新时返回空数组或null
         """;
@@ -1623,7 +1628,10 @@ public sealed class AgentPlanner
             update.AuthorMemory = new AuthorMemoryUpdate
             {
                 StyleLikes = ReadStringArray(author, "style_likes", "styleLikes"),
-                StyleDislikes = ReadStringArray(author, "style_dislikes", "styleDislikes")
+                StyleDislikes = ReadStringArray(author, "style_dislikes", "styleDislikes"),
+                ConfirmationTolerance = ReadOptionalString(author, null, "confirmation_tolerance", "confirmationTolerance"),
+                GenreHabits = ReadStringArray(author, "genre_habits", "genreHabits"),
+                FavoriteKnowledgeIds = ReadStringArray(author, "favorite_knowledge_ids", "favoriteKnowledgeIds")
             };
         }
 
@@ -1632,7 +1640,9 @@ public sealed class AgentPlanner
             update.ExecutionMemory = new ExecutionMemoryUpdate
             {
                 ToolSuccess = ReadOptionalString(execution, null, "tool_success", "toolSuccess"),
-                ToolFailure = ReadOptionalString(execution, null, "tool_failure", "toolFailure")
+                ToolFailure = ReadOptionalString(execution, null, "tool_failure", "toolFailure"),
+                ToolFailurePatterns = ReadStringArray(execution, "tool_failure_patterns", "toolFailurePatterns"),
+                KnowledgeProcessingFailures = ReadStringArray(execution, "knowledge_processing_failures", "knowledgeProcessingFailures")
             };
         }
 
@@ -1736,7 +1746,7 @@ public sealed class AgentPlanner
         var requiresInput = !observation.Success ||
                             observation.Phase.Contains("awaiting_user", StringComparison.OrdinalIgnoreCase) ||
                             observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(observation.ToolName, "StartNewNovelProject", StringComparison.OrdinalIgnoreCase);
+                            string.Equals(observation.ToolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase);
         var qualityGate = BuildRuleQualityGate(observation);
         if (qualityGate.Status is "fail" or "needs_rewrite" or "needs_user_input")
             requiresInput = qualityGate.RequiresUserInput;
@@ -1759,8 +1769,8 @@ public sealed class AgentPlanner
 
     private static AgentReflection BuildGovernanceRuleReflection(AgentObservationContext context, AgentRuntimeObservation observation)
     {
-        var isProjectStart = string.Equals(observation.ToolName, "StartNewNovelProject", StringComparison.OrdinalIgnoreCase);
-        var reply = isProjectStart || observation.Phase.Contains("foundation", StringComparison.OrdinalIgnoreCase)
+        var needsFoundationIntake = observation.Phase.Contains("foundation", StringComparison.OrdinalIgnoreCase);
+        var reply = needsFoundationIntake
             ? "这本新小说的工程已经在当前会话里准备好了。下一步我需要你补齐故事地基：类型、核心钩子、主角引擎、主要阅读快感，以及明确不要的方向。"
             : BuildNaturalGovernanceReply(context, observation);
 
@@ -1770,7 +1780,7 @@ public sealed class AgentPlanner
             GoalSatisfied = true,
             ShouldContinue = false,
             RequiresUserInput = true,
-            NextIntent = observation.Phase.Contains("foundation", StringComparison.OrdinalIgnoreCase) ? "foundation_intake" : "await_user",
+            NextIntent = needsFoundationIntake ? "foundation_intake" : "await_user",
             ReplyDraft = reply,
             NewTodoItems = new List<string> { "等待作者补充下一步输入" },
             Blockers = new List<string>(),
@@ -1778,7 +1788,7 @@ public sealed class AgentPlanner
             MissionPatch = new AgentMissionPatch
             {
                 Status = "blocked",
-                Stage = observation.Phase.Contains("foundation", StringComparison.OrdinalIgnoreCase) ? "foundation" : "await_user",
+                Stage = needsFoundationIntake ? "foundation" : "await_user",
                 CurrentFocus = context.ActiveRunId,
             },
         };

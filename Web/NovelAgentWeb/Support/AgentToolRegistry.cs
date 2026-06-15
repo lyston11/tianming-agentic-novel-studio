@@ -45,14 +45,14 @@ public sealed class AgentToolRegistry
     private static readonly string[] ConversationTools = new[]
     {
         "QueryProjectStatus",
-        "StartNewNovelProject",
+        "ResolveNovelProject",
         "ProcessKnowledgeFile",
     };
 
     private static readonly string[] PlanningTools = new[]
     {
         "QueryProjectStatus",
-        "StartNewNovelProject",
+        "ResolveNovelProject",
         "SearchCreativeKnowledge",
         "ProcessKnowledgeFile",
         "PlanStoryFoundation",
@@ -202,7 +202,7 @@ public sealed class AgentToolRegistry
         var entries = new[]
         {
             Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", Effects(toolCache: true, sqliteSnapshot: true, sqlite: new[] { "agent_tool_search_snapshots" }), (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
-            Entry("StartNewNovelProject", "project", "Low", false, new[] { "title", "genre", "seed" }, "创建一本独立新小说并切换当前会话上下文，不覆盖旧书。", Effects(memory: new[] { "session", "project" }, sqlite: new[] { "novel_projects", "agent_sessions" }), (call, session, _, _, ct) => StartNewNovelProjectAsync(call, session, ct)),
+            Entry("ResolveNovelProject", "project", "Low", false, new[] { "mode", "projectId", "projectTitle", "title", "genre", "seed" }, "由 Agent 决策绑定已有小说或创建新小说。mode 可选 bind_existing/create_new/auto；绑定不创建新书，创建会切换当前会话上下文。", Effects(memory: new[] { "session", "project" }, sqlite: new[] { "novel_projects", "agent_sessions" }), (call, session, _, _, ct) => ResolveNovelProjectAsync(call, session, ct)),
             Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", Effects(memory: new[] { "project" }, sqlite: new[] { "knowledge_base", "knowledge_processing_tasks", "content_documents", "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", Effects(), (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
             Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", Effects(memory: new[] { "execution" }, sqlite: new[] { "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
@@ -268,7 +268,103 @@ public sealed class AgentToolRegistry
             WritesVectorIndexes = vector?.ToList() ?? new List<string>()
         };
 
-    private async Task<AgentToolExecutionResult> StartNewNovelProjectAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
+    private async Task<AgentToolExecutionResult> ResolveNovelProjectAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
+    {
+        var mode = Arg(call, "mode", "auto").Trim().ToLowerInvariant();
+        var projectId = Arg(call, "projectId");
+        var projectTitle = Arg(call, "projectTitle");
+        var wantsBinding = mode is "bind_existing" or "bind" or "existing" or "continue_existing" or "continue" ||
+                           !string.IsNullOrWhiteSpace(projectId) ||
+                           !string.IsNullOrWhiteSpace(projectTitle);
+
+        if (wantsBinding)
+        {
+            var project = await FindProjectForBindingAsync(projectId, projectTitle, ct).ConfigureAwait(false);
+            if (project == null)
+            {
+                return new AgentToolExecutionResult
+                {
+                    Success = false,
+                    Message = string.IsNullOrWhiteSpace(projectTitle) && string.IsNullOrWhiteSpace(projectId)
+                        ? "没有找到可绑定的已有小说项目。"
+                        : $"没有找到匹配的已有小说项目：{FirstNonEmpty(projectTitle, projectId)}。",
+                    Phase = session.Phase,
+                    Suggestions = new[] { "列出已有项目", "创建新小说", "换一个项目名" },
+                };
+            }
+
+            await _catalog.ActivateAsync(project.Id, ct).ConfigureAwait(false);
+            session.ActiveProjectId = project.Id;
+            session.ActiveRunId = null;
+            session.Phase = "project_bound";
+            session.WorkingMemory.ProjectMemory.ProjectId = project.Id;
+            session.WorkingMemory.MissionPlan.ProjectId = project.Id;
+            session.WorkingMemory.MissionPlan.ProjectTitle = project.Title;
+            session.WorkingMemory.Mission.CurrentGoal = FirstNonEmpty(session.WorkingMemory.CurrentGoal, project.CoreHook);
+
+            return new AgentToolExecutionResult
+            {
+                Success = true,
+                Message = $"已切换到已有小说「{project.Title}」。后续记忆、工具和任务都会在这个项目上下文里继续。",
+                Phase = session.Phase,
+                Data = project,
+                Artifact = BuildArtifact("project_bound", project.Id, project.Id, string.Empty, $"已绑定已有小说「{project.Title}」。", new[] { "查看当前状态", "继续规划" }),
+                Suggestions = new[] { "查看当前状态", "继续规划", "处理知识文件" },
+            };
+        }
+
+        return await CreateNovelProjectAsync(call, session, ct).ConfigureAwait(false);
+    }
+
+    private async Task<NovelProjectInfo?> FindProjectForBindingAsync(string projectId, string projectTitle, CancellationToken ct)
+    {
+        var document = await _catalog.GetAsync(ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(projectId))
+        {
+            var byId = document.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase));
+            if (byId != null)
+            {
+                return byId;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(projectTitle))
+        {
+            var byTitle = document.Projects.FirstOrDefault(p =>
+                string.Equals(p.Title, projectTitle, StringComparison.OrdinalIgnoreCase));
+            if (byTitle != null)
+            {
+                return byTitle;
+            }
+
+            var normalizedTitle = NormalizeProjectFingerprint(projectTitle);
+            if (!string.IsNullOrWhiteSpace(normalizedTitle))
+            {
+                byTitle = document.Projects.FirstOrDefault(p =>
+                {
+                    var candidate = NormalizeProjectFingerprint(p.Title);
+                    return !string.IsNullOrWhiteSpace(candidate) &&
+                           (candidate.Contains(normalizedTitle, StringComparison.OrdinalIgnoreCase) ||
+                            normalizedTitle.Contains(candidate, StringComparison.OrdinalIgnoreCase));
+                });
+                if (byTitle != null)
+                {
+                    return byTitle;
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(document.ActiveProjectId))
+        {
+            return document.Projects.FirstOrDefault(p =>
+                string.Equals(p.Id, document.ActiveProjectId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return null;
+    }
+
+    private async Task<AgentToolExecutionResult> CreateNovelProjectAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
         var seed = Arg(call, "seed", session.WorkingMemory.CurrentGoal);
         if (IsAwaitingFoundationForExistingProject(session))
@@ -952,6 +1048,7 @@ public sealed class AgentToolRegistry
         type switch
         {
             "novel_project" or "existing_novel_project" => "新书任务已创建",
+            "project_bound" => "已有项目已绑定",
             "story_foundation_candidates" => "故事地基候选已生成",
             "story_foundation_commit" => "故事地基已固化",
             "volume_arc_plan" => "卷规划已生成",
@@ -1007,6 +1104,9 @@ public sealed class AgentToolRegistry
 
     private static string Arg(AgentToolCall call, string name, string fallback = "") =>
         call.Arguments.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value.Trim() : fallback;
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
 
     private static int ArgInt(AgentToolCall call, string name, int fallback = 0) =>
         call.Arguments.TryGetValue(name, out var value) && int.TryParse(value?.Trim(), out var parsed) ? parsed : fallback;

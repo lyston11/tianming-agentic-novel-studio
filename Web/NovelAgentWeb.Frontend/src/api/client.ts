@@ -1,5 +1,19 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5002/api';
 
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  body: string;
+
+  constructor(status: number, statusText: string, body: string) {
+    super(body || `${status} ${statusText}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+    this.body = body;
+  }
+}
+
 function getToken(): string | null {
   try {
     const stored = localStorage.getItem('auth-storage');
@@ -43,7 +57,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, response.statusText, text);
   }
 
   if (response.status === 204) {

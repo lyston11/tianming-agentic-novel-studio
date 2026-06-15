@@ -242,7 +242,7 @@ public class ToolSearchCacheServiceTests
         await service.SaveAsync(
             session,
             "planning",
-            new[] { new ToolSchema { Name = "StartNewNovelProject" } },
+            new[] { new ToolSchema { Name = "ResolveNovelProject" } },
             CancellationToken.None);
         session.DiscoveredTools.Clear();
 
@@ -252,7 +252,7 @@ public class ToolSearchCacheServiceTests
         Assert.Equal("sqlite-snapshot", result.Source);
         Assert.NotNull(result.Tools);
         Assert.Equal("Planning", session.DiscoveredPhase);
-        Assert.Equal("StartNewNovelProject", result.Tools![0].Name);
+        Assert.Equal("ResolveNovelProject", result.Tools![0].Name);
     }
 
     private static NovelAgentDbContext CreateDb()

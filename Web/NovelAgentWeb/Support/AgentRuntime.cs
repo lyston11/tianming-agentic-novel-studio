@@ -424,7 +424,7 @@ public sealed class AgentRuntime
             // Execute tool
             await EmitAsync(session, AgentSseEventType.AgentActing, $"正在执行：{action.ToolCall.Name}", ct, action.ToolCall);
             confirmed = IsAutopilotAuthorizedAction(action, session);
-            var result = string.Equals(action.ToolCall.Name, "StartNewNovelProject", StringComparison.OrdinalIgnoreCase)
+            var result = IsProjectResolutionTool(action.ToolCall.Name)
                 ? await _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct).ConfigureAwait(false)
                 : await WithSessionProjectAsync(session,
                     () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct), ct).ConfigureAwait(false);
@@ -781,6 +781,9 @@ public sealed class AgentRuntime
         IsPendingConfirmationAction(action, session) ||
         action.ToolCall?.Name is "CommitStoryFoundation" or "CommitVolumeArc" or
             "GenerateChapterWithChanges" or "RepairChapterDraft" or "CommitValidatedChapter";
+
+    private static bool IsProjectResolutionTool(string toolName) =>
+        toolName is "ResolveNovelProject";
 
     // ═══════════════════════════════════════════════════════════════
     //  Helper methods
@@ -1337,9 +1340,15 @@ public sealed class AgentRuntime
         _ => phase,
     };
 
-    private static string BuildStatusSummary(AgentSession session, StoryBibleDocument bible)
+    private static string BuildStatusSummary(AgentSession session, StoryBibleDocument? bible)
     {
         var parts = new List<string>();
+        if (bible == null)
+        {
+            parts.Add("尚未绑定项目。可以先创建新小说，或切换到已有项目。");
+            return string.Join("\n", parts);
+        }
+
         if (bible.Constitution != null)
             parts.Add($"Story Bible 已固化：{bible.Constitution.Genre}/{bible.Constitution.SubGenre}，核心钩子「{bible.Constitution.CoreHook}」");
         else
