@@ -193,7 +193,9 @@ builder.Services.AddScoped<IStoryBibleRepository, StoryBibleRepository>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Dev", policy =>
-        policy.WithOrigins("http://localhost:3002")
+        policy.WithOrigins(
+                "http://localhost:3002",
+                "http://127.0.0.1:3002")
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials());
