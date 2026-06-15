@@ -1,4 +1,4 @@
-import { API_BASE_URL, api, get, post } from './client';
+import { API_BASE_URL, ApiError, api, get, post } from './client';
 import type {
   AgentChatRequest,
   AgentChatResponse,
@@ -24,6 +24,8 @@ import type {
   VolumeArcResponse,
   WorkspaceResponse,
 } from './types';
+
+export { API_BASE_URL, ApiError };
 
 // Materials API (new multi-user endpoints)
 export const listMaterials = async (projectId: string): Promise<MaterialListResponse> => {

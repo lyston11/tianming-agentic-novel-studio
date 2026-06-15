@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  ApiError,
   createAgentSession,
   createSseConnection,
   listAgentSessions,
@@ -106,6 +107,10 @@ function mergeResumeMemory(resume: AgentSessionResumeResponse) {
   };
 }
 
+function isMissingSessionError(err: unknown) {
+  return err instanceof ApiError && err.status === 404;
+}
+
 export default function AgentPage() {
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
@@ -185,16 +190,32 @@ export default function AgentPage() {
     loadSessionMessages(detail.sessionId, detail.messages, memory);
   }, [clearEvents, loadSessionMessages, setActiveRun, setCurrentProjectId, setResumeState, setSessionId]);
 
+  const clearMissingSession = useCallback((id: string) => {
+    if (lastResumedSessionIdRef.current === id) {
+      lastResumedSessionIdRef.current = '';
+    }
+    setSessionLoadError('');
+    setSessionId('');
+    setActiveRun(null);
+    clearResumeState();
+    clearEvents();
+    setCurrentSessionMessages('');
+  }, [clearEvents, clearResumeState, setActiveRun, setCurrentSessionMessages, setSessionId]);
+
   const resumeCurrentSession = useCallback(async (id: string) => {
     try {
       setSessionLoadError('');
       const detail = await resumeAgentSession(id);
       applySessionResume(detail);
     } catch (err) {
+      if (isMissingSessionError(err)) {
+        clearMissingSession(id);
+        return;
+      }
       lastResumedSessionIdRef.current = '';
       setSessionLoadError(err instanceof Error ? err.message : '会话恢复失败');
     }
-  }, [applySessionResume]);
+  }, [applySessionResume, clearMissingSession]);
 
   const selectSession = useCallback(async (id: string) => {
     try {
@@ -202,15 +223,21 @@ export default function AgentPage() {
       const detail = await resumeAgentSession(id);
       applySessionResume(detail);
     } catch (err) {
+      if (isMissingSessionError(err)) {
+        clearMissingSession(id);
+        void reloadSessions();
+        return;
+      }
       setSessionLoadError(err instanceof Error ? err.message : '会话详情加载失败');
     }
-  }, [applySessionResume]);
+  }, [applySessionResume, clearMissingSession, reloadSessions]);
 
   const createNewSession = useCallback(async () => {
     try {
       setSessionLoadError('');
       setSessionMenu(null);
       const detail = await createAgentSession();
+      lastResumedSessionIdRef.current = detail.sessionId;
       setSessionId(detail.sessionId);
       setActiveRun(null);
       clearResumeState();
@@ -261,10 +288,15 @@ export default function AgentPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!sessionsLoaded) return;
     if (lastResumedSessionIdRef.current === sessionId) return;
+    if (!sessions.some((item) => item.sessionId === sessionId)) {
+      clearMissingSession(sessionId);
+      return;
+    }
     lastResumedSessionIdRef.current = sessionId;
     void resumeCurrentSession(sessionId);
-  }, [resumeCurrentSession, sessionId]);
+  }, [clearMissingSession, resumeCurrentSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
     if (!sessionMenu) return;

@@ -70,7 +70,7 @@ public class AgentSessionService : IAgentSessionService
         CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.AgentSessions
-            .WithUserFilterIfNotAdmin(userId, isAdmin)
+            .WithUserFilter(userId)
             .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
 
         if (session == null)
@@ -88,7 +88,7 @@ public class AgentSessionService : IAgentSessionService
         CancellationToken cancellationToken = default)
     {
         var query = _dbContext.AgentSessions
-            .WithUserFilterIfNotAdmin(userId, isAdmin);
+            .WithUserFilter(userId);
 
         if (!includeArchived)
         {
@@ -113,7 +113,7 @@ public class AgentSessionService : IAgentSessionService
         CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.AgentSessions
-            .WithUserFilterIfNotAdmin(userId, isAdmin)
+            .WithUserFilter(userId)
             .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
 
         if (session == null)
@@ -148,7 +148,7 @@ public class AgentSessionService : IAgentSessionService
         CancellationToken cancellationToken = default)
     {
         var session = await _dbContext.AgentSessions
-            .WithUserFilterIfNotAdmin(userId, isAdmin)
+            .WithUserFilter(userId)
             .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
 
         if (session == null)

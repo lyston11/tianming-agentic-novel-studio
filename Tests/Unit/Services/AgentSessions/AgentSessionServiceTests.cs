@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using Xunit;
 
@@ -63,6 +64,113 @@ public class AgentSessionServiceTests
         Assert.Single(response);
         Assert.Equal("project-1", response[0].ActiveProjectId);
         Assert.Equal(1, response[0].MessageCount);
+    }
+
+    [Fact]
+    public async Task ListUserSessionsAsync_AdminReturnsOnlyOwnAgentSessions()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.AddRange(
+            new AgentSession
+            {
+                Id = "admin-session",
+                UserId = "admin-user",
+                ProjectId = null,
+                Title = "管理员自己的会话",
+                SessionData = "{}",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                UpdatedAt = DateTime.UtcNow.AddMinutes(-1)
+            },
+            new AgentSession
+            {
+                Id = "other-session",
+                UserId = "other-user",
+                ProjectId = null,
+                Title = "其他用户的会话",
+                SessionData = "{}",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        await db.SaveChangesAsync();
+        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+
+        var response = await service.ListUserSessionsAsync("admin-user", isAdmin: true, cancellationToken: CancellationToken.None);
+
+        var session = Assert.Single(response);
+        Assert.Equal("admin-session", session.SessionId);
+    }
+
+    [Fact]
+    public async Task GetSessionByIdAsync_AdminCannotReadOtherUsersAgentSession()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = "other-session",
+            UserId = "other-user",
+            ProjectId = null,
+            Title = "其他用户的会话",
+            SessionData = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            service.GetSessionByIdAsync("other-session", "admin-user", isAdmin: true, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_AdminCannotUpdateOtherUsersAgentSession()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = "other-session",
+            UserId = "other-user",
+            ProjectId = null,
+            Title = "其他用户的会话",
+            SessionData = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            service.UpdateSessionAsync(
+                "other-session",
+                new UpdateAgentSessionRequest { Title = "不应该成功" },
+                "admin-user",
+                isAdmin: true,
+                CancellationToken.None));
+
+        var otherSession = await db.AgentSessions.SingleAsync(s => s.Id == "other-session");
+        Assert.Equal("其他用户的会话", otherSession.Title);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_AdminCannotDeleteOtherUsersAgentSession()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = "other-session",
+            UserId = "other-user",
+            ProjectId = null,
+            Title = "其他用户的会话",
+            SessionData = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            service.DeleteSessionAsync("other-session", "admin-user", isAdmin: true, CancellationToken.None));
+
+        Assert.True(await db.AgentSessions.AnyAsync(s => s.Id == "other-session"));
     }
 
     private static NovelAgentDbContext CreateDb()
