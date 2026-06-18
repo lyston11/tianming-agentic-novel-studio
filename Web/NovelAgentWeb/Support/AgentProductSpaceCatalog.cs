@@ -14,7 +14,7 @@ public static class AgentProductSpaceCatalog
                 Contains = new List<string> { "novel_projects", "volumes", "chapters", "story_constitutions" },
                 ProcessArtifacts = new List<string> { "待提交候选不会直接进入书城" },
                 FinalArtifacts = new List<string> { "已提交 Story Bible", "已提交章节", "项目状态与字数" },
-                PrimaryTools = new List<string> { "ResolveNovelProject", "CommitStoryFoundation", "CommitVolumeArc", "CommitValidatedChapter", "QueryWorkspaceState" }
+                Capabilities = new List<string> { "查看项目与书城状态", "绑定或创建创作项目", "固化 Story Bible", "提交最终章节" }
             },
             new()
             {
@@ -24,7 +24,7 @@ public static class AgentProductSpaceCatalog
                 Contains = new List<string> { "agent_runs", "content_documents", "mission_blackboard", "tool_execution_ledger" },
                 ProcessArtifacts = new List<string> { "故事地基候选", "卷规划候选", "章节候选", "上下文包", "章节草稿", "校验报告", "修复记录" },
                 FinalArtifacts = new List<string> { "通过 commit 工具固化后的 Story Bible 或章节" },
-                PrimaryTools = new List<string> { "PlanStoryFoundation", "PlanVolumeArc", "PlanChapter", "BuildChapterContextPackage", "GenerateChapterWithChanges", "ValidateChapterDraft", "RepairChapterDraft", "ReviewChapter" }
+                Capabilities = new List<string> { "生成规划候选", "构建上下文包", "生成草稿", "校验草稿", "修复草稿", "复盘执行结果" }
             },
             new()
             {
@@ -34,7 +34,7 @@ public static class AgentProductSpaceCatalog
                 Contains = new List<string> { "knowledge_base", "knowledge_processing_tasks", "project_knowledge_usages", "content_chunks", "content_vector_points" },
                 ProcessArtifacts = new List<string> { "上传处理任务", "抽取条目", "检索命中", "项目引用记录" },
                 FinalArtifacts = new List<string> { "可复用知识条目", "项目知识引用关系" },
-                PrimaryTools = new List<string> { "ProcessKnowledgeFile", "SearchCreativeKnowledge", "RefreshProjectIndexes", "QueryWorkspaceState" }
+                Capabilities = new List<string> { "处理上传资料", "检索创作知识", "维护知识与索引", "查看知识库概览" }
             },
             new()
             {
@@ -44,7 +44,7 @@ public static class AgentProductSpaceCatalog
                 Contains = new List<string> { "chat_memory", "session_memory", "project_memory", "author_memory", "execution_memory", "agent_memory_events" },
                 ProcessArtifacts = new List<string> { "本轮观察", "短期偏好", "失败模式", "修复经验" },
                 FinalArtifacts = new List<string> { "作者长期偏好", "项目长期约束", "会话待办和开放问题" },
-                PrimaryTools = new List<string> { "SearchCreativeKnowledge", "ReviewChapter" }
+                Capabilities = new List<string> { "读取近期对话", "沉淀会话目标", "沉淀项目约束", "沉淀作者偏好", "沉淀执行经验" }
             },
             new()
             {
@@ -54,7 +54,7 @@ public static class AgentProductSpaceCatalog
                 Contains = new List<string> { "tool_search", "available_tools", "recent_observations", "guardrails", "policy_engine" },
                 ProcessArtifacts = new List<string> { "工具发现结果", "工具调用账本", "反思补丁", "治理观察" },
                 FinalArtifacts = new List<string> { "面向用户的回复", "持久化后的记忆事件" },
-                PrimaryTools = new List<string> { "tool_search", "QueryWorkspaceState", "QueryProjectStatus" }
+                Capabilities = new List<string> { "检索工具语义", "记录工具执行", "生成运行时观察", "执行安全护栏", "返回用户可见回复" }
             }
         },
         MemoryLayers = new List<AgentMemoryLayerDefinition>
@@ -104,9 +104,9 @@ public static class AgentProductSpaceCatalog
         {
             "Agent 自己根据用户意图、产品空间地图和工具语义决定是否调用工具。",
             "Runtime 只提供状态、工具执行和安全边界，不做业务关键词路由。",
-            "涉及真实系统状态、书城、知识库、工作流完成度时，不凭空猜测，可自主调用只读状态工具。",
+            "涉及真实系统状态、书城、知识库、工作流完成度时，不凭空猜测；从完整工具目录中选择具备相应读能力的工具。",
             "区分过程产物和最终产物：规划/草稿/校验在工作流中，提交后的章节和 Story Bible 才进入书城。",
-            "未绑定项目时允许自然聊天、工具发现、工作台状态查询和项目解析；不能把项目记忆写到未知项目。"
+            "未绑定项目时允许自然聊天、工具语义检索和安全的只读/项目解析能力；不能把项目记忆写到未知项目。"
         }
     };
 }
@@ -126,7 +126,7 @@ public sealed class AgentProductSpaceDefinition
     public List<string> Contains { get; set; } = new();
     public List<string> ProcessArtifacts { get; set; } = new();
     public List<string> FinalArtifacts { get; set; } = new();
-    public List<string> PrimaryTools { get; set; } = new();
+    public List<string> Capabilities { get; set; } = new();
 }
 
 public sealed class AgentMemoryLayerDefinition
@@ -141,6 +141,9 @@ public sealed class AgentMemoryLayerDefinition
 public sealed class AgentWorkspaceState
 {
     public AgentCurrentSessionState CurrentSession { get; set; } = new();
+    public AgentWorkspaceAuthorProfileState AuthorProfile { get; set; } = new();
+    public int ProjectTotalCount { get; set; }
+    public int ProjectPreviewCount { get; set; }
     public List<AgentWorkspaceProjectState> VisibleProjects { get; set; } = new();
     public AgentWorkspaceKnowledgeState KnowledgeBase { get; set; } = new();
     public AgentWorkspaceWorkflowState Workflow { get; set; } = new();
@@ -156,11 +159,26 @@ public sealed class AgentWorkspaceState
             HasActiveProject = !string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
                 !session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase)
         },
+        AuthorProfile = new AgentWorkspaceAuthorProfileState
+        {
+            DisplayName = session.WorkingMemory.AuthorMemory?.DisplayName ?? string.Empty,
+            StyleLikeCount = session.WorkingMemory.AuthorMemory?.StyleLikes.Count ?? 0,
+            StyleDislikeCount = session.WorkingMemory.AuthorMemory?.StyleDislikes.Count ?? 0,
+            GenreHabitCount = session.WorkingMemory.AuthorMemory?.GenreHabits.Count ?? 0
+        },
         Notes = new List<string>
         {
-            "这是轻量提示，不是数据库全量状态；需要真实书城/知识库/工作流状态时可调用 QueryWorkspaceState。"
+            "这是轻量提示，不是数据库全量状态；需要真实状态时，从完整工具目录中选择具备相应读能力的工具。"
         }
     };
+}
+
+public sealed class AgentWorkspaceAuthorProfileState
+{
+    public string DisplayName { get; set; } = string.Empty;
+    public int StyleLikeCount { get; set; }
+    public int StyleDislikeCount { get; set; }
+    public int GenreHabitCount { get; set; }
 }
 
 public sealed class AgentCurrentSessionState

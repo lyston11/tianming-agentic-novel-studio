@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TM.Services.Framework.AI.NovelAgent.Models;
@@ -82,7 +83,11 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             var document = await _storyBibleService.LoadAsync(ct).ConfigureAwait(false);
             var storyState = await _storyStateSnapshotService.BuildForChapterAsync(chapterId, ct)
                 .ConfigureAwait(false);
-            var content = await _contentService.GetChapterAsync(chapterId).ConfigureAwait(false) ?? string.Empty;
+            var storedContent = await _contentService.GetChapterAsync(chapterId).ConfigureAwait(false) ?? string.Empty;
+            var content = ResolveReviewContent(
+                storedContent,
+                run.DraftArtifact?.CommittedContent,
+                run.DraftArtifact?.DraftContent);
 
             var review = new NovelAgentPostGenerationReview
             {
@@ -108,6 +113,42 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             AddNextChapterSuggestions(review, run.ChapterBrief, storyState);
 
             return review;
+        }
+
+        private static string ResolveReviewContent(
+            string? storedContent,
+            string? committedContent,
+            string? draftContent)
+        {
+            if (!string.IsNullOrWhiteSpace(storedContent))
+                return storedContent.Trim();
+            if (!string.IsNullOrWhiteSpace(committedContent))
+                return committedContent.Trim();
+            return StripChanges(draftContent);
+        }
+
+        private static string StripChanges(string? content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return string.Empty;
+
+            var xml = Regex.Match(
+                content,
+                @"<\s*(?:chapter_changes|changes)\b[^>]*>[\s\S]*?</\s*(?:chapter_changes|changes)\s*>",
+                RegexOptions.IgnoreCase);
+            if (xml.Success)
+                return content[..xml.Index].Trim();
+
+            var xmlStart = Regex.Match(
+                content,
+                @"<\s*(?:chapter_changes|changes)\b[^>]*>",
+                RegexOptions.IgnoreCase);
+            if (xmlStart.Success)
+                return content[..xmlStart.Index].Trim();
+
+            const string marker = "## CHANGES";
+            var index = content.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            return index >= 0 ? content[..index].Trim() : content.Trim();
         }
 
         private async Task AddValidationCheckAsync(

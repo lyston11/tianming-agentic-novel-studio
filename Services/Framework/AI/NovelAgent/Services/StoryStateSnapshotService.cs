@@ -35,6 +35,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             _embeddingService = embeddingService;
         }
 
+        public StoryBibleService StoryBibleService => _storyBibleService;
+
         public async Task<StoryStateSnapshot> BuildForChapterAsync(
             string chapterId,
             CancellationToken ct = default)

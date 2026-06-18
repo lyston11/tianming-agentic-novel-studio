@@ -10,6 +10,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         public string SubGenre { get; set; } = string.Empty;
         public string TargetReader { get; set; } = string.Empty;
         public string DesiredDirection { get; set; } = string.Empty;
+        public List<string> CandidateDirections { get; set; } = new();
+        public List<string> ForbiddenDirections { get; set; } = new();
     }
 
     public sealed class ChapterCreativeRequest
@@ -25,6 +27,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         public List<string> CharacterStates { get; set; } = new();
         public List<string> UsedPlotPatterns { get; set; } = new();
         public List<string> SimilarContentFragments { get; set; } = new();
+        public List<string> CandidateDirections { get; set; } = new();
+        public List<string> ForbiddenDirections { get; set; } = new();
     }
 
     public sealed class MacroStoryConceptCandidate
@@ -46,6 +50,24 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
 
         [JsonPropertyName("protagonistEngine")]
         public string ProtagonistEngine { get; set; } = string.Empty;
+
+        [JsonPropertyName("worldbuildingBlueprint")]
+        public string WorldbuildingBlueprint { get; set; } = string.Empty;
+
+        [JsonPropertyName("progressionSystem")]
+        public string ProgressionSystem { get; set; } = string.Empty;
+
+        [JsonPropertyName("protagonistProfile")]
+        public string ProtagonistProfile { get; set; } = string.Empty;
+
+        [JsonPropertyName("pleasureLoop")]
+        public string PleasureLoop { get; set; } = string.Empty;
+
+        [JsonPropertyName("firstThreeVolumes")]
+        public List<string> FirstThreeVolumes { get; set; } = new();
+
+        [JsonPropertyName("keyCharacters")]
+        public List<string> KeyCharacters { get; set; } = new();
 
         [JsonPropertyName("depthLayer")]
         public string DepthLayer { get; set; } = string.Empty;

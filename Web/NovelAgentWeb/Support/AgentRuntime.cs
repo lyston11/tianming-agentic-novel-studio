@@ -1,7 +1,10 @@
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -16,8 +19,12 @@ public sealed class AgentRuntime
     private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
     private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
 
-    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
-    private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
+    private WorkspaceEntry? _workspaceEntry;
+    private NovelAgentWorkspace? _workspaceInstance;
+    private NovelProjectCatalog? _catalogInstance;
+
+    private NovelAgentWorkspace _workspace => _workspaceInstance ?? throw new InvalidOperationException("Workspace not set for current request");
+    private NovelProjectCatalog _catalog => _catalogInstance ?? throw new InvalidOperationException("Catalog not set for current request");
 
     private readonly IWorkspaceFactory _workspaceFactory;
     private readonly ICurrentUserService _currentUserService;
@@ -38,6 +45,9 @@ public sealed class AgentRuntime
     private readonly ConversationKernel _conversationKernel;
     private readonly AgentRecoveryEngine _recoveryEngine;
     private readonly PhaseContextBuilder _contextBuilder;
+    private readonly IAgentRuntimeRunService _runtimeRuns;
+    private readonly IAgentRuntimeEventService _runtimeEvents;
+    private readonly IAgentInterruptService _interrupts;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentRuntime> _logger;
     private AgentAction? lastAction;
@@ -61,6 +71,9 @@ public sealed class AgentRuntime
         AgentToolGuardrails guardrails,
         ConversationKernel conversationKernel,
         PhaseContextBuilder contextBuilder,
+        IAgentRuntimeRunService runtimeRuns,
+        IAgentRuntimeEventService runtimeEvents,
+        IAgentInterruptService interrupts,
         IServiceScopeFactory scopeFactory,
         ILogger<AgentRuntime> logger)
     {
@@ -83,6 +96,9 @@ public sealed class AgentRuntime
         _conversationKernel = conversationKernel;
         _recoveryEngine = new AgentRecoveryEngine(toolRegistry, guardrails);
         _contextBuilder = contextBuilder;
+        _runtimeRuns = runtimeRuns;
+        _runtimeEvents = runtimeEvents;
+        _interrupts = interrupts;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -115,30 +131,64 @@ public sealed class AgentRuntime
         }
     }
 
+    public async Task<AgentForegroundTurnResult> TryHandleForegroundAsync(string sessionId, string userMessage, CancellationToken ct)
+    {
+        var userId = _currentUserService.GetUserId();
+        var session = await _sessionManager.GetOrCreateSessionAsync(sessionId, ct).ConfigureAwait(false);
+        var projectId = string.IsNullOrWhiteSpace(session.ActiveProjectId)
+            ? "temp-" + userId
+            : session.ActiveProjectId;
+
+        var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct).ConfigureAwait(false);
+        SetWorkspaceContext(workspaceEntry);
+        try
+        {
+            return await TryHandleForegroundWithWorkspaceAsync(session, userMessage, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ClearWorkspaceContext(releaseLease: true);
+        }
+    }
+
     private void SetWorkspaceContext(WorkspaceEntry workspaceEntry)
     {
         var workspace = workspaceEntry.Workspace;
         var catalog = new NovelProjectCatalog(workspace, _scopeFactory);
 
+        _logger.LogInformation(
+            "Agent workspace context set: entryProject={EntryProjectId}, workspaceProject={WorkspaceProjectId}, user={UserId}",
+            workspaceEntry.ProjectId,
+            workspace.ProjectId,
+            workspace.UserId);
+
         _currentWorkspaceEntry.Value = workspaceEntry;
         _currentWorkspace.Value = workspace;
         _currentCatalog.Value = catalog;
+        _workspaceEntry = workspaceEntry;
+        _workspaceInstance = workspace;
+        _catalogInstance = catalog;
         workspace.SetRequestContext();
-        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        _toolRegistry.SetWorkspaceContext(workspace, catalog);
+        AgentObservationBuilder.SetWorkspace(workspace);
         ProjectScopedExecutor.SetCatalog(catalog);
         PhaseContextBuilder.SetWorkspace(workspace);
     }
 
     private void ClearWorkspaceContext(bool releaseLease)
     {
-        var workspaceEntry = _currentWorkspaceEntry.Value;
-        var workspace = _currentWorkspace.Value;
+        var workspaceEntry = _workspaceEntry ?? _currentWorkspaceEntry.Value;
+        var workspace = _workspaceInstance ?? _currentWorkspace.Value;
 
         workspace?.ClearRequestContext();
         _currentWorkspaceEntry.Value = null;
         _currentWorkspace.Value = null;
         _currentCatalog.Value = null;
-        AgentToolRegistry.ClearWorkspace();
+        _workspaceEntry = null;
+        _workspaceInstance = null;
+        _catalogInstance = null;
+        _toolRegistry.ClearWorkspaceContext();
+        AgentObservationBuilder.ClearWorkspace();
         ProjectScopedExecutor.ClearCatalog();
         PhaseContextBuilder.ClearWorkspace();
 
@@ -153,9 +203,17 @@ public sealed class AgentRuntime
             ? "temp-" + userId
             : session.ActiveProjectId;
 
-        var currentEntry = _currentWorkspaceEntry.Value;
+        var currentEntry = _workspaceEntry ?? _currentWorkspaceEntry.Value;
         if (currentEntry != null && string.Equals(currentEntry.ProjectId, desiredProjectId, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Agent workspace context already matches session: desiredProject={DesiredProjectId}, entryProject={EntryProjectId}, workspaceProject={WorkspaceProjectId}, sessionProject={SessionProjectId}",
+                desiredProjectId,
+                currentEntry.ProjectId,
+                currentEntry.Workspace.ProjectId,
+                session.ActiveProjectId);
             return;
+        }
 
         WorkspaceEntry nextEntry;
         if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
@@ -172,6 +230,12 @@ public sealed class AgentRuntime
         try
         {
             SetWorkspaceContext(nextEntry);
+            _logger.LogInformation(
+                "Agent workspace context switched: desiredProject={DesiredProjectId}, entryProject={EntryProjectId}, workspaceProject={WorkspaceProjectId}, sessionProject={SessionProjectId}",
+                desiredProjectId,
+                nextEntry.ProjectId,
+                nextEntry.Workspace.ProjectId,
+                session.ActiveProjectId);
         }
         catch
         {
@@ -243,6 +307,7 @@ public sealed class AgentRuntime
         for (var step = 1; step <= maxSteps; step++)
         {
             ct.ThrowIfCancellationRequested();
+            userMessage = await DrainInterruptsAsync(session, userMessage, ct).ConfigureAwait(false);
 
             // Observe - only if we have a project
             if (project != null && bible != null)
@@ -288,7 +353,25 @@ public sealed class AgentRuntime
             // First respect a valid user-facing text reply. IsNoTool means planner_failed_or_no_action,
             // not "this normal chat response did not need a tool".
             if (ShouldReturnUserFacingReply(action))
-                return await FinishTextResponse(session, userMessage, action, lastContext, trace, lastReflection, ct);
+            {
+                if (ShouldDeferUserFacingReplyToScheduler(action, lastContext))
+                {
+                    var scheduledAction = _taskScheduler.BuildContinueAction(lastContext);
+                    if (scheduledAction != null)
+                    {
+                        action = scheduledAction;
+                        lastAction = action;
+                    }
+                    else
+                    {
+                        return await FinishTextResponse(session, userMessage, action, lastContext, trace, lastReflection, ct);
+                    }
+                }
+                else
+                {
+                    return await FinishTextResponse(session, userMessage, action, lastContext, trace, lastReflection, ct);
+                }
+            }
 
             // no_action sentinel — planner/provider failed to produce a usable action.
             if (action.IsNoTool || action.ToolCall == null)
@@ -313,15 +396,27 @@ public sealed class AgentRuntime
                 }
             }
 
-            // Retrieve → convert to SearchCreativeKnowledge tool call
+            // Retrieve is a planner intent, not a runtime route to a privileged tool.
             if (action.Type == AgentActionType.Retrieve)
             {
-                action.Type = AgentActionType.ToolCall;
-                action.ToolCall ??= new AgentToolCall
+                var query = action.RagQueries.FirstOrDefault() ?? userMessage;
+                session.WorkingMemory.RecentObservations.Add(new AgentRuntimeObservation
                 {
-                    Name = "SearchCreativeKnowledge",
-                    Arguments = { ["query"] = action.RagQueries.FirstOrDefault() ?? userMessage },
+                    ObservationType = "runtime_observation",
+                    ToolName = "runtime",
+                    Success = false,
+                    Phase = "retrieve_requires_tool_selection",
+                    Message = $"Planner requested retrieval for '{query}', but runtime will not route it to a specific business tool. Choose a concrete registered tool by its semantics."
+                });
+                action = new AgentAction
+                {
+                    Type = AgentActionType.ChatReply,
+                    Intent = action.Intent,
+                    Reply = "我需要先根据当前工具语义选择合适的检索或状态能力，再继续处理。",
+                    IsNoTool = true,
+                    Source = "runtime_retrieve_requires_tool_selection"
                 };
+                continue;
             }
 
             // Autopilot mode: planner confirm_request is treated as an executable tool call.
@@ -422,12 +517,37 @@ public sealed class AgentRuntime
             }
 
             // Execute tool
-            await EmitAsync(session, AgentSseEventType.AgentActing, $"正在执行：{action.ToolCall.Name}", ct, action.ToolCall);
+            var progress = TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressPresenter.DescribeRunning(
+                action.ToolCall.Name,
+                "running",
+                session.Phase,
+                session.ActiveRunId);
+            AddProgressObservation(session, step, action.ToolCall.Name, progress);
+            await EmitAsync(session, AgentSseEventType.AgentActing, progress.Title, ct, progress, session.ActiveRunId);
             confirmed = IsAutopilotAuthorizedAction(action, session);
-            var result = CanExecuteWithoutProject(action.ToolCall.Name)
-                ? await _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct).ConfigureAwait(false)
-                : await WithSessionProjectAsync(session,
+            AgentToolExecutionResult result;
+            if (CanExecuteWithoutProject(action.ToolCall.Name))
+            {
+                result = await ExecuteToolWithHeartbeatAsync(session, action.ToolCall,
                     () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct), ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await EnsureWorkspaceForSessionProjectAsync(session, ct).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "Executing project tool with workspace: tool={ToolName}, sessionProject={SessionProjectId}, runtimeWorkspace={RuntimeWorkspaceProjectId}",
+                    action.ToolCall.Name,
+                    session.ActiveProjectId,
+                    _workspace.ProjectId);
+                project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+                if (project == null)
+                    throw new InvalidOperationException($"Project {session.ActiveProjectId} not found");
+                bible = await _catalog.WithProjectAsync(project,
+                    () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+                result = await WithSessionProjectAsync(session,
+                    () => ExecuteToolWithHeartbeatAsync(session, action.ToolCall,
+                        () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed, ct), ct), ct).ConfigureAwait(false);
+            }
 
             if (result.Success)
             {
@@ -456,7 +576,9 @@ public sealed class AgentRuntime
                         ObservationType = "tool_recovery",
                         ToolName = action.ToolCall.Name,
                         Success = result.Success,
-                        Message = $"工具 {action.ToolCall.Name} 初次失败后自动恢复成功",
+                        Message = result.Success
+                            ? $"工具 {action.ToolCall.Name} 初次失败后自动恢复成功"
+                            : $"工具 {action.ToolCall.Name} 初次失败后已进入可继续修复状态：{result.Message}",
                         RunId = result.RunId ?? session.ActiveRunId ?? string.Empty,
                         Phase = result.Phase,
                     };
@@ -498,7 +620,8 @@ public sealed class AgentRuntime
             }
 
             lastResult = result;
-            _guardrails.RecordSuccess(action.ToolCall.Name);
+            if (result.Success)
+                _guardrails.RecordSuccess(action.ToolCall.Name);
             if (!string.IsNullOrWhiteSpace(result.Phase)) session.Phase = result.Phase;
 
             // Refresh project if tool execution set ActiveProjectId
@@ -516,7 +639,7 @@ public sealed class AgentRuntime
             if (project != null)
                 await SyncMissionPlanAsync(session, project, result, action, null, ct).ConfigureAwait(false);
 
-            await PublishToolResultAsync(session, result, ct).ConfigureAwait(false);
+            await PublishToolResultAsync(session, action.ToolCall.Name, result, ct).ConfigureAwait(false);
 
             var observation = AddRuntimeObservation(session, step, action.ToolCall.Name, result);
             trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "act", Action = action, Observation = observation });
@@ -539,11 +662,11 @@ public sealed class AgentRuntime
             await EmitAsync(session, AgentSseEventType.MissionUpdated, "任务记忆已更新。", ct, session.WorkingMemory.MissionPlan);
 
             // Loop termination checks
-            if (!result.Success || reflection.RequiresUserInput || reflection.GoalSatisfied || !reflection.ShouldContinue)
+            if (ShouldStopAfterToolResult(result, reflection, session.WorkingMemory.MissionPlan))
                 return await FinishReflectionResponse(session, userMessage, action, lastContext, trace, reflection, result, ct);
 
-            // Safety escalation at turn 7
-            if (step >= 7)
+            // Safety escalation at configured turn limit.
+            if (ShouldEscalateSafety(step, maxSteps))
             {
                 var safetyAction = new AgentAction
                 {
@@ -578,6 +701,109 @@ public sealed class AgentRuntime
             Suggestions = lastResult?.Suggestions ?? new[] { "查看当前状态", "继续下一步" },
             Source = "runtime_guard",
         }, lastContext, trace, lastReflection, ct);
+    }
+
+    private async Task<AgentForegroundTurnResult> TryHandleForegroundWithWorkspaceAsync(
+        AgentSession session,
+        string userMessage,
+        CancellationToken ct)
+    {
+        session.UpdatedAt = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(session.Title) || session.Title == "新会话")
+            session.Title = BuildSessionTitle(userMessage);
+
+        NovelProjectInfo? project = null;
+        if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
+            project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+
+        var trace = new List<AgentRuntimeStep>();
+        var userTurn = _conversationKernel.BuildEnvelope(session, userMessage);
+        StoryBibleDocument? bible = null;
+        if (project != null)
+        {
+            bible = await _catalog.WithProjectAsync(project,
+                () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+            await _memoryService.HydrateAsync(session, project, bible, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            await _memoryService.HydrateProjectlessAsync(session, ct).ConfigureAwait(false);
+        }
+
+        trace.Add(new AgentRuntimeStep
+        {
+            StepIndex = 0,
+            Stage = "conversation_intent",
+            StopReason = $"{userTurn.Intent.Label}:{userTurn.DialogueAct}",
+        });
+
+        var pendingAction = ResolvePendingConfirmationAction(session, userMessage);
+        if (pendingAction != null)
+        {
+            if (pendingAction.Type == AgentActionType.FinalReply)
+            {
+                await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
+                var response = await FinishTextResponse(session, userMessage, pendingAction, null, trace, null, ct).ConfigureAwait(false);
+                return AgentForegroundTurnResult.Reply(response);
+            }
+
+            return AgentForegroundTurnResult.Background();
+        }
+
+        AgentObservationContext context;
+        if (project != null && bible != null)
+        {
+            _blackboardRecovery.Recover(session, project, bible);
+            context = await _catalog.WithProjectAsync(project,
+                () => _observationBuilder.BuildAsync(session, project, bible, userMessage, userTurn.Intent, ct), ct).ConfigureAwait(false);
+            context.AnchorPrompt = await BuildAnchorPromptAsync(session, project, bible, 1, 1, userMessage, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            context = BuildProjectlessReflectContext(session, userMessage, new AgentObservationContext
+            {
+                TurnIntent = userTurn.Intent,
+                UserTurn = userTurn,
+            });
+            context.AnchorPrompt = "Foreground turn. No active project. Decide whether to answer now or defer action to the background workflow.";
+        }
+
+        trace.Add(new AgentRuntimeStep
+        {
+            StepIndex = 1,
+            Stage = "observe",
+            Action = new AgentAction
+            {
+                Type = AgentActionType.FinalReply,
+                Intent = "observe",
+                Brief = context.MissionPlan?.LastVerifiedState ?? "foreground_turn",
+                Source = "foreground_observation",
+            },
+        });
+
+        var action = await _planner.PlanActionAsync(context, ct).ConfigureAwait(false);
+        session.WorkingMemory.LastDecision = action.ToDecision();
+        RememberUserMessage(session, userMessage, action);
+        trace.Add(new AgentRuntimeStep { StepIndex = 1, Stage = "plan", Action = action });
+
+        if (!ShouldReturnUserFacingReply(action))
+        {
+            if (IsForegroundReadableToolAction(action))
+                return await ExecuteForegroundReadableToolAsync(session, userMessage, action, context, project, bible, trace, ct)
+                    .ConfigureAwait(false);
+
+            if (ShouldStartBackground(action))
+                return AgentForegroundTurnResult.Background();
+
+            await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
+            var fallback = BuildForegroundNoBackgroundReply(action);
+            var response = await FinishTextResponse(session, userMessage, fallback, context, trace, null, ct).ConfigureAwait(false);
+            return AgentForegroundTurnResult.NoBackground(response);
+        }
+
+        await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
+        var reply = await FinishTextResponse(session, userMessage, action, context, trace, null, ct).ConfigureAwait(false);
+        return AgentForegroundTurnResult.Reply(reply);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -774,10 +1000,10 @@ public sealed class AgentRuntime
         new AgentToolDefinition
         {
             Name = "tool_search",
-            Description = "搜索指定阶段的可用工具。",
+            Description = "全局工具目录与语义检索入口。query/intent/context 用于检索工具语义；phase 只是排序提示，不是阶段白名单。",
             Risk = "Low",
             RequiresConfirmation = false,
-            Arguments = new List<string> { "phase" },
+            Arguments = new List<string> { "query", "intent", "context", "phase", "includeAll", "limit" },
             Semantic = new AgentToolSemanticSpec
             {
                 DomainSurface = "Agent Runtime",
@@ -785,7 +1011,7 @@ public sealed class AgentRuntime
                 ReadsFrom = new List<string> { "agent_tool_registry", "tool_search_cache" },
                 WritesTo = new List<string> { "agent_tool_search_snapshots", "tool_search_cache" },
                 UserVisibleWhere = "Agent 对话中的工具发现结果",
-                ResultSemantics = "返回某个阶段可用工具及其语义，帮助模型自主选择下一步。"
+                ResultSemantics = "返回全局工具目录的语义检索结果，帮助模型自主选择下一步；不是阶段白名单，也不是业务工具前置门禁。"
             }
         }
     };
@@ -798,7 +1024,19 @@ public sealed class AgentRuntime
     private static bool CanExecuteWithoutProject(string toolName) =>
         string.Equals(toolName, "tool_search", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(toolName, "QueryWorkspaceState", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(toolName, "SearchCreativeKnowledge", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(toolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLongRunningWritingTool(string toolName) =>
+        toolName is "GenerateChapterWithChanges" or "RepairChapterDraft" or "CommitValidatedChapter";
+
+    private static bool IsForegroundReadableToolAction(AgentAction action)
+    {
+        if (action.Type != AgentActionType.ToolCall || action.ToolCall == null)
+            return false;
+
+        return action.ToolCall.Name is "QueryWorkspaceState" or "QueryProjectStatus" or "SearchCreativeKnowledge";
+    }
 
     private static AgentObservationContext BuildProjectlessReflectContext(
         AgentSession session,
@@ -890,6 +1128,14 @@ public sealed class AgentRuntime
             return await FinishGovernanceResponseAsync(session, userMessage, action, null, trace, 1, action.ToolCall?.Name ?? "PendingConfirmation", blocked, "policy_observation", project, ct).ConfigureAwait(false);
         }
 
+        var toolProgress = TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressPresenter.DescribeRunning(
+            action.ToolCall!.Name,
+            "running",
+            session.Phase,
+            session.ActiveRunId);
+        AddProgressObservation(session, 1, action.ToolCall!.Name, toolProgress);
+        await EmitAsync(session, AgentSseEventType.AgentActing, toolProgress.Title, ct, toolProgress, session.ActiveRunId);
+
         var result = await WithProjectScopeAsync(session, scopedProject,
             async () =>
             {
@@ -908,7 +1154,8 @@ public sealed class AgentRuntime
                         "policy_observation");
                 }
 
-                return await _toolRegistry.ExecuteAsync(action.ToolCall!, session, scopedBible, confirmed, ct).ConfigureAwait(false);
+                return await ExecuteToolWithHeartbeatAsync(session, action.ToolCall!,
+                    () => _toolRegistry.ExecuteAsync(action.ToolCall!, session, scopedBible, confirmed, ct), ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         result.RequiresConfirmation = false;
         if (result.Success)
@@ -918,7 +1165,7 @@ public sealed class AgentRuntime
         }
         project = scopedProject;
         await SyncMissionPlanAsync(session, project, result, action, null, ct).ConfigureAwait(false);
-        await PublishToolResultAsync(session, result, ct).ConfigureAwait(false);
+        await PublishToolResultAsync(session, action.ToolCall!.Name, result, ct).ConfigureAwait(false);
         var observation = AddRuntimeObservation(session, 1, action.ToolCall!.Name, result);
         trace.Add(new AgentRuntimeStep { StepIndex = 1, Stage = "act", Action = action, Observation = observation });
 
@@ -932,6 +1179,128 @@ public sealed class AgentRuntime
         ApplyReflection(session, reflection);
         await SyncMissionPlanAsync(session, project, result, action, reflection, ct).ConfigureAwait(false);
         return await FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result, ct);
+    }
+
+    private async Task<AgentForegroundTurnResult> ExecuteForegroundReadableToolAsync(
+        AgentSession session,
+        string userMessage,
+        AgentAction action,
+        AgentObservationContext context,
+        NovelProjectInfo? project,
+        StoryBibleDocument? bible,
+        List<AgentRuntimeStep> trace,
+        CancellationToken ct)
+    {
+        await AddChatTurnAsync(session, "user", userMessage, ct).ConfigureAwait(false);
+
+        if (action.ToolCall == null)
+        {
+            var fallback = BuildForegroundNoBackgroundReply(action);
+            var fallbackResponse = await FinishTextResponse(session, userMessage, fallback, context, trace, null, ct).ConfigureAwait(false);
+            return AgentForegroundTurnResult.NoBackground(fallbackResponse);
+        }
+
+        if (string.Equals(action.ToolCall.Name, "QueryProjectStatus", StringComparison.Ordinal) &&
+            (project == null || bible == null))
+        {
+            var noProject = new AgentAction
+            {
+                Type = AgentActionType.ChatReply,
+                Intent = action.Intent,
+                Reply = "当前会话还没有绑定小说项目，所以没有项目工作流状态可读。你可以让我查看整个工作台状态，或者先选择/创建一本小说。",
+                Suggestions = new[] { "查看工作台状态", "选择已有项目", "创建新小说" },
+                Source = "foreground_readable_no_project",
+                IsNoTool = true,
+            };
+            var response = await FinishTextResponse(session, userMessage, noProject, context, trace, null, ct).ConfigureAwait(false);
+            return AgentForegroundTurnResult.NoBackground(response);
+        }
+
+        var result = CanExecuteWithoutProject(action.ToolCall.Name)
+            ? await ExecuteToolWithHeartbeatAsync(session, action.ToolCall,
+                () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed: false, ct), ct).ConfigureAwait(false)
+            : await WithSessionProjectAsync(session,
+                () => ExecuteToolWithHeartbeatAsync(session, action.ToolCall,
+                    () => _toolRegistry.ExecuteAsync(action.ToolCall, session, bible, confirmed: false, ct), ct), ct).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(result.Phase))
+            session.Phase = result.Phase;
+
+        if (project != null)
+            await SyncMissionPlanAsync(session, project, result, action, null, ct).ConfigureAwait(false);
+
+        await PublishToolResultAsync(session, action.ToolCall.Name, result, ct).ConfigureAwait(false);
+        var observation = AddRuntimeObservation(session, 1, action.ToolCall.Name, result);
+        trace.Add(new AgentRuntimeStep { StepIndex = 1, Stage = "act", Action = action, Observation = observation });
+
+        var reflectContext = project != null && !string.IsNullOrWhiteSpace(session.ActiveProjectId)
+            ? await WithSessionProjectAsync(session,
+                async () =>
+                {
+                    var refreshedBible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
+                    return await _observationBuilder.BuildAsync(session, project, refreshedBible, userMessage, GetCurrentTurnIntent(session, userMessage), ct).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false)
+            : BuildProjectlessReflectContext(session, userMessage, context);
+
+        var reflection = await _reflectionEngine.ReflectAsync(reflectContext, observation, ct).ConfigureAwait(false);
+        ApplyReflection(session, reflection);
+        if (project != null)
+            await SyncMissionPlanAsync(session, project, result, action, reflection, ct).ConfigureAwait(false);
+
+        var finalResponse = await FinishReflectionResponse(session, userMessage, action, reflectContext, trace, reflection, result, ct).ConfigureAwait(false);
+        return AgentForegroundTurnResult.Reply(finalResponse);
+    }
+
+    private async Task<string> DrainInterruptsAsync(AgentSession session, string currentUserMessage, CancellationToken ct)
+    {
+        var userId = _currentUserService.GetUserId();
+        var activeRun = await _runtimeRuns.TryGetActiveAsync(userId, session.SessionId, ct).ConfigureAwait(false);
+        if (activeRun == null)
+            return currentUserMessage;
+
+        var pending = await _interrupts.GetPendingAsync(activeRun.Id, ct).ConfigureAwait(false);
+        if (pending.Count == 0)
+            return currentUserMessage;
+
+        var interruptLines = new List<string>();
+        foreach (var interrupt in pending)
+        {
+            if (string.IsNullOrWhiteSpace(interrupt.Message))
+            {
+                await _interrupts.MarkRejectedAsync(interrupt.Id, "empty_message", ct).ConfigureAwait(false);
+                continue;
+            }
+
+            var content = interrupt.Message.Trim();
+            interruptLines.Add(content);
+            await AddChatTurnAsync(session, "user", content, ct).ConfigureAwait(false);
+            await _interrupts.MarkConsumedAsync(interrupt.Id, new
+            {
+                consumedBy = "agent_runtime_safe_point",
+                activeRunId = activeRun.Id
+            }, ct).ConfigureAwait(false);
+        }
+
+        if (interruptLines.Count == 0)
+            return currentUserMessage;
+
+        var merged = string.Join("\n", interruptLines);
+        AddRuntimeObservation(session, 0, "interrupt_queue", new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "interrupt_received",
+            RunId = activeRun.Id,
+            Message = $"执行中收到用户补充：{TrimForReply(merged, 300)}"
+        }, "user_interrupt");
+
+        await _runtimeRuns.UpdateProgressAsync(
+            activeRun.Id,
+            "interrupt_received",
+            "已读取执行中的用户补充，正在重新判断下一步。",
+            currentStep: 0,
+            ct: ct).ConfigureAwait(false);
+
+        return $"{currentUserMessage}\n\n[执行中收到用户补充]\n{merged}";
     }
 
     private async Task<NovelProjectInfo> ResolveSessionProjectAsync(AgentSession session, CancellationToken ct)
@@ -994,7 +1363,7 @@ public sealed class AgentRuntime
         AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace, AgentReflection? reflection,
         CancellationToken ct)
     {
-        var reply = FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。");
+        var reply = PrepareUserFacingReply(FirstNonEmpty(action.Reply, reflection?.ReplyDraft, action.Brief, "已完成本轮分析。"));
         await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         session.Phase = action.Type == AgentActionType.Clarify ? "awaiting_user_foundation" : session.Phase;
         await PersistTextSessionMemoryAsync(session, action, context, reflection, ct).ConfigureAwait(false);
@@ -1071,7 +1440,11 @@ public sealed class AgentRuntime
         var trigger = DetermineUpdateTrigger(session);
         _logger.LogInformation("Memory update trigger: {Trigger} for session {SessionId}", trigger, session.SessionId);
 
-        var reply = FirstNonEmpty(reflection.ReplyDraft, reflection.Summary, result.Message);
+        var reply = PrepareUserFacingReply(FirstNonEmpty(
+            SelectReadOnlySnapshotReply(session, reflection, result),
+            reflection.ReplyDraft,
+            reflection.Summary,
+            result.Message));
         await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(session.ActiveProjectId) ||
             session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase))
@@ -1141,7 +1514,7 @@ public sealed class AgentRuntime
         plan.ProjectId = session.ActiveProjectId;
         plan.CurrentRunId = session.ActiveRunId ?? plan.CurrentRunId;
         plan.UpdatedAt = DateTime.UtcNow;
-        var reply = confirmationMessage;
+        var reply = PrepareUserFacingReply(confirmationMessage);
         await AddChatTurnAsync(session, "assistant", reply, ct).ConfigureAwait(false);
         await _sessionManager.SaveSessionAsync(session, ct);
         return BuildResponse(session, reply, new[] { "继续执行", "调整方案" }, action, context, trace);
@@ -1151,10 +1524,10 @@ public sealed class AgentRuntime
         AgentSession session, string reply, IReadOnlyList<string> suggestions,
         AgentAction action, AgentObservationContext? context, IReadOnlyList<AgentRuntimeStep> trace) =>
         new(
-            reply,
+            PrepareUserFacingReply(reply),
             suggestions.Count > 0 ? suggestions : new[] { "查看当前状态", "继续下一步" },
             session.SessionId,
-            session.ActiveRunId,
+            null,
             session.Phase,
             action.ToDecision() is { } decision ? AgentDecisionTrace.From(decision) : null,
             context?.Rag,
@@ -1162,6 +1535,45 @@ public sealed class AgentRuntime
             trace.ToArray(),
             session.WorkingMemory.MissionPlan,
             null);
+
+    private static string PrepareUserFacingReply(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply))
+            return reply;
+
+        var cleaned = reply.Trim();
+        cleaned = Regex.Replace(
+            cleaned,
+            @"当前调度任务\s+`?CommitValidatedChapter`?\s+显示\s+running，但实际上还没有执行提交。",
+            "当前后台调度里有提交动作记录，但书城还没有新增章节。");
+
+        var replacements = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["`CommitValidatedChapter`"] = "提交章节到书城",
+            ["CommitValidatedChapter"] = "提交章节到书城",
+            ["Commit 进书城"] = "提交到书城",
+            ["Commit 到书城"] = "提交到书城",
+            ["`PlanStoryFoundation`"] = "搭建故事地基",
+            ["PlanStoryFoundation"] = "搭建故事地基",
+            ["`QueryWorkspaceState`"] = "读取工作台状态",
+            ["QueryWorkspaceState"] = "读取工作台状态",
+            ["`QueryProjectStatus`"] = "读取项目状态",
+            ["QueryProjectStatus"] = "读取项目状态",
+            ["pending_quality_review"] = "等待质量评审",
+            ["（pending）"] = "（等待提交）",
+            ["**planned**"] = "**已规划，未启动**",
+            ["planned"] = "已规划",
+            ["CHANGES"] = "修订记录",
+            ["Story Bible"] = "故事设定库",
+            ["fallback 模式"] = "基础上下文模式",
+            ["fallback"] = "基础上下文",
+        };
+
+        foreach (var (internalText, userText) in replacements)
+            cleaned = cleaned.Replace(internalText, userText, StringComparison.Ordinal);
+
+        return cleaned;
+    }
 
     private static AgentRuntimeObservation AddRuntimeObservation(
         AgentSession session, int step, string toolName,
@@ -1188,6 +1600,29 @@ public sealed class AgentRuntime
         if (session.WorkingMemory.RecentObservations.Count > MaxRecentObservations)
             session.WorkingMemory.RecentObservations.RemoveRange(0, session.WorkingMemory.RecentObservations.Count - MaxRecentObservations);
         return observation;
+    }
+
+    private static void AddProgressObservation(
+        AgentSession session,
+        int step,
+        string toolName,
+        TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressView progress)
+    {
+        var observation = new AgentRuntimeObservation
+        {
+            StepIndex = step,
+            ObservationType = "tool_progress",
+            ToolName = toolName,
+            Success = true,
+            RequiresConfirmation = false,
+            Risk = "Low",
+            Message = $"{progress.Title}。{progress.Detail}",
+            RunId = progress.RunId ?? session.ActiveRunId ?? string.Empty,
+            Phase = session.Phase,
+        };
+        session.WorkingMemory.RecentObservations.Add(observation);
+        if (session.WorkingMemory.RecentObservations.Count > MaxRecentObservations)
+            session.WorkingMemory.RecentObservations.RemoveRange(0, session.WorkingMemory.RecentObservations.Count - MaxRecentObservations);
     }
 
     private static AgentToolExecutionResult BuildGovernanceResult(
@@ -1272,16 +1707,180 @@ public sealed class AgentRuntime
         await _memoryService.PersistAsync(session, project, bible, reflection, ct).ConfigureAwait(false);
     }
 
-    private async Task PublishToolResultAsync(AgentSession session, AgentToolExecutionResult result, CancellationToken ct)
+    private async Task PublishToolResultAsync(AgentSession session, string toolName, AgentToolExecutionResult result, CancellationToken ct)
     {
         var type = result.Success ? AgentSseEventType.StepComplete : AgentSseEventType.StepFail;
-        await EmitAsync(session, type, result.Message, ct, result.Data, result.RunId);
+        var progress = string.IsNullOrWhiteSpace(toolName)
+            ? null
+            : TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressPresenter.Describe(new TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolExecutionSnapshot
+            {
+                ToolName = toolName,
+                Status = result.Success ? "succeeded" : "failed",
+                Phase = session.Phase,
+                ResultPhase = result.Phase,
+                ResultMessage = result.Message,
+                RunId = result.RunId,
+                StartedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow
+        });
+        await EmitAsync(session, type, progress?.Title ?? result.Message, ct, progress ?? result.Data, result.RunId);
+        var preview = TM.Web.NovelAgentWeb.Services.AgentTools.AgentArtifactPreviewPresenter.Build(toolName, result);
+        if (preview != null)
+            await EmitAsync(session, AgentSseEventType.ArtifactPreview, preview.Title, ct, preview, preview.RunId ?? result.RunId);
         if (result.Data is NovelAgentRun run)
             await EmitAsync(session, AgentSseEventType.RunCreated, result.Message, ct, run, run.RunId);
     }
 
-    private Task EmitAsync(AgentSession session, string type, string message, CancellationToken ct, object? data = null, string? runId = null) =>
-        _sessionManager.SendEventAsync(session.SessionId, new AgentSseEvent { Type = type, RunId = runId, Message = message, Data = data }, ct);
+    private async Task<AgentToolExecutionResult> ExecuteToolWithHeartbeatAsync(
+        AgentSession session,
+        AgentToolCall toolCall,
+        Func<Task<AgentToolExecutionResult>> execute,
+        CancellationToken ct)
+    {
+        if (!IsLongRunningWritingTool(toolCall.Name))
+            return await execute().ConfigureAwait(false);
+
+        var startedAt = DateTime.UtcNow;
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var heartbeatTask = EmitToolHeartbeatAsync(session, toolCall, startedAt, heartbeatCts.Token);
+        try
+        {
+            return await execute().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var report = BuildToolFailureProgress(toolCall.Name, session.Phase, ExtractRunId(toolCall, session), ex.Message);
+            await EmitAsync(session, AgentSseEventType.StepFail, report.Title, ct, report, report.RunId).ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            await heartbeatCts.CancelAsync().ConfigureAwait(false);
+            try
+            {
+                await heartbeatTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown once the tool finishes.
+            }
+        }
+    }
+
+    private async Task EmitToolHeartbeatAsync(
+        AgentSession session,
+        AgentToolCall toolCall,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                var elapsed = DateTime.UtcNow - startedAt;
+                var runId = ExtractRunId(toolCall, session);
+                var progress = AgentToolProgressPresenter.DescribeHeartbeat(toolCall.Name, elapsed, session.Phase, runId);
+                AddProgressObservation(session, 0, toolCall.Name, progress);
+                await EmitAsync(session, AgentSseEventType.AgentActing, progress.Title, ct, progress, runId).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The owning tool completed or the request was canceled.
+        }
+    }
+
+    private static AgentToolProgressView BuildToolFailureProgress(string toolName, string phase, string? runId, string error)
+    {
+        var progress = AgentToolProgressPresenter.DescribeRunning(toolName, "failed", phase, runId);
+        progress.Detail = string.Join("\n", new[]
+        {
+            $"失败阶段：{FirstNonEmpty(phase, "工具执行")}",
+            "已有产物：请查看工作流中的最近草稿、门禁报告或评审记录。",
+            $"可继续动作：查看失败项，必要时重新修订后继续。原始错误：{error}",
+            "是否需要用户决定：如果失败项涉及设定取舍，需要用户确认；纯格式或索引问题可继续自动修复。"
+        });
+        return progress;
+    }
+
+    private static string? ExtractRunId(AgentToolCall toolCall, AgentSession session)
+    {
+        if (toolCall.Arguments.TryGetValue("runId", out var value) && !string.IsNullOrWhiteSpace(value))
+            return value;
+        return session.ActiveRunId;
+    }
+
+    private async Task EmitAsync(AgentSession session, string type, string message, CancellationToken ct, object? data = null, string? runId = null)
+    {
+        await PersistRuntimeProgressAsync(session, type, message, data, ct).ConfigureAwait(false);
+        await _sessionManager.SendEventAsync(session.SessionId, new AgentSseEvent { Type = type, RunId = runId, Message = message, Data = data }, ct).ConfigureAwait(false);
+    }
+
+    private async Task PersistRuntimeProgressAsync(AgentSession session, string type, string message, object? data, CancellationToken ct)
+    {
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var activeRun = await _runtimeRuns.TryGetActiveAsync(userId, session.SessionId, ct).ConfigureAwait(false);
+            if (activeRun == null)
+                return;
+
+            var phase = type switch
+            {
+                AgentSseEventType.AgentObserving => "observing",
+                AgentSseEventType.AgentPlanning => "planning",
+                AgentSseEventType.AgentActing => "acting",
+                AgentSseEventType.AgentReflecting => "reflecting",
+                AgentSseEventType.StepComplete => "step_complete",
+                AgentSseEventType.StepFail => "step_failed",
+                AgentSseEventType.ArtifactPreview => "artifact_preview",
+                AgentSseEventType.MissionUpdated => "mission_updated",
+                AgentSseEventType.ConfirmationRequired => "waiting_confirmation",
+                _ => activeRun.CurrentPhase
+            };
+            var toolName = data is TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressView progress
+                ? progress.ToolName
+                : activeRun.ActiveTool;
+            await _runtimeRuns.UpdateProgressAsync(activeRun.Id, phase, message, toolName, ExtractStepNumber(message), ct).ConfigureAwait(false);
+            if (type == AgentSseEventType.ArtifactPreview)
+            {
+                await _runtimeEvents.AppendAsync(new CreateAgentRuntimeEventRequest(
+                    activeRun.Id,
+                    userId,
+                    session.SessionId,
+                    activeRun.ProjectId ?? session.ActiveProjectId,
+                    type,
+                    message,
+                    data), ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to persist runtime progress for session {SessionId}", session.SessionId);
+        }
+    }
+
+    private static int? ExtractStepNumber(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return null;
+
+        var marker = message.IndexOf("第 ", StringComparison.Ordinal);
+        if (marker < 0)
+            return null;
+
+        var start = marker + 2;
+        var slash = message.IndexOf('/', start);
+        if (slash <= start)
+            return null;
+
+        return int.TryParse(message[start..slash], out var step) ? step : null;
+    }
 
     private static void RememberUserMessage(AgentSession session, string userMessage, AgentAction action)
     {
@@ -1325,6 +1924,177 @@ public sealed class AgentRuntime
         Source = "runtime_guard",
     };
 
+    public static bool ShouldStopAfterToolResult(
+        AgentToolExecutionResult result,
+        AgentReflection reflection,
+        AgentMissionPlan? plan = null)
+    {
+        if (IsCapabilityDiscoveryArtifact(result.Artifact))
+            return false;
+
+        if (!result.Success)
+            return !IsRecoverableToolFailure(result, plan);
+
+        if (IsReadOnlyStateSnapshotArtifact(result.Artifact))
+            return true;
+
+        var hasStructuredNextStep = HasStructuredNextStep(result, plan);
+        var hasMissionStructuredNextStep = HasMissionStructuredNextStep(plan);
+
+        if ((IsUserReviewArtifact(result.Artifact) || IsUserReviewPhase(result.Phase)) && !hasMissionStructuredNextStep)
+            return true;
+
+        if (reflection.RequiresUserInput && !hasStructuredNextStep)
+            return true;
+
+        if (reflection.GoalSatisfied && !hasStructuredNextStep)
+            return true;
+
+        if (!reflection.ShouldContinue && !hasStructuredNextStep)
+            return true;
+
+        return false;
+    }
+
+    public static bool ShouldEscalateSafety(int step, int maxSteps) =>
+        step >= Math.Max(1, maxSteps);
+
+    private static bool HasStructuredNextStep(AgentToolExecutionResult result, AgentMissionPlan? plan) =>
+        result.Artifact?.NextHints.Count > 0 == true ||
+        result.Suggestions.Count > 0 ||
+        HasMissionStructuredNextStep(plan);
+
+    private static bool IsRecoverableToolFailure(AgentToolExecutionResult result, AgentMissionPlan? plan) =>
+        result.IsRepairable &&
+        !string.IsNullOrWhiteSpace(result.RecommendedToolName) &&
+        HasMissionStructuredNextStep(plan);
+
+    private static bool HasMissionStructuredNextStep(AgentMissionPlan? plan) =>
+        plan?.AllowedNextActions.Count > 0 ||
+        plan?.TodoQueue.Count > 0 ||
+        HasSchedulerPointerNextStep(plan) ||
+        plan?.SchedulerState.Tasks.Any(t => t.Status is "running" or "queued") == true;
+
+    private static bool HasSchedulerPointerNextStep(AgentMissionPlan? plan)
+    {
+        if (plan == null)
+            return false;
+
+        var scheduler = plan.SchedulerState;
+        return !string.IsNullOrWhiteSpace(scheduler.ActiveTaskId) ||
+               !string.IsNullOrWhiteSpace(scheduler.ActiveRunId) ||
+               !string.IsNullOrWhiteSpace(scheduler.ActiveChapterId);
+    }
+
+    private static bool IsCapabilityDiscoveryArtifact(AgentToolArtifact? artifact) =>
+        string.Equals(artifact?.ArtifactType, "tool_search_result", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsReadOnlyStateSnapshotArtifact(AgentToolArtifact? artifact) =>
+        artifact?.ArtifactType is "workspace_state" or "project_status" or "workflow_state";
+
+    private static string BuildReadOnlySnapshotReply(AgentSession session, AgentToolExecutionResult result)
+    {
+        if (!result.Success || !IsReadOnlyStateSnapshotArtifact(result.Artifact))
+            return string.Empty;
+
+        if (result.Data is AgentWorkspaceState workspaceState)
+            return BuildWorkspaceSnapshotReply(session, workspaceState);
+
+        var summary = FirstNonEmpty(result.Artifact?.Summary, result.Message);
+        if (string.IsNullOrWhiteSpace(summary))
+            return string.Empty;
+
+        var lines = summary
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(4)
+            .ToList();
+        return lines.Count == 0 ? summary : string.Join("\n", lines);
+    }
+
+    private static string SelectReadOnlySnapshotReply(
+        AgentSession session,
+        AgentReflection reflection,
+        AgentToolExecutionResult result)
+    {
+        if (!result.Success || !IsReadOnlyStateSnapshotArtifact(result.Artifact))
+            return string.Empty;
+
+        if (IsUsableModelSnapshotReply(reflection.ReplyDraft, result))
+            return reflection.ReplyDraft;
+
+        return BuildReadOnlySnapshotReply(session, result);
+    }
+
+    private static bool IsUsableModelSnapshotReply(string? reply, AgentToolExecutionResult result)
+    {
+        if (string.IsNullOrWhiteSpace(reply))
+            return false;
+
+        var normalizedReply = reply.Trim();
+        if (string.Equals(normalizedReply, result.Message?.Trim(), StringComparison.Ordinal))
+            return false;
+
+        return !normalizedReply.Contains("activeProjectId=", StringComparison.OrdinalIgnoreCase) &&
+               !normalizedReply.Contains("owned_by_current_user=", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildWorkspaceSnapshotReply(AgentSession session, AgentWorkspaceState state)
+    {
+        var displayName = FirstNonEmpty(state.AuthorProfile.DisplayName, session.WorkingMemory.AuthorMemory?.DisplayName);
+        var prefix = string.IsNullOrWhiteSpace(displayName) ? string.Empty : $"{displayName}，";
+
+        var projectLine = state.ProjectTotalCount <= 0
+            ? "小说书城当前没有可见项目。"
+            : $"小说书城当前可见项目共 {state.ProjectTotalCount} 本；本次快照列出最近 {state.ProjectPreviewCount} 本。";
+
+        var previewLine = string.Empty;
+        if (state.VisibleProjects.Count > 0)
+        {
+            var statusCounts = state.VisibleProjects
+                .GroupBy(p => string.IsNullOrWhiteSpace(p.Status) ? "未知状态" : p.Status)
+                .Select(g => $"{g.Key} {g.Count()} 本");
+            var committed = state.VisibleProjects.Sum(p => p.CommittedChapterCount);
+            previewLine = $"快照状态：{string.Join("，", statusCounts)}；已提交章节 {committed} 章。";
+        }
+
+        var knowledgeLine = $"知识库当前可见条目 {state.KnowledgeBase.TotalCount} 条。";
+        var workflowLine = state.Workflow.ActiveRunCount > 0
+            ? $"创作工作流当前有 {state.Workflow.ActiveRunCount} 个活跃 Run。"
+            : "创作工作流当前没有活跃 Run。";
+        var sessionLine = state.CurrentSession.HasActiveProject
+            ? "当前会话已绑定一个小说项目。"
+            : "当前会话没有绑定项目。";
+
+        return string.Join("\n", new[]
+        {
+            prefix + projectLine,
+            previewLine,
+            knowledgeLine,
+            workflowLine,
+            sessionLine,
+            "这次只是读取状态，没有创建或修改项目。"
+        }.Where(x => !string.IsNullOrWhiteSpace(x)));
+    }
+
+    private static bool IsUserReviewArtifact(AgentToolArtifact? artifact)
+    {
+        if (artifact == null)
+            return false;
+
+        return artifact.ArtifactType is "story_foundation_candidates" or "volume_arc_candidates" or "chapter_candidates" ||
+               artifact.ArtifactType.Contains("candidate", StringComparison.OrdinalIgnoreCase) ||
+               artifact.ArtifactType.Contains("confirmation", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUserReviewPhase(string? phase)
+    {
+        if (string.IsNullOrWhiteSpace(phase))
+            return false;
+
+        return phase.Contains("candidate", StringComparison.OrdinalIgnoreCase) ||
+               phase.Contains("awaiting_confirmation", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool ShouldReturnUserFacingReply(AgentAction action)
     {
         if (string.IsNullOrWhiteSpace(action.Reply)) return false;
@@ -1334,10 +2104,63 @@ public sealed class AgentRuntime
         var source = action.Source.Trim().ToLowerInvariant();
         if (source.Contains("planner_error", StringComparison.OrdinalIgnoreCase) ||
             source.Contains("parse_error", StringComparison.OrdinalIgnoreCase) ||
-            source.Contains("provider_raw_error", StringComparison.OrdinalIgnoreCase))
+            source.Contains("provider_raw_error", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("error_timeout", StringComparison.OrdinalIgnoreCase))
             return false;
 
         return true;
+    }
+
+    public static bool ShouldDeferUserFacingReplyToScheduler(AgentAction action, AgentObservationContext? context)
+    {
+        if (!ShouldReturnUserFacingReply(action) || context == null)
+            return false;
+
+        var intentType = context.TurnIntent?.Type ?? TurnIntentType.FreeChat;
+        var dialogueAct = context.UserTurn?.DialogueAct ?? DialogueAct.Chat;
+        if (intentType is TurnIntentType.StatusQuery or TurnIntentType.Cancel or TurnIntentType.FreeChat ||
+            dialogueAct is DialogueAct.AskStatus or DialogueAct.Cancel or DialogueAct.Chat)
+            return false;
+
+        var plan = context.MissionPlan;
+        var hasActionableTask = plan.SchedulerState.Tasks.Any(t =>
+            t.Status is "running" or "queued" &&
+            !string.IsNullOrWhiteSpace(t.NextAction));
+
+        return hasActionableTask && plan.AllowedNextActions.Count > 0;
+    }
+
+    private static bool ShouldStartBackground(AgentAction action) =>
+        action.Type is AgentActionType.ToolCall or AgentActionType.Retrieve or AgentActionType.ConfirmRequest ||
+        action.ToolCall != null;
+
+    private static AgentAction BuildForegroundNoBackgroundReply(AgentAction action)
+    {
+        if (!string.IsNullOrWhiteSpace(action.Reply))
+        {
+            return new AgentAction
+            {
+                Type = action.Type is AgentActionType.Clarify ? AgentActionType.Clarify : AgentActionType.ChatReply,
+                Intent = string.IsNullOrWhiteSpace(action.Intent) ? "foreground_reply" : action.Intent,
+                Reply = action.Reply,
+                Suggestions = action.Suggestions,
+                Source = action.Source,
+                Risk = action.Risk,
+                Confidence = action.Confidence,
+                IsNoTool = true,
+            };
+        }
+
+        return new AgentAction
+        {
+            Type = AgentActionType.ChatReply,
+            Intent = string.IsNullOrWhiteSpace(action.Intent) ? "foreground_no_background" : action.Intent,
+            Reply = "这一轮我没有拿到可靠的可执行动作，所以不会启动后台任务。你可以继续问我当前状态，或直接告诉我要创作、修改、查询哪一部分。",
+            Suggestions = new[] { "查看当前状态", "开始创作任务", "补充要求" },
+            Source = string.IsNullOrWhiteSpace(action.Source) ? "foreground_no_background" : action.Source,
+            IsNoTool = true,
+            Confidence = action.Confidence,
+        };
     }
 
     private static string BuildToolCallFingerprint(AgentToolCall call)

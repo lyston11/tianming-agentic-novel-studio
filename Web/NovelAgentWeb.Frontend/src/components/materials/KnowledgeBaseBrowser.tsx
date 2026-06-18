@@ -1,20 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listKnowledgeEntries, deleteKnowledgeEntryById, updateKnowledgeEntryById } from '../../api';
-import type { CreativeKnowledgeCategory, CreativeKnowledgeEntry } from '../../api/types';
+import type { CreativeKnowledgeEntry } from '../../api/types';
 
-const CATEGORIES: { key: CreativeKnowledgeCategory | 'All'; label: string }[] = [
-  { key: 'All', label: '全部' },
-  { key: 'GenrePrinciple', label: '题材原则' },
-  { key: 'TropePattern', label: '套路模式' },
-  { key: 'AntiTropeStrategy', label: '反套路' },
-  { key: 'ReaderPromise', label: '读者承诺' },
-  { key: 'ThemeDepth', label: '主题深度' },
-  { key: 'EmotionArc', label: '情绪线' },
-  { key: 'RelationshipDynamic', label: '关系动态' },
-  { key: 'ProjectUsedPattern', label: '项目记忆' },
-];
+type KnowledgeCategoryKey = 'All' | string;
+type KnowledgeEntryView = Omit<CreativeKnowledgeEntry, 'category'> & { category: string };
 
 const CATEGORY_COLORS: Record<string, string> = {
   GenrePrinciple: 'var(--gold)',
@@ -25,6 +16,20 @@ const CATEGORY_COLORS: Record<string, string> = {
   EmotionArc: 'var(--red)',
   RelationshipDynamic: 'var(--jade)',
   ProjectUsedPattern: 'var(--muted)',
+  Uncategorized: 'var(--muted)',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  All: '全部',
+  GenrePrinciple: '题材原则',
+  TropePattern: '套路模式',
+  AntiTropeStrategy: '反套路',
+  ReaderPromise: '读者承诺',
+  ThemeDepth: '主题深度',
+  EmotionArc: '情绪线',
+  RelationshipDynamic: '关系动态',
+  ProjectUsedPattern: '项目记忆',
+  Uncategorized: '未分类',
 };
 
 const CATEGORY_DESCRIPTIONS: Record<string, string> = {
@@ -37,13 +42,35 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   EmotionArc: '情绪推进和转折节奏',
   RelationshipDynamic: '人物关系张力',
   ProjectUsedPattern: '项目已用桥段记忆',
+  Uncategorized: '未声明类型的知识条目',
 };
 
-function getCategoryLabel(category: CreativeKnowledgeCategory | 'All') {
-  return CATEGORIES.find((c) => c.key === category)?.label ?? category;
+const KNOWN_CATEGORY_ORDER = [
+  'GenrePrinciple',
+  'TropePattern',
+  'AntiTropeStrategy',
+  'ReaderPromise',
+  'ThemeDepth',
+  'EmotionArc',
+  'RelationshipDynamic',
+  'ProjectUsedPattern',
+  'Uncategorized',
+];
+
+function normalizeCategory(value?: string | null) {
+  const category = value?.trim();
+  return category || 'Uncategorized';
 }
 
-function getShortContent(entry: CreativeKnowledgeEntry) {
+function getCategoryLabel(category: KnowledgeCategoryKey) {
+  return CATEGORY_LABELS[category] ?? category;
+}
+
+function getCategoryDescription(category: KnowledgeCategoryKey) {
+  return CATEGORY_DESCRIPTIONS[category] ?? `知识抽取类型：${category}`;
+}
+
+function getShortContent(entry: KnowledgeEntryView) {
   if (entry.content.length <= 160) return entry.content;
   return `${entry.content.slice(0, 160)}...`;
 }
@@ -73,7 +100,7 @@ interface KnowledgeBaseBrowserProps {
 
 export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBaseBrowserProps) {
   const queryClient = useQueryClient();
-  const [selectedCategory, setSelectedCategory] = useState<CreativeKnowledgeCategory | 'All'>('All');
+  const [selectedCategory, setSelectedCategory] = useState<KnowledgeCategoryKey>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -87,20 +114,11 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
   });
 
   // Map backend KnowledgeResponse to frontend CreativeKnowledgeEntry
-  const entries: CreativeKnowledgeEntry[] = useMemo(
+  const entries: KnowledgeEntryView[] = useMemo(
     () => rawEntries.map(e => {
-      // Validate category with fallback
-      const validCategories: CreativeKnowledgeCategory[] = [
-        'GenrePrinciple', 'TropePattern', 'AntiTropeStrategy', 'ReaderPromise',
-        'ThemeDepth', 'EmotionArc', 'RelationshipDynamic', 'ProjectUsedPattern'
-      ];
-      const category = validCategories.includes(e.entryType as CreativeKnowledgeCategory)
-        ? (e.entryType as CreativeKnowledgeCategory)
-        : 'GenrePrinciple';
-
       return {
         id: e.id,
-        category,
+        category: normalizeCategory(e.entryType),
         title: e.title,
         content: e.content,
         genre: '',
@@ -142,7 +160,7 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     },
   });
 
-  const startEditing = (entry: CreativeKnowledgeEntry) => {
+  const startEditing = (entry: KnowledgeEntryView) => {
     setSelectedId(entry.id);
     setEditingId(entry.id);
     setEditTitle(entry.title);
@@ -156,6 +174,30 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     }
     return counts;
   }, [entries]);
+
+  const categoryOptions = useMemo(() => {
+    const dynamicCategories = Array.from(categoryCounts.keys()).sort((a, b) => {
+      const orderA = KNOWN_CATEGORY_ORDER.indexOf(a);
+      const orderB = KNOWN_CATEGORY_ORDER.indexOf(b);
+      if (orderA !== -1 || orderB !== -1) {
+        if (orderA === -1) return 1;
+        if (orderB === -1) return -1;
+        return orderA - orderB;
+      }
+
+      const countDiff = (categoryCounts.get(b) ?? 0) - (categoryCounts.get(a) ?? 0);
+      return countDiff || getCategoryLabel(a).localeCompare(getCategoryLabel(b), 'zh-Hans-CN');
+    });
+
+    return ['All', ...dynamicCategories] as KnowledgeCategoryKey[];
+  }, [categoryCounts]);
+
+  useEffect(() => {
+    if (selectedCategory !== 'All' && !categoryCounts.has(selectedCategory)) {
+      setSelectedCategory('All');
+      setSelectedId(null);
+    }
+  }, [categoryCounts, selectedCategory]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -206,20 +248,20 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
 
       <div className="knowledge-workspace">
         <aside className="knowledge-category-rail" aria-label="知识分类">
-          {CATEGORIES.map((cat) => {
-            const count = cat.key === 'All' ? entries.length : categoryCounts.get(cat.key) ?? 0;
+          {categoryOptions.map((category) => {
+            const count = category === 'All' ? entries.length : categoryCounts.get(category) ?? 0;
             return (
               <button
-                key={cat.key}
-                className={`knowledge-category${selectedCategory === cat.key ? ' active' : ''}`}
+                key={category}
+                className={`knowledge-category${selectedCategory === category ? ' active' : ''}`}
                 onClick={() => {
-                  setSelectedCategory(cat.key);
+                  setSelectedCategory(category);
                   setSelectedId(null);
                 }}
               >
                 <span>
-                  <strong>{cat.label}</strong>
-                  <small>{CATEGORY_DESCRIPTIONS[cat.key]}</small>
+                  <strong>{getCategoryLabel(category)}</strong>
+                  <small>{getCategoryDescription(category)}</small>
                 </span>
                 <em>{count}</em>
               </button>

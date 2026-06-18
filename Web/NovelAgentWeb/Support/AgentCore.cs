@@ -556,6 +556,7 @@ public sealed class AgentProjectMemory
 
 public sealed class AgentAuthorMemory
 {
+    public string DisplayName { get; set; } = string.Empty;
     public List<string> StyleLikes { get; set; } = new();
     public List<string> StyleDislikes { get; set; } = new();
     public string ConfirmationTolerance { get; set; } = "key_checkpoints";
@@ -868,31 +869,15 @@ public sealed class AgentObservationBuilder
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
-        var toolCachePhase = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
-            ? session.Phase
+        var toolCacheScope = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
+            ? "global"
             : session.DiscoveredPhase;
-        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCachePhase, ct).ConfigureAwait(false);
+        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCacheScope, ct).ConfigureAwait(false);
         var availableTools = availableToolLookup.Tools;
 
         if (availableTools == null)
         {
-            var toolSearchEntry = _toolRegistry.Find("tool_search");
-            if (toolSearchEntry == null)
-            {
-                throw new InvalidOperationException("tool_search not found in registry");
-            }
-
-            availableTools = new List<ToolSchema>
-            {
-                new ToolSchema
-                {
-                    Name = "tool_search",
-                    Description = toolSearchEntry.Description,
-                    Risk = "Low",
-                    RequiresConfirmation = false,
-                    Parameters = new Dictionary<string, string> { { "phase", "string" } }
-                }
-            };
+            availableTools = _toolRegistry.ListToolSchemas();
         }
 
         return new AgentObservationContext
@@ -967,6 +952,7 @@ public sealed class AgentObservationBuilder
 
     private static AgentAuthorMemory MapAuthor(AuthorMemory source) => new()
     {
+        DisplayName = source.DisplayName ?? string.Empty,
         StyleLikes = new List<string>(source.StyleLikes),
         StyleDislikes = new List<string>(source.StyleDislikes),
         ConfirmationTolerance = source.ConfirmationTolerance ?? "key_checkpoints",
@@ -1188,6 +1174,7 @@ public sealed class AgentObservationBuilder
 
 public sealed class AgentPlanner
 {
+    private static readonly TimeSpan ReflectionLlmBudget = TimeSpan.FromSeconds(2);
     private readonly UserSettingsManager _settingsManager;
     private readonly ILlmToolCallingClient _toolCallingClient;
     private readonly HttpClient _http;
@@ -1284,9 +1271,15 @@ public sealed class AgentPlanner
 
         try
         {
-            var json = await CompleteJsonAsync(settings, BuildReflectSystemPrompt(), BuildReflectUserPrompt(context, observation), ct)
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            budget.CancelAfter(ReflectionLlmBudget);
+            var json = await CompleteJsonAsync(settings, BuildReflectSystemPrompt(), BuildReflectUserPrompt(context, observation), budget.Token)
                 .ConfigureAwait(false);
             return ParseReflection(json);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return BuildRuleReflection(context, observation);
         }
         catch
         {
@@ -1301,43 +1294,43 @@ public sealed class AgentPlanner
 
         return "# Stable Layer - Identity & Rules\n\n" +
             "你是天命小说助手，一个专门帮助用户创作长篇小说的 AI 助手。\n" +
-            "当用户问起你的身份、名字或你是谁时，回答你是天命小说助手，不要提及 Claude、Anthropic 或其他底层模型名称。\n" +
+            "当用户问起你的身份、名字或你是谁时，回答你是天命小说助手，不要提及 Claude、Anthropic 或其他底层模型名称；当用户问“我是谁/我叫什么/你知道我是谁吗”时，应优先查看 authorMemory.displayName 等用户记忆再回答。\n" +
             "你的职责是帮助用户构思故事、规划章节、生成内容、管理创作进度。用自然、温暖的方式与用户对话。\n\n" +
             $"## Available Tools ({tools.Count})\n{toolLines}\n\n" +
             "## Decision Principles\n" +
             "1. 你拥有 product_space、memory_layers、workspace_state_hint 和工具语义地图；请基于这些信息自己决策，不要依赖关键词路由。\n" +
-            "2. 自然问候、开放闲聊可直接 chat_reply；涉及真实系统状态、小说书城、知识库、工作流进度、工具产物位置时，不要凭空猜测，可自主调用只读状态工具。\n" +
+            "1a. 用户说“继续”“下一步”“开始写”“这是什么意思”等自然表达时，不代表固定工具名或固定阶段；你必须结合 raw_message、chat history、mission blackboard、recent_observations、tool semantics 和真实执行进度判断。\n" +
+            "2. 自然问候、开放闲聊可直接 chat_reply；涉及真实系统状态、小说书城、知识库、工作流进度、工具产物位置时，不要凭空猜测；从工具语义中的 Surface/ReadsFrom/Output 自主选择合适工具。\n" +
             "3. 区分过程产物和最终产物：Plan/Generate/Validate/Repair 产物属于创作工作流；Commit 后才成为书城或 Story Bible 的最终可见结果。\n" +
-            "4. Project management: Call ResolveNovelProject when user wants the Agent to bind an existing novel or create a new novel. Let the tool decide bind_existing/create_new/auto from the user's intent; casual chat must not auto-bind a project.\n" +
+            "3a. 面向用户回复时必须使用作者能理解的产品语言，不要展示内部工具名、调度状态码、JSON 字段、fallback/Runtime/guardrail 等工程词；例如说“等待质量评审”“提交章节到书城”，不要说 pending_quality_review 或 CommitValidatedChapter。\n" +
+            "4. Project management: when user wants to bind an existing novel or create a new novel, choose the registered tool whose semantics match project binding/creation. Casual chat must not auto-bind a project.\n" +
+            "4a. If turn_intent.type is NewProjectSeed or dialogue_act is StartProject, treat this as a request for an independent new work. Do not bind or continue an old active project unless the user explicitly says to open/bind/continue that existing project. Prefer project creation/resolution arguments that preserve the requested new title and seed.\n" +
+            "4b. If the user provides a new book title, that title is the target work identity. An existing active project is background context only, not permission to reuse it.\n" +
             "5. Use clarify when creative info is missing for an explicit action request.\n" +
             "6. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
-            "7. Chapter generation workflow: BuildChapterContextPackage -> GenerateChapterWithChanges -> ValidateChapterDraft -> RepairChapterDraft or CommitValidatedChapter.\n" +
+            "7. Chapter generation workflow: build chapter context -> generate draft with changes -> validate draft -> repair or commit according to validation and quality state. Choose concrete tools from the registered tool semantics.\n" +
             "8. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
             "9. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
-            "10. Use SearchCreativeKnowledge when more knowledge is needed for creative reasoning, and QueryWorkspaceState when you need current workbench/library/knowledge/workflow facts.\n" +
+            "10. When more knowledge or real state is needed, choose from the complete registered tool list by reading each tool's description, Surface, ReadsFrom, Output and Visible semantics; no business tool is privileged.\n" +
             "11. Read anchor_context for working_memory, task_state, history context.\n" +
             "12. If recent_observations contains a repairable policy/guardrail observation, treat it as an environment fact: choose its recommended prerequisite tool or ask the user; do not repeat the blocked tool.\n\n" +
             "## 工具发现机制\n\n" +
-            "你通过 tool_search 工具来动态发现可用工具。\n\n" +
+            "tool_search 是全局工具目录与语义检索入口，不是阶段白名单，也不是所有业务工具的前置门禁。\n\n" +
             "**基本原则**：\n" +
-            "1. 根据用户意图和当前任务，判断需要什么工具\n" +
-            "2. 检查已缓存的工具是否满足需求\n" +
-            "3. 如果缓存不满足，调用 tool_search(phase=\"阶段名\") 获取该阶段的工具\n" +
-            "4. 工具缓存是上次 tool_search 的结果。如果缓存中的工具能满足需求，直接使用；如果缓存中没有你需要的工具，先调用 tool_search 发现新工具。\n\n" +
-            "**阶段说明**（供参考，不是硬性规则）：\n" +
-            "- Conversation: 闲聊、问候、状态查询\n" +
-            "- Planning: 规划故事地基、卷、章节\n" +
-            "- Creation: 生成章节正文、修复草稿\n" +
-            "- Review: 提交章节、复盘\n" +
-            "- All: 查看所有可用工具\n\n" +
+            "1. 你自己根据用户意图、产品空间、记忆、工作流状态和工具语义决定要不要调用工具、调用哪个工具。\n" +
+            "2. Available Tools 是当前候选工具池，不是唯一可用范围；如果你已明确知道需要哪个已注册业务工具，可以直接调用。\n" +
+            "3. 只有工具能力不清、候选缓存明显不足、用户询问系统能力、或需要跨产品空间找工具时，才调用 tool_search。\n" +
+            "4. 调用 tool_search 时传 query/intent/context；phase 只能作为排序 hint，不能当作可用工具边界。\n" +
+            "5. 如果 tool_search 或其他工具重复调用被运行时拦截，不要把拦截机制告诉用户；把它当作内部观察，改选更合适的业务工具、只读状态工具或给出真实状态回答。\n\n" +
             "**示例**：\n" +
             "- 用户说\"你好\" → 如果只是在问候，可用 chat_reply\n" +
-            "- 用户问\"书城里有哪些项目\"、\"知识库有什么\"、\"工作流跑到哪\" → 需要真实状态，可先发现并调用 QueryWorkspaceState\n" +
-            "- 用户说\"创建新小说\"或\"继续某本书\" → 需要 ResolveNovelProject → 如果缓存里没有，调用 tool_search(phase=\"Planning\")\n" +
-            "- 正在规划阶段，用户说\"开始写\" → 需要生成工具 → 调用 tool_search(phase=\"Creation\")\n\n" +
+            "- 用户问\"书城里有哪些项目\"、\"知识库有什么\"、\"工作流跑到哪\" → 需要真实状态，应从完整工具目录中选择具备对应读取能力的工具\n" +
+            "- 用户明确要求创建新小说、打开/绑定某本已有小说 → 应从完整工具目录中选择具备项目绑定或创建能力的工具\n" +
+            "- 用户要求搭建故事地基且已有项目上下文 → 应选择能产出故事地基过程候选的工具；这是工作流过程产物，不是最终书城成稿\n" +
+            "- 用户表达“开始写/继续/下一步” → 先理解当前项目状态和最近执行结果，再自主判断是追问、查询状态、规划、生成还是提交；不要把这些词当作硬路由\n\n" +
             "## 任务执行原则\n" +
             "采用'先执行后修正'模式，不要频繁请求用户确认：\n" +
-            "1. 理解用户意图后，使用tool_search找到工具，直接执行\n" +
+            "1. 理解用户意图后，如已有足够上下文和工具语义，直接选择合适业务工具执行；不需要每次先 tool_search\n" +
             "2. 执行后告知用户结果和下一步计划\n" +
             "3. 如果用户不满意，会主动告诉你如何调整\n" +
             "4. 工作流自带校验机制（如ValidateChapterDraft），发现问题自动修复\n\n" +
@@ -1364,6 +1357,21 @@ public sealed class AgentPlanner
             anchor_context = string.IsNullOrWhiteSpace(context.AnchorPrompt) ? null : context.AnchorPrompt,
             product_space = context.ProductSpace,
             memory_layers = context.ProductSpace.MemoryLayers,
+            memory_context = new
+            {
+                session_memory = context.SessionMemory,
+                project_memory = context.ProjectMemory,
+                author_memory = new
+                {
+                    display_name = context.AuthorMemory.DisplayName,
+                    style_likes = context.AuthorMemory.StyleLikes,
+                    style_dislikes = context.AuthorMemory.StyleDislikes,
+                    confirmation_tolerance = context.AuthorMemory.ConfirmationTolerance,
+                    genre_habits = context.AuthorMemory.GenreHabits,
+                    favorite_knowledge_ids = context.AuthorMemory.FavoriteKnowledgeIds,
+                },
+                execution_memory = context.ExecutionMemory,
+            },
             workspace_state = context.WorkspaceState,
             project = new
             {
@@ -1395,6 +1403,7 @@ public sealed class AgentPlanner
         - 你要把它当作新的环境事实，重新判断当前会话状态、任务黑板和下一步。
         - 如果工具已经创建过项目或已有等待中的地基输入，应继续沿当前项目推进，用自然语言向作者说明当前需要的创作输入。
         - 如果策略阻止了错误工具调用，应解释可见状态和下一步，而不是责备用户或暴露 guard。
+        - 面向作者的 reply_draft 必须使用产品语言，不要输出内部工具名、调度状态码、JSON 字段、fallback/Runtime/guardrail 等工程词。
         对章节草稿、门禁报告、修复结果和提交前状态，你必须额外进行文学质量门禁：
         - 节奏是否拖沓或跳跃。
         - 角色动机是否成立。
@@ -1460,6 +1469,7 @@ public sealed class AgentPlanner
         - unresolvedThreads: 伏笔线索（格式："线索名（计划揭示章节）"）
 
         ## memoryUpdate.authorMemory
+        - displayName: 用户明确告诉你的称呼或名字。只在用户明确自称或要求你这样称呼时写入；不确定时返回 null。
         - styleLikes: 喜欢的写作风格
         - styleDislikes: 反感的风格
         - confirmationTolerance: 用户对自动执行/确认的偏好（如 auto_low_risk、key_checkpoints）
@@ -1648,6 +1658,7 @@ public sealed class AgentPlanner
         {
             update.AuthorMemory = new AuthorMemoryUpdate
             {
+                DisplayName = ReadOptionalString(author, null, "display_name", "displayName"),
                 StyleLikes = ReadStringArray(author, "style_likes", "styleLikes"),
                 StyleDislikes = ReadStringArray(author, "style_dislikes", "styleDislikes"),
                 ConfirmationTolerance = ReadOptionalString(author, null, "confirmation_tolerance", "confirmationTolerance"),
@@ -1735,16 +1746,17 @@ public sealed class AgentPlanner
             };
         }
 
-        // Minimal fallback — try scheduler, then status query
+        // Minimal fallback — report scheduler state without choosing a business tool for the model.
         var scheduled = context.MissionPlan.SchedulerState.Tasks
             .FirstOrDefault(t => t.Status is "running" or "queued");
         if (scheduled != null)
         {
             return new AgentAction
             {
-                Type = AgentActionType.ToolCall,
+                Type = AgentActionType.ChatReply,
                 Intent = "continue_mission",
-                ToolCall = new AgentToolCall { Name = "QueryProjectStatus" },
+                Reply = $"当前有任务处于 {scheduled.Status} 状态：{new[] { scheduled.TaskType, scheduled.ChapterId, scheduled.RunId, scheduled.TaskId }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? scheduled.TaskId}。我需要基于完整工具语义重新选择下一步动作。",
+                IsNoTool = true,
                 Source = source,
             };
         }
@@ -1764,10 +1776,21 @@ public sealed class AgentPlanner
         if (observation.ObservationType is "policy_observation" or "runtime_observation")
             return BuildGovernanceRuleReflection(context, observation);
 
+        var isReviewableProcessArtifact =
+            observation.Artifact?.ArtifactType is "story_foundation_candidates" or "volume_arc_candidates" or "chapter_candidates" ||
+            observation.Phase.Contains("candidates", StringComparison.OrdinalIgnoreCase);
+        var isNewProjectFoundationIntake =
+            string.Equals(observation.ToolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase) &&
+            (observation.Phase.Contains("awaiting_user_foundation", StringComparison.OrdinalIgnoreCase) ||
+             observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase) ||
+             observation.Artifact?.ArtifactType is "novel_project" or "existing_novel_project");
+        var hasSufficientFoundationBrief = isNewProjectFoundationIntake && HasSufficientFoundationBrief(context.UserMessage);
         var requiresInput = !observation.Success ||
-                            observation.Phase.Contains("awaiting_user", StringComparison.OrdinalIgnoreCase) ||
-                            observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(observation.ToolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase);
+                            isReviewableProcessArtifact ||
+                            (!hasSufficientFoundationBrief && observation.Phase.Contains("awaiting_user", StringComparison.OrdinalIgnoreCase)) ||
+                            (!hasSufficientFoundationBrief && observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase)) ||
+                            observation.Phase.Contains("project_", StringComparison.OrdinalIgnoreCase) ||
+                            (!hasSufficientFoundationBrief && observation.Artifact?.ArtifactType.Contains("project", StringComparison.OrdinalIgnoreCase) == true);
         var qualityGate = BuildRuleQualityGate(observation);
         if (qualityGate.Status is "fail" or "needs_rewrite" or "needs_user_input")
             requiresInput = qualityGate.RequiresUserInput;
@@ -1787,6 +1810,31 @@ public sealed class AgentPlanner
             // Don't recommend next tool — let LLM decide
         };
     }
+
+    private static bool HasSufficientFoundationBrief(string userMessage)
+    {
+        if (string.IsNullOrWhiteSpace(userMessage))
+            return false;
+
+        var text = userMessage.Trim();
+        var signalCount = 0;
+        if (TextContainsAny(text, "玄幻", "末世", "都市", "悬疑", "科幻", "仙侠", "奇幻", "爽文", "升级流", "学院流", "废土"))
+            signalCount++;
+        if (TextContainsAny(text, "主角", "男主", "女主", "底层", "幸存者", "少年", "穿越", "重生"))
+            signalCount++;
+        if (TextContainsAny(text, "系统", "金手指", "吞噬", "晶核", "升级", "打怪", "修炼", "异能", "境界", "建基地"))
+            signalCount++;
+        if (TextContainsAny(text, "爽点", "打怪", "升级", "碾压", "收伙伴", "征服", "后宫", "建基地", "成长"))
+            signalCount++;
+        if (TextContainsAny(text, "不要", "禁区", "排除", "禁止", "不想要", "别"))
+            signalCount++;
+
+        return signalCount >= 4 && text.Length >= 40;
+    }
+
+    private static bool TextContainsAny(string text, params string[] tokens) =>
+        tokens.Any(token => !string.IsNullOrWhiteSpace(token) &&
+                            text.Contains(token, StringComparison.OrdinalIgnoreCase));
 
     private static AgentReflection BuildGovernanceRuleReflection(AgentObservationContext context, AgentRuntimeObservation observation)
     {
@@ -1820,7 +1868,16 @@ public sealed class AgentPlanner
         if (context.TurnIntent.Type == TurnIntentType.StatusQuery)
             return "我查了一下当前会话的任务黑板：这轮更像是在问进度，而不是要新建或重写内容。你可以让我查看当前状态，或直接说要继续推进哪一章。";
         if (context.MissionPlan.AllowedNextActions.Count > 0)
-            return $"当前可以推进的下一步是：{string.Join("、", context.MissionPlan.AllowedNextActions.Take(3))}。你可以让我继续，或补充新的创作要求。";
+        {
+            var actions = context.MissionPlan.AllowedNextActions
+                .Select(TM.Web.NovelAgentWeb.Services.AgentTools.AgentToolProgressPresenter.DescribeAction)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToList();
+            if (actions.Count > 0)
+                return $"当前还没有新的工具执行结果。按工作流，下一步可以推进：{string.Join("、", actions)}。你可以继续补充要求，我会基于真实执行进度再判断下一步。";
+        }
         return "我没有继续执行新的写入动作。你可以告诉我现在要查看状态、继续任务，还是补充新的创作简报。";
     }
 

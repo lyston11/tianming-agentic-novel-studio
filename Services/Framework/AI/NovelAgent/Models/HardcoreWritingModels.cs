@@ -36,11 +36,56 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("ragQueries")]
         public List<string> RagQueries { get; set; } = new();
 
+        [JsonPropertyName("hardContinuityFacts")]
+        public List<string> HardContinuityFacts { get; set; } = new();
+
         [JsonPropertyName("warnings")]
         public List<string> Warnings { get; set; } = new();
 
         [JsonPropertyName("builtAt")]
         public DateTime BuiltAt { get; set; } = DateTime.Now;
+    }
+
+    public sealed class ChapterContinuityFacts
+    {
+        [JsonPropertyName("chapterId")]
+        public string ChapterId { get; set; } = string.Empty;
+
+        [JsonPropertyName("chapterTitle")]
+        public string ChapterTitle { get; set; } = string.Empty;
+
+        [JsonPropertyName("protagonistName")]
+        public string ProtagonistName { get; set; } = string.Empty;
+
+        [JsonPropertyName("protagonistIdentity")]
+        public string ProtagonistIdentity { get; set; } = string.Empty;
+
+        [JsonPropertyName("protagonistStatus")]
+        public string ProtagonistStatus { get; set; } = string.Empty;
+
+        [JsonPropertyName("currentLocation")]
+        public string CurrentLocation { get; set; } = string.Empty;
+
+        [JsonPropertyName("systemState")]
+        public string SystemState { get; set; } = string.Empty;
+
+        [JsonPropertyName("equipmentState")]
+        public string EquipmentState { get; set; } = string.Empty;
+
+        [JsonPropertyName("keyEvents")]
+        public List<string> KeyEvents { get; set; } = new();
+
+        [JsonPropertyName("endingState")]
+        public string EndingState { get; set; } = string.Empty;
+
+        [JsonPropertyName("nextChapterMustCarry")]
+        public List<string> NextChapterMustCarry { get; set; } = new();
+
+        [JsonPropertyName("sourceRunId")]
+        public string SourceRunId { get; set; } = string.Empty;
+
+        [JsonPropertyName("extractedAt")]
+        public DateTime ExtractedAt { get; set; } = DateTime.Now;
     }
 
     public sealed class GenerationGateReport

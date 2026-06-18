@@ -40,19 +40,21 @@ public sealed class AgentConversationTurn
 
 public sealed class AgentSessionManager
 {
-    private readonly ConcurrentDictionary<string, Channel<AgentSseEvent>> _channels = new();
     private readonly TM.Web.NovelAgentWeb.Data.NovelAgentDbContext _db;
     private readonly TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService _currentUser;
     private readonly IChatHistoryRepository? _chatHistory;
+    private readonly AgentSseEventBus _events;
 
     public AgentSessionManager(
         TM.Web.NovelAgentWeb.Data.NovelAgentDbContext db,
         TM.Web.NovelAgentWeb.Services.Auth.ICurrentUserService currentUser,
-        IChatHistoryRepository? chatHistory = null)
+        IChatHistoryRepository? chatHistory = null,
+        AgentSseEventBus? events = null)
     {
         _db = db;
         _currentUser = currentUser;
         _chatHistory = chatHistory;
+        _events = events ?? new AgentSseEventBus();
     }
 
     public async Task<AgentSession> GetOrCreateSessionAsync(string? sessionId = null, CancellationToken ct = default)
@@ -148,19 +150,11 @@ public sealed class AgentSessionManager
         await _db.SaveChangesAsync(ct);
     }
 
-    public Channel<AgentSseEvent> GetOrCreateChannel(string sessionId) =>
-        _channels.GetOrAdd(sessionId, _ => Channel.CreateUnbounded<AgentSseEvent>());
-
     public async Task SendEventAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
-    {
-        evt.SessionId = sessionId;
-        evt.Timestamp = DateTime.UtcNow;
-        var channel = GetOrCreateChannel(sessionId);
-        await channel.Writer.WriteAsync(evt, ct);
-    }
+        => await _events.SendAsync(sessionId, evt, ct).ConfigureAwait(false);
 
     public ChannelReader<AgentSseEvent> GetEventReader(string sessionId) =>
-        GetOrCreateChannel(sessionId).Reader;
+        _events.GetReader(sessionId);
 
     public async Task RemoveSessionAsync(string sessionId, CancellationToken ct = default)
     {
@@ -171,8 +165,7 @@ public sealed class AgentSessionManager
             _db.AgentSessions.Remove(entity);
             await _db.SaveChangesAsync(ct);
         }
-        if (_channels.TryRemove(sessionId, out var channel))
-            channel.Writer.TryComplete();
+        _events.RemoveSession(sessionId);
     }
 
     private static string SerializeSessionData(AgentSession session) =>
@@ -342,4 +335,29 @@ public sealed class AgentSessionManager
 
     private static string FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+}
+
+public sealed class AgentSseEventBus
+{
+    private readonly ConcurrentDictionary<string, Channel<AgentSseEvent>> _channels = new();
+
+    public ChannelReader<AgentSseEvent> GetReader(string sessionId) =>
+        GetOrCreateChannel(sessionId).Reader;
+
+    public async Task SendAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
+    {
+        evt.SessionId = sessionId;
+        evt.Timestamp = DateTime.UtcNow;
+        var channel = GetOrCreateChannel(sessionId);
+        await channel.Writer.WriteAsync(evt, ct).ConfigureAwait(false);
+    }
+
+    public void RemoveSession(string sessionId)
+    {
+        if (_channels.TryRemove(sessionId, out var channel))
+            channel.Writer.TryComplete();
+    }
+
+    private Channel<AgentSseEvent> GetOrCreateChannel(string sessionId) =>
+        _channels.GetOrAdd(sessionId, _ => Channel.CreateUnbounded<AgentSseEvent>());
 }

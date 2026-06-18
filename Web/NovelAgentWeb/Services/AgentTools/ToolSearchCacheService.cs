@@ -43,7 +43,7 @@ public class ToolSearchCacheService : IToolSearchCacheService
         if (!string.Equals(session.ToolSearchCacheVersion, version, StringComparison.Ordinal))
             return ToolSearchCacheLookup.Miss;
 
-        var normalizedPhase = NormalizePhase(phase);
+        var normalizedPhase = NormalizeScope(phase);
 
         if (IsValidSessionSnapshot(session, normalizedPhase))
             return new ToolSearchCacheLookup(session.DiscoveredTools, "session-hot");
@@ -82,7 +82,7 @@ public class ToolSearchCacheService : IToolSearchCacheService
             NullIfEmpty(session.ActiveProjectId),
             session.SessionId,
             ct).ConfigureAwait(false));
-        var normalizedPhase = NormalizePhase(phase);
+        var normalizedPhase = NormalizeScope(phase);
         var now = DateTime.UtcNow;
         var snapshot = new ToolSearchCacheSnapshot
         {
@@ -102,11 +102,13 @@ public class ToolSearchCacheService : IToolSearchCacheService
         await _redis.SetAsync(cacheKey, snapshot, CacheTtl, ct);
     }
 
-    private static bool IsValidSessionSnapshot(AgentSession session, string phase)
+    private static bool IsValidSessionSnapshot(AgentSession session, string scope)
     {
         return !string.IsNullOrWhiteSpace(session.DiscoveredPhase) &&
                session.DiscoveredTools.Count > 0 &&
-               string.Equals(session.DiscoveredPhase, phase, StringComparison.OrdinalIgnoreCase) &&
+               (string.Equals(session.DiscoveredPhase, scope, StringComparison.OrdinalIgnoreCase) ||
+                (string.Equals(scope, "global", StringComparison.OrdinalIgnoreCase) &&
+                 session.DiscoveredPhase.StartsWith("global:", StringComparison.OrdinalIgnoreCase))) &&
                session.LastToolSearchAt != null &&
                DateTime.UtcNow - session.LastToolSearchAt.Value <= CacheTtl;
     }
@@ -208,18 +210,18 @@ public class ToolSearchCacheService : IToolSearchCacheService
         return remaining <= TimeSpan.Zero ? TimeSpan.FromSeconds(1) : remaining;
     }
 
-    private static string NormalizePhase(string phase)
+    private static string NormalizeScope(string phase)
     {
         if (string.IsNullOrWhiteSpace(phase))
-            return "Conversation";
+            return "global";
 
         return phase.Trim().ToLowerInvariant() switch
         {
-            "planning" => "Planning",
-            "creation" => "Creation",
-            "review" => "Review",
-            "all" => "All",
-            "conversation" => "Conversation",
+            "planning" => "global:Planning",
+            "creation" => "global:Creation",
+            "review" => "global:Review",
+            "all" => "global:All",
+            "conversation" => "global:Conversation",
             _ => phase.Trim()
         };
     }

@@ -17,6 +17,9 @@ internal static class Program
     {
         ("Genre direction planner protects type promise", GenreDirectionPlannerProtectsTypePromise),
         ("Book concept designer generates durable macro candidates", BookConceptDesignerGeneratesDurableMacroCandidates),
+        ("Book concept designer removes rejected macro templates", BookConceptDesignerRemovesRejectedMacroTemplates),
+        ("Book concept designer keeps positive power fantasy direction with long exclusions", BookConceptDesignerKeepsPositivePowerFantasyDirectionWithLongExclusions),
+        ("Book concept designer ignores forbidden phrases embedded in natural seed", BookConceptDesignerIgnoresForbiddenPhrasesEmbeddedInNaturalSeed),
         ("Story foundation commit uses structured candidate identity", StoryFoundationCommitUsesStructuredCandidateIdentityAsync),
         ("Creative knowledge base seeds and project memory are retrievable", CreativeKnowledgeBaseRetrievesSeedsAndProjectMemoryAsync),
         ("NovelAgentOrchestrator runs foundation and chapter planning loop", NovelAgentOrchestratorRunsFoundationAndChapterPlanningLoopAsync),
@@ -28,7 +31,10 @@ internal static class Program
         ("Canon ledger high-risk status requires confirmation", CanonLedgerHighRiskRequiresConfirmationAsync),
         ("StoryStateSnapshot uses vector chapter and chunk recall", StoryStateSnapshotUsesVectorRecallAsync),
         ("Commercial rhythm checker feeds planning and review", CommercialRhythmFeedsPlanningAndReview),
+        ("VolumeArcPlanner follows power progression direction", VolumeArcPlannerFollowsPowerProgressionDirection),
         ("ChapterNoveltyPlanner uses emotion and relationship knowledge", ChapterPlannerUsesEmotionRelationshipKnowledge),
+        ("ChapterNoveltyPlanner removes rejected plot templates", ChapterPlannerRemovesRejectedPlotTemplates),
+        ("ChapterNoveltyPlanner respects direct forbidden directions", ChapterPlannerRespectsDirectForbiddenDirections),
         ("Sample novel chapter fixture feeds RAG repetition planning", SampleNovelChapterFixtureFeedsRagPlanningAsync),
         ("Sample novel regression fixture is loadable", SampleNovelRegressionFixtureIsLoadableAsync),
         ("Quality evaluation fixtures cover five reviewer dimensions", QualityEvaluationFixturesCoverFiveReviewerDimensionsAsync)
@@ -108,11 +114,128 @@ internal static class Program
             .ToList();
         Check.True(candidateScores.SequenceEqual(candidateScores.OrderByDescending(s => s)),
             "Macro candidates should be sorted by novelty/sustainability/type match.");
-        Check.True(candidates.Take(2).Any(c => c.Title == "真相递进型"),
-            "Top macro candidates should keep the truth-progression route available for rule-suspense stories.");
+        Check.True(candidates.All(c => !string.IsNullOrWhiteSpace(c.Title) && !string.IsNullOrWhiteSpace(c.CoreHook)),
+            "Macro candidates should be generated from the current brief, not from empty placeholders.");
         Check.True(candidates.Any(c => c.Risks.Any(r => r.Contains("线索", StringComparison.OrdinalIgnoreCase)
                                                         || r.Contains("代价账本", StringComparison.OrdinalIgnoreCase))),
             "Macro candidates should carry execution risks, not only ideas.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task BookConceptDesignerRemovesRejectedMacroTemplates()
+    {
+        var designer = new BookConceptDesigner(new GenreDirectionPlanner());
+        var request = new StoryFoundationRequest
+        {
+            UserSeed = "灵气复苏末日，主角猥琐发育，带系统金手指，核心就是一路打怪升级，突破境界，碾压敌人。",
+            Genre = "末世打怪升级爽文",
+            TargetReader = "喜欢节奏明快、打怪升级、战力成长和爽点兑现的读者",
+            DesiredDirection = "这些都不要，就要一路打怪升级的；不要规则反噬型、不要真相递进型、不要关系代价型",
+            ForbiddenDirections = { "规则反噬型", "真相递进型", "关系代价型" }
+        };
+
+        var candidates = designer.GenerateMacroCandidates(request).ToList();
+        var allText = string.Join("\n", candidates.Select(c => $"{c.Title} {c.CoreHook} {c.WorldCoreRule} {c.MainConflictEngine}"));
+
+        Check.True(candidates.Count >= 3, "Designer should still produce multiple macro candidates after deleting fixed templates.");
+        Check.DoesNotContain("规则反噬", allText, "Rejected rule-backlash template must not appear in generated macro candidates.");
+        Check.DoesNotContain("真相递进", allText, "Rejected truth-ladder template must not appear in generated macro candidates.");
+        Check.DoesNotContain("关系代价", allText, "Rejected relationship-cost template must not appear in generated macro candidates.");
+        Check.True(candidates.Any(c => (c.Title + c.CoreHook + c.MainConflictEngine).Contains("打怪", StringComparison.OrdinalIgnoreCase)
+                                      || (c.Title + c.CoreHook + c.MainConflictEngine).Contains("升级", StringComparison.OrdinalIgnoreCase)),
+            "Generated candidates should follow the user's positive direction.");
+        Check.True(candidates.All(c => !string.IsNullOrWhiteSpace(c.ProgressionSystem)
+                                      && !string.IsNullOrWhiteSpace(c.WorldbuildingBlueprint)
+                                      && !string.IsNullOrWhiteSpace(c.ProtagonistProfile)
+                                      && !string.IsNullOrWhiteSpace(c.PleasureLoop)
+                                      && c.FirstThreeVolumes.Count >= 3
+                                      && c.KeyCharacters.Count >= 5),
+            "Story foundation candidates must be complete enough to feed volume and chapter planning, not just thin hook summaries.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task BookConceptDesignerKeepsPositivePowerFantasyDirectionWithLongExclusions()
+    {
+        var designer = new BookConceptDesigner(new GenreDirectionPlanner());
+        var request = new StoryFoundationRequest
+        {
+            UserSeed = "末世玄幻爽文，男主从底层幸存者开始，系统吞噬怪物晶核升级，一路打怪升级、建基地、收伙伴。后宫流，升级系统，灵气复苏，征服类剧情，纯打怪升级变强流，碾压流。",
+            Genre = "末世玄幻",
+            SubGenre = "升级流爽文",
+            TargetReader = "喜欢爽文、升级流、后宫元素的男性读者",
+            DesiredDirection = "系统吞噬晶核升级为核心机制，男主从底层一路碾压变强，建基地收伙伴，每章都有爽点，但爽点需要有代价回流，避免无成本流水账。",
+            CandidateDirections =
+            {
+                "开篇绝境求生+首次觉醒系统的冲击力",
+                "末世社会生态+男主的底层视角代入感",
+                "吞噬系统的独特机制展示+首次战力碾压的爽感爆发"
+            },
+            ForbiddenDirections =
+            {
+                "规则反噬：不要设计系统反噬或升级代价机制",
+                "真相递进：不要隐藏世界真相逐步揭露的阴谋线",
+                "关系代价：不要让感情关系成为力量获取的代价或束缚",
+                "无成本碾压：不要让爽点完全没有后续影响"
+            }
+        };
+
+        var candidates = designer.GenerateMacroCandidates(request).ToList();
+        var allText = string.Join("\n", candidates.Select(c => $"{c.Title} {c.CoreHook} {c.WorldCoreRule} {c.MainConflictEngine}"));
+
+        Check.True(candidates.Count >= 3,
+            "Long exclusion descriptions should not erase the user's positive power-fantasy direction.");
+        Check.True(candidates.Any(c => (c.Title + c.CoreHook + c.MainConflictEngine).Contains("打怪", StringComparison.OrdinalIgnoreCase)
+                                      || (c.Title + c.CoreHook + c.MainConflictEngine).Contains("升级", StringComparison.OrdinalIgnoreCase)
+                                      || (c.Title + c.CoreHook + c.MainConflictEngine).Contains("吞噬", StringComparison.OrdinalIgnoreCase)),
+            "Generated candidates should preserve monster-core devouring and power-growth fantasy.");
+        Check.DoesNotContain("规则反噬", allText, "Rejected rule-backlash direction must not appear.");
+        Check.DoesNotContain("真相递进", allText, "Rejected truth-ladder direction must not appear.");
+        Check.DoesNotContain("关系代价", allText, "Rejected relationship-cost direction must not appear.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task BookConceptDesignerIgnoresForbiddenPhrasesEmbeddedInNaturalSeed()
+    {
+        var designer = new BookConceptDesigner(new GenreDirectionPlanner());
+        var request = new StoryFoundationRequest
+        {
+            UserSeed = "新写一本小说，书名《裂穹机兵：从冻土矿奴到天轨霸主》，类型是废土机甲打怪升级爽文。请直接开始执行，先建立故事地基，包含世界观、升级体系、主角、爽点循环、前三卷、首批角色。不要规则反噬、真相递进、关系代价候选。",
+            Genre = "废土机甲打怪升级爽文",
+            DesiredDirection = "废土机甲打怪升级爽文，矿奴逆袭，战甲改装，怪物核心升级",
+            CandidateDirections =
+            {
+                "机甲融合与进化升级体系，主角机甲可吞噬怪物核心进化",
+                "废土末世资源争夺，矿奴身份底层逆袭",
+                "天轨系统作为升级与战力衡量的核心设定",
+                "碾压式战斗爽感，以弱胜强后持续升级碾压"
+            },
+            ForbiddenDirections =
+            {
+                "规则反噬：升级或使用能力会带来负面代价的设定",
+                "真相递进：世界真相层层剥开、最终发现一切都是骗局的叙事",
+                "关系代价：角色关系发展需要牺牲能力或资源作为代价的设计",
+                "虐主向：长期压迫主角、主角反复受挫的叙事"
+            }
+        };
+
+        var candidates = designer.GenerateMacroCandidates(request).ToList();
+        var allText = string.Join("\n", candidates.Select(c => $"{c.Title} {c.CoreHook} {c.WorldbuildingBlueprint} {c.ProgressionSystem} {c.PleasureLoop}"));
+
+        Check.True(candidates.Count >= 3,
+            "Natural full-prompt seeds that include forbidden phrases should still generate usable macro candidates.");
+        Check.True(candidates.Any(c => allText.Contains("机甲", StringComparison.OrdinalIgnoreCase)
+                                      || allText.Contains("战甲", StringComparison.OrdinalIgnoreCase)),
+            "Candidates should preserve the positive mecha/power progression direction.");
+        Check.DoesNotContain("规则反噬", allText, "Forbidden phrases embedded in the user's natural prompt must not leak into candidate text.");
+        Check.DoesNotContain("真相递进", allText, "Forbidden phrases embedded in the user's natural prompt must not leak into candidate text.");
+        Check.DoesNotContain("关系代价", allText, "Forbidden phrases embedded in the user's natural prompt must not leak into candidate text.");
+        Check.DoesNotContain("请直接开始执行", allText, "Operational instructions must not become story concept text.");
+        Check.DoesNotContain("先建立故事地基", allText, "Workflow instructions must not become story concept text.");
+        Check.DoesNotContain("包含世界观", allText, "Checklist wording must not become story concept text.");
+        Check.DoesNotContain("首批角色", allText, "Checklist wording must not become story concept text.");
 
         return Task.CompletedTask;
     }
@@ -639,6 +762,123 @@ internal static class Program
             "Relationship candidate should receive creative knowledge support.");
         Check.Contains("导师", relationCandidate.ConflictMove + relationCandidate.CharacterChoice,
             "Relationship candidate should keep the active conflict pressure visible.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task VolumeArcPlannerFollowsPowerProgressionDirection()
+    {
+        var planner = new VolumeArcPlanner();
+        var plan = planner.BuildPlan(new VolumeArcPlanningRequest
+        {
+            UserGoal = "这一卷就写主角一路打怪升级、抢资源点、突破境界，不要规则展示、不要第一次错误胜利、不要代价显形、不要中段反转、不要伏笔回收。",
+            ExpectedChapterCount = 12,
+            CandidateDirections = { "怪物压力升级", "资源点争夺", "境界突破门槛", "强敌压迫" },
+            ForbiddenDirections = { "规则展示", "第一次错误胜利", "代价显形", "中段反转", "伏笔回收" }
+        }, new StoryCreativeConstitution
+        {
+            Genre = "末世打怪升级爽文",
+            MainPleasure = "打怪、升级、资源获取和碾压强敌。",
+            GenreProfile = new GenreDirectionProfile
+            {
+                PleasureStrength = 9,
+                PaceStrength = 9,
+                WorldbuildingStrength = 7
+            }
+        }, knowledge: null);
+
+        var planText = string.Join("\n", new[]
+        {
+            plan.Title,
+            plan.CoreQuestion,
+            plan.MidpointReversal,
+            plan.Climax,
+            string.Join("\n", plan.ChapterBeats.Select(b => $"{b.Role} {b.Goal} {b.Turn} {b.Cost}")),
+            string.Join("\n", plan.ForeshadowingPlan.Select(f => $"{f.Name} {f.Setup} {f.Payoff}"))
+        });
+
+        Check.Contains("打怪", planText + " " + plan.Title,
+            "Power progression volume should preserve monster-fighting direction.");
+        Check.True(plan.ChapterBeats.Any(b => (b.Role + b.Goal + b.Turn).Contains("资源", StringComparison.OrdinalIgnoreCase)
+                                           || (b.Role + b.Goal + b.Turn).Contains("境界", StringComparison.OrdinalIgnoreCase)),
+            "Power progression volume should include resource or realm progression beats.");
+        Check.DoesNotContain("规则展示", planText, "Rejected fixed volume beat must not appear.");
+        Check.DoesNotContain("第一次错误胜利", planText, "Rejected fixed volume beat must not appear.");
+        Check.DoesNotContain("代价显形", planText, "Rejected fixed volume beat must not appear.");
+        Check.DoesNotContain("中段反转", planText, "Rejected fixed volume beat must not appear.");
+        Check.DoesNotContain("伏笔回收", planText, "Rejected fixed volume beat must not appear.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ChapterPlannerRemovesRejectedPlotTemplates()
+    {
+        var planner = new ChapterNoveltyPlanner();
+        var brief = planner.BuildBrief(new ChapterCreativeRequest
+        {
+            UserGoal = "写主角一路打怪升级，不要规则反噬，不要认知反转，不要关系破局。",
+            ActiveConflicts = { "怪潮压境" },
+            CharacterStates = { "主角正在猥琐发育" },
+            Constitution = new StoryCreativeConstitution
+            {
+                Genre = "末世打怪升级爽文",
+                MainPleasure = "打怪、升级、资源获取和碾压强敌。",
+                GenreProfile = new GenreDirectionProfile
+                {
+                    PleasureStrength = 9,
+                    PaceStrength = 9,
+                    WorldbuildingStrength = 7,
+                    Strategy = "用打怪升级循环兑现爽点。"
+                },
+                ForbiddenDirections = { "规则反噬", "认知反转", "关系破局" }
+            }
+        });
+
+        var candidateText = string.Join("\n", brief.Candidates.Select(c => $"{c.Title} {c.CoreTwist} {c.ConflictMove}"));
+        Check.DoesNotContain("规则反噬", candidateText, "Rejected rule-backlash plot template must not appear.");
+        Check.DoesNotContain("认知反转", candidateText, "Rejected cognitive-reversal plot template must not appear.");
+        Check.DoesNotContain("关系破局", candidateText, "Rejected relationship-breakthrough plot template must not appear.");
+        Check.DoesNotContain("失败推进", candidateText, "Unrequested failure-progression template must not be injected into pure leveling candidates.");
+        Check.DoesNotContain("代价交换", candidateText, "Unrequested cost-exchange template must not be injected into pure leveling candidates.");
+        Check.DoesNotContain("伏笔回收", candidateText, "Unrequested foreshadowing template must not be injected into pure leveling candidates.");
+        Check.True(brief.Candidates.Any(c => (c.Title + c.CoreTwist + c.ConflictMove).Contains("打怪", StringComparison.OrdinalIgnoreCase)
+                                           || (c.Title + c.CoreTwist + c.ConflictMove).Contains("升级", StringComparison.OrdinalIgnoreCase)),
+            "Chapter candidates should follow the positive chapter direction.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ChapterPlannerRespectsDirectForbiddenDirections()
+    {
+        var planner = new ChapterNoveltyPlanner();
+        var brief = planner.BuildBrief(new ChapterCreativeRequest
+        {
+            UserGoal = "这一章写主角和女机械师谈判结盟，重点是阵营拉扯。",
+            ActiveConflicts = { "斗场怪物压境" },
+            CharacterStates = { "主角还是底层维修工" },
+            CandidateDirections = { "人物立场重组推进主线" },
+            ForbiddenDirections = { "人物立场重组", "关系", "认知改写" },
+            Constitution = new StoryCreativeConstitution
+            {
+                Genre = "废土机甲打怪升级爽文",
+                MainPleasure = "打怪、升级、资源获取和碾压强敌。",
+                GenreProfile = new GenreDirectionProfile
+                {
+                    PleasureStrength = 9,
+                    PaceStrength = 9,
+                    WorldbuildingStrength = 7,
+                    Strategy = "用战斗和改装成长兑现爽点。"
+                }
+            }
+        });
+
+        var candidateText = string.Join("\n", brief.Candidates.Select(c => $"{c.Title} {c.CoreTwist} {c.ConflictMove} {c.CharacterChoice}"));
+        Check.DoesNotContain("人物立场", candidateText, "Direct forbidden directions must remove matching chapter candidates.");
+        Check.DoesNotContain("关系", candidateText, "Direct forbidden directions must remove matching chapter candidates.");
+        Check.True(brief.Candidates.Any(c => (c.Title + c.CoreTwist + c.ConflictMove).Contains("战斗", StringComparison.OrdinalIgnoreCase)
+                                           || (c.Title + c.CoreTwist + c.ConflictMove).Contains("资源", StringComparison.OrdinalIgnoreCase)
+                                           || (c.Title + c.CoreTwist + c.ConflictMove).Contains("升级", StringComparison.OrdinalIgnoreCase)),
+            "Chapter candidates should keep positive combat progression after filtering direct forbidden directions.");
 
         return Task.CompletedTask;
     }

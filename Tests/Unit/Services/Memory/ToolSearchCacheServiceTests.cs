@@ -33,7 +33,7 @@ public class ToolSearchCacheServiceTests
             "user-1",
             "session-1",
             "project-1",
-            "Planning",
+            "global:Planning",
             "project=1|session=2");
 
         await service.SaveAsync(
@@ -65,7 +65,7 @@ public class ToolSearchCacheServiceTests
             UserId = "user-1",
             SessionId = "session-1",
             ActiveProjectId = "project-1",
-            DiscoveredPhase = "Planning",
+            DiscoveredPhase = "global:Planning",
             ToolSearchCacheVersion = "project=1|execution=1",
             LastToolSearchAt = DateTime.UtcNow,
             DiscoveredTools = new List<ToolSchema>
@@ -97,7 +97,7 @@ public class ToolSearchCacheServiceTests
             UserId = "user-1",
             SessionId = "session-1",
             ActiveProjectId = "project-1",
-            DiscoveredPhase = "Planning",
+            DiscoveredPhase = "global:Planning",
             ToolSearchCacheVersion = "project:project-1:*=1",
             LastToolSearchAt = DateTime.UtcNow,
             DiscoveredTools = new List<ToolSchema>
@@ -152,7 +152,7 @@ public class ToolSearchCacheServiceTests
             UserId = "user-1",
             SessionId = "session-1",
             ActiveProjectId = "project-1",
-            DiscoveredPhase = "Planning",
+            DiscoveredPhase = "global:Planning",
             ToolSearchCacheVersion = "project=1|session=2",
             LastToolSearchAt = originalSession.LastToolSearchAt
         };
@@ -170,7 +170,7 @@ public class ToolSearchCacheServiceTests
                     "user-1",
                     "session-1",
                     "project-1",
-                    "Planning",
+                    "global:Planning",
                     "project=1|session=2")),
                 It.IsAny<object>(),
                 It.Is<TimeSpan?>(ttl => ttl > TimeSpan.Zero && ttl <= TimeSpan.FromMinutes(5)),
@@ -251,7 +251,7 @@ public class ToolSearchCacheServiceTests
         Assert.True(result.Hit);
         Assert.Equal("sqlite-snapshot", result.Source);
         Assert.NotNull(result.Tools);
-        Assert.Equal("Planning", session.DiscoveredPhase);
+        Assert.Equal("global:Planning", session.DiscoveredPhase);
         Assert.Equal("ResolveNovelProject", result.Tools![0].Name);
     }
 

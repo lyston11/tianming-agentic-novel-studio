@@ -22,6 +22,7 @@ public class AgentMemoryServiceTests
             },
             AuthorMemory = new AuthorMemory
             {
+                DisplayName = "旧称呼",
                 StyleLikes = new List<string> { "旧喜好" },
                 StyleDislikes = new List<string> { "旧反感" }
             },
@@ -48,6 +49,7 @@ public class AgentMemoryServiceTests
         };
         session.WorkingMemory.AuthorMemory = new AgentAuthorMemory
         {
+            DisplayName = "旧称呼",
             StyleLikes = new List<string> { "旧喜好" },
             StyleDislikes = new List<string> { "旧反感" }
         };
@@ -75,6 +77,7 @@ public class AgentMemoryServiceTests
                     },
                     AuthorMemory = new AuthorMemoryUpdate
                     {
+                        DisplayName = "lyston",
                         StyleLikes = new List<string> { "细腻心理描写" },
                         StyleDislikes = new List<string> { "重复情绪渲染" }
                     },
@@ -96,17 +99,22 @@ public class AgentMemoryServiceTests
         Assert.Contains("不要出现现代科技元素", session.WorkingMemory.ProjectMemory.Constraints);
         Assert.Contains("kb-new", session.WorkingMemory.ProjectMemory.ReferencedKnowledgeIds);
         Assert.Contains("反套路-误导线索", session.WorkingMemory.ProjectMemory.UsedTropePatterns);
+        Assert.Equal("lyston", session.WorkingMemory.AuthorMemory.DisplayName);
         Assert.Contains("细腻心理描写", session.WorkingMemory.AuthorMemory.StyleLikes);
         Assert.Contains("WriteChapter 成功", session.WorkingMemory.ExecutionMemory.SuccessfulRepairNotes);
 
-        Assert.True(repository.ProjectUpdates.TryGetValue("project.constraints", out var constraints));
+        Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.constraints", out var constraints));
         Assert.Contains("保持节奏紧凑", Assert.IsType<List<string>>(constraints));
         Assert.True(repository.ProjectUnionUpdates.TryGetValue("project.referenced_knowledge_ids", out var knowledgeIds));
         Assert.Contains("kb-new", Assert.IsType<List<string>>(knowledgeIds));
         Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.repeated_blockers", out var blockers));
         Assert.Contains("ValidateChapterDraft 发现节奏问题", Assert.IsType<List<string>>(blockers));
-        Assert.True(repository.AuthorUpdates.TryGetValue("author.style_likes", out var styleLikes));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.style_likes", out var styleLikes));
         Assert.Contains("细腻心理描写", Assert.IsType<List<string>>(styleLikes));
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.display_name", out var displayName));
+        Assert.Equal("lyston", Assert.IsType<string>(displayName));
+        Assert.False(repository.ProjectUpdates.ContainsKey("project.constraints"));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.style_likes"));
         Assert.False(repository.ProjectUpdates.ContainsKey("project.referenced_knowledge_ids"));
         Assert.False(repository.ProjectUpdates.ContainsKey("execution.repeated_blockers"));
     }
@@ -242,14 +250,93 @@ public class AgentMemoryServiceTests
 
         Assert.True(repository.AuthorUpdates.TryGetValue("author.confirmation_tolerance", out var confirmationTolerance));
         Assert.Equal("auto_low_risk", Assert.IsType<string>(confirmationTolerance));
-        Assert.True(repository.AuthorUpdates.TryGetValue("author.genre_habits", out var genreHabits));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.genre_habits", out var genreHabits));
         Assert.Contains("赛博悬疑", Assert.IsType<List<string>>(genreHabits));
-        Assert.True(repository.AuthorUpdates.TryGetValue("author.favorite_knowledge_ids", out var favoriteKnowledgeIds));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.favorite_knowledge_ids", out var favoriteKnowledgeIds));
         Assert.Contains("kb-new", Assert.IsType<List<string>>(favoriteKnowledgeIds));
         Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.tool_failures", out var toolFailures));
         Assert.Contains("ValidateChapterDraft: continuity", Assert.IsType<List<string>>(toolFailures));
         Assert.True(repository.ProjectUnionUpdates.TryGetValue("execution.knowledge_processing_failures", out var knowledgeFailures));
         Assert.Contains("knowledge-task-1: missing_llm_settings", Assert.IsType<List<string>>(knowledgeFailures));
+    }
+
+    [Fact]
+    public async Task PersistProjectlessAsync_PersistsAuthorDisplayNameFromReflection()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+
+        await service.PersistProjectlessAsync(session, new AgentReflection
+        {
+            MissionPatch = new AgentMissionPatch
+            {
+                MemoryUpdate = new AgentMemoryUpdate
+                {
+                    AuthorMemory = new AuthorMemoryUpdate
+                    {
+                        DisplayName = "lyston"
+                    }
+                }
+            }
+        });
+
+        Assert.Equal("lyston", session.WorkingMemory.AuthorMemory.DisplayName);
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.display_name", out var displayName));
+        Assert.Equal("lyston", Assert.IsType<string>(displayName));
+    }
+
+    [Fact]
+    public async Task PersistProjectlessAsync_UnionsLongTermAuthorListsFromReflection()
+    {
+        var repository = new RecordingMemoryRepository
+        {
+            AuthorMemory = new AuthorMemory
+            {
+                StyleLikes = new List<string> { "旧风格偏好" },
+                GenreHabits = new List<string> { "旧类型习惯" },
+                FavoriteKnowledgeIds = new List<string> { "kb-old" }
+            }
+        };
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+
+        await service.PersistProjectlessAsync(session, new AgentReflection
+        {
+            MissionPatch = new AgentMissionPatch
+            {
+                MemoryUpdate = new AgentMemoryUpdate
+                {
+                    AuthorMemory = new AuthorMemoryUpdate
+                    {
+                        StyleLikes = new List<string> { "喜欢快节奏升级" },
+                        ConfirmationTolerance = "auto_low_risk",
+                        GenreHabits = new List<string> { "末世打怪升级" },
+                        FavoriteKnowledgeIds = new List<string> { "kb-new" }
+                    }
+                }
+            }
+        });
+
+        Assert.True(repository.AuthorUpdates.TryGetValue("author.confirmation_tolerance", out var confirmationTolerance));
+        Assert.Equal("auto_low_risk", Assert.IsType<string>(confirmationTolerance));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.style_likes", out var styleLikes));
+        Assert.Contains("喜欢快节奏升级", Assert.IsType<List<string>>(styleLikes));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.genre_habits", out var genreHabits));
+        Assert.Contains("末世打怪升级", Assert.IsType<List<string>>(genreHabits));
+        Assert.True(repository.AuthorUnionUpdates.TryGetValue("author.favorite_knowledge_ids", out var favoriteKnowledgeIds));
+        Assert.Contains("kb-new", Assert.IsType<List<string>>(favoriteKnowledgeIds));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.style_likes"));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.genre_habits"));
+        Assert.False(repository.AuthorUpdates.ContainsKey("author.favorite_knowledge_ids"));
     }
 
     [Fact]
@@ -291,6 +378,40 @@ public class AgentMemoryServiceTests
         Assert.Equal("SelectChapterCandidate", Assert.IsType<string>(pendingToolName));
         Assert.True(repository.SessionUpdates.TryGetValue("session.last_intent", out var lastIntent));
         Assert.Equal("select_chapter_candidate", Assert.IsType<string>(lastIntent));
+    }
+
+    [Fact]
+    public async Task PersistAsync_NormalizesRepeatedSessionMemoryObservationPrefixes()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1"
+        };
+        session.WorkingMemory.RecentObservations.Add(new AgentRuntimeObservation
+        {
+            ObservationType = "session_memory",
+            Message = "session_memory: session_memory: 用户希望主角叫陈默",
+            Phase = "memory_restore",
+            Success = true
+        });
+        session.WorkingMemory.RecentObservations.Add(new AgentRuntimeObservation
+        {
+            ObservationType = "session_memory",
+            Message = "用户希望主角叫陈默",
+            Phase = "memory_restore",
+            Success = true
+        });
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection());
+
+        Assert.True(repository.SessionUpdates.TryGetValue("session.recent_observations", out var observationsValue));
+        var observations = Assert.IsType<List<string>>(observationsValue);
+        var observation = Assert.Single(observations);
+        Assert.Equal("session_memory: 用户希望主角叫陈默", observation);
+        Assert.DoesNotContain("session_memory: session_memory", observation);
     }
 
     [Fact]

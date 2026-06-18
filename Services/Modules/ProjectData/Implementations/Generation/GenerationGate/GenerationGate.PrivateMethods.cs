@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using TM.Framework.Common.Helpers.Id;
 using TM.Services.Modules.ProjectData.Implementations.Generation;
 using TM.Services.Modules.ProjectData.Models.Tracking;
@@ -38,41 +39,227 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             content = content.Trim();
 
-            var jsonStart = content.IndexOf('{');
-            if (jsonStart < 0)
+            if (TryNormalizeChangesJsonShape(content, out var normalized))
+                return normalized;
+
+            var candidates = ExtractBalancedJsonObjects(content).ToList();
+            foreach (var candidate in candidates.AsEnumerable().Reverse())
             {
-                return content;
+                var repaired = RepairChangesJson(candidate);
+                if (TryNormalizeChangesJsonShape(repaired, out normalized))
+                    return normalized;
+                if (TryParseChangesJsonDocument(repaired, out var matchedFieldCount) && matchedFieldCount > 0)
+                    return repaired;
             }
 
-            var best = string.Empty;
-            var end = content.IndexOf('}', jsonStart + 1);
-            while (end > jsonStart)
-            {
-                var candidate = content.Substring(jsonStart, end - jsonStart + 1);
-                try
-                {
-                    using var doc = JsonDocument.Parse(candidate, new JsonDocumentOptions
-                    {
-                        CommentHandling = JsonCommentHandling.Skip,
-                        AllowTrailingCommas = true
-                    });
+            var fallback = candidates.LastOrDefault();
+            if (!string.IsNullOrWhiteSpace(fallback))
+                return fallback;
 
-                    if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            var jsonStart = content.IndexOf('{');
+            return jsonStart < 0 ? content : content.Substring(jsonStart);
+        }
+
+        public static bool TryNormalizeChangesJsonShape(string json, out string normalized)
+        {
+            normalized = string.Empty;
+            if (string.IsNullOrWhiteSpace(json))
+                return false;
+
+            var repaired = RepairChangesJson(json);
+            JsonNode? node;
+            try
+            {
+                node = JsonNode.Parse(repaired, documentOptions: new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+
+            var merged = CreateEmptyChangesObject();
+            var matchedFieldCount = 0;
+
+            if (node is JsonObject obj)
+            {
+                matchedFieldCount += MergeChangesObject(merged, obj);
+            }
+            else if (node is JsonArray arr)
+            {
+                foreach (var item in arr)
+                {
+                    if (item is JsonObject itemObj)
+                        matchedFieldCount += MergeChangesObject(merged, itemObj);
+                }
+            }
+
+            if (matchedFieldCount == 0)
+                return false;
+
+            normalized = merged.ToJsonString(ChangesJsonWriteOptions);
+            return true;
+        }
+
+        private static JsonObject CreateEmptyChangesObject()
+        {
+            var obj = new JsonObject();
+            foreach (var field in ChapterChanges.TopLevelFieldNames)
+            {
+                obj[field] = field == nameof(ChapterChanges.TimeProgression)
+                    ? null
+                    : new JsonArray();
+            }
+
+            return obj;
+        }
+
+        private static int MergeChangesObject(JsonObject target, JsonObject source)
+        {
+            var matched = 0;
+            foreach (var field in ChapterChanges.TopLevelFieldNames)
+            {
+                var prop = FindProperty(source, field);
+                if (prop == null)
+                    continue;
+
+                matched++;
+                target[field] = NormalizeChangesField(field, prop.Value.Value);
+            }
+
+            return matched;
+        }
+
+        private static KeyValuePair<string, JsonNode?>? FindProperty(JsonObject obj, string field)
+        {
+            foreach (var prop in obj)
+            {
+                if (string.Equals(prop.Key, field, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(prop.Key, ToCamelCase(field), StringComparison.OrdinalIgnoreCase))
+                {
+                    return prop;
+                }
+            }
+
+            return null;
+        }
+
+        private static JsonNode? NormalizeChangesField(string field, JsonNode? value)
+        {
+            if (field == nameof(ChapterChanges.TimeProgression))
+            {
+                if (value is JsonArray arr && arr.Count == 0)
+                    return null;
+                return value?.DeepClone();
+            }
+
+            if (value is null)
+                return new JsonArray();
+
+            if (value is JsonArray)
+                return value.DeepClone();
+
+            return new JsonArray(value.DeepClone());
+        }
+
+        private static readonly JsonSerializerOptions ChangesJsonWriteOptions = new()
+        {
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        private static IEnumerable<string> ExtractBalancedJsonObjects(string content)
+        {
+            var inString = false;
+            var quote = '"';
+            var escape = false;
+            var depth = 0;
+            var start = -1;
+
+            for (var i = 0; i < content.Length; i++)
+            {
+                var c = content[i];
+
+                if (inString)
+                {
+                    if (escape)
                     {
-                        return candidate;
+                        escape = false;
+                        continue;
+                    }
+
+                    if (c == '\\')
+                    {
+                        escape = true;
+                        continue;
+                    }
+
+                    if (c == quote)
+                    {
+                        inString = false;
+                    }
+
+                    continue;
+                }
+
+                if (c == '"' || c == '\'')
+                {
+                    inString = true;
+                    quote = c;
+                    continue;
+                }
+
+                if (c == '{')
+                {
+                    if (depth == 0)
+                        start = i;
+                    depth++;
+                    continue;
+                }
+
+                if (c != '}' || depth == 0)
+                    continue;
+
+                depth--;
+                if (depth == 0 && start >= 0)
+                {
+                    yield return content.Substring(start, i - start + 1);
+                    start = -1;
+                }
+            }
+        }
+
+        private static bool TryParseChangesJsonDocument(string json, out int matchedFieldCount)
+        {
+            matchedFieldCount = 0;
+            try
+            {
+                using var doc = JsonDocument.Parse(json, new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    return false;
+
+                foreach (var field in ChangesSignatureFields)
+                {
+                    if (doc.RootElement.TryGetProperty(field, out _) ||
+                        doc.RootElement.TryGetProperty(ToCamelCase(field), out _))
+                    {
+                        matchedFieldCount++;
                     }
                 }
-                catch
-                {
-                    best = candidate;
-                }
 
-                end = content.IndexOf('}', end + 1);
+                return true;
             }
-
-            return string.IsNullOrEmpty(best)
-                ? content.Substring(jsonStart)
-                : best;
+            catch (JsonException)
+            {
+                return false;
+            }
         }
 
         private static string RepairChangesJson(string json)

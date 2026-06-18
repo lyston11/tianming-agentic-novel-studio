@@ -261,6 +261,7 @@ public class RuntimePurityTests
 
         Assert.Contains("SetWorkspaceContext", text, StringComparison.Ordinal);
         Assert.Contains("workspace.SetRequestContext()", text, StringComparison.Ordinal);
+        Assert.Contains("AgentObservationBuilder.SetWorkspace", text, StringComparison.Ordinal);
         Assert.Contains("ProjectScopedExecutor.SetCatalog", text, StringComparison.Ordinal);
         Assert.Contains("EnsureWorkspaceForSessionProjectAsync", text, StringComparison.Ordinal);
         Assert.Contains("_workspaceFactory.AcquireAsync(userId, session.ActiveProjectId", text, StringComparison.Ordinal);
@@ -318,6 +319,7 @@ public class RuntimePurityTests
         Assert.Contains("ProductSpace", text, StringComparison.Ordinal);
         Assert.Contains("WorkspaceState", text, StringComparison.Ordinal);
         Assert.Contains("memory_layers", text, StringComparison.Ordinal);
+        Assert.Contains("memory_context", text, StringComparison.Ordinal);
         Assert.Contains("product_space", text, StringComparison.Ordinal);
         Assert.Contains("workspace_state", text, StringComparison.Ordinal);
         Assert.Contains("DomainSurface", text, StringComparison.Ordinal);
@@ -327,6 +329,32 @@ public class RuntimePurityTests
         Assert.Contains("UserVisibleWhere", text, StringComparison.Ordinal);
         Assert.DoesNotContain("NOT QueryProjectStatus tool", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Use chat_reply for greetings, questions, status queries", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentPlanner_DoesNotPromoteSpecificBusinessToolsInInstructions()
+    {
+        var root = FindRepositoryRoot();
+        var coreText = File.ReadAllText(Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentCore.cs"));
+        var toolCallingText = File.ReadAllText(Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentToolCallingClient.cs"));
+
+        Assert.DoesNotContain("Call ResolveNovelProject", coreText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Use SearchCreativeKnowledge", coreText, StringComparison.Ordinal);
+        Assert.DoesNotContain("QueryWorkspaceState when", coreText, StringComparison.Ordinal);
+        Assert.DoesNotContain("QueryProjectStatus", toolCallingText, StringComparison.Ordinal);
+        Assert.DoesNotContain("QueryWorkspaceState", toolCallingText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProductSpaceCatalog_DescribesCapabilitiesNotPrimaryTools()
+    {
+        var root = FindRepositoryRoot();
+        var catalogText = File.ReadAllText(Path.Combine(root, "Web", "NovelAgentWeb", "Support", "AgentProductSpaceCatalog.cs"));
+
+        Assert.DoesNotContain("PrimaryTools", catalogText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"ResolveNovelProject\"", catalogText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"QueryWorkspaceState\"", catalogText, StringComparison.Ordinal);
+        Assert.Contains("Capabilities", catalogText, StringComparison.Ordinal);
     }
 
     [Fact]

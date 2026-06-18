@@ -3,6 +3,7 @@ using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Extensions;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Support;
 using AgentSessionEntity = TM.Web.NovelAgentWeb.Data.Entities.AgentSession;
 
@@ -14,13 +15,16 @@ namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 public class AgentSessionService : IAgentSessionService
 {
     private readonly NovelAgentDbContext _dbContext;
+    private readonly IAgentRuntimeRunService _runtimeRuns;
     private readonly ILogger<AgentSessionService> _logger;
 
     public AgentSessionService(
         NovelAgentDbContext dbContext,
+        IAgentRuntimeRunService runtimeRuns,
         ILogger<AgentSessionService> logger)
     {
         _dbContext = dbContext;
+        _runtimeRuns = runtimeRuns;
         _logger = logger;
     }
 
@@ -166,6 +170,7 @@ public class AgentSessionService : IAgentSessionService
     {
         var data = DeserializeSessionData(session.SessionData);
         var projectId = session.ProjectId ?? string.Empty;
+        var activeRuntimeRun = await _runtimeRuns.TryGetActiveAsync(session.UserId, session.Id, ct).ConfigureAwait(false);
         var messages = await _dbContext.AgentChatTurns
             .AsNoTracking()
             .Where(t => t.SessionId == session.Id && t.UserId == session.UserId)
@@ -185,7 +190,7 @@ public class AgentSessionService : IAgentSessionService
             Title = session.Title,
             Phase = string.IsNullOrWhiteSpace(data.Phase) ? "idle" : data.Phase,
             ActiveProjectId = projectId,
-            ActiveRunId = data.ActiveRunId,
+            ActiveRunId = activeRuntimeRun?.Id,
             IsArchived = session.IsArchived,
             RunHistory = data.RunHistory,
             CreatedAt = session.CreatedAt,

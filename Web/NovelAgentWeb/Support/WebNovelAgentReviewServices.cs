@@ -27,10 +27,15 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         {
             if (run == null) throw new ArgumentNullException(nameof(run));
 
-            var content = await _contentService.GetChapterAsync(run.TargetChapterId).ConfigureAwait(false) ?? string.Empty;
+            var storedContent = await _contentService.GetChapterAsync(run.TargetChapterId).ConfigureAwait(false) ?? string.Empty;
+            var content = ResolveReviewContent(
+                storedContent,
+                run.DraftArtifact?.CommittedContent,
+                run.DraftArtifact?.DraftContent);
             var document = await _storyBibleService.LoadAsync(ct).ConfigureAwait(false);
             var storyState = await _storyStateSnapshotService.BuildForChapterAsync(run.TargetChapterId, ct)
                 .ConfigureAwait(false);
+            var contentSource = string.IsNullOrWhiteSpace(storedContent) ? "工作流草稿" : "内容文档";
 
             var review = new NovelAgentPostGenerationReview
             {
@@ -42,7 +47,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 RequiresRewrite = string.IsNullOrWhiteSpace(content) || run.GateReport?.Status == "failed",
                 Summary = string.IsNullOrWhiteSpace(content)
                     ? "章节正文为空，需重新生成或补写。"
-                    : $"章节已保存到内容文档，共 {content.Length} 字符；Story Bible 当前包含 {document.VolumeArcs.Count} 个卷规划，故事状态包含 {storyState.CharacterStates.Count} 条角色状态。"
+                    : $"章节已从{contentSource}读取，共 {content.Length} 字符；Story Bible 当前包含 {document.VolumeArcs.Count} 个卷规划，故事状态包含 {storyState.CharacterStates.Count} 条角色状态。"
             };
 
             review.Checks.Add(new NovelAgentReviewCheck
@@ -55,10 +60,32 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 RiskLevel = NovelToolRiskLevel.High,
                 Message = string.IsNullOrWhiteSpace(content)
                     ? "未读取到章节正文内容。"
-                    : "章节正文已从内容文档读取。"
+                    : $"章节正文已从{contentSource}读取。"
             });
 
             return review;
+        }
+
+        public static string ResolveReviewContent(
+            string? storedContent,
+            string? committedContent,
+            string? draftContent)
+        {
+            if (!string.IsNullOrWhiteSpace(storedContent))
+                return storedContent.Trim();
+            if (!string.IsNullOrWhiteSpace(committedContent))
+                return committedContent.Trim();
+            return StripChanges(draftContent);
+        }
+
+        private static string StripChanges(string? content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return string.Empty;
+
+            const string marker = "## CHANGES";
+            var index = content.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            return index >= 0 ? content[..index].Trim() : content.Trim();
         }
     }
 
@@ -82,4 +109,3 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         }
     }
 }
-

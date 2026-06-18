@@ -1,7 +1,9 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using TM.Web.NovelAgentWeb.Controllers;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
@@ -70,5 +72,63 @@ public class AgentControllerResumeTests
         var result = await controller.ResumeSession("missing-session", CancellationToken.None);
 
         Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public void AgentChatResponsePublicProjection_StripsInternalDebugPayload()
+    {
+        var response = new AgentChatResponse(
+            "真实进度回复",
+            Array.Empty<string>(),
+            "session-1",
+            "run-1",
+            "queued",
+            Decision: new AgentDecisionTrace { Intent = "debug-intent" },
+            Rag: new AgentRagContext { Used = true },
+            Memory: new AgentWorkingMemorySnapshot
+            {
+                MissionPlan = new AgentMissionPlan { ProjectId = "project-1" },
+                PendingConfirmation = new AgentPendingConfirmation { ImpactSummary = "提交章节" }
+            },
+            RuntimeTrace: new[] { new AgentRuntimeStep { StepIndex = 1 } });
+
+        var publicResponse = AgentChatResponsePublicProjection.ToPublic(response);
+
+        Assert.Equal("真实进度回复", publicResponse.Reply);
+        Assert.Equal("project-1", publicResponse.ActiveProjectId);
+        Assert.NotNull(publicResponse.PendingConfirmation);
+        Assert.Null(publicResponse.Decision);
+        Assert.Null(publicResponse.Rag);
+        Assert.Null(publicResponse.Memory);
+        Assert.Null(publicResponse.RuntimeTrace);
+        Assert.Null(publicResponse.MissionPlan);
+    }
+
+    [Fact]
+    public void AgentChatResponsePublicProjection_JsonOmitsNullInternalDebugFields()
+    {
+        var response = new AgentChatResponse(
+            "真实进度回复",
+            Array.Empty<string>(),
+            "session-1",
+            Phase: "validated",
+            Decision: new AgentDecisionTrace { Intent = "debug-intent" },
+            Rag: new AgentRagContext { Used = true },
+            Memory: new AgentWorkingMemorySnapshot(),
+            RuntimeTrace: new[] { new AgentRuntimeStep { StepIndex = 1 } },
+            MissionPlan: new AgentMissionPlan());
+
+        var publicResponse = AgentChatResponsePublicProjection.ToPublic(response);
+        var json = JsonSerializer.Serialize(publicResponse, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        Assert.DoesNotContain("decision", json);
+        Assert.DoesNotContain("rag", json);
+        Assert.DoesNotContain("memory", json);
+        Assert.DoesNotContain("runtimeTrace", json);
+        Assert.DoesNotContain("missionPlan", json);
+        Assert.Contains("activeProjectId", json);
     }
 }

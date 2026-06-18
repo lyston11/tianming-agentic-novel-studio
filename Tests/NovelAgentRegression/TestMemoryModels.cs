@@ -283,12 +283,17 @@ public sealed class AuthorMemoryUpdate
 {
     public List<string> StyleLikes { get; set; } = new();
     public List<string> StyleDislikes { get; set; } = new();
+    public string? ConfirmationTolerance { get; set; }
+    public List<string> GenreHabits { get; set; } = new();
+    public List<string> FavoriteKnowledgeIds { get; set; } = new();
 }
 
 public sealed class ExecutionMemoryUpdate
 {
     public string? ToolSuccess { get; set; }
     public string? ToolFailure { get; set; }
+    public List<string> ToolFailurePatterns { get; set; } = new();
+    public List<string> KnowledgeProcessingFailures { get; set; } = new();
 }
 
 public sealed class AgentChapterTaskPatch

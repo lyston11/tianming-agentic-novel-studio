@@ -36,6 +36,9 @@ public class NovelAgentDbContext : DbContext
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
     public DbSet<AgentToolExecution> AgentToolExecutions { get; set; } = null!;
     public DbSet<AgentToolSearchSnapshot> AgentToolSearchSnapshots { get; set; } = null!;
+    public DbSet<AgentRuntimeRun> AgentRuntimeRuns { get; set; } = null!;
+    public DbSet<AgentInterrupt> AgentInterrupts { get; set; } = null!;
+    public DbSet<AgentRuntimeEvent> AgentRuntimeEvents { get; set; } = null!;
     public DbSet<KnowledgeProcessingTask> KnowledgeProcessingTasks { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -912,6 +915,77 @@ public class NovelAgentDbContext : DbContext
                 .HasDatabaseName("idx_agent_tool_search_snapshots_scope_version");
             entity.HasIndex(e => e.ExpiresAt)
                 .HasDatabaseName("idx_agent_tool_search_snapshots_expires_at");
+        });
+
+        modelBuilder.Entity<AgentRuntimeRun>(entity =>
+        {
+            entity.ToTable("agent_runtime_runs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.Status).HasColumnName("status").IsRequired();
+            entity.Property(e => e.CurrentPhase).HasColumnName("current_phase");
+            entity.Property(e => e.CurrentStep).HasColumnName("current_step");
+            entity.Property(e => e.ActiveTool).HasColumnName("active_tool");
+            entity.Property(e => e.UserMessage).HasColumnName("user_message");
+            entity.Property(e => e.LastMessage).HasColumnName("last_message");
+            entity.Property(e => e.ResultJson).HasColumnName("result_json");
+            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+            entity.Property(e => e.CancelRequested).HasColumnName("cancel_requested");
+            entity.Property(e => e.StartedAt).HasColumnName("started_at");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.Status, e.UpdatedAt })
+                .HasDatabaseName("idx_agent_runtime_runs_session_status");
+            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.Status, e.UpdatedAt })
+                .HasDatabaseName("idx_agent_runtime_runs_project_status");
+        });
+
+        modelBuilder.Entity<AgentInterrupt>(entity =>
+        {
+            entity.ToTable("agent_interrupts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.RuntimeRunId).HasColumnName("runtime_run_id").IsRequired();
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.Kind).HasColumnName("kind").IsRequired();
+            entity.Property(e => e.Status).HasColumnName("status").IsRequired();
+            entity.Property(e => e.Priority).HasColumnName("priority");
+            entity.Property(e => e.Message).HasColumnName("message").IsRequired();
+            entity.Property(e => e.DecisionJson).HasColumnName("decision_json");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.ConsumedAt).HasColumnName("consumed_at");
+
+            entity.HasIndex(e => new { e.RuntimeRunId, e.Status, e.Priority, e.CreatedAt })
+                .HasDatabaseName("idx_agent_interrupts_run_pending");
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.Status, e.CreatedAt })
+                .HasDatabaseName("idx_agent_interrupts_session_pending");
+        });
+
+        modelBuilder.Entity<AgentRuntimeEvent>(entity =>
+        {
+            entity.ToTable("agent_runtime_events");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.RuntimeRunId).HasColumnName("runtime_run_id").IsRequired();
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.Type).HasColumnName("type").IsRequired();
+            entity.Property(e => e.Message).HasColumnName("message").IsRequired();
+            entity.Property(e => e.DataJson).HasColumnName("data_json");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => new { e.UserId, e.SessionId, e.CreatedAt })
+                .HasDatabaseName("idx_agent_runtime_events_session_recent");
+            entity.HasIndex(e => new { e.RuntimeRunId, e.CreatedAt })
+                .HasDatabaseName("idx_agent_runtime_events_run_recent");
         });
 
         // KnowledgeProcessingTask entity configuration

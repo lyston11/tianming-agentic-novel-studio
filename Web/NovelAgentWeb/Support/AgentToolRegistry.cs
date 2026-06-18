@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -14,8 +16,11 @@ public sealed class AgentToolRegistry
     private static readonly AsyncLocal<NovelAgentWorkspace?> _currentWorkspace = new();
     private static readonly AsyncLocal<NovelProjectCatalog?> _currentCatalog = new();
 
-    private NovelAgentWorkspace _workspace => _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
-    private NovelProjectCatalog _catalog => _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
+    private NovelAgentWorkspace? _workspaceInstance;
+    private NovelProjectCatalog? _catalogInstance;
+
+    private NovelAgentWorkspace _workspace => _workspaceInstance ?? _currentWorkspace.Value ?? throw new InvalidOperationException("Workspace not set for current request");
+    private NovelProjectCatalog _catalog => _catalogInstance ?? _currentCatalog.Value ?? throw new InvalidOperationException("Catalog not set for current request");
 
     private readonly UserSettingsManager _settingsManager;
     private readonly IServiceProvider _serviceProvider;
@@ -34,6 +39,20 @@ public sealed class AgentToolRegistry
         _currentCatalog.Value = null;
     }
 
+    internal void SetWorkspaceContext(NovelAgentWorkspace workspace, NovelProjectCatalog catalog)
+    {
+        _workspaceInstance = workspace;
+        _catalogInstance = catalog;
+        SetWorkspace(workspace, catalog);
+    }
+
+    internal void ClearWorkspaceContext()
+    {
+        _workspaceInstance = null;
+        _catalogInstance = null;
+        ClearWorkspace();
+    }
+
     public AgentToolRegistry(UserSettingsManager settingsManager, IServiceProvider serviceProvider, ILogger<AgentToolRegistry> logger)
     {
         _settingsManager = settingsManager;
@@ -41,50 +60,6 @@ public sealed class AgentToolRegistry
         _logger = logger;
         _entries = BuildEntries();
     }
-
-    private static readonly string[] ConversationTools = new[]
-    {
-        "QueryWorkspaceState",
-        "QueryProjectStatus",
-        "ResolveNovelProject",
-        "ProcessKnowledgeFile",
-    };
-
-    private static readonly string[] PlanningTools = new[]
-    {
-        "QueryWorkspaceState",
-        "QueryProjectStatus",
-        "ResolveNovelProject",
-        "SearchCreativeKnowledge",
-        "ProcessKnowledgeFile",
-        "PlanStoryFoundation",
-        "CommitStoryFoundation",
-        "PlanVolumeArc",
-        "CommitVolumeArc",
-        "PlanChapter",
-        "SelectChapterCandidate",
-        "BuildChapterContextPackage",
-    };
-
-    private static readonly string[] CreationTools = new[]
-    {
-        "QueryWorkspaceState",
-        "QueryProjectStatus",
-        "GenerateChapterWithChanges",
-        "RepairChapterDraft",
-        "ValidateChapterDraft",
-    };
-
-    private static readonly string[] ReviewTools = new[]
-    {
-        "QueryWorkspaceState",
-        "QueryProjectStatus",
-        "CommitValidatedChapter",
-        "ReviewChapter",
-        "RefreshProjectIndexes",
-        "AnalyzeDependencyImpact",
-        "ProcessKnowledgeFile",
-    };
 
     public IReadOnlyList<AgentToolDefinition> ListTools() => _entries.Values.Select(e => e.Definition).ToList();
 
@@ -101,30 +76,30 @@ public sealed class AgentToolRegistry
 
     public IReadOnlyList<string> GetToolNamesForPhase(ConversationPhase phase)
     {
-        return phase switch
-        {
-            ConversationPhase.Conversation => ConversationTools,
-            ConversationPhase.Planning => PlanningTools,
-            ConversationPhase.Creation => CreationTools,
-            ConversationPhase.Review => ReviewTools,
-            _ => ConversationTools,
-        };
+        return _entries.Values
+            .Where(entry => !string.Equals(entry.Definition.Name, "tool_search", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => CategoryHintRank(entry.Category, phase))
+            .ThenBy(entry => entry.Definition.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Definition.Name)
+            .ToArray();
     }
+
+    internal string CurrentWorkspaceProjectIdForTests() => _workspace.ProjectId;
 
     public IReadOnlyList<ToolSchema> ListToolSchemasForPhase(ConversationPhase phase)
     {
-        var allowedNames = GetToolNamesForPhase(phase);
-        return _entries
-            .Where(e => allowedNames.Contains(e.Key, StringComparer.OrdinalIgnoreCase))
-            .Select(e => new ToolSchema
+        return GetToolNamesForPhase(phase)
+            .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
+            .Where(def => def != null)
+            .Select(def => new ToolSchema
             {
-                Name = e.Value.Definition.Name,
-                Description = e.Value.Definition.Description,
-                Risk = e.Value.Definition.Risk,
-                RequiresConfirmation = e.Value.Definition.RequiresConfirmation,
-                Parameters = e.Value.Definition.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
-                SideEffects = e.Value.Definition.SideEffects,
-                Semantic = e.Value.Definition.Semantic,
+                Name = def!.Name,
+                Description = def.Description,
+                Risk = def.Risk,
+                RequiresConfirmation = def.RequiresConfirmation,
+                Parameters = def.Arguments.ToDictionary(arg => arg, _ => "string", StringComparer.OrdinalIgnoreCase),
+                SideEffects = def.SideEffects,
+                Semantic = def.Semantic,
             })
             .ToList();
     }
@@ -207,17 +182,18 @@ public sealed class AgentToolRegistry
     {
         var entries = new[]
         {
-            Entry("tool_search", "meta", "Low", false, new[] { "phase" }, "搜索指定阶段的可用工具。phase参数（必填）可选值：Conversation（闲聊、问候、状态查询）、Planning（规划故事地基/卷/章节）、Creation（生成章节正文）、Review（提交章节、复盘）、All（返回全部工具）。根据用户意图和当前任务状态判断阶段。", Effects(toolCache: true, sqliteSnapshot: true, sqlite: new[] { "agent_tool_search_snapshots" }), (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
+            Entry("tool_search", "meta", "Low", false, new[] { "query", "intent", "context", "phase", "includeAll", "limit" }, "全局工具目录与语义检索入口。query/intent/context 用于检索和排序工具语义；phase 只是可选 hint，不会限制可用工具集合；includeAll=true 可返回完整目录。", Effects(toolCache: true, sqliteSnapshot: true, sqlite: new[] { "agent_tool_search_snapshots" }), (call, session, _, _, ct) => ToolSearchAsync(call, session, ct)),
             Entry("QueryWorkspaceState", "workspace", "Low", false, Array.Empty<string>(), "只读查询当前用户可见的工作台真实状态：小说书城项目、知识库条目、创作工作流 Run、当前会话绑定情况。不会创建、绑定或切换项目。", Effects(), (call, session, _, _, ct) => QueryWorkspaceStateAsync(session, ct)),
             Entry("ResolveNovelProject", "project", "Low", false, new[] { "mode", "projectId", "projectTitle", "title", "genre", "seed" }, "由 Agent 决策绑定已有小说或创建新小说。mode 可选 bind_existing/create_new/auto；绑定不创建新书，创建会切换当前会话上下文。", Effects(memory: new[] { "session", "project" }, sqlite: new[] { "novel_projects", "agent_sessions" }), (call, session, _, _, ct) => ResolveNovelProjectAsync(call, session, ct)),
             Entry("ProcessKnowledgeFile", "knowledge", "Medium", true, new[] { "taskId" }, "处理已上传的知识文件，自动提取创意写作知识条目。支持结构化文档和创意素材。", Effects(memory: new[] { "project" }, sqlite: new[] { "knowledge_base", "knowledge_processing_tasks", "content_documents", "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, _, _, _, ct) => ProcessKnowledgeFileAsync(call, ct)),
             Entry("QueryProjectStatus", "blackboard", "Low", false, Array.Empty<string>(), "读取 MissionBlackboard、Story Bible、素材、账本、当前可操作 Run 状态。", Effects(), (call, session, bible, _, ct) => QueryProjectStatusAsync(session, bible, ct)),
+            Entry("QueryProjectContent", "content", "Low", false, new[] { "chapterId", "chapterNumber", "volumeNumber", "includeBody", "includeFacts" }, "只读读取当前项目的卷、章、正文、摘要和关键连续性事实。用于回答“第几章写了什么、所属卷、正文开头、关键事实”等内容问题，不改变工作流或书城。", Effects(), (call, session, bible, _, ct) => QueryProjectContentAsync(call, session, bible, ct)),
             Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", Effects(memory: new[] { "execution" }, sqlite: new[] { "project_knowledge_usages" }, vector: new[] { "knowledge" }), (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
-            Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre" }, "生成故事地基和大框架候选，不直接固化。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
+            Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre", "subGenre", "targetReader", "desiredDirection", "candidateDirections", "forbiddenDirections" }, "生成故事地基和大框架候选，不直接固化。候选必须服从用户正向方向和明确排除项；可由大模型传 candidateDirections/forbiddenDirections 指定候选语义。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
             Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId", "selectedMacroCandidateTitle" }, "把候选故事地基固化到 Story Bible。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "story_constitutions", "agent_runs", "content_documents" }, vector: new[] { "story_bible" }), (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
-            Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId" }, "规划卷级弧线，不直接固化。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
+            Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId", "candidateDirections", "forbiddenDirections" }, "规划卷级弧线，不直接固化。candidateDirections/forbiddenDirections 由大模型根据用户意图给出，工具按语义方向生成卷节拍。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
             Entry("CommitVolumeArc", "commit", "High", true, new[] { "runId" }, "把卷规划提交到 Story Bible。", Effects(memory: new[] { "project", "execution" }, sqlite: new[] { "volume_arcs", "agent_runs", "content_documents" }, vector: new[] { "story_bible" }), (call, session, _, confirmed, ct) => CommitVolumeArcAsync(call, session, confirmed, ct)),
-            Entry("PlanChapter", "planning", "Medium", false, new[] { "creativeBrief", "chapterId", "sourceTurnId" }, "检索项目状态和知识库，生成章节候选。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }, vector: new[] { "knowledge", "chapter_context" }), (call, session, bible, _, ct) => PlanChapterAsync(call, session, bible, ct)),
+            Entry("PlanChapter", "planning", "Medium", false, new[] { "creativeBrief", "chapterId", "sourceTurnId", "candidateDirections", "forbiddenDirections" }, "检索项目状态和知识库，生成章节候选。candidateDirections/forbiddenDirections 由大模型根据用户意图给出，工具按这些语义方向生成候选，不再套固定桥段模板。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs", "content_documents" }, vector: new[] { "knowledge", "chapter_context" }), (call, session, bible, _, ct) => PlanChapterAsync(call, session, bible, ct)),
             Entry("SelectChapterCandidate", "planning", "Medium", false, new[] { "runId", "candidateTitles" }, "选择章节候选，决定后续正文生成方向。", Effects(memory: new[] { "session", "execution" }, sqlite: new[] { "agent_runs" }), (call, session, _, confirmed, ct) => SelectChapterCandidateAsync(call, session, confirmed, ct)),
             Entry("BuildChapterContextPackage", "writing", "Low", false, new[] { "runId" }, "构建章节上下文包，汇总事实快照、蓝图、摘要链和长距离 RAG。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs", "content_documents" }, vector: new[] { "chapter_context" }), (call, session, _, _, ct) => BuildChapterContextPackageAsync(call, session, ct)),
             Entry("GenerateChapterWithChanges", "writing", "High", true, new[] { "runId" }, "生成章节正文和 CHANGES，硬门禁通过后才提交成稿。", Effects(memory: new[] { "execution" }, sqlite: new[] { "agent_runs", "content_documents" }), (call, session, _, confirmed, ct) => GenerateChapterWithChangesAsync(call, session, confirmed, ct)),
@@ -252,6 +228,7 @@ public sealed class AgentToolRegistry
         if (!isAdmin)
             projectQuery = projectQuery.Where(p => p.UserId == session.UserId);
 
+        var projectTotalCount = await projectQuery.CountAsync(ct).ConfigureAwait(false);
         var visibleProjects = await projectQuery
             .OrderByDescending(p => p.UpdatedAt)
             .Take(20)
@@ -342,6 +319,15 @@ public sealed class AgentToolRegistry
                 HasActiveProject = !string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
                     !session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase)
             },
+            AuthorProfile = new AgentWorkspaceAuthorProfileState
+            {
+                DisplayName = session.WorkingMemory.AuthorMemory?.DisplayName ?? string.Empty,
+                StyleLikeCount = session.WorkingMemory.AuthorMemory?.StyleLikes.Count ?? 0,
+                StyleDislikeCount = session.WorkingMemory.AuthorMemory?.StyleDislikes.Count ?? 0,
+                GenreHabitCount = session.WorkingMemory.AuthorMemory?.GenreHabits.Count ?? 0
+            },
+            ProjectTotalCount = projectTotalCount,
+            ProjectPreviewCount = visibleProjects.Count,
             VisibleProjects = visibleProjects,
             KnowledgeBase = new AgentWorkspaceKnowledgeState
             {
@@ -376,7 +362,7 @@ public sealed class AgentToolRegistry
                 "workspace",
                 session.ActiveProjectId ?? string.Empty,
                 string.Empty,
-                "已读取小说书城、知识库和创作工作流状态。",
+                $"已读取小说书城、知识库和创作工作流状态；小说书城当前可见项目共 {projectTotalCount} 本。",
                 state.VisibleProjects.Select(p => $"{p.Title} ({p.Id})").ToArray()),
             Suggestions = new[]
             {
@@ -389,9 +375,10 @@ public sealed class AgentToolRegistry
 
     private static string BuildWorkspaceStateMessage(AgentWorkspaceState state)
     {
+        var projectCountLine = $"小说书城当前可见项目共 {state.ProjectTotalCount} 本；本次快照列出最近 {state.ProjectPreviewCount} 本。";
         var projectLines = state.VisibleProjects.Count == 0
-            ? "小说书城：当前可见项目 0 个。"
-            : "小说书城：\n" + string.Join("\n", state.VisibleProjects.Select(p =>
+            ? projectCountLine
+            : projectCountLine + "\n" + string.Join("\n", state.VisibleProjects.Select(p =>
                 $"• {p.Title}（{p.Status}，owner={p.OwnerUsername}/{p.OwnerUserId}，chapters={p.ChapterCount}，committed={p.CommittedChapterCount}，owned_by_current_user={p.IsOwnedByCurrentUser}）"));
         var knowledgeTypes = state.KnowledgeBase.CountsByType.Count == 0
             ? "无分类"
@@ -400,13 +387,17 @@ public sealed class AgentToolRegistry
             ? "创作工作流：最近无 Run。"
             : "创作工作流最近 Run：\n" + string.Join("\n", state.Workflow.RecentRuns.Select(r =>
                 $"• {r.RunType}/{r.Status} project={r.ProjectId} run={r.Id}"));
+        var authorLine = string.IsNullOrWhiteSpace(state.AuthorProfile.DisplayName)
+            ? "作者记忆：未记录用户称呼。"
+            : $"作者记忆：作者称呼：{state.AuthorProfile.DisplayName}；风格喜好 {state.AuthorProfile.StyleLikeCount} 条，反感风格 {state.AuthorProfile.StyleDislikeCount} 条，题材习惯 {state.AuthorProfile.GenreHabitCount} 条。";
 
         return string.Join("\n\n", new[]
         {
-            $"当前会话：activeProjectId={state.CurrentSession.ActiveProjectId}，phase={state.CurrentSession.Phase}，hasActiveProject={state.CurrentSession.HasActiveProject}",
             projectLines,
             $"知识库：共 {state.KnowledgeBase.TotalCount} 条；分类：{knowledgeTypes}。",
             workflowLines,
+            authorLine,
+            $"当前会话：activeProjectId={state.CurrentSession.ActiveProjectId}，phase={state.CurrentSession.Phase}，hasActiveProject={state.CurrentSession.HasActiveProject}",
             string.Join("\n", state.Notes)
         });
     }
@@ -445,6 +436,7 @@ public sealed class AgentToolRegistry
             "meta" => "Agent Runtime",
             "workspace" => "小说书城 / 创作工作流 / 知识库 / 记忆系统",
             "project" => "小说书城",
+            "content" => "小说书城 / 正文内容 / Story Bible",
             "knowledge" or "rag" => "知识库",
             "blackboard" => "创作工作流",
             "planning" or "writing" or "gate" => "创作工作流",
@@ -458,6 +450,7 @@ public sealed class AgentToolRegistry
             "meta" => "capability_catalog",
             "workspace" => "read_only_workspace_snapshot",
             "project" => "project_binding_or_creation",
+            "content" => "read_only_project_content",
             "knowledge" => "knowledge_ingestion_process_result",
             "rag" => "retrieval_context",
             "blackboard" => "project_workflow_state",
@@ -480,6 +473,9 @@ public sealed class AgentToolRegistry
                 break;
             case "project":
                 readsFrom.AddRange(new[] { "novel_projects", "agent_sessions", "session_memory" });
+                break;
+            case "content":
+                readsFrom.AddRange(new[] { "novel_projects", "volumes", "volume_arcs", "chapters", "content_documents", "content_chunks", "story_bible", "continuity_facts" });
                 break;
             case "knowledge":
             case "rag":
@@ -511,7 +507,9 @@ public sealed class AgentToolRegistry
         if (sideEffects.WritesToolSearchCache) writesTo.Add("tool_search_cache");
         if (sideEffects.WritesRedisRecentCache) writesTo.Add("recent_runtime_cache");
 
-        if (writesTo.Count == 0 || string.Equals(name, "QueryWorkspaceState", StringComparison.OrdinalIgnoreCase))
+        if (writesTo.Count == 0 ||
+            string.Equals(name, "QueryWorkspaceState", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "QueryProjectContent", StringComparison.OrdinalIgnoreCase))
         {
             writesTo.Clear();
             writesTo.Add("none_read_only");
@@ -527,6 +525,7 @@ public sealed class AgentToolRegistry
             {
                 "workspace" => "Agent 对话中的工作台快照；不会改变书城或会话绑定",
                 "project" => "当前 Agent 会话和小说书城项目列表",
+                "content" => "Agent 对话中的项目内容引用；不会改变书城、正文或工作流",
                 "knowledge" or "rag" => "知识库、项目知识引用和 Agent 对话",
                 "planning" or "writing" or "gate" => "创作工作流 Run 和 Agent 对话",
                 "commit" => "小说书城、Story Bible、章节列表和 Agent 对话",
@@ -537,6 +536,7 @@ public sealed class AgentToolRegistry
             ResultSemantics = category switch
             {
                 "workspace" => "返回当前可见真实状态，帮助模型理解书城、知识库、工作流和会话绑定；结果不是项目绑定决策。",
+                "content" => "返回当前项目已落库的卷、章、正文片段和连续性事实，供模型基于真实内容回答或续写。",
                 "planning" => "返回候选或计划，属于过程产物，需后续 commit 才会成为最终项目状态。",
                 "writing" => "返回草稿或上下文包，属于过程产物，需门禁和 commit 后才进入书城。",
                 "gate" => "返回校验报告，决定是否修复或提交，报告本身不是最终章节。",
@@ -568,9 +568,11 @@ public sealed class AgentToolRegistry
         var mode = Arg(call, "mode", "auto").Trim().ToLowerInvariant();
         var projectId = Arg(call, "projectId");
         var projectTitle = Arg(call, "projectTitle");
-        var wantsBinding = mode is "bind_existing" or "bind" or "existing" or "continue_existing" or "continue" ||
-                           !string.IsNullOrWhiteSpace(projectId) ||
-                           !string.IsNullOrWhiteSpace(projectTitle);
+        var wantsCreation = mode is "create_new" or "create" or "new";
+        var wantsBinding = !wantsCreation &&
+                           (mode is "bind_existing" or "bind" or "existing" or "continue_existing" or "continue" ||
+                            !string.IsNullOrWhiteSpace(projectId) ||
+                            !string.IsNullOrWhiteSpace(projectTitle));
 
         if (wantsBinding)
         {
@@ -692,20 +694,25 @@ public sealed class AgentToolRegistry
             };
         }
 
-        var requestedTitle = Arg(call, "title");
+        var requestedTitle = FirstNonEmpty(Arg(call, "title"), Arg(call, "projectTitle"));
         var requestedGenre = Arg(call, "genre", ExtractGenre(seed, string.Empty));
+        var foundationBriefText = BuildFoundationBriefText(call, session, seed, requestedTitle, requestedGenre);
         var reusableProject = await FindReusableDraftProjectAsync(seed, requestedTitle, ct).ConfigureAwait(false);
         if (reusableProject != null)
         {
-            BindSessionToFoundationProject(session, reusableProject, seed);
+            var hasCompleteBrief = HasSufficientFoundationBrief(foundationBriefText);
+            BindSessionToFoundationProject(session, reusableProject, seed, hasCompleteBrief);
+            var message = hasCompleteBrief
+                ? $"已复用待补地基的新小说「{reusableProject.Title}」，没有重复创建同名项目。\n\n当前需求已经包含类型、主角、爽点循环和明确不要的方向，信息足够生成故事地基候选。"
+                : $"已复用待补地基的新小说「{reusableProject.Title}」，没有重复创建同名项目。\n\n现在继续把地基问清楚：这本书的类型、核心钩子、主角引擎、主要阅读快感，以及明确不要的方向分别是什么？";
             return new AgentToolExecutionResult
             {
                 Success = true,
-                Message = $"已复用待补地基的新小说「{reusableProject.Title}」，没有重复创建同名项目。\n\n现在继续把地基问清楚：这本书的类型、核心钩子、主角引擎、主要阅读快感，以及明确不要的方向分别是什么？",
+                Message = message,
                 Phase = session.Phase,
                 Data = reusableProject,
-                Artifact = BuildArtifact("existing_novel_project", reusableProject.Id, reusableProject.Id, string.Empty, $"复用新小说「{reusableProject.Title}」。", new[] { "补齐故事地基", "生成故事地基候选" }),
-                Suggestions = new[] { "补齐类型/核心钩子/主角引擎", "查看当前状态", "继续地基规划" },
+                Artifact = BuildArtifact("existing_novel_project", reusableProject.Id, reusableProject.Id, string.Empty, $"复用新小说「{reusableProject.Title}」。", hasCompleteBrief ? new[] { "生成故事地基候选" } : new[] { "补齐故事地基", "生成故事地基候选" }),
+                Suggestions = hasCompleteBrief ? new[] { "生成故事地基候选", "查看当前状态" } : new[] { "补齐类型/核心钩子/主角引擎", "查看当前状态", "继续地基规划" },
             };
         }
 
@@ -714,16 +721,20 @@ public sealed class AgentToolRegistry
             requestedGenre,
             seed), ct).ConfigureAwait(false);
 
-        BindSessionToFoundationProject(session, project, seed);
+        var hasCompleteFoundationBrief = HasSufficientFoundationBrief(foundationBriefText);
+        BindSessionToFoundationProject(session, project, seed, hasCompleteFoundationBrief);
+        var resultMessage = hasCompleteFoundationBrief
+            ? $"已创建新小说「{project.Title}」，它会作为独立作品进入书城，不会覆盖旧书。\n\n当前需求已经包含类型、主角、爽点循环和明确不要的方向，信息足够生成故事地基候选。"
+            : $"已创建新小说「{project.Title}」，它会作为独立作品进入书城，不会覆盖旧书。\n\n现在先把地基问清楚：这本书的类型、核心钩子、主角引擎、主要阅读快感，以及明确不要的方向分别是什么？";
 
         return new AgentToolExecutionResult
         {
             Success = true,
-            Message = $"已创建新小说「{project.Title}」，它会作为独立作品进入书城，不会覆盖旧书。\n\n现在先把地基问清楚：这本书的类型、核心钩子、主角引擎、主要阅读快感，以及明确不要的方向分别是什么？",
+            Message = resultMessage,
             Phase = session.Phase,
             Data = project,
-            Artifact = BuildArtifact("novel_project", project.Id, project.Id, string.Empty, $"新小说「{project.Title}」已创建。", new[] { "补齐故事地基", "生成故事地基候选" }),
-            Suggestions = new[] { "玄幻学院流，主角有代价型能力", "都市悬疑，主角追查异常规则", "我先给你完整设定" },
+            Artifact = BuildArtifact("novel_project", project.Id, project.Id, string.Empty, $"新小说「{project.Title}」已创建。", hasCompleteFoundationBrief ? new[] { "生成故事地基候选" } : new[] { "补齐故事地基", "生成故事地基候选" }),
+            Suggestions = hasCompleteFoundationBrief ? new[] { "生成故事地基候选", "查看当前状态" } : new[] { "玄幻学院流，主角有代价型能力", "都市悬疑，主角追查异常规则", "我先给你完整设定" },
         };
     }
 
@@ -767,28 +778,73 @@ public sealed class AgentToolRegistry
             string.Equals(run.DraftArtifact?.Status, "committed", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(run.DraftArtifact?.CommittedContent));
 
-    private static void BindSessionToFoundationProject(AgentSession session, NovelProjectInfo project, string seed)
+    private static void BindSessionToFoundationProject(AgentSession session, NovelProjectInfo project, string seed, bool foundationBriefReady = false)
     {
         session.ActiveProjectId = project.Id;
         session.ActiveRunId = null;
         session.RunHistory.Clear();
-        session.Phase = "awaiting_user_foundation";
+        session.Phase = foundationBriefReady ? "foundation_ready" : "awaiting_user_foundation";
         session.WorkingMemory.PendingToolCall = null;
         session.WorkingMemory.CurrentGoal = seed;
         session.WorkingMemory.OpenQuestions.Clear();
         session.WorkingMemory.Mission = new AgentMissionState
         {
             CurrentGoal = seed,
-            CreativePhase = "foundation_intake",
-            Readiness = "needs_author_input",
-            NextIntent = "ask_foundation_question",
-            PendingUserDecision = "补齐故事地基设定",
-            PendingQuestion = "这本新小说的类型、核心钩子、主角引擎、阅读快感和禁区分别是什么？",
+            CreativePhase = foundationBriefReady ? "ready_for_foundation_planning" : "foundation_intake",
+            Readiness = foundationBriefReady ? "ready" : "needs_author_input",
+            NextIntent = foundationBriefReady ? "plan_story_foundation" : "ask_foundation_question",
+            PendingUserDecision = foundationBriefReady ? string.Empty : "补齐故事地基设定",
+            PendingQuestion = foundationBriefReady ? string.Empty : "这本新小说的类型、核心钩子、主角引擎、阅读快感和禁区分别是什么？",
         };
         if (!string.IsNullOrWhiteSpace(seed))
             session.WorkingMemory.Mission.FoundationBrief["rawSeed"] = seed;
-        session.WorkingMemory.OpenQuestions.Add(session.WorkingMemory.Mission.PendingQuestion);
+        if (!foundationBriefReady)
+            session.WorkingMemory.OpenQuestions.Add(session.WorkingMemory.Mission.PendingQuestion);
     }
+
+    private static bool HasSufficientFoundationBrief(string seed)
+    {
+        if (string.IsNullOrWhiteSpace(seed))
+            return false;
+
+        var signalCount = 0;
+        if (ContainsAny(seed, "玄幻", "末世", "都市", "悬疑", "科幻", "仙侠", "奇幻", "爽文", "升级流", "学院流", "废土", "机甲"))
+            signalCount++;
+        if (ContainsAny(seed, "主角", "男主", "女主", "底层", "幸存者", "少年", "穿越", "重生", "矿工", "奴工"))
+            signalCount++;
+        if (ContainsAny(seed, "系统", "金手指", "吞噬", "晶核", "升级", "打怪", "修炼", "异能", "境界", "建基地", "战甲", "材料", "改装"))
+            signalCount++;
+        if (ContainsAny(seed, "爽点", "打怪", "升级", "碾压", "收伙伴", "征服", "后宫", "建基地", "成长", "爆材料", "扩大地图"))
+            signalCount++;
+        if (ContainsAny(seed, "不要", "禁区", "排除", "禁止", "不想要", "别"))
+            signalCount++;
+
+        return signalCount >= 4 && seed.Trim().Length >= 40;
+    }
+
+    private static string BuildFoundationBriefText(
+        AgentToolCall call,
+        AgentSession session,
+        string seed,
+        string requestedTitle,
+        string requestedGenre) =>
+        string.Join(" ", new[]
+        {
+            seed,
+            requestedTitle,
+            requestedGenre,
+            Arg(call, "creativeBrief"),
+            Arg(call, "desiredDirection"),
+            Arg(call, "targetReader"),
+            session.WorkingMemory.CurrentGoal,
+            session.WorkingMemory.Mission.CurrentGoal,
+            session.WorkingMemory.Mission.PendingUserDecision,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    private static bool ContainsAny(string text, params string[] tokens) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        tokens.Any(token => !string.IsNullOrWhiteSpace(token) &&
+                            text.Contains(token, StringComparison.OrdinalIgnoreCase));
 
     private static string NormalizeProjectFingerprint(string? value)
     {
@@ -841,6 +897,156 @@ public sealed class AgentToolRegistry
             Phase = "query_project",
             Artifact = BuildArtifact("project_status", "story_bible", string.Empty, currentRun?.RunId ?? string.Empty, string.Join("；", lines), bible.Constitution == null ? new[] { "开始规划故事地基" } : new[] { "规划下一章", "查看书城" }),
             Suggestions = bible.Constitution == null ? new[] { "开始规划故事地基" } : new[] { "规划下一章", "查看书城" },
+        };
+    }
+
+    private async Task<AgentToolExecutionResult> QueryProjectContentAsync(
+        AgentToolCall call,
+        AgentSession session,
+        StoryBibleDocument bible,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId))
+        {
+            return new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = "当前会话尚未绑定小说项目，无法读取项目卷章正文。",
+                Phase = "query_project_content",
+                Suggestions = new[] { "先绑定小说项目", "查看工作台项目列表" }
+            };
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
+        var userRole = await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == session.UserId)
+            .Select(u => u.Role)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var isAdmin = string.Equals(userRole, "admin", StringComparison.OrdinalIgnoreCase);
+
+        var projectQuery = db.NovelProjects.AsNoTracking().Where(p => p.Id == session.ActiveProjectId);
+        if (!isAdmin)
+            projectQuery = projectQuery.Where(p => p.UserId == session.UserId);
+        var project = await projectQuery.FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (project == null)
+        {
+            return new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = "没有找到当前会话可读取的小说项目。",
+                Phase = "query_project_content",
+                Suggestions = new[] { "重新绑定项目", "查看工作台状态" }
+            };
+        }
+
+        var chapterId = Arg(call, "chapterId");
+        var chapterNumber = ArgInt(call, "chapterNumber");
+        var volumeNumber = ArgInt(call, "volumeNumber");
+        var includeBody = ArgBool(call, "includeBody", fallback: false);
+        var includeFacts = ArgBool(call, "includeFacts", fallback: true);
+
+        var chapterQuery = db.Chapters
+            .AsNoTracking()
+            .Include(c => c.Volume)
+            .Where(c => c.ProjectId == project.Id);
+        if (!string.IsNullOrWhiteSpace(chapterId))
+            chapterQuery = chapterQuery.Where(c => c.Id == chapterId || c.Title == chapterId);
+        if (chapterNumber > 0)
+            chapterQuery = chapterQuery.Where(c => c.ChapterNumber == chapterNumber);
+        if (volumeNumber > 0)
+            chapterQuery = chapterQuery.Where(c => c.Volume != null && c.Volume.VolumeNumber == volumeNumber);
+
+        var chapters = await chapterQuery
+            .OrderBy(c => c.ChapterNumber)
+            .Take(string.IsNullOrWhiteSpace(chapterId) && chapterNumber <= 0 ? 12 : 1)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (chapters.Count == 0)
+        {
+            return new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = "没有找到匹配的章节内容。",
+                Phase = "query_project_content",
+                Suggestions = new[] { "换一个章节号", "先查询项目状态", "查看书城章节列表" }
+            };
+        }
+
+        var items = new List<ProjectContentQueryItem>();
+        foreach (var chapter in chapters)
+        {
+            var body = string.Empty;
+            try
+            {
+                body = await contentDocuments.GetTextAsync(
+                    project.UserId,
+                    project.Id,
+                    "chapter",
+                    chapter.Id,
+                    "chapter_body",
+                    ct).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException)
+            {
+                var chunks = await db.ContentChunks
+                    .AsNoTracking()
+                    .Where(c => c.Document.SourceType == "chapter" &&
+                                c.Document.SourceId == chapter.Id &&
+                                c.Document.ProjectId == project.Id &&
+                                c.Document.DocumentRole == "chapter_body" &&
+                                c.Document.Status == "active")
+                    .OrderBy(c => c.ChunkIndex)
+                    .Select(c => c.ChunkText)
+                    .ToListAsync(ct)
+                    .ConfigureAwait(false);
+                body = string.Join("", chunks);
+            }
+
+            var facts = includeFacts
+                ? bible.ContinuityFacts
+                    .Where(f => string.Equals(f.ChapterId, chapter.Id, StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                : new List<ChapterContinuityFacts>();
+            items.Add(new ProjectContentQueryItem
+            {
+                ChapterId = chapter.Id,
+                ChapterNumber = chapter.ChapterNumber,
+                ChapterTitle = chapter.Title,
+                VolumeId = chapter.VolumeId ?? string.Empty,
+                VolumeNumber = chapter.Volume?.VolumeNumber ?? 0,
+                VolumeTitle = chapter.Volume?.Title ?? string.Empty,
+                WordCount = chapter.WordCount,
+                Status = chapter.Status,
+                BodyPreview = TrimBody(body, includeBody ? 2000 : 240),
+                Body = includeBody ? body : string.Empty,
+                ContinuityFacts = facts
+            });
+        }
+
+        var message = FormatProjectContentQuery(project.Title, items, includeBody);
+        return new AgentToolExecutionResult
+        {
+            Success = true,
+            Message = message,
+            Phase = "query_project_content",
+            Data = new ProjectContentQueryResult
+            {
+                ProjectId = project.Id,
+                ProjectTitle = project.Title,
+                Items = items
+            },
+            Artifact = BuildArtifact(
+                "project_content_query",
+                items.First().ChapterId,
+                project.Id,
+                string.Empty,
+                $"已读取 {items.Count} 个章节内容。",
+                new[] { "基于真实章节回答", "继续下一章" }),
+            Suggestions = new[] { "基于真实章节回答", "继续下一章" }
         };
     }
 
@@ -959,6 +1165,12 @@ public sealed class AgentToolRegistry
 
     private async Task<AgentToolExecutionResult> PlanStoryFoundationAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
+        _logger.LogInformation(
+            "PlanStoryFoundation starting: sessionProject={SessionProjectId}, workspaceProject={WorkspaceProjectId}, user={UserId}",
+            session.ActiveProjectId,
+            _workspace.ProjectId,
+            _workspace.UserId);
+
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
         var userSeed = Arg(call, "userSeed", Arg(call, "creativeBrief", session.WorkingMemory.CurrentGoal));
         var genre = Arg(call, "genre", ExtractGenre(userSeed, settings.DefaultGenre));
@@ -972,21 +1184,28 @@ public sealed class AgentToolRegistry
             SubGenre = subGenre,
             TargetReader = targetReader,
             DesiredDirection = desiredDirection,
+            CandidateDirections = ArgList(call, "candidateDirections"),
+            ForbiddenDirections = ArgList(call, "forbiddenDirections"),
         }, ct).ConfigureAwait(false);
 
         session.ActiveRunId = run.RunId;
         session.RunHistory.Add(run.RunId);
         session.Phase = "foundation_candidates";
+        var hasCandidates = run.MacroCandidates.Count > 0;
 
         return new AgentToolExecutionResult
         {
-            Success = true,
+            Success = hasCandidates,
             Message = FormatFoundationCandidates(run),
             RunId = run.RunId,
             Phase = session.Phase,
             Data = run,
-            Artifact = BuildArtifact("story_foundation_candidates", run.RunId, session.ActiveProjectId, run.RunId, $"生成 {run.MacroCandidates.Count} 个故事地基候选。", run.MacroCandidates.Select(c => c.Title).Take(3).ToArray()),
-            Suggestions = run.MacroCandidates.Select((c, i) => $"选第{i + 1}个: {c.Title}").ToArray(),
+            Artifact = hasCandidates
+                ? BuildArtifact("story_foundation_candidates", run.RunId, session.ActiveProjectId, run.RunId, $"生成 {run.MacroCandidates.Count} 个故事地基候选。", run.MacroCandidates.Select(c => c.Title).Take(3).ToArray())
+                : null,
+            Suggestions = hasCandidates
+                ? run.MacroCandidates.Select((c, i) => $"选第{i + 1}个: {c.Title}").ToArray()
+                : new[] { "补充正向创作方向", "重新生成故事地基" },
         };
     }
 
@@ -1036,6 +1255,8 @@ public sealed class AgentToolRegistry
             StartChapterId = startChapterId,
             EndChapterId = endChapterId,
             ExpectedChapterCount = chapterCount,
+            CandidateDirections = ArgList(call, "candidateDirections"),
+            ForbiddenDirections = ArgList(call, "forbiddenDirections"),
         }, ct).ConfigureAwait(false);
 
         session.ActiveRunId = run.RunId;
@@ -1111,6 +1332,8 @@ public sealed class AgentToolRegistry
         {
             UserGoal = creativeBrief,
             ChapterId = chapterId,
+            CandidateDirections = ArgList(call, "candidateDirections"),
+            ForbiddenDirections = ArgList(call, "forbiddenDirections"),
         }, ct).ConfigureAwait(false);
 
         session.ActiveRunId = run.RunId;
@@ -1176,7 +1399,9 @@ public sealed class AgentToolRegistry
             Success = result.Success,
             RequiresConfirmation = false,
             Risk = result.RiskLevel.ToString(),
-            Message = result.Message,
+            Message = result.Success
+                ? result.Message
+                : BuildWritingFailureMessage("生成章节正文", session.Phase, result.Message, hasDraft: result.DraftArtifact != null, hasGateReport: result.GateReport != null),
             RunId = runId,
             Phase = session.Phase,
             Data = result,
@@ -1236,19 +1461,42 @@ public sealed class AgentToolRegistry
         var runId = Arg(call, "runId", session.ActiveRunId ?? string.Empty);
         var result = await _workspace.Orchestrator.RepairChapterDraftAsync(runId, confirmed, ct).ConfigureAwait(false);
         session.Phase = result.Success ? "validated" : result.GateReport?.Status ?? session.Phase;
+        var repairAttempt = result.DraftArtifact?.RepairAttemptCount ?? 0;
+        var canAutoRepair = !result.Success && result.GateReport != null && repairAttempt < 3;
         return new AgentToolExecutionResult
         {
             Success = result.Success,
             RequiresConfirmation = false,
             Risk = result.RiskLevel.ToString(),
-            Message = result.Message,
+            Message = result.Success
+                ? result.Message
+                : BuildWritingFailureMessage("修复章节草稿", session.Phase, result.Message, hasDraft: result.DraftArtifact != null, hasGateReport: result.GateReport != null),
             RunId = runId,
             Phase = session.Phase,
+            IsRepairable = canAutoRepair,
+            RecommendedToolName = canAutoRepair ? "RepairChapterDraft" : string.Empty,
+            RecommendedArguments = canAutoRepair
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["runId"] = runId,
+                    ["repairAttempt"] = (repairAttempt + 1).ToString(),
+                    ["repairStrategy"] = SelectRepairStrategy(repairAttempt + 1)
+                }
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            MissingPrerequisite = canAutoRepair ? "chapter_draft_repair" : string.Empty,
             Data = result,
             Artifact = BuildArtifact(result.Success ? "chapter_draft_repaired" : "chapter_repair_report", result.Run?.TargetChapterId ?? runId, session.ActiveProjectId, runId, result.Message, result.Success ? new[] { "提交成稿", "查看门禁报告" } : new[] { "继续修复", "请用户补设定" }),
             Suggestions = result.Success ? new[] { "提交成稿", "查看门禁报告" } : new[] { "继续修复", "请用户补设定" },
         };
     }
+
+    private static string SelectRepairStrategy(int attempt) =>
+        attempt switch
+        {
+            <= 1 => "patch_missing_continuity",
+            2 => "rewrite_continuity_scene",
+            _ => "regenerate_opening_with_hard_facts"
+        };
 
     private async Task<AgentToolExecutionResult> CommitValidatedChapterAsync(AgentToolCall call, AgentSession session, bool confirmed, CancellationToken ct)
     {
@@ -1262,7 +1510,9 @@ public sealed class AgentToolRegistry
             Success = result.Success,
             RequiresConfirmation = false,
             Risk = result.RiskLevel.ToString(),
-            Message = result.Message,
+            Message = result.Success
+                ? result.Message
+                : BuildWritingFailureMessage("提交章节到书城", session.Phase, result.Message, hasDraft: result.DraftArtifact != null, hasGateReport: result.GateReport != null),
             RunId = runId,
             Phase = session.Phase,
             Data = result,
@@ -1306,15 +1556,75 @@ public sealed class AgentToolRegistry
             RunId = runId,
             Phase = session.Phase,
             Data = result,
-            Artifact = BuildArtifact("chapter_review", runId, session.ActiveProjectId, runId, result.Message, new[] { "导入账本", "继续下一章" }),
-            Suggestions = new[] { "导入账本", "继续下一章" },
+            Artifact = BuildArtifact("chapter_review", runId, session.ActiveProjectId, runId, result.Message, new[] { "提交成稿", "查看评审报告" }),
+            Suggestions = new[] { "提交成稿", "查看评审报告" },
         };
+    }
+
+    private static string BuildWritingFailureMessage(
+        string stage,
+        string phase,
+        string originalMessage,
+        bool hasDraft,
+        bool hasGateReport)
+    {
+        var artifacts = new List<string>();
+        if (hasDraft) artifacts.Add("章节草稿");
+        if (hasGateReport) artifacts.Add("门禁报告");
+        if (artifacts.Count == 0) artifacts.Add("暂无可用产物");
+
+        return string.Join("\n", new[]
+        {
+            $"失败阶段：{stage}（当前状态：{(string.IsNullOrWhiteSpace(phase) ? "未知" : phase)}）",
+            $"已有产物：{string.Join("、", artifacts)}",
+            $"失败原因：{originalMessage}",
+            hasGateReport ? "可继续动作：查看失败项后修复章节草稿，或补充设定后重试。" : "可继续动作：补齐上下文或重新生成章节草稿。",
+            hasGateReport ? "是否需要用户决定：若失败项涉及设定取舍，需要用户确认；格式/连续性问题可继续自动修复。" : "是否需要用户决定：通常不需要，除非缺少关键创作设定。"
+        });
     }
 
     private async Task<NovelAgentRun?> FindRunAsync(string runId, CancellationToken ct)
     {
         var bible = await _workspace.Orchestrator.GetStoryBibleAsync(ct).ConfigureAwait(false);
         return bible.AgentRuns.FirstOrDefault(r => string.Equals(r.RunId, runId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string FormatProjectContentQuery(
+        string projectTitle,
+        IReadOnlyList<ProjectContentQueryItem> items,
+        bool includeBody)
+    {
+        var lines = new List<string> { $"项目「{projectTitle}」内容查询结果：" };
+        foreach (var item in items)
+        {
+            lines.Add(
+                $"第 {item.ChapterNumber} 章：{item.ChapterTitle}\n" +
+                $"所属卷：{(item.VolumeNumber > 0 ? $"第 {item.VolumeNumber} 卷" : "未绑定卷")} {item.VolumeTitle}\n" +
+                $"状态：{item.Status}；字数：{item.WordCount}\n" +
+                $"正文{(includeBody ? "" : "开头")}：{item.BodyPreview}");
+            foreach (var facts in item.ContinuityFacts)
+            {
+                var factLines = new[]
+                {
+                    string.IsNullOrWhiteSpace(facts.ProtagonistName) ? string.Empty : $"主角：{facts.ProtagonistName}",
+                    string.IsNullOrWhiteSpace(facts.ProtagonistIdentity) ? string.Empty : $"身份：{facts.ProtagonistIdentity}",
+                    string.IsNullOrWhiteSpace(facts.ProtagonistStatus) ? string.Empty : $"状态：{facts.ProtagonistStatus}",
+                    string.IsNullOrWhiteSpace(facts.EndingState) ? string.Empty : $"结尾：{facts.EndingState}",
+                    facts.NextChapterMustCarry.Count == 0 ? string.Empty : $"下一章必须承接：{string.Join("；", facts.NextChapterMustCarry)}"
+                }.Where(s => !string.IsNullOrWhiteSpace(s));
+                lines.Add("关键事实：" + string.Join("；", factLines));
+            }
+        }
+
+        return string.Join("\n\n", lines);
+    }
+
+    private static string TrimBody(string body, int maxLength)
+    {
+        var text = string.IsNullOrWhiteSpace(body)
+            ? "未找到正文内容。"
+            : body.Trim();
+        return text.Length <= maxLength ? text : text[..maxLength] + "...";
     }
 
     private static AgentToolArtifact BuildArtifact(
@@ -1360,6 +1670,7 @@ public sealed class AgentToolRegistry
             "chapter_commit_blocked" => "章节提交被阻塞",
             "dependency_impact" => "依赖影响已分析",
             "chapter_review" => "章节复盘已生成",
+            "project_content_query" => "项目内容已读取",
             _ => type,
         };
 
@@ -1370,7 +1681,16 @@ public sealed class AgentToolRegistry
         for (var i = 0; i < run.MacroCandidates.Count; i++)
         {
             var c = run.MacroCandidates[i];
-            lines.Add($"【{i + 1}】{c.Title}\n核心钩子：{c.CoreHook}\n新颖度/可持续/类型匹配：{c.NoveltyScore}/{c.SustainabilityScore}/{c.TypeMatchScore}");
+            lines.Add(
+                $"【{i + 1}】{c.Title}\n" +
+                $"核心钩子：{c.CoreHook}\n" +
+                $"世界观：{c.WorldbuildingBlueprint}\n" +
+                $"升级/能力体系：{c.ProgressionSystem}\n" +
+                $"主角：{c.ProtagonistProfile}\n" +
+                $"爽点循环：{c.PleasureLoop}\n" +
+                $"前三卷：{string.Join(" / ", c.FirstThreeVolumes)}\n" +
+                $"首批角色：{string.Join("；", c.KeyCharacters)}\n" +
+                $"新颖度/可持续/类型匹配：{c.NoveltyScore}/{c.SustainabilityScore}/{c.TypeMatchScore}");
         }
         return string.Join("\n\n", lines);
     }
@@ -1405,6 +1725,34 @@ public sealed class AgentToolRegistry
 
     private static int ArgInt(AgentToolCall call, string name, int fallback = 0) =>
         call.Arguments.TryGetValue(name, out var value) && int.TryParse(value?.Trim(), out var parsed) ? parsed : fallback;
+
+    private static List<string> ArgList(AgentToolCall call, string name)
+    {
+        if (!call.Arguments.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
+            return new List<string>();
+
+        var text = value.Trim();
+        if (text.StartsWith("[", StringComparison.Ordinal))
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<List<string>>(text) is { Count: > 0 } items
+                    ? items.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList()
+                    : new List<string>();
+            }
+            catch
+            {
+                // Fall through to delimiter parsing.
+            }
+        }
+
+        return text
+            .Split(new[] { '\n', ',', '，', '、', ';', '；' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 
     private static int NextVolumeNumber(StoryBibleDocument bible) =>
         Math.Max(1, bible.VolumeArcs.Count + 1);
@@ -1518,24 +1866,18 @@ public sealed class AgentToolRegistry
 
     private async Task<AgentToolExecutionResult> ToolSearchAsync(AgentToolCall call, AgentSession session, CancellationToken ct)
     {
-        var phaseArg = NormalizeToolSearchPhase(Arg(call, "phase", "Conversation"));
+        var phaseArg = NormalizeToolSearchPhase(Arg(call, "phase", session.Phase));
+        var query = FirstNonEmpty(Arg(call, "query"), Arg(call, "intent"), Arg(call, "context"), session.WorkingMemory.CurrentGoal);
+        var intent = Arg(call, "intent");
+        var context = Arg(call, "context");
+        var includeAll = ArgBool(call, "includeAll");
+        var requestedLimit = ArgInt(call, "limit", 12);
+        var limit = includeAll
+            ? int.MaxValue
+            : Math.Clamp(requestedLimit <= 0 ? 12 : requestedLimit, 1, 50);
 
-        IReadOnlyList<string> toolNames;
-        if (string.Equals(phaseArg, "All", StringComparison.OrdinalIgnoreCase))
-        {
-            toolNames = _entries.Keys.Where(k => k != "tool_search").ToArray();
-        }
-        else
-        {
-            var phase = phaseArg switch
-            {
-                "Planning" => ConversationPhase.Planning,
-                "Creation" => ConversationPhase.Creation,
-                "Review" => ConversationPhase.Review,
-                _ => ConversationPhase.Conversation,
-            };
-            toolNames = GetToolNamesForPhase(phase);
-        }
+        var rankedTools = SearchToolDefinitions(query, intent, context, phaseArg, includeAll, limit);
+        var toolNames = rankedTools.Select(def => def.Name).ToArray();
 
         var toolList = toolNames
             .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
@@ -1544,15 +1886,13 @@ public sealed class AgentToolRegistry
             .ToList();
 
         var message = toolList.Count == 0
-            ? $"阶段「{phaseArg}」没有可用工具。"
-            : $"阶段「{phaseArg}」可用工具（{toolList.Count}个）：\n{string.Join("\n", toolList)}";
+            ? "已读取当前创作上下文，正在重新判断下一步。"
+            : $"已准备 {toolList.Count} 项可用创作能力，正在选择最适合当前目标的下一步。";
 
-        var discoveredTools = toolNames
-            .Select(name => _entries.TryGetValue(name, out var entry) ? entry.Definition : null)
-            .Where(def => def != null)
+        var discoveredTools = rankedTools
             .Select(def => new ToolSchema
             {
-                Name = def!.Name,
+                Name = def.Name,
                 Description = def.Description,
                 Risk = def.Risk,
                 RequiresConfirmation = def.RequiresConfirmation,
@@ -1564,17 +1904,154 @@ public sealed class AgentToolRegistry
 
         using var scope = _serviceProvider.CreateScope();
         var cache = scope.ServiceProvider.GetRequiredService<IToolSearchCacheService>();
-        await cache.SaveAsync(session, phaseArg, discoveredTools, ct).ConfigureAwait(false);
+        var searchScope = BuildToolSearchScopeKey(query, intent, context, phaseArg, includeAll);
+        await cache.SaveAsync(session, searchScope, discoveredTools, ct).ConfigureAwait(false);
 
         return new AgentToolExecutionResult
         {
             Success = true,
             Message = message,
             Phase = session.Phase,
-            Data = new { Phase = phaseArg, Tools = toolNames },
-            Artifact = BuildArtifact("tool_search_result", phaseArg, session.ActiveProjectId ?? string.Empty, string.Empty, $"检索到 {toolList.Count} 个工具。", Array.Empty<string>()),
+            Data = new { Query = query, PhaseHint = phaseArg, ScopeKey = searchScope, Tools = toolNames, ToolDetails = toolList },
+            Artifact = BuildArtifact("tool_search_result", searchScope, session.ActiveProjectId ?? string.Empty, string.Empty, $"已准备 {toolList.Count} 项可用创作能力。", Array.Empty<string>()),
             Suggestions = Array.Empty<string>(),
         };
+    }
+
+    private IReadOnlyList<AgentToolDefinition> SearchToolDefinitions(
+        string query,
+        string intent,
+        string context,
+        string phaseHint,
+        bool includeAll,
+        int limit)
+    {
+        var phase = phaseHint switch
+        {
+            "Planning" => ConversationPhase.Planning,
+            "Creation" => ConversationPhase.Creation,
+            "Review" => ConversationPhase.Review,
+            _ => ConversationPhase.Conversation,
+        };
+        var searchText = string.Join(' ', new[] { query, intent, context }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var terms = TokenizeToolSearchText(searchText);
+
+        return _entries.Values
+            .Where(entry => !string.Equals(entry.Definition.Name, "tool_search", StringComparison.OrdinalIgnoreCase))
+            .Select((entry, index) => new
+            {
+                Definition = entry.Definition,
+                Index = index,
+                Score = includeAll ? 0 : ScoreTool(entry.Definition, terms),
+                HintRank = CategoryHintRank(entry.Category, phase)
+            })
+            .Where(x => includeAll || terms.Count == 0 || x.Score > 0 || x.HintRank >= 0)
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.HintRank < 0 ? int.MaxValue : x.HintRank)
+            .ThenBy(x => x.Index)
+            .Take(limit)
+            .Select(x => x.Definition)
+            .ToList();
+    }
+
+    private static int ScoreTool(AgentToolDefinition tool, IReadOnlyList<string> terms)
+    {
+        if (terms.Count == 0)
+            return 0;
+
+        var haystack = string.Join(' ', new[]
+        {
+            tool.Name,
+            tool.Description,
+            tool.Risk,
+            tool.Semantic.DomainSurface,
+            tool.Semantic.OutputKind,
+            tool.Semantic.UserVisibleWhere,
+            tool.Semantic.ResultSemantics,
+            string.Join(' ', tool.Arguments),
+            string.Join(' ', tool.Semantic.ReadsFrom),
+            string.Join(' ', tool.Semantic.WritesTo),
+        }).ToLowerInvariant();
+
+        var score = 0;
+        foreach (var term in terms)
+        {
+            if (haystack.Contains(term, StringComparison.OrdinalIgnoreCase))
+                score += tool.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ? 6 : 2;
+        }
+        return score;
+    }
+
+    private static IReadOnlyList<string> TokenizeToolSearchText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Array.Empty<string>();
+
+        return text
+            .Split(new[] { ' ', '\t', '\r', '\n', ',', '.', ';', ':', '，', '。', '；', '：', '、', '(', ')', '（', '）', '[', ']', '【', '】', '"', '\'' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToLowerInvariant())
+            .Where(t => t.Length >= 2)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .ToList();
+    }
+
+    private static int CategoryHintRank(string category, ConversationPhase phase)
+    {
+        return phase switch
+        {
+            ConversationPhase.Planning => category switch
+            {
+                "planning" => 0,
+                "project" => 1,
+                "content" or "knowledge" or "rag" => 2,
+                "blackboard" or "workspace" => 3,
+                "commit" => 4,
+                _ => 10,
+            },
+            ConversationPhase.Creation => category switch
+            {
+                "writing" => 0,
+                "gate" => 1,
+                "planning" => 2,
+                "content" or "blackboard" or "workspace" => 3,
+                _ => 10,
+            },
+            ConversationPhase.Review => category switch
+            {
+                "review" or "gate" => 0,
+                "commit" => 1,
+                "maintenance" => 2,
+                "content" or "blackboard" or "workspace" => 3,
+                _ => 10,
+            },
+            _ => category switch
+            {
+                "workspace" or "blackboard" => 0,
+                "project" or "content" => 1,
+                "knowledge" or "rag" => 2,
+                _ => 10,
+            },
+        };
+    }
+
+    private static bool ArgBool(AgentToolCall call, string name, bool fallback = false) =>
+        call.Arguments.TryGetValue(name, out var value) && bool.TryParse(value?.Trim(), out var parsed) ? parsed : fallback;
+
+    private static string BuildToolSearchScopeKey(string query, string intent, string context, string phaseHint, bool includeAll)
+    {
+        var normalized = string.Join("|", new[]
+        {
+            $"phaseHint={phaseHint}",
+            $"includeAll={includeAll}",
+            $"query={query}",
+            $"intent={intent}",
+            $"context={context}",
+        }).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "global";
+        var hash = Math.Abs(StringComparer.OrdinalIgnoreCase.GetHashCode(normalized));
+        return $"global:{phaseHint}:{hash:x}";
     }
 
     private static string NormalizeToolSearchPhase(string value)
@@ -1592,4 +2069,26 @@ public sealed class AgentToolRegistry
             _ => "Conversation"
         };
     }
+}
+
+public sealed class ProjectContentQueryResult
+{
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
+    public List<ProjectContentQueryItem> Items { get; set; } = new();
+}
+
+public sealed class ProjectContentQueryItem
+{
+    public string ChapterId { get; set; } = string.Empty;
+    public int ChapterNumber { get; set; }
+    public string ChapterTitle { get; set; } = string.Empty;
+    public string VolumeId { get; set; } = string.Empty;
+    public int VolumeNumber { get; set; }
+    public string VolumeTitle { get; set; } = string.Empty;
+    public int WordCount { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string BodyPreview { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public List<ChapterContinuityFacts> ContinuityFacts { get; set; } = new();
 }

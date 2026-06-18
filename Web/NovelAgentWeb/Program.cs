@@ -8,6 +8,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Middleware;
 using TM.Web.NovelAgentWeb.Services;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Caching;
@@ -142,6 +143,7 @@ builder.Services.AddScoped<JwtTokenGenerator>();
 
 // Register Current User Service (for authorization and data isolation)
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<IBackgroundUserContext, BackgroundUserContext>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
 // Register Project Service
@@ -174,6 +176,10 @@ builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
 builder.Services.AddScoped<IAgentSessionResumeService, AgentSessionResumeService>();
 builder.Services.AddScoped<IAgentToolExecutionLedger, AgentToolExecutionLedger>();
+builder.Services.AddScoped<IAgentRuntimeRunService, AgentRuntimeRunService>();
+builder.Services.AddScoped<IAgentInterruptService, AgentInterruptService>();
+builder.Services.AddScoped<IAgentRuntimeEventService, AgentRuntimeEventService>();
+builder.Services.AddSingleton<IAgentRuntimeQueue, AgentRuntimeQueue>();
 
 // Register Embedding Service. Stub mode is explicit and reported by /health until a real provider is added.
 builder.Services.AddNovelAgentEmbedding(builder.Configuration, builder.Environment);
@@ -204,6 +210,7 @@ builder.Services.AddCors(options =>
 // NovelAgentWorkspace and NovelProjectCatalog are now provided dynamically via WorkspaceFactory
 builder.Services.AddSingleton<ProjectScopedExecutor>();
 builder.Services.AddSingleton<IMaterialAnalysisService, StubMaterialAnalysisService>();
+builder.Services.AddSingleton<AgentSseEventBus>();
 builder.Services.AddScoped<AgentSessionManager>();
 builder.Services.AddSingleton<UserSettingsManager>(sp =>
 {
@@ -215,9 +222,10 @@ builder.Services.AddSingleton<UserSettingsManager>(sp =>
         storageRoot,
         projectName,
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<IHttpContextAccessor>());
+        sp.GetRequiredService<IHttpContextAccessor>(),
+        sp.GetRequiredService<IBackgroundUserContext>());
 });
-builder.Services.AddSingleton<AgentToolRegistry>();
+builder.Services.AddScoped<AgentToolRegistry>();
 builder.Services.AddSingleton<AgentToolGuardrails>();
 builder.Services.AddSingleton<HttpClient>(sp =>
 {
@@ -237,6 +245,7 @@ builder.Services.AddSingleton<AgentQualityReviewSuite>();
 builder.Services.AddSingleton<ReflectionEngine>();
 builder.Services.AddScoped<PhaseContextBuilder>();
 builder.Services.AddScoped<AgentRuntime>();
+builder.Services.AddScoped<IAgentForegroundTurnRunner, AgentForegroundTurnRunner>();
 builder.Services.AddScoped<AgentRouter>();
 builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 builder.Services.AddSingleton<QdrantSearchService>(); // Vector search service with user isolation
@@ -264,6 +273,7 @@ builder.Services.AddScoped<IContentDocumentService, ContentDocumentService>();
 builder.Services.AddSingleton<QdrantHealthCheck>();
 builder.Services.AddSingleton<IQdrantHealthProbe>(sp => sp.GetRequiredService<QdrantHealthCheck>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<QdrantHealthCheck>());
+builder.Services.AddHostedService<AgentRuntimeWorker>();
 builder.Services.AddSingleton<RuntimeHealthService>();
 
 var app = builder.Build();

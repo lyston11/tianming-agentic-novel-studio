@@ -166,6 +166,8 @@ public sealed class AgentMemoryService
 
         if (update?.AuthorMemory != null)
         {
+            if (!string.IsNullOrWhiteSpace(update.AuthorMemory.DisplayName))
+                working.AuthorMemory.DisplayName = update.AuthorMemory.DisplayName.Trim();
             foreach (var item in Clean(update.AuthorMemory.StyleLikes))
                 AddUnique(working.AuthorMemory.StyleLikes, item);
             foreach (var item in Clean(update.AuthorMemory.StyleDislikes))
@@ -216,6 +218,10 @@ public sealed class AgentMemoryService
 
         var hasExplicitUpdate = update != null;
 
+        if (hasExplicitUpdate &&
+            !string.IsNullOrWhiteSpace(working.AuthorMemory.DisplayName) &&
+            !string.Equals(working.AuthorMemory.DisplayName, currentAuthorMemory.DisplayName, StringComparison.Ordinal))
+            authorUpdates["author.display_name"] = working.AuthorMemory.DisplayName;
         if (!string.IsNullOrWhiteSpace(working.ProjectMemory.LongTermGoal) &&
             !string.Equals(working.ProjectMemory.LongTermGoal, currentProjectMemory.LongTermGoal, StringComparison.Ordinal))
             updates["project.long_term_goal"] = working.ProjectMemory.LongTermGoal;
@@ -223,9 +229,9 @@ public sealed class AgentMemoryService
             !string.Equals(working.ProjectMemory.ReaderPromise, currentProjectMemory.ReaderPromise, StringComparison.Ordinal))
             updates["project.reader_promise"] = working.ProjectMemory.ReaderPromise;
         if (hasExplicitUpdate && working.ProjectMemory.Constraints.Count > 0)
-            updates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.ProjectMemory.UnresolvedThreads.Count > 0)
-            updates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            unionUpdates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.ReferencedKnowledgeIds.Count > 0)
             unionUpdates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.UsedTropePatterns.Count > 0)
@@ -239,13 +245,13 @@ public sealed class AgentMemoryService
         if (working.ExecutionMemory.KnowledgeProcessingFailures.Count > 0)
             unionUpdates["execution.knowledge_processing_failures"] = working.ExecutionMemory.KnowledgeProcessingFailures.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
-            authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && !string.IsNullOrWhiteSpace(working.AuthorMemory.ConfirmationTolerance))
             authorUpdates["author.confirmation_tolerance"] = working.AuthorMemory.ConfirmationTolerance;
         if (hasExplicitUpdate && working.AuthorMemory.GenreHabits.Count > 0)
-            authorUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.AuthorMemory.FavoriteKnowledgeIds.Count > 0)
-            authorUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.AuthorMemory.StyleDislikes.Count > 0)
             authorUnionUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -314,6 +320,8 @@ public sealed class AgentMemoryService
 
         if (update?.AuthorMemory != null)
         {
+            if (!string.IsNullOrWhiteSpace(update.AuthorMemory.DisplayName))
+                working.AuthorMemory.DisplayName = update.AuthorMemory.DisplayName.Trim();
             foreach (var item in Clean(update.AuthorMemory.StyleLikes))
                 AddUnique(working.AuthorMemory.StyleLikes, item);
             foreach (var item in Clean(update.AuthorMemory.StyleDislikes))
@@ -355,14 +363,18 @@ public sealed class AgentMemoryService
         Trim(working.AuthorMemory.FavoriteKnowledgeIds, MaxFavoriteKnowledgeIds);
 
         var hasExplicitUpdate = update != null;
+        if (hasExplicitUpdate &&
+            !string.IsNullOrWhiteSpace(working.AuthorMemory.DisplayName) &&
+            !string.Equals(working.AuthorMemory.DisplayName, currentAuthorMemory.DisplayName, StringComparison.Ordinal))
+            authorUpdates["author.display_name"] = working.AuthorMemory.DisplayName;
         if (hasExplicitUpdate && working.AuthorMemory.StyleLikes.Count > 0)
-            authorUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.style_likes"] = working.AuthorMemory.StyleLikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && !string.IsNullOrWhiteSpace(working.AuthorMemory.ConfirmationTolerance))
             authorUpdates["author.confirmation_tolerance"] = working.AuthorMemory.ConfirmationTolerance;
         if (hasExplicitUpdate && working.AuthorMemory.GenreHabits.Count > 0)
-            authorUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.genre_habits"] = working.AuthorMemory.GenreHabits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (hasExplicitUpdate && working.AuthorMemory.FavoriteKnowledgeIds.Count > 0)
-            authorUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            authorUnionUpdates["author.favorite_knowledge_ids"] = working.AuthorMemory.FavoriteKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.AuthorMemory.StyleDislikes.Count > 0)
             authorUnionUpdates["author.style_dislikes"] = working.AuthorMemory.StyleDislikes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -497,9 +509,20 @@ public sealed class AgentMemoryService
     {
         var head = FirstNonEmpty(observation.ToolName, observation.ObservationType, "observation");
         var body = FirstNonEmpty(observation.Message, observation.Phase);
+        if (string.Equals(head, "session_memory", StringComparison.OrdinalIgnoreCase))
+            body = RemoveRepeatedPrefix(body, "session_memory");
         return string.IsNullOrWhiteSpace(body)
             ? head
             : $"{head}: {TrimText(body, 500)}";
+    }
+
+    private static string RemoveRepeatedPrefix(string value, string prefix)
+    {
+        var text = value?.Trim() ?? string.Empty;
+        var marker = prefix + ":";
+        while (text.StartsWith(marker, StringComparison.OrdinalIgnoreCase))
+            text = text[marker.Length..].Trim();
+        return text;
     }
 
     private static string TrimText(string value, int maxLength)
@@ -648,6 +671,7 @@ public sealed class AgentMemoryService
 
     private static AgentAuthorMemory MapToAgentAuthorMemory(AuthorMemory source) => new()
     {
+        DisplayName = source.DisplayName ?? string.Empty,
         StyleLikes = new List<string>(source.StyleLikes),
         StyleDislikes = new List<string>(source.StyleDislikes),
         ConfirmationTolerance = source.ConfirmationTolerance ?? "key_checkpoints",

@@ -48,6 +48,7 @@ public class AgentMemoryUpdateTests
     {
         var authorUpdate = new AuthorMemoryUpdate
         {
+            DisplayName = "lyston",
             StyleLikes = new List<string> { "细腻的心理描写" },
             StyleDislikes = new List<string> { "过于啰嗦的描写", "重复的情绪渲染" },
             ConfirmationTolerance = "auto_low_risk",
@@ -55,6 +56,7 @@ public class AgentMemoryUpdateTests
             FavoriteKnowledgeIds = new List<string> { "kb-1" }
         };
 
+        Assert.Equal("lyston", authorUpdate.DisplayName);
         Assert.Single(authorUpdate.StyleLikes);
         Assert.Equal(2, authorUpdate.StyleDislikes.Count);
         Assert.Equal("auto_low_risk", authorUpdate.ConfirmationTolerance);
@@ -128,6 +130,7 @@ public class AgentMemoryUpdateTests
               "unresolvedThreads": ["主角身世之谜（第15章揭示）"]
             },
             "authorMemory": {
+              "displayName": "lyston",
               "styleLikes": ["细腻心理描写"],
               "styleDislikes": ["重复情绪渲染"],
               "confirmationTolerance": "auto_low_risk",
@@ -151,6 +154,7 @@ public class AgentMemoryUpdateTests
         Assert.Equal("用户确认偏好", update.SessionMemory.ChatSummary);
         Assert.Contains("保持节奏紧凑", update.SessionMemory.ExtractedPreferences);
         Assert.Contains("不要出现现代科技元素", update.ProjectMemory.NewConstraints);
+        Assert.Equal("lyston", update.AuthorMemory.DisplayName);
         Assert.Contains("细腻心理描写", update.AuthorMemory.StyleLikes);
         Assert.Equal("auto_low_risk", update.AuthorMemory.ConfirmationTolerance);
         Assert.Contains("玄幻", update.AuthorMemory.GenreHabits);
@@ -179,6 +183,7 @@ public class AgentMemoryUpdateTests
                 "unresolved_threads": []
               },
               "author_memory": {
+                "display_name": "lyston",
                 "confirmation_tolerance": "key_checkpoints",
                 "genre_habits": ["赛博悬疑"],
                 "favorite_knowledge_ids": ["kb-2"]
@@ -199,6 +204,7 @@ public class AgentMemoryUpdateTests
         Assert.Equal("蛇形命名摘要", update.SessionMemory.ChatSummary);
         Assert.Contains("避免长段说明", update.SessionMemory.ExtractedPreferences);
         Assert.Contains("只使用近未来科技", update.ProjectMemory.NewConstraints);
+        Assert.Equal("lyston", update.AuthorMemory.DisplayName);
         Assert.Equal("key_checkpoints", update.AuthorMemory.ConfirmationTolerance);
         Assert.Contains("赛博悬疑", update.AuthorMemory.GenreHabits);
         Assert.Contains("kb-2", update.AuthorMemory.FavoriteKnowledgeIds);
@@ -208,10 +214,64 @@ public class AgentMemoryUpdateTests
         Assert.Contains("套路A", update.UsedTropePatterns);
     }
 
+    [Fact]
+    public void ActionPrompt_IncludesConcreteAuthorDisplayName()
+    {
+        var prompt = BuildActionUserPrompt(new AgentObservationContext
+        {
+            UserMessage = "你知道我是谁吗？",
+            AuthorMemory = new AgentAuthorMemory
+            {
+                DisplayName = "lyston"
+            }
+        });
+
+        Assert.Contains("author_memory", prompt);
+        Assert.Contains("display_name", prompt);
+        Assert.Contains("lyston", prompt);
+    }
+
+    [Fact]
+    public void NativeToolCallingPayload_IncludesConcreteMemoryContext()
+    {
+        var payload = BuildNativeToolCallingPayload(new AgentObservationContext
+        {
+            UserMessage = "你知道我是谁吗？",
+            AuthorMemory = new AgentAuthorMemory
+            {
+                DisplayName = "lyston",
+                StyleLikes = new List<string> { "爽文" }
+            },
+            ProjectMemory = new AgentProjectMemory
+            {
+                Constraints = new List<string> { "不要硬模板" }
+            }
+        });
+
+        Assert.Contains("memory_context", payload);
+        Assert.Contains("display_name", payload);
+        Assert.Contains("lyston", payload);
+        Assert.Contains("不要硬模板", payload);
+    }
+
     private static AgentReflection ParseReflection(string json)
     {
         var method = typeof(AgentPlanner).GetMethod("ParseReflection", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new MissingMethodException(nameof(AgentPlanner), "ParseReflection");
         return Assert.IsType<AgentReflection>(method.Invoke(null, new object[] { json }));
+    }
+
+    private static string BuildActionUserPrompt(AgentObservationContext context)
+    {
+        var method = typeof(AgentPlanner).GetMethod("BuildActionUserPrompt", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(nameof(AgentPlanner), "BuildActionUserPrompt");
+        return Assert.IsType<string>(method.Invoke(null, new object[] { context }));
+    }
+
+    private static string BuildNativeToolCallingPayload(AgentObservationContext context)
+    {
+        var method = typeof(ProviderToolCallingClient).GetMethod("BuildPlannerPayload", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(nameof(ProviderToolCallingClient), "BuildPlannerPayload");
+        return Assert.IsType<string>(method.Invoke(null, new object[] { context }));
     }
 }

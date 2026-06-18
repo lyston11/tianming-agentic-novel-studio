@@ -1,5 +1,6 @@
 using TM.Web.NovelAgentWeb.Support;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
+using System.Text.Json;
 
 namespace TM.Web.NovelAgentWeb.Models.AgentSessions;
 
@@ -27,5 +28,15 @@ public sealed class AgentSessionResumeResponse
     public bool ToolSearchCacheFresh { get; set; }
     public string ToolSearchCacheSource { get; set; } = "none";
     public IReadOnlyList<AgentToolExecutionSnapshot> RecentToolExecutions { get; set; } = Array.Empty<AgentToolExecutionSnapshot>();
+    public IReadOnlyList<AgentRuntimeEventView> RecentRuntimeEvents { get; set; } = Array.Empty<AgentRuntimeEventView>();
     public IReadOnlyList<string> RunHistory { get; set; } = Array.Empty<string>();
+}
+
+public sealed class AgentRuntimeEventView
+{
+    public string Type { get; set; } = string.Empty;
+    public string? RunId { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public JsonElement Data { get; set; }
+    public DateTime Timestamp { get; set; }
 }

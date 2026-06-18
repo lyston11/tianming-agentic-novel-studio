@@ -590,6 +590,52 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             }
         }
 
+        public async Task<StoryBibleCommitResult> UpsertContinuityFactsAsync(
+            ChapterContinuityFacts facts,
+            CancellationToken ct = default)
+        {
+            if (facts == null || string.IsNullOrWhiteSpace(facts.ChapterId))
+            {
+                return new StoryBibleCommitResult
+                {
+                    Success = false,
+                    Message = "章节连续性事实为空，无法沉淀。",
+                    StoragePath = GetStoragePath()
+                };
+            }
+
+            await _ioLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var document = await LoadWithoutLockAsync(ct).ConfigureAwait(false);
+                NormalizeContinuityFacts(facts);
+                document.ContinuityFacts.RemoveAll(f =>
+                    string.Equals(f.ChapterId, facts.ChapterId, StringComparison.OrdinalIgnoreCase));
+                document.ContinuityFacts.Add(facts);
+                UpsertProtagonistLedger(document, facts);
+                Touch(document);
+                AddRevision(
+                    document,
+                    "UpsertContinuityFacts",
+                    $"沉淀章节连续性事实：{FirstNonEmpty(facts.ChapterTitle, facts.ChapterId)}",
+                    facts.SourceRunId,
+                    facts.ChapterId);
+                await SaveWithoutLockAsync(document, ct).ConfigureAwait(false);
+
+                return new StoryBibleCommitResult
+                {
+                    Success = true,
+                    Message = "章节连续性事实已沉淀到 Story Bible。",
+                    StoragePath = GetStoragePath(),
+                    Document = Clone(document)
+                };
+            }
+            finally
+            {
+                _ioLock.Release();
+            }
+        }
+
         public async Task<CharacterMaintenanceResult> UpdateCharacterEntryStatusAsync(
             string entryId,
             CharacterLedgerStatus status,
@@ -726,6 +772,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             document.VolumeArcs ??= new List<VolumeArcPlan>();
             document.ForeshadowLedger ??= new List<ForeshadowLedgerEntry>();
             document.CharacterLedger ??= new List<CharacterLedgerEntry>();
+            document.ContinuityFacts ??= new List<ChapterContinuityFacts>();
             document.CanonLedger ??= new List<CanonLedgerEntry>();
             document.AgentRuns ??= new List<NovelAgentRun>();
             document.Revisions ??= new List<StoryBibleRevision>();
@@ -737,6 +784,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 NormalizeForeshadowEntry(entry);
             foreach (var entry in document.CharacterLedger)
                 NormalizeCharacterEntry(entry);
+            foreach (var facts in document.ContinuityFacts)
+                NormalizeContinuityFacts(facts);
             foreach (var entry in document.CanonLedger)
                 NormalizeEntry(entry);
             foreach (var revision in document.Revisions)
@@ -835,6 +884,61 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             entry.SourceChapterId = entry.SourceChapterId?.Trim() ?? string.Empty;
             if (entry.CreatedAt == default) entry.CreatedAt = DateTime.Now;
             entry.UpdatedAt = DateTime.Now;
+        }
+
+        private static void NormalizeContinuityFacts(ChapterContinuityFacts facts)
+        {
+            facts.ChapterId = facts.ChapterId?.Trim() ?? string.Empty;
+            facts.ChapterTitle = facts.ChapterTitle?.Trim() ?? string.Empty;
+            facts.ProtagonistName = facts.ProtagonistName?.Trim() ?? string.Empty;
+            facts.ProtagonistIdentity = facts.ProtagonistIdentity?.Trim() ?? string.Empty;
+            facts.ProtagonistStatus = facts.ProtagonistStatus?.Trim() ?? string.Empty;
+            facts.CurrentLocation = facts.CurrentLocation?.Trim() ?? string.Empty;
+            facts.SystemState = facts.SystemState?.Trim() ?? string.Empty;
+            facts.EquipmentState = facts.EquipmentState?.Trim() ?? string.Empty;
+            facts.KeyEvents = NormalizeList(facts.KeyEvents);
+            facts.EndingState = facts.EndingState?.Trim() ?? string.Empty;
+            facts.NextChapterMustCarry = NormalizeList(facts.NextChapterMustCarry);
+            facts.SourceRunId = facts.SourceRunId?.Trim() ?? string.Empty;
+            if (facts.ExtractedAt == default) facts.ExtractedAt = DateTime.Now;
+        }
+
+        private static void UpsertProtagonistLedger(StoryBibleDocument document, ChapterContinuityFacts facts)
+        {
+            if (string.IsNullOrWhiteSpace(facts.ProtagonistName))
+                return;
+
+            var entry = document.CharacterLedger.FirstOrDefault(c =>
+                string.Equals(c.CharacterName, facts.ProtagonistName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(c.Role, "主角", StringComparison.OrdinalIgnoreCase));
+            if (entry == null)
+            {
+                entry = new CharacterLedgerEntry
+                {
+                    CharacterName = facts.ProtagonistName,
+                    Role = "主角",
+                    Type = CharacterLedgerEntryType.Identity,
+                    Status = CharacterLedgerStatus.Active,
+                    Importance = 10,
+                    SourceRunId = facts.SourceRunId,
+                    SourceChapterId = facts.ChapterId
+                };
+                document.CharacterLedger.Insert(0, entry);
+            }
+
+            entry.Status = CharacterLedgerStatus.Active;
+            entry.Summary = FirstNonEmpty(facts.ProtagonistStatus, facts.ProtagonistIdentity, entry.Summary);
+            entry.IdentityState = FirstNonEmpty(facts.ProtagonistIdentity, entry.IdentityState);
+            entry.CurrentGoal = FirstNonEmpty(facts.EndingState, entry.CurrentGoal);
+            entry.NextPressure = FirstNonEmpty(facts.NextChapterMustCarry.FirstOrDefault(), entry.NextPressure);
+            if (!string.IsNullOrWhiteSpace(facts.SystemState))
+                entry.AbilityCost.Ability = facts.SystemState;
+            if (!string.IsNullOrWhiteSpace(facts.EquipmentState))
+                entry.Notes.Add($"装备状态：{facts.EquipmentState}");
+            if (!string.IsNullOrWhiteSpace(facts.CurrentLocation))
+                entry.Notes.Add($"当前位置：{facts.CurrentLocation}");
+            entry.Evidence.Add($"continuity:{facts.ChapterId}");
+            NormalizeCharacterEntry(entry);
         }
 
         private static void NormalizeVolumeArc(VolumeArcPlan plan)

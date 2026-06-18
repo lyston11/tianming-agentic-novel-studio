@@ -55,8 +55,18 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
 
         chapter.CurrentDocumentId = document.Id;
         chapter.WordCount = CountWords(content);
+        chapter.Status = "committed";
         chapter.UpdatedAt = DateTime.UtcNow;
+        var otherChapterWordCount = await db.Chapters
+            .AsNoTracking()
+            .Where(c => c.ProjectId == project.Id && c.Id != chapter.Id)
+            .SumAsync(c => c.WordCount)
+            .ConfigureAwait(false);
+        project.WordCount = otherChapterWordCount + chapter.WordCount;
+        project.Status = ResolveProjectStatusAfterChapterCommit(project.Status);
+        project.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync().ConfigureAwait(false);
+        await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
 
         await UpsertChapterVectorsAsync(userId, chapter, content, db).ConfigureAwait(false);
     }
@@ -339,20 +349,33 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
             .ConfigureAwait(false);
 
         if (chapter != null)
+        {
+            var readableTitle = ResolveReadableChapterTitle(chapter.Title, content, chapter.ChapterNumber);
+            if (!string.Equals(readableTitle, chapter.Title, StringComparison.Ordinal))
+            {
+                chapter.Title = readableTitle;
+                chapter.UpdatedAt = DateTime.UtcNow;
+            }
+            await EnsureCanonicalVolumeBindingAsync(db, project, chapter).ConfigureAwait(false);
+            await db.SaveChangesAsync().ConfigureAwait(false);
+            await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
             return chapter;
+        }
 
-        var nextNumber = await db.Chapters
+        var existingMaxNumber = await db.Chapters
             .AsNoTracking()
             .Where(c => c.ProjectId == project.Id)
             .Select(c => (int?)c.ChapterNumber)
             .MaxAsync()
-            .ConfigureAwait(false) + 1 ?? 1;
+            .ConfigureAwait(false);
+        var nextNumber = ResolveRequestedChapterNumber(chapterId) ?? (existingMaxNumber + 1 ?? 1);
+        var resolvedChapterId = await ResolveNewChapterIdAsync(db, project, chapterId, nextNumber).ConfigureAwait(false);
 
         chapter = new Chapter
         {
-            Id = string.IsNullOrWhiteSpace(chapterId) ? Guid.NewGuid().ToString() : chapterId,
+            Id = resolvedChapterId,
             ProjectId = project.Id,
-            Title = string.IsNullOrWhiteSpace(chapterId) ? $"第{nextNumber}章" : chapterId,
+            Title = ResolveReadableChapterTitle(chapterId, content, nextNumber),
             ChapterNumber = nextNumber,
             WordCount = CountWords(content),
             Status = "draft",
@@ -360,9 +383,226 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
             UpdatedAt = DateTime.UtcNow
         };
 
+        await EnsureCanonicalVolumeBindingAsync(db, project, chapter).ConfigureAwait(false);
         db.Chapters.Add(chapter);
         await db.SaveChangesAsync().ConfigureAwait(false);
+        await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
         return chapter;
+    }
+
+    private static async Task<string> ResolveNewChapterIdAsync(
+        NovelAgentDbContext db,
+        NovelProject project,
+        string? requestedChapterId,
+        int chapterNumber)
+    {
+        if (string.IsNullOrWhiteSpace(requestedChapterId))
+            return Guid.NewGuid().ToString();
+
+        var normalized = requestedChapterId.Trim();
+        var idExists = await db.Chapters
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == normalized)
+            .ConfigureAwait(false);
+        if (!idExists)
+            return normalized;
+
+        var projectScopedId = $"{project.Id}-{normalized}";
+        var scopedExists = await db.Chapters
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == projectScopedId)
+            .ConfigureAwait(false);
+        if (!scopedExists)
+            return projectScopedId;
+
+        return $"{project.Id}-chapter-{chapterNumber:000}-{Guid.NewGuid():N}";
+    }
+
+    private static int? ResolveRequestedChapterNumber(string? chapterId)
+    {
+        if (string.IsNullOrWhiteSpace(chapterId))
+            return null;
+
+        var digits = new string(chapterId.Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var number) && number > 0 ? number : null;
+    }
+
+    private static async Task EnsureCanonicalVolumeBindingAsync(
+        NovelAgentDbContext db,
+        NovelProject project,
+        Chapter chapter)
+    {
+        if (chapter.ChapterNumber <= 0)
+            chapter.ChapterNumber = ResolveRequestedChapterNumber(chapter.Id) ?? 1;
+
+        var arc = await ResolveVolumeArcForChapterAsync(db, project, chapter.ChapterNumber).ConfigureAwait(false);
+        var volumeNumber = arc?.VolumeNumber ?? 1;
+        var volumeTitle = string.IsNullOrWhiteSpace(arc?.VolumeTitle)
+            ? $"第{volumeNumber}卷"
+            : arc!.VolumeTitle.Trim();
+
+        var volume = await db.Volumes
+            .FirstOrDefaultAsync(v => v.ProjectId == project.Id && v.VolumeNumber == volumeNumber)
+            .ConfigureAwait(false);
+        if (volume == null)
+        {
+            volume = new Volume
+            {
+                Id = $"volume-{project.Id}-{volumeNumber:000}",
+                ProjectId = project.Id,
+                VolumeNumber = volumeNumber,
+                Title = volumeTitle,
+                Summary = arc?.VolumeTheme
+            };
+            db.Volumes.Add(volume);
+        }
+        else
+        {
+            volume.Title = volumeTitle;
+            if (!string.IsNullOrWhiteSpace(arc?.VolumeTheme))
+                volume.Summary = arc.VolumeTheme;
+        }
+
+        chapter.VolumeId = volume.Id;
+    }
+
+    private static async Task<VolumeArc?> ResolveVolumeArcForChapterAsync(
+        NovelAgentDbContext db,
+        NovelProject project,
+        int chapterNumber)
+    {
+        var arcs = await db.VolumeArcs
+            .Where(a => a.ProjectId == project.Id)
+            .OrderBy(a => a.VolumeNumber)
+            .ToListAsync()
+            .ConfigureAwait(false);
+        if (arcs.Count == 0)
+            return null;
+
+        var lowerBound = 1;
+        foreach (var arc in arcs)
+        {
+            var target = Math.Max(arc.TargetChapters ?? 0, 0);
+            var upperBound = target > 0 ? lowerBound + target - 1 : int.MaxValue;
+            if (chapterNumber >= lowerBound && chapterNumber <= upperBound)
+                return arc;
+            lowerBound = upperBound == int.MaxValue ? lowerBound : upperBound + 1;
+        }
+
+        return arcs.Last();
+    }
+
+    private static async Task SynchronizeVolumeArcCurrentChaptersAsync(
+        NovelAgentDbContext db,
+        NovelProject project,
+        string? volumeId)
+    {
+        if (string.IsNullOrWhiteSpace(volumeId))
+            return;
+
+        var volume = await db.Volumes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.Id == volumeId && v.ProjectId == project.Id)
+            .ConfigureAwait(false);
+        if (volume == null)
+            return;
+
+        var arc = await db.VolumeArcs
+            .FirstOrDefaultAsync(a => a.ProjectId == project.Id && a.VolumeNumber == volume.VolumeNumber)
+            .ConfigureAwait(false);
+        if (arc == null)
+            return;
+
+        arc.CurrentChapters = await db.Chapters
+            .AsNoTracking()
+            .CountAsync(c => c.ProjectId == project.Id && c.VolumeId == volumeId &&
+                             (c.Status == "committed" || c.Status == "published" || c.Status == "completed"))
+            .ConfigureAwait(false);
+        arc.Status = arc.TargetChapters.HasValue && arc.CurrentChapters >= arc.TargetChapters.Value
+            ? "completed"
+            : arc.CurrentChapters > 0 ? "in_progress" : arc.Status;
+        arc.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    private static string ResolveReadableChapterTitle(string? requestedTitle, string content, int chapterNumber)
+    {
+        var heading = ExtractChapterHeading(content);
+        if (!string.IsNullOrWhiteSpace(heading))
+            return heading;
+
+        if (!IsMachineChapterTitle(requestedTitle))
+            return requestedTitle!.Trim();
+
+        return chapterNumber > 0 ? $"第 {chapterNumber} 章" : "未命名章节";
+    }
+
+    private static bool IsMachineChapterTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return true;
+
+        var normalized = title.Trim();
+        if (!normalized.StartsWith("chapter-", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return normalized.Skip("chapter-".Length).All(c => char.IsDigit(c) || c == '_' || c == '-');
+    }
+
+    private static string ExtractChapterHeading(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return string.Empty;
+
+        var lineEnd = content.IndexOfAny(new[] { '\r', '\n' });
+        var firstLine = (lineEnd >= 0 ? content[..lineEnd] : content).Trim();
+        if (firstLine.StartsWith("#", StringComparison.Ordinal))
+            firstLine = firstLine.TrimStart('#').Trim();
+        if (firstLine.Length == 0)
+            return string.Empty;
+
+        var chapterStart = firstLine.IndexOf('第');
+        var chapterEnd = firstLine.IndexOf('章', chapterStart >= 0 ? chapterStart : 0);
+        if (chapterStart < 0 || chapterEnd <= chapterStart)
+            return firstLine.Length <= 24 ? firstLine : string.Empty;
+
+        var prefix = firstLine[chapterStart..(chapterEnd + 1)].Trim();
+        var rest = firstLine[(chapterEnd + 1)..].TrimStart(' ', '\t', ':', '：', '-', '—');
+        if (string.IsNullOrWhiteSpace(rest))
+            return prefix;
+
+        var subtitle = TakeCompactSubtitle(rest);
+        return string.IsNullOrWhiteSpace(subtitle) ? prefix : $"{prefix}：{subtitle}";
+    }
+
+    private static string TakeCompactSubtitle(string text)
+    {
+        var chars = new List<char>(capacity: 8);
+        foreach (var c in text)
+        {
+            if (char.IsWhiteSpace(c) || "，,。.!！?？；;：:、\"“”'‘’（）()【】[]".Contains(c))
+                break;
+            chars.Add(c);
+            if (chars.Count >= 6)
+                break;
+        }
+
+        if (chars.Count >= 6 && chars[^1] == chars[0])
+            chars.RemoveAt(chars.Count - 1);
+
+        return new string(chars.ToArray()).Trim();
+    }
+
+    private static string ResolveProjectStatusAfterChapterCommit(string? currentStatus)
+    {
+        if (string.Equals(currentStatus, "published", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentStatus, "completed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentStatus, "archived", StringComparison.OrdinalIgnoreCase))
+        {
+            return currentStatus!;
+        }
+
+        return "Writing";
     }
 
     private static int CountWords(string content)

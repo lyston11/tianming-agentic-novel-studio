@@ -116,23 +116,60 @@ public sealed class AgentMissionTaskTreeService
                 : run.ChapterBrief.Candidates.Count > 0 ? "candidates_ready" : chapter.CandidateStatus;
         chapter.ContextStatus = run.ContextPackage?.Status ?? chapter.ContextStatus;
         chapter.DraftStatus = run.DraftArtifact?.Status ?? chapter.DraftStatus;
-        chapter.GateStatus = run.GateReport?.Status ?? chapter.GateStatus;
+        if (run.GateReport != null)
+        {
+            chapter.GateStatus = run.GateReport.Status;
+            chapter.GateIssueSummary = run.GateReport.Issues.Count > 0
+                ? string.Join("；", run.GateReport.Issues.Take(3))
+                : string.Empty;
+            chapter.GateReportId = $"gate:{run.RunId}:{run.GateReport.ValidatedAt:O}";
+        }
+        else if (run.DraftArtifact != null)
+        {
+            chapter.GateStatus = "pending";
+            chapter.GateIssueSummary = string.Empty;
+            chapter.GateReportId = string.Empty;
+        }
         chapter.RepairAttemptCount = run.DraftArtifact?.RepairAttemptCount ?? chapter.RepairAttemptCount;
         chapter.CommitStatus = run.DraftArtifact?.Status == "committed" ? "committed" : chapter.CommitStatus;
-        chapter.GateIssueSummary = run.GateReport?.Issues.Count > 0
-            ? string.Join("；", run.GateReport.Issues.Take(3))
-            : chapter.GateIssueSummary;
         chapter.LastArtifactIds = BuildArtifactIds(run);
-        if (run.GateReport?.Status == "validated" && chapter.QualityStatus == "not_reviewed")
-            chapter.QualityStatus = "pending_quality_review";
+        if (run.PostGenerationReview != null)
+        {
+            chapter.QualityStatus = run.PostGenerationReview.RequiresRewrite
+                ? "quality_failed"
+                : "quality_passed";
+            chapter.QualityScores = new AgentQualityScores
+            {
+                Pacing = run.PostGenerationReview.QualityScore,
+                CharacterMotivation = run.PostGenerationReview.QualityScore,
+                Conflict = run.PostGenerationReview.QualityScore,
+                Continuity = run.PostGenerationReview.QualityScore,
+                Prose = run.PostGenerationReview.QualityScore,
+                ReaderPromise = run.PostGenerationReview.QualityScore,
+            };
+            chapter.QualityIssueSummary = run.PostGenerationReview.RequiresRewrite
+                ? FirstNonEmpty(run.PostGenerationReview.Summary, string.Join("；", run.PostGenerationReview.Checks.Select(c => c.Message).Take(3)))
+                : string.Empty;
+            chapter.QualityReportId = $"quality:{run.RunId}:{run.PostGenerationReview.ReviewId}";
+        }
+        else if (run.DraftArtifact != null || run.GateReport != null)
+        {
+            chapter.QualityStatus = run.GateReport?.Status == "validated"
+                ? "pending_quality_review"
+                : "not_reviewed";
+            chapter.QualityIssueSummary = string.Empty;
+            chapter.QualityReportId = string.Empty;
+            chapter.QualityScores = new AgentQualityScores();
+        }
         chapter.DraftArtifactId = run.DraftArtifact?.ArtifactId ?? chapter.DraftArtifactId;
-        chapter.GateReportId = run.GateReport == null ? chapter.GateReportId : $"gate:{run.RunId}:{run.GateReport.ValidatedAt:O}";
         chapter.ArtifactStatus = ComputeArtifactStatus(run, chapter);
         chapter.Status = ComputeChapterStatus(run, chapter);
         chapter.NextAction = ComputeNextAction(chapter);
         chapter.AllowedNextActions = ComputeAllowedNextActions(chapter);
         chapter.UserVisibleStatus = MapUserVisibleStatus(chapter);
-        chapter.LastTransitionReason = $"run:{run.Intent}/{run.Status}";
+        chapter.LastTransitionReason = chapter.QualityStatus == "pending_quality_review"
+            ? chapter.QualityStatus
+            : $"run:{run.Intent}/{run.Status}";
         chapter.UpdatedAt = DateTime.UtcNow;
     }
 
@@ -538,6 +575,8 @@ public sealed class AgentMissionTaskTreeService
             return "quality_failed";
         if (chapter.QualityStatus is "quality_passed" && chapter.GateStatus == "validated")
             return "quality_passed";
+        if (chapter.QualityStatus == "pending_quality_review" && chapter.GateStatus == "validated")
+            return "pending_quality_review";
         if (chapter.GateStatus == "validated")
             return "validated";
         if (chapter.GateStatus is "failed" or "gate_failed" || run.Status == NovelAgentRunStatus.Repairing)
@@ -576,7 +615,8 @@ public sealed class AgentMissionTaskTreeService
             "draft_generated" => "ValidateChapterDraft",
             "gate_failed" => "RepairChapterDraft",
             "repairing" => "ValidateChapterDraft",
-            "validated" => "CommitValidatedChapter",
+            "validated" => chapter.QualityStatus == "pending_quality_review" ? "ReviewChapter" : "CommitValidatedChapter",
+            "pending_quality_review" => "ReviewChapter",
             "quality_failed" => "RepairChapterDraft",
             "quality_passed" => "CommitValidatedChapter",
             "needs_context_rebuild" => "BuildChapterContextPackage",
@@ -592,7 +632,9 @@ public sealed class AgentMissionTaskTreeService
         var actions = new List<string>();
         if (!string.IsNullOrWhiteSpace(next))
             actions.Add(next);
-        if (chapter.Status is "validated" or "quality_passed")
+        if (chapter.Status is "validated" && chapter.QualityStatus != "pending_quality_review")
+            actions.Add("ReviewChapter");
+        if (chapter.Status is "quality_passed")
             actions.Add("ReviewChapter");
         if (chapter.Status is "gate_failed" or "repairing" or "quality_failed")
             actions.Add("ValidateChapterDraft");
@@ -610,6 +652,7 @@ public sealed class AgentMissionTaskTreeService
         {
             "committed" => "成稿已进入书城",
             "quality_passed" => "质量门禁通过，准备提交",
+            "pending_quality_review" => "结构门禁通过，等待质量评审",
             "validated" => "结构门禁通过，等待质量反思",
             "quality_failed" => "质量门禁未通过，等待修复",
             "gate_failed" => "结构门禁未通过，等待修复",

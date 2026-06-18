@@ -9,6 +9,7 @@ public static class ProjectWorkflow
         NovelAgentWorkspace workspace,
         NovelProjectCatalog catalog,
         AgentSessionManager sessionManager,
+        MissionBlackboardRecoveryService? blackboardRecovery,
         string projectId,
         CancellationToken ct = default)
     {
@@ -29,6 +30,12 @@ public static class ProjectWorkflow
             .Where(session => IsProjectSession(session, project.Id))
             .OrderByDescending(session => session.UpdatedAt)
             .ToList();
+
+        if (blackboardRecovery != null)
+        {
+            foreach (var session in sessions)
+                blackboardRecovery.Recover(session, project, bible);
+        }
 
         var planDiagnostics = sessions
             .Select(session => new PlanDiagnostic(session.WorkingMemory.MissionPlan, BuildStaleMissionWarnings(project, session.WorkingMemory.MissionPlan).ToList()))
@@ -66,6 +73,8 @@ public static class ProjectWorkflow
 
         var allArtifacts = BuildChapterArtifacts(bible.AgentRuns).ToList();
         var currentArtifacts = BuildCurrentChapterArtifacts(allArtifacts).ToList();
+        var artifactTimeline = BuildArtifactTimeline(library, bible, allArtifacts, tasks).ToList();
+        var productionStages = BuildProductionStages(library, artifactTimeline, tasks).ToList();
         var activityScore = ComputeActivityScore(library, bible, tasks, healthyPlans, currentArtifacts);
         var suspectReasons = BuildSuspectReasons(project, library, bible, tasks, missionPlans, staleMissionWarnings).ToList();
         var isEmptyProject = activityScore <= 0;
@@ -88,7 +97,9 @@ public static class ProjectWorkflow
             string.Empty,
             activeSession?.SessionId ?? string.Empty,
             activeSession?.ActiveRunId ?? tasks.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t.RunId))?.RunId ?? string.Empty,
-            DateTime.UtcNow.ToString("O"));
+            DateTime.UtcNow.ToString("O"),
+            productionStages,
+            artifactTimeline);
     }
 
     private static WorkflowSessionSummary ToSessionSummary(AgentSession session) => new(
@@ -99,6 +110,523 @@ public static class ProjectWorkflow
         session.UpdatedAt.ToString("O"),
         session.WorkingMemory.MissionPlan,
         null);
+
+    public static IReadOnlyList<WorkflowArtifactTimelineItem> BuildArtifactTimeline(
+        NovelLibraryDocument library,
+        StoryBibleDocument bible,
+        IEnumerable<WorkflowChapterArtifactSummary> artifacts,
+        IEnumerable<AgentScheduledTask> tasks)
+    {
+        var items = new List<WorkflowArtifactTimelineItem>();
+
+        foreach (var run in bible.AgentRuns.OrderByDescending(run => run.UpdatedAt))
+        {
+            AddRunArtifacts(items, run);
+        }
+
+        foreach (var volume in bible.VolumeArcs.OrderByDescending(volume => volume.UpdatedAt))
+            AddVolumePlan(items, volume, string.Empty, volume.UpdatedAt, volume.Status.ToString(), "StoryBible.VolumeArcs");
+
+        foreach (var artifact in artifacts.OrderByDescending(artifact => ParseDate(artifact.UpdatedAt)))
+        {
+            if (items.Any(item => string.Equals(item.RunId, artifact.RunId, StringComparison.OrdinalIgnoreCase) &&
+                                  string.Equals(item.ChapterId, artifact.ChapterId, StringComparison.OrdinalIgnoreCase) &&
+                                  item.Kind is "draft_artifact" or "gate_report" or "quality_review"))
+                continue;
+
+            items.Add(TimelineItem(
+                $"chapter-artifact:{artifact.RunId}:{artifact.ChapterId}",
+                "chapter_artifact_summary",
+                "章节产物",
+                "创作工作流",
+                artifact.Status,
+                FirstNonEmpty(artifact.CandidateTitle, artifact.ChapterId),
+                artifact.HasDraft ? "章节已有草稿摘要。" : "章节已有过程产物。",
+                FirstNonEmpty(artifact.DraftPreview, string.Join(" / ", artifact.GateIssues.Concat(artifact.QualityIssues).Take(4))),
+                string.Empty,
+                artifact.ChapterId,
+                artifact.RunId,
+                ParseDate(artifact.UpdatedAt),
+                isFinal: string.Equals(artifact.DraftStatus, "committed", StringComparison.OrdinalIgnoreCase),
+                isUserVisible: true,
+                "ProjectWorkflow.ChapterArtifacts"));
+        }
+
+        foreach (var volume in library.Volumes)
+        {
+            if (!string.Equals(volume.VolumeId, "unassigned", StringComparison.OrdinalIgnoreCase) &&
+                !items.Any(item => item.Kind == "volume_plan" && string.Equals(item.VolumeId, volume.VolumeId, StringComparison.OrdinalIgnoreCase)))
+            {
+                items.Add(TimelineItem(
+                    $"library-volume:{volume.VolumeId}",
+                    "volume_plan",
+                    "分卷规划",
+                    "创作工作流",
+                    volume.Status,
+                    volume.Title,
+                    $"{volume.Chapters.Count}/{volume.ExpectedChapterCount} 个章节位来自真实项目结构。",
+                    string.Join(" / ", volume.Chapters.Select(chapter => chapter.Title).Where(v => !string.IsNullOrWhiteSpace(v)).Take(5)),
+                    volume.VolumeId,
+                    string.Empty,
+                    string.Empty,
+                    DateTime.MinValue,
+                    isFinal: string.Equals(volume.Status, "Canon", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(volume.Status, "completed", StringComparison.OrdinalIgnoreCase),
+                    isUserVisible: true,
+                    "NovelLibrary.Volumes"));
+            }
+
+            foreach (var chapter in volume.Chapters.Where(IsLibraryChapterVisible))
+            {
+                items.Add(TimelineItem(
+                    $"library-chapter:{chapter.ChapterId}",
+                    "library_chapter",
+                    "已入库章节",
+                    "小说书城",
+                    chapter.Status,
+                    chapter.Title,
+                    FirstNonEmpty(chapter.Summary, "正文已经进入小说书城。"),
+                    chapter.Content,
+                    volume.VolumeId,
+                    chapter.ChapterId,
+                    chapter.RunId,
+                    ParseDate(chapter.UpdatedAt),
+                    isFinal: true,
+                    isUserVisible: true,
+                    "NovelLibrary.Chapters"));
+            }
+        }
+
+        foreach (var task in tasks.OrderByDescending(task => task.UpdatedAt))
+        {
+            if (task.Status is not ("running" or "blocked" or "queued"))
+                continue;
+
+            items.Add(new WorkflowArtifactTimelineItem(
+                $"task:{task.TaskId}",
+                "scheduled_task",
+                "调度任务",
+                "创作工作流",
+                task.Status,
+                FirstNonEmpty(task.ChapterId, task.TaskType),
+                FirstNonEmpty(task.NextAction, task.BlockedReason, "等待 Agent 判断下一步。"),
+                task.BlockedReason ?? string.Empty,
+                string.Empty,
+                task.ChapterId,
+                task.RunId,
+                task.UpdatedAt.ToString("O"),
+                false,
+                false,
+                "AgentMissionPlan.SchedulerState"));
+        }
+
+        return NormalizeTimelineTitles(items, library)
+            .OrderByDescending(item => ParseDate(item.UpdatedAt))
+            .ToList();
+    }
+
+    private static IEnumerable<WorkflowArtifactTimelineItem> NormalizeTimelineTitles(
+        IEnumerable<WorkflowArtifactTimelineItem> items,
+        NovelLibraryDocument library)
+    {
+        var chapterTitleById = library.Volumes
+            .SelectMany(volume => volume.Chapters)
+            .Where(chapter => !string.IsNullOrWhiteSpace(chapter.ChapterId))
+            .GroupBy(chapter => chapter.ChapterId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.ChapterId) ||
+                !chapterTitleById.TryGetValue(item.ChapterId, out var chapterTitle) ||
+                string.IsNullOrWhiteSpace(chapterTitle))
+            {
+                yield return item;
+                continue;
+            }
+
+            var title = chapterTitle;
+            var summary = IsSameLooseText(item.Summary, title)
+                ? item.IsFinal
+                    ? "已进入小说书城，可在正文成稿中查看。"
+                    : FirstNonEmpty(item.Status, "过程产物")
+                : item.Summary;
+
+            yield return item with { Title = title, Summary = summary };
+        }
+    }
+
+    private static bool IsSameLooseText(string? left, string? right)
+    {
+        static string Normalize(string? value)
+        {
+            return new string((value ?? string.Empty)
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+        }
+
+        var normalizedLeft = Normalize(left);
+        return normalizedLeft.Length > 0 && normalizedLeft == Normalize(right);
+    }
+
+    public static IReadOnlyList<WorkflowProductionStage> BuildProductionStages(
+        NovelLibraryDocument library,
+        IEnumerable<WorkflowArtifactTimelineItem> timeline,
+        IEnumerable<AgentScheduledTask> tasks)
+    {
+        var items = timeline.ToList();
+        var taskList = tasks.ToList();
+
+        var committedChapterCount = library.Volumes
+            .SelectMany(volume => volume.Chapters)
+            .Count(IsLibraryChapterVisible);
+
+        return new[]
+        {
+            BuildStage("foundation", "故事地基", "故事地基", items, taskList,
+                item => item.Kind is "story_foundation_candidates" or "story_constitution",
+                "还没有故事地基候选或 Story Bible。", "让 Agent 根据创作目标生成故事地基。"),
+            BuildStage("volume_plan", "分卷规划", "创作工作流", items, taskList,
+                item => item.Kind == "volume_plan",
+                "还没有真实分卷规划。", "让 Agent 基于 Story Bible 规划第一卷。"),
+            BuildStage("chapter_plan", "章节规划", "创作工作流", items, taskList,
+                item => item.Kind == "chapter_brief",
+                "还没有章节候选或章节目标。", "让 Agent 选择卷内章节并生成章节规划。", totalCount: library.PlannedChapterCount),
+            BuildStage("context", "上下文包", "创作工作流", items, taskList,
+                item => item.Kind == "context_package",
+                "还没有章节上下文包。", "让 Agent 为目标章节构建上下文包。"),
+            BuildStage("draft", "正文草稿", "创作工作流", items, taskList,
+                item => item.Kind == "draft_artifact" || item.Kind == "chapter_artifact_summary" && !string.IsNullOrWhiteSpace(item.Preview),
+                "还没有真实正文草稿。", "让 Agent 在上下文包基础上生成正文草稿。"),
+            BuildStage("gate", "结构门禁", "创作工作流", items, taskList,
+                item => item.Kind == "gate_report",
+                "还没有结构门禁报告。", "草稿生成后由 Agent 执行结构门禁。"),
+            BuildStage("quality", "质量评审", "创作工作流", items, taskList,
+                item => item.Kind == "quality_review",
+                "还没有质量评审报告。", "门禁后由 Agent 执行质量评审。"),
+            BuildStage("library", "书城入库", "小说书城", items, taskList,
+                item => item.Kind == "library_chapter" || item.IsFinal && item.Surface == "小说书城",
+                "还没有已入库的真实章节。", "通过门禁和质量评审后，再提交到小说书城。",
+                currentCount: committedChapterCount, totalCount: library.PlannedChapterCount)
+        };
+    }
+
+    private static bool IsLibraryChapterVisible(NovelChapterView chapter) =>
+        chapter.VisibleInLibrary ||
+        string.Equals(chapter.ArtifactStatus, "committed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(chapter.WritingStatus, "committed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(chapter.Status, "committed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(chapter.Status, "published", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(chapter.Status, "completed", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddRunArtifacts(List<WorkflowArtifactTimelineItem> items, NovelAgentRun run)
+    {
+        if (run.Intent == NovelAgentIntent.CreateStoryFoundation && run.MacroCandidates.Count > 0)
+        {
+            var title = run.MacroCandidates.FirstOrDefault()?.Title ?? "故事地基候选";
+            items.Add(TimelineItem(
+                $"foundation-candidates:{run.RunId}",
+                "story_foundation_candidates",
+                "故事地基候选",
+                "创作工作流",
+                run.Status.ToString(),
+                title,
+                $"{run.MacroCandidates.Count} 个候选等待选择或固化。",
+                FirstNonEmpty(run.MacroCandidates.FirstOrDefault()?.CoreHook, run.UserGoal),
+                string.Empty,
+                string.Empty,
+                run.RunId,
+                run.UpdatedAt,
+                isFinal: false,
+                isUserVisible: true,
+                "StoryBible.AgentRuns"));
+        }
+
+        if (run.StoryConstitution != null)
+        {
+            items.Add(TimelineItem(
+                $"constitution:{run.RunId}",
+                "story_constitution",
+                "Story Bible",
+                "故事地基",
+                run.Status.ToString(),
+                FirstNonEmpty(run.StoryConstitution.CoreHook, "已生成创作宪法"),
+                FirstNonEmpty(run.StoryConstitution.ReaderPromise, run.StoryConstitution.MainPleasure, "故事地基已生成。"),
+                BuildConstitutionPreview(run.StoryConstitution),
+                string.Empty,
+                string.Empty,
+                run.RunId,
+                run.UpdatedAt,
+                isFinal: run.Status == NovelAgentRunStatus.Completed,
+                isUserVisible: true,
+                "StoryBible.Constitution"));
+        }
+
+        if (run.VolumeArcPlan != null)
+            AddVolumePlan(items, run.VolumeArcPlan, run.RunId, run.UpdatedAt, run.Status.ToString(), "StoryBible.AgentRuns.VolumeArcPlan");
+
+        if (run.ChapterBrief != null)
+        {
+            var brief = run.ChapterBrief;
+            items.Add(TimelineItem(
+                $"chapter-brief:{run.RunId}:{brief.ChapterId}",
+                "chapter_brief",
+                "章节规划",
+                "创作工作流",
+                run.Status.ToString(),
+                FirstNonEmpty(brief.SelectedCandidateTitle, brief.RecommendedCandidateTitle, brief.ChapterId),
+                FirstNonEmpty(brief.CoreIdea, "章节候选或章节目标已生成。"),
+                BuildChapterBriefPreview(brief),
+                string.Empty,
+                brief.ChapterId,
+                run.RunId,
+                run.UpdatedAt,
+                isFinal: false,
+                isUserVisible: true,
+                "StoryBible.AgentRuns.ChapterBrief"));
+        }
+
+        if (run.ContextPackage != null)
+        {
+            var context = run.ContextPackage;
+            items.Add(TimelineItem(
+                $"context:{run.RunId}:{context.ChapterId}",
+                "context_package",
+                "上下文包",
+                "创作工作流",
+                context.Status,
+                context.ChapterId,
+                $"{context.WorldRules.Count + context.CharacterStates.Count + context.ActiveConflicts.Count} 条上下文约束，{context.LongDistanceRecall.Count} 条长距召回。",
+                string.Join(" / ", context.Warnings.Concat(context.RagQueries).Where(v => !string.IsNullOrWhiteSpace(v)).Take(4)),
+                string.Empty,
+                context.ChapterId,
+                run.RunId,
+                context.BuiltAt,
+                isFinal: false,
+                isUserVisible: true,
+                "StoryBible.AgentRuns.ContextPackage"));
+        }
+
+        if (run.DraftArtifact != null)
+        {
+            var draft = run.DraftArtifact;
+            items.Add(TimelineItem(
+                $"draft:{run.RunId}:{draft.ArtifactId}",
+                "draft_artifact",
+                "正文草稿",
+                "创作工作流",
+                draft.Status,
+                FirstNonEmpty(run.ChapterBrief?.SelectedCandidateTitle, run.ChapterBrief?.RecommendedCandidateTitle, draft.ChapterId),
+                string.IsNullOrWhiteSpace(draft.CommittedContent) ? "草稿仍在工作流中。" : "正文已经提交到书城。",
+                BuildDraftPreview(draft),
+                string.Empty,
+                draft.ChapterId,
+                run.RunId,
+                draft.CommittedAt ?? draft.GeneratedAt,
+                isFinal: string.Equals(draft.Status, "committed", StringComparison.OrdinalIgnoreCase),
+                isUserVisible: true,
+                "StoryBible.AgentRuns.DraftArtifact"));
+        }
+
+        if (run.GateReport != null)
+        {
+            var gate = run.GateReport;
+            var chapterId = FirstNonEmpty(run.ChapterBrief?.ChapterId, run.TargetChapterId);
+            items.Add(TimelineItem(
+                $"gate:{run.RunId}:{gate.ValidatedAt:O}",
+                "gate_report",
+                "结构门禁",
+                "创作工作流",
+                gate.Status,
+                chapterId,
+                gate.Issues.Count == 0 ? "结构门禁暂无阻塞。" : $"{gate.Issues.Count} 个结构问题需要处理。",
+                string.Join(" / ", gate.Issues.Concat(gate.RepairHints).Where(v => !string.IsNullOrWhiteSpace(v)).Take(4)),
+                string.Empty,
+                chapterId,
+                run.RunId,
+                gate.ValidatedAt,
+                isFinal: string.Equals(gate.Status, "validated", StringComparison.OrdinalIgnoreCase),
+                isUserVisible: true,
+                "StoryBible.AgentRuns.GateReport"));
+        }
+
+        if (run.PostGenerationReview != null)
+        {
+            var review = run.PostGenerationReview;
+            var chapterId = FirstNonEmpty(review.ChapterId, run.TargetChapterId);
+            items.Add(TimelineItem(
+                $"quality:{run.RunId}:{review.ReviewId}",
+                "quality_review",
+                "质量评审",
+                "创作工作流",
+                review.OverallResult,
+                chapterId,
+                review.RequiresRewrite ? "质量评审要求返工。" : "质量评审通过或无强阻塞。",
+                FirstNonEmpty(review.Summary, string.Join(" / ", BuildQualityIssues(review).Take(4))),
+                string.Empty,
+                chapterId,
+                run.RunId,
+                review.CreatedAt,
+                isFinal: !review.RequiresRewrite,
+                isUserVisible: true,
+                "StoryBible.AgentRuns.PostGenerationReview"));
+        }
+    }
+
+    private static void AddVolumePlan(
+        List<WorkflowArtifactTimelineItem> items,
+        VolumeArcPlan volume,
+        string runId,
+        DateTime updatedAt,
+        string status,
+        string source)
+    {
+        var volumeId = FirstNonEmpty(volume.VolumeId, volume.Id);
+        if (string.IsNullOrWhiteSpace(volumeId))
+            return;
+
+        if (items.Any(item => item.Kind == "volume_plan" && string.Equals(item.VolumeId, volumeId, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        items.Add(TimelineItem(
+            $"volume:{volumeId}:{runId}",
+            "volume_plan",
+            "分卷规划",
+            "创作工作流",
+            status,
+            FirstNonEmpty(volume.Title, "未命名卷"),
+            FirstNonEmpty(volume.VolumePromise, volume.CoreQuestion, $"{volume.ExpectedChapterCount} 个章节位。"),
+            BuildVolumePreview(volume),
+            volumeId,
+            string.Empty,
+            runId,
+            updatedAt,
+            isFinal: volume.Status == VolumeArcStatus.Canon,
+            isUserVisible: true,
+            source));
+    }
+
+    private static WorkflowProductionStage BuildStage(
+        string key,
+        string label,
+        string surface,
+        IReadOnlyList<WorkflowArtifactTimelineItem> timeline,
+        IReadOnlyList<AgentScheduledTask> tasks,
+        Func<WorkflowArtifactTimelineItem, bool> predicate,
+        string emptyReason,
+        string nextIntentHint,
+        int currentCount = 0,
+        int totalCount = 0)
+    {
+        var artifacts = timeline.Where(predicate).OrderByDescending(item => ParseDate(item.UpdatedAt)).ToList();
+        var activeTasks = tasks.Count(task => task.Status is "running" or "blocked" or "queued");
+        var primary = artifacts.FirstOrDefault();
+        var blocked = artifacts.Any(item =>
+            item.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+            item.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+            item.Status.Contains("rewrite", StringComparison.OrdinalIgnoreCase));
+        var running = activeTasks > 0 && artifacts.Any(item => item.Kind == "scheduled_task");
+        var status = artifacts.Count == 0
+            ? "empty"
+            : blocked
+                ? "blocked"
+                : running
+                    ? "running"
+                    : artifacts.Any(item => item.IsFinal)
+                        ? "ready"
+                        : "in_progress";
+        var count = currentCount > 0 ? currentCount : artifacts.Count;
+        var total = totalCount > 0 ? totalCount : artifacts.Count;
+
+        return new WorkflowProductionStage(
+            key,
+            label,
+            surface,
+            status,
+            primary?.Summary ?? emptyReason,
+            primary?.Preview ?? string.Empty,
+            artifacts.Count,
+            count,
+            total,
+            primary?.UpdatedAt ?? string.Empty,
+            primary?.Id ?? string.Empty,
+            primary?.RunId ?? string.Empty,
+            artifacts.Count == 0 ? emptyReason : string.Empty,
+            nextIntentHint);
+    }
+
+    private static WorkflowArtifactTimelineItem TimelineItem(
+        string id,
+        string kind,
+        string label,
+        string surface,
+        string status,
+        string title,
+        string summary,
+        string preview,
+        string volumeId,
+        string chapterId,
+        string runId,
+        DateTime updatedAt,
+        bool isFinal,
+        bool isUserVisible,
+        string source)
+    {
+        return new WorkflowArtifactTimelineItem(
+            id,
+            kind,
+            label,
+            surface,
+            status,
+            title,
+            summary,
+            TrimPreview(preview),
+            volumeId,
+            chapterId,
+            runId,
+            updatedAt == DateTime.MinValue ? string.Empty : updatedAt.ToString("O"),
+            isFinal,
+            isUserVisible,
+            source);
+    }
+
+    private static string BuildConstitutionPreview(StoryCreativeConstitution constitution) =>
+        string.Join(" / ", new[]
+        {
+            constitution.Genre,
+            constitution.SubGenre,
+            constitution.WorldCoreRule,
+            constitution.MainConflictEngine,
+            constitution.ProtagonistEngine
+        }.Where(value => !string.IsNullOrWhiteSpace(value)).Take(5));
+
+    private static string BuildVolumePreview(VolumeArcPlan volume) =>
+        string.Join(" / ", new[]
+        {
+            volume.EntryState,
+            volume.CoreQuestion,
+            volume.MainConflictUpgrade,
+            volume.Climax,
+            volume.AftermathHook
+        }.Where(value => !string.IsNullOrWhiteSpace(value)).Take(5));
+
+    private static string BuildChapterBriefPreview(ChapterCreativeBrief brief) =>
+        string.Join(" / ", new[]
+        {
+            brief.ConflictMove,
+            brief.CharacterChoice,
+            brief.CostOrConsequence,
+            brief.ForeshadowingAction
+        }.Where(value => !string.IsNullOrWhiteSpace(value)).Take(5));
+
+    private static string TrimPreview(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        var normalized = value.Trim();
+        return normalized.Length <= 1200 ? normalized : normalized[..1200] + "...";
+    }
 
     private static IEnumerable<WorkflowChapterArtifactSummary> BuildChapterArtifacts(IEnumerable<NovelAgentRun> runs)
     {

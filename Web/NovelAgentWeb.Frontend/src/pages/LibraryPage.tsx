@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deleteNovelProject, updateNovelProject, getStoryBibleByProject, listVolumeArcs } from '../api';
-import type { NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { deleteNovelProject, updateNovelProject, getChapterById, getStoryBibleByProject, listProjectChapters, listVolumeArcs } from '../api';
+import type { ChapterResponse, NovelBookView, NovelChapterView, NovelVolumeView } from '../api/types';
 import { projectService, toNovelProjectInfo } from '../services/projectService';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/useProjectStore';
@@ -31,6 +31,69 @@ function coverMark(title: string) {
   return (title || '命').trim().slice(0, 1);
 }
 
+function libraryProgressPercent(book: NovelBookView) {
+  const total = book.plannedChapterCount || book.generatedChapterCount;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.round((book.generatedChapterCount / total) * 100));
+}
+
+function chapterTitle(chapter: ChapterResponse) {
+  if (/^chapter-\d+$/i.test(chapter.title)) {
+    return `第 ${chapter.chapterNumber} 章`;
+  }
+
+  return chapter.title || `第 ${chapter.chapterNumber} 章`;
+}
+
+function toLibraryChapter(chapter: ChapterResponse): NovelChapterView {
+  return {
+    chapterId: chapter.id,
+    volumeId: chapter.volumeId ?? 'committed',
+    volumeTitle: '已入库章节',
+    title: chapterTitle(chapter),
+    beatIndex: chapter.chapterNumber,
+    beatRole: '',
+    goal: '',
+    turn: '',
+    cost: '',
+    status: '已入库',
+    runId: '',
+    intent: '',
+    updatedAt: chapter.updatedAt,
+    hasGeneratedContent: true,
+    needsRewrite: false,
+    wordCount: chapter.wordCount,
+    summary: `${chapterTitle(chapter)}已提交到小说书城。`,
+    content: chapter.content ?? '',
+    selectedCandidateTitle: '',
+    qualityScore: 0,
+    rewriteAttemptCount: 0,
+    reviewChecks: [],
+    nextSuggestions: [],
+    writingStatus: 'committed',
+    contextPackageStatus: '',
+    draftArtifactStatus: 'committed',
+    gateStatus: 'validated',
+    changesProtocolPassed: true,
+    factSnapshotPassed: true,
+    blueprintPassed: true,
+    longDistanceRagPassed: true,
+    ragRecallCount: 0,
+    repairAttemptCount: 0,
+    gateIssues: [],
+    repairHints: [],
+    dependencyWarnings: [],
+    contextWarnings: [],
+    visibleInWorkflow: false,
+    visibleInLibrary: true,
+    userVisibleStatus: '成稿已进入书城',
+    artifactStatus: 'committed',
+    draftArtifactId: '',
+    gateReportId: '',
+    qualityReportId: '',
+  };
+}
+
 export default function LibraryPage() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
@@ -55,6 +118,27 @@ export default function LibraryPage() {
     () => projectsList.map(toNovelProjectInfo),
     [projectsList],
   );
+  const chapterQueries = useQueries({
+    queries: projectsList.map((project) => ({
+      queryKey: ['projectChapters', project.id],
+      queryFn: () => listProjectChapters(project.id),
+      refetchInterval: 10000,
+      staleTime: 5000,
+    })),
+  });
+  const chaptersByProject = useMemo(() => {
+    const map = new Map<string, ChapterResponse[]>();
+    projectsList.forEach((project, index) => {
+      const chapters = chapterQueries[index]?.data ?? [];
+      map.set(
+        project.id,
+        chapters
+          .filter((chapter) => chapter.status.toLowerCase() === 'committed')
+          .sort((a, b) => a.chapterNumber - b.chapterNumber),
+      );
+    });
+    return map;
+  }, [chapterQueries, projectsList]);
 
   const { data: storyBible, isLoading: bibleLoading } = useQuery({
     queryKey: ['storyBible', currentProjectId],
@@ -72,41 +156,48 @@ export default function LibraryPage() {
 
   // Convert project data to NovelBookView format for compatibility
   const books: NovelBookView[] = useMemo(() => {
-    return projectsList.map(project => ({
-      projectId: project.id,
-      title: project.title,
-      genre: project.genre || '',
-      subGenre: project.subGenre || '',
-      coreHook: project.coreHook || '',
-      readerPromise: '',
-      status: project.status,
-      isActive: true,
-      volumeCount: 0,
-      generatedChapterCount: 0,
-      plannedChapterCount: 0,
-      needsRewriteCount: 0,
-      updatedAt: project.updatedAt,
-      selectedChapter: null,
-    }));
-  }, [projectsList]);
+    return projectsList.map(project => {
+      const committedChapters = chaptersByProject.get(project.id) ?? [];
+      const selectedChapter = committedChapters[0]
+        ? toLibraryChapter(committedChapters[0])
+        : null;
+      return {
+        projectId: project.id,
+        title: project.title,
+        genre: project.genre || '',
+        subGenre: project.subGenre || '',
+        coreHook: project.coreHook || '',
+        readerPromise: '',
+        status: project.status,
+        isActive: true,
+        volumeCount: committedChapters.length > 0 ? 1 : 0,
+        generatedChapterCount: committedChapters.length,
+        plannedChapterCount: committedChapters.length,
+        needsRewriteCount: 0,
+        updatedAt: project.updatedAt,
+        selectedChapter,
+      };
+    });
+  }, [chaptersByProject, projectsList]);
 
-  // For now, show all projects in library (not just those with generated chapters)
-  // TODO: We may want to fetch volume counts for all projects to filter properly
   const libraryBooks = useMemo(
-    () => books,
+    () => books.filter((book) =>
+      book.generatedChapterCount > 0 ||
+      book.selectedChapter?.visibleInLibrary ||
+      !!book.selectedChapter?.content?.trim()),
     [books],
   );
 
   // Enhance the selected book with StoryBible and volume data
   const selectedBook = useMemo(() => {
+    if (!currentProjectId) return null;
     const baseBook = books.find((book) => book.projectId === currentProjectId);
     if (!baseBook) return null;
 
     const projectVolumes = volumes ?? [];
-    const generatedChapterCount = projectVolumes.reduce((sum, vol) =>
-      sum + (vol.currentChapters || 0), 0
-    );
-    const plannedChapterCount = projectVolumes.reduce((sum, vol) =>
+    const committedChapters = chaptersByProject.get(currentProjectId) ?? [];
+    const generatedChapterCount = committedChapters.length;
+    const plannedChapterCount = committedChapters.length || projectVolumes.reduce((sum, vol) =>
       sum + (vol.targetChapters || vol.currentChapters || 0), 0
     );
 
@@ -115,14 +206,28 @@ export default function LibraryPage() {
       coreHook: storyBible?.constitution?.coreHook || baseBook.coreHook,
       readerPromise: storyBible?.constitution?.readerPromise || '',
       genre: storyBible?.constitution?.genre || baseBook.genre,
-      volumeCount: projectVolumes.length,
+      volumeCount: committedChapters.length > 0 ? 1 : projectVolumes.length,
       generatedChapterCount,
       plannedChapterCount,
+      selectedChapter: committedChapters[0] ? toLibraryChapter(committedChapters[0]) : baseBook.selectedChapter,
     };
-  }, [books, currentProjectId, storyBible, volumes]);
+  }, [books, chaptersByProject, currentProjectId, storyBible, volumes]);
 
   // Convert VolumeArcResponse[] to NovelVolumeView[] format
   const volumeViews: NovelVolumeView[] = useMemo(() => {
+    const committedChapters = currentProjectId ? chaptersByProject.get(currentProjectId) ?? [] : [];
+    if (committedChapters.length > 0) {
+      return [{
+        volumeId: 'committed',
+        title: '已入库章节',
+        status: 'committed',
+        startChapterId: committedChapters[0].id,
+        endChapterId: committedChapters[committedChapters.length - 1].id,
+        expectedChapterCount: committedChapters.length,
+        chapters: committedChapters.map(toLibraryChapter),
+      }];
+    }
+
     if (!volumes) return [];
     return volumes.map(vol => ({
       volumeId: vol.id,
@@ -180,19 +285,39 @@ export default function LibraryPage() {
         } as NovelChapterView,
       ],
     }));
-  }, [volumes]);
+  }, [chaptersByProject, currentProjectId, volumes]);
 
   // TODO: Once chapter API is available, filter by hasGeneratedContent
   const filteredVolumes = useMemo(() => volumeViews, [volumeViews]);
   const allChapters = useMemo(() => filteredVolumes.flatMap((vol) => vol.chapters), [filteredVolumes]);
   const selectedChapter = useMemo(() => {
     if (allChapters.length === 0) return null;
-    return (
+    const baseChapter = (
       allChapters.find((chapter) => chapter.chapterId === selectedChapterId) ??
       allChapters[0]
     );
+    return baseChapter;
   }, [allChapters, selectedChapterId]);
-  const selectedVolume = filteredVolumes.find((volume) => volume.volumeId === selectedChapter?.volumeId) ?? filteredVolumes[0];
+  const selectedChapterContent = useQuery({
+    queryKey: ['chapterContent', selectedChapter?.chapterId],
+    queryFn: () => getChapterById(selectedChapter!.chapterId),
+    enabled: !!selectedChapter?.chapterId && selectedChapter.visibleInLibrary,
+    staleTime: 10000,
+  });
+  const readerChapter = useMemo(() => {
+    if (!selectedChapter) return null;
+    const detail = selectedChapterContent.data;
+    if (!detail || detail.id !== selectedChapter.chapterId) return selectedChapter;
+
+    return {
+      ...selectedChapter,
+      title: chapterTitle(detail),
+      content: detail.content ?? selectedChapter.content,
+      wordCount: detail.wordCount,
+      updatedAt: detail.updatedAt,
+    };
+  }, [selectedChapter, selectedChapterContent.data]);
+  const selectedVolume = filteredVolumes.find((volume) => volume.volumeId === readerChapter?.volumeId) ?? filteredVolumes[0];
   const readyChapters = selectedBook?.generatedChapterCount ?? 0;
   const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
 
@@ -313,9 +438,13 @@ export default function LibraryPage() {
                       <em>{coverMark(book.title)}</em>
                     </button>
                     <div className="magazine-book-copy">
-                      <span>{book.generatedChapterCount} / {book.plannedChapterCount || book.generatedChapterCount} 章入库</span>
+                      <div className="magazine-book-meta">
+                        <span>{book.generatedChapterCount} / {book.plannedChapterCount || book.generatedChapterCount} 章入库</span>
+                        <em>{book.status || 'Writing'}</em>
+                      </div>
                       <h3>{book.title}</h3>
                       <p>{book.readerPromise || book.coreHook || book.selectedChapter?.summary || '这本书已经有确认入库的章节。'}</p>
+                      <i className="magazine-book-progress"><b style={{ width: `${libraryProgressPercent(book)}%` }} /></i>
                       <div className="magazine-actions">
                         <button className="ink-button" type="button" onClick={() => openBookReader(book)}>阅读</button>
                         <button className="ghost-button" type="button" onClick={() => openBookDetail(book)}>档案</button>
@@ -405,41 +534,47 @@ export default function LibraryPage() {
             </aside>
 
             <main className="magazine-paper">
-              {selectedChapter ? (
+              {readerChapter ? (
                 <>
                   <header className="paper-title">
-                    <span>{selectedVolume?.title ?? selectedChapter.volumeTitle}</span>
-                    <h1>{selectedChapter.title}</h1>
+                    <span>{selectedVolume?.title ?? readerChapter.volumeTitle}</span>
+                    <h1>{readerChapter.title}</h1>
                     <div>
-                      <em>{selectedChapter.chapterId}</em>
-                      <em>{formatDate(selectedChapter.updatedAt)}</em>
-                      <em>{selectedChapter.wordCount} 字</em>
+                      <em>{readerChapter.chapterId}</em>
+                      <em>{formatDate(readerChapter.updatedAt)}</em>
+                      <em>{readerChapter.wordCount} 字</em>
                     </div>
                   </header>
 
                   <section className="paper-summary">
                     <strong>本章摘要</strong>
-                    <p>{selectedChapter.summary}</p>
+                    <p>{readerChapter.summary}</p>
                   </section>
 
                   <article className="paper-content">
-                    {selectedChapter.content.split(/\n{2,}/).map((paragraph, index) => (
-                      <p key={index}>{paragraph}</p>
-                    ))}
+                    {selectedChapterContent.isLoading && !readerChapter.content ? (
+                      <p>正在加载章节正文...</p>
+                    ) : readerChapter.content ? (
+                      readerChapter.content.split(/\n{2,}/).map((paragraph, index) => (
+                        <p key={index}>{paragraph}</p>
+                      ))
+                    ) : (
+                      <p>正文暂未读取到，请稍后刷新。</p>
+                    )}
                   </article>
 
-                  {(selectedChapter.reviewChecks.length > 0 || selectedChapter.nextSuggestions.length > 0) && (
+                  {(readerChapter.reviewChecks.length > 0 || readerChapter.nextSuggestions.length > 0) && (
                     <aside className="paper-notes">
-                      {selectedChapter.reviewChecks.length > 0 && (
+                      {readerChapter.reviewChecks.length > 0 && (
                         <div>
                           <h3>审稿检查</h3>
-                          {selectedChapter.reviewChecks.map((check, index) => <p key={index}>{check}</p>)}
+                          {readerChapter.reviewChecks.map((check, index) => <p key={index}>{check}</p>)}
                         </div>
                       )}
-                      {selectedChapter.nextSuggestions.length > 0 && (
+                      {readerChapter.nextSuggestions.length > 0 && (
                         <div>
                           <h3>下一章提示</h3>
-                          {selectedChapter.nextSuggestions.map((suggestion, index) => <p key={index}>{suggestion}</p>)}
+                          {readerChapter.nextSuggestions.map((suggestion, index) => <p key={index}>{suggestion}</p>)}
                         </div>
                       )}
                     </aside>

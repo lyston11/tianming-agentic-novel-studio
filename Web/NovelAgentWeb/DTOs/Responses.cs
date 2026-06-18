@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Support;
 
@@ -9,12 +10,40 @@ public sealed record AgentChatResponse(
     string SessionId = "",
     string? RunId = null,
     string Phase = "",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     AgentDecisionTrace? Decision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     AgentRagContext? Rag = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     AgentWorkingMemorySnapshot? Memory = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<AgentRuntimeStep>? RuntimeTrace = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     AgentMissionPlan? MissionPlan = null,
-    AgentPendingConfirmation? PendingConfirmation = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    AgentPendingConfirmation? PendingConfirmation = null,
+    string ActiveProjectId = "");
+
+public static class AgentChatResponsePublicProjection
+{
+    public static AgentChatResponse ToPublic(AgentChatResponse response)
+    {
+        var activeProjectId = response.ActiveProjectId;
+        if (string.IsNullOrWhiteSpace(activeProjectId))
+            activeProjectId = response.MissionPlan?.ProjectId
+                ?? response.Memory?.MissionPlan?.ProjectId
+                ?? string.Empty;
+
+        return new AgentChatResponse(
+            response.Reply,
+            response.Suggestions,
+            response.SessionId,
+            response.RunId,
+            response.Phase,
+            PendingConfirmation: response.PendingConfirmation ?? response.Memory?.PendingConfirmation,
+            ActiveProjectId: activeProjectId);
+    }
+}
 
 public sealed record AgentConversationTurnView(
     string Role,
@@ -142,7 +171,9 @@ public sealed record ProjectWorkflowDocument(
     string PendingConfirmationSessionId,
     string ActiveSessionId,
     string ActiveRunId,
-    string UpdatedAt);
+    string UpdatedAt,
+    IReadOnlyList<WorkflowProductionStage> ProductionStages,
+    IReadOnlyList<WorkflowArtifactTimelineItem> ArtifactTimeline);
 
 public sealed record WorkflowSessionSummary(
     string SessionId,
@@ -175,6 +206,39 @@ public sealed record WorkflowChapterArtifactSummary(
     IReadOnlyList<string> SourceRunIds,
     int LifecycleRank,
     bool IsCurrent);
+
+public sealed record WorkflowProductionStage(
+    string Key,
+    string Label,
+    string Surface,
+    string Status,
+    string Summary,
+    string Detail,
+    int ArtifactCount,
+    int CurrentCount,
+    int TotalCount,
+    string UpdatedAt,
+    string PrimaryArtifactId,
+    string PrimaryRunId,
+    string EmptyReason,
+    string NextIntentHint);
+
+public sealed record WorkflowArtifactTimelineItem(
+    string Id,
+    string Kind,
+    string Label,
+    string Surface,
+    string Status,
+    string Title,
+    string Summary,
+    string Preview,
+    string VolumeId,
+    string ChapterId,
+    string RunId,
+    string UpdatedAt,
+    bool IsFinal,
+    bool IsUserVisible,
+    string Source);
 
 public sealed class MaterialReference
 {

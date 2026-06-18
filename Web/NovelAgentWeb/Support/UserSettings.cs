@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.Auth;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -62,6 +63,7 @@ public sealed class UserSettingsManager
 {
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    private readonly IBackgroundUserContext? _backgroundUserContext;
     private UserSettings? _fallbackSettings;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -69,10 +71,12 @@ public sealed class UserSettingsManager
         string storageRoot,
         string projectName,
         IServiceScopeFactory? scopeFactory = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IBackgroundUserContext? backgroundUserContext = null)
     {
         _scopeFactory = scopeFactory;
         _httpContextAccessor = httpContextAccessor;
+        _backgroundUserContext = backgroundUserContext;
     }
 
     public async Task<UserSettings> LoadAsync(CancellationToken ct = default)
@@ -206,6 +210,9 @@ public sealed class UserSettingsManager
 
     private string? TryGetCurrentUserId()
     {
+        if (_backgroundUserContext?.Current is { } background)
+            return background.UserId;
+
         var user = _httpContextAccessor?.HttpContext?.User;
         if (user?.Identity?.IsAuthenticated != true)
         {

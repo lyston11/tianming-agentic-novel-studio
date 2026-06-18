@@ -690,6 +690,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             run.DraftArtifact = await _hardcoreWritingEngine.GenerateDraftWithChangesAsync(run, run.ContextPackage, ct)
                 .ConfigureAwait(false);
             run.GateReport = null;
+            run.PostGenerationReview = null;
             SetStepStatus(run, "NovelAgent.GenerateChapterWithChanges", NovelAgentStepStatus.Completed);
             SetStepStatus(run, "NovelAgent.ValidateChapterDraft", NovelAgentStepStatus.Pending);
             run.Notes.Add("正文草稿和 CHANGES 已生成，等待硬门禁校验。");
@@ -740,6 +741,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             if (run.GateReport.Status == "validated")
             {
                 run.Status = NovelAgentRunStatus.Planning;
+                EnsureReviewStep(run);
+                SetStepStatus(run, "NovelAgent.ReviewGeneratedChapter", NovelAgentStepStatus.Pending);
                 SetStepStatus(run, "NovelAgent.CommitValidatedChapter", NovelAgentStepStatus.Pending);
                 run.Notes.Add("硬门禁已通过，可继续提交成稿。");
             }
@@ -796,6 +799,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             SetStepStatus(run, "NovelAgent.RepairChapterDraft", NovelAgentStepStatus.Running);
             run.DraftArtifact = await _hardcoreWritingEngine.RepairDraftAsync(run, run.ContextPackage, run.DraftArtifact, run.GateReport, ct)
                 .ConfigureAwait(false);
+            run.PostGenerationReview = null;
             run.GateReport = await _hardcoreWritingEngine.ValidateDraftAsync(run, run.ContextPackage, run.DraftArtifact, ct)
                 .ConfigureAwait(false);
             SetStepStatus(run, "NovelAgent.ValidateChapterDraft", run.GateReport.Status == "validated"
@@ -809,6 +813,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 run.Status = NovelAgentRunStatus.Planning;
                 run.DraftArtifact.Status = "draft_generated";
+                EnsureReviewStep(run);
+                SetStepStatus(run, "NovelAgent.ReviewGeneratedChapter", NovelAgentStepStatus.Pending);
+                SetStepStatus(run, "NovelAgent.CommitValidatedChapter", NovelAgentStepStatus.Pending);
                 run.Notes.Add("章节草稿修复后已通过硬门禁，可继续提交成稿。");
             }
             else
@@ -860,12 +867,40 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 };
             }
 
+            if (run.PostGenerationReview == null)
+            {
+                return new NovelAgentExecutionResult
+                {
+                    Success = false,
+                    RiskLevel = NovelToolRiskLevel.Medium,
+                    Message = "当前章节已通过结构门禁，但还没有执行质量评审，不能直接提交到书城。",
+                    ContextPackage = run.ContextPackage,
+                    DraftArtifact = run.DraftArtifact,
+                    GateReport = run.GateReport,
+                    Run = run
+                };
+            }
+
+            if (run.PostGenerationReview.RequiresRewrite ||
+                run.PostGenerationReview.OverallResult is "Fail" or "Failed")
+            {
+                return new NovelAgentExecutionResult
+                {
+                    Success = false,
+                    RiskLevel = NovelToolRiskLevel.High,
+                    Message = $"当前章节质量评审未通过，需先修复：{run.PostGenerationReview.Summary}",
+                    ContextPackage = run.ContextPackage,
+                    DraftArtifact = run.DraftArtifact,
+                    GateReport = run.GateReport,
+                    Run = run
+                };
+            }
+
             run.DraftArtifact.Status = "committed";
             run.DraftArtifact.CommittedContent = _hardcoreWritingEngine.StripChanges(run.DraftArtifact.DraftContent);
             run.DraftArtifact.CommittedAt = DateTime.Now;
             run.DependencyImpact = await _hardcoreWritingEngine.CommitValidatedChapterAsync(run, run.ContextPackage, run.DraftArtifact, ct)
                 .ConfigureAwait(false);
-            run.PostGenerationReview = BuildGateBackedReview(run);
             run.Status = NovelAgentRunStatus.Completed;
             SetStepStatus(run, "NovelAgent.CommitValidatedChapter", NovelAgentStepStatus.Completed);
             run.Notes.Add($"章节已提交成稿：{run.DependencyImpact.Summary}");
@@ -2375,6 +2410,17 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             result.ProtagonistEngine = FirstNonEmpty(candidate.ProtagonistEngine, result.ProtagonistEngine);
             result.DepthLayer = FirstNonEmpty(candidate.DepthLayer, result.DepthLayer);
             result.NoveltyPoint = FirstNonEmpty(candidate.Title, result.NoveltyPoint);
+            result.ReaderPromise = FirstNonEmpty(
+                candidate.PleasureLoop,
+                result.ReaderPromise);
+            result.WorldCoreRule = JoinNonEmpty("；", result.WorldCoreRule, candidate.WorldbuildingBlueprint, candidate.ProgressionSystem);
+            result.MainConflictEngine = JoinNonEmpty("；", result.MainConflictEngine, candidate.PleasureLoop);
+            result.ProtagonistEngine = JoinNonEmpty("；", result.ProtagonistEngine, candidate.ProtagonistProfile);
+            result.CommercialRhythm = JoinNonEmpty(
+                "；",
+                result.CommercialRhythm,
+                candidate.FirstThreeVolumes.Count > 0 ? $"前三卷方向：{string.Join(" / ", candidate.FirstThreeVolumes)}" : string.Empty,
+                candidate.KeyCharacters.Count > 0 ? $"首批角色：{string.Join(" / ", candidate.KeyCharacters)}" : string.Empty);
             result.GenreProfile.RiskWarnings.AddRange(candidate.Risks);
             result.GenreProfile.RiskWarnings = result.GenreProfile.RiskWarnings
                 .Where(r => !string.IsNullOrWhiteSpace(r))
@@ -2383,6 +2429,12 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 .ToList();
             return result;
         }
+
+        private static string JoinNonEmpty(string separator, params string[] values) =>
+            string.Join(separator, values
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase));
 
         private static MacroStoryConceptCandidate? ResolveSelectedMacroCandidate(
             IReadOnlyList<MacroStoryConceptCandidate> candidates,

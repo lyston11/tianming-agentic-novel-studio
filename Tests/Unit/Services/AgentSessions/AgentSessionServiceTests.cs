@@ -4,6 +4,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using Xunit;
 
 namespace Tests.Unit.Services.AgentSessions;
@@ -14,7 +15,7 @@ public class AgentSessionServiceTests
     public async Task GetOrCreateSessionAsync_ReturnsFrontendContractFields()
     {
         await using var db = CreateDb();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         var response = await service.GetOrCreateSessionAsync(
             null,
@@ -57,7 +58,7 @@ public class AgentSessionServiceTests
             Content = "hello"
         });
         await db.SaveChangesAsync();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         var response = await service.ListUserSessionsAsync("user-1", isAdmin: false, cancellationToken: CancellationToken.None);
 
@@ -92,7 +93,7 @@ public class AgentSessionServiceTests
                 UpdatedAt = DateTime.UtcNow
             });
         await db.SaveChangesAsync();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         var response = await service.ListUserSessionsAsync("admin-user", isAdmin: true, cancellationToken: CancellationToken.None);
 
@@ -115,7 +116,7 @@ public class AgentSessionServiceTests
             UpdatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             service.GetSessionByIdAsync("other-session", "admin-user", isAdmin: true, CancellationToken.None));
@@ -136,7 +137,7 @@ public class AgentSessionServiceTests
             UpdatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             service.UpdateSessionAsync(
@@ -165,7 +166,7 @@ public class AgentSessionServiceTests
             UpdatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
-        var service = new AgentSessionService(db, NullLogger<AgentSessionService>.Instance);
+        var service = CreateService(db);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             service.DeleteSessionAsync("other-session", "admin-user", isAdmin: true, CancellationToken.None));
@@ -180,4 +181,7 @@ public class AgentSessionServiceTests
             .Options;
         return new NovelAgentDbContext(options);
     }
+
+    private static AgentSessionService CreateService(NovelAgentDbContext db) =>
+        new(db, new AgentRuntimeRunService(db), NullLogger<AgentSessionService>.Instance);
 }

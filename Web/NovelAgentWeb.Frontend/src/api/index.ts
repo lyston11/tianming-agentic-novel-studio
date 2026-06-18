@@ -6,6 +6,7 @@ import type {
   AgentSessionResumeResponse,
   AgentSessionSummary,
   AgentSessionUpdateRequest,
+  ChapterResponse,
   CharacterResponse,
   KnowledgeResponse,
   KnowledgeSearchResult,
@@ -200,6 +201,12 @@ export const deleteNovelProject = async (projectId: string): Promise<NovelProjec
   await api<void>(`/projects/${projectId}`, { method: 'DELETE' });
   return { success: true, message: '项目已删除。', activeProjectId: '' };
 };
+
+export const listProjectChapters = (projectId: string) =>
+  get<ChapterResponse[]>(`/chapters/project/${encodeURIComponent(projectId)}`);
+
+export const getChapterById = (chapterId: string) =>
+  get<ChapterResponse>(`/chapters/${encodeURIComponent(chapterId)}`);
 
 // Settings
 export const getSettings = () => get<UserSettings>('/settings');

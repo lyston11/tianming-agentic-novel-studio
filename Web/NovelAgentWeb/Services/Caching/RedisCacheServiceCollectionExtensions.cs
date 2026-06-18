@@ -13,16 +13,17 @@ public static class RedisCacheServiceCollectionExtensions
         var redisAllowFallback = configuration.GetValue("Redis:AllowInMemoryFallback", false);
         var redisConnectionString = configuration["Redis:ConnectionString"];
         var redisInstanceName = configuration["Redis:InstanceName"];
+        var resilientConnectionString = NormalizeConnectionString(redisConnectionString);
 
-        if (redisEnabled && !string.IsNullOrWhiteSpace(redisConnectionString))
+        if (redisEnabled && !string.IsNullOrWhiteSpace(resilientConnectionString))
         {
             services.AddStackExchangeRedisCache(options =>
             {
-                options.Configuration = redisConnectionString;
+                options.Configuration = resilientConnectionString;
                 options.InstanceName = redisInstanceName ?? "NovelAgent:";
             });
 
-            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnectionString));
+            services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(resilientConnectionString));
         }
         else if (redisAllowFallback)
         {
@@ -34,5 +35,15 @@ public static class RedisCacheServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    internal static string? NormalizeConnectionString(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return connectionString;
+
+        var options = ConfigurationOptions.Parse(connectionString);
+        options.AbortOnConnectFail = false;
+        return options.ToString();
     }
 }

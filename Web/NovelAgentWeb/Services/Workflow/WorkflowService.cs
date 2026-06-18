@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
@@ -17,6 +18,7 @@ public class WorkflowService : IWorkflowService
     private readonly ICurrentUserService _currentUserService;
     private readonly IWorkspaceFactory _workspaceFactory;
     private readonly AgentSessionManager _sessionManager;
+    private readonly MissionBlackboardRecoveryService _blackboardRecovery;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<WorkflowService> _logger;
 
@@ -25,6 +27,7 @@ public class WorkflowService : IWorkflowService
         ICurrentUserService currentUserService,
         IWorkspaceFactory workspaceFactory,
         AgentSessionManager sessionManager,
+        MissionBlackboardRecoveryService blackboardRecovery,
         IServiceScopeFactory scopeFactory,
         ILogger<WorkflowService> logger)
     {
@@ -32,6 +35,7 @@ public class WorkflowService : IWorkflowService
         _currentUserService = currentUserService;
         _workspaceFactory = workspaceFactory;
         _sessionManager = sessionManager;
+        _blackboardRecovery = blackboardRecovery;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -56,20 +60,30 @@ public class WorkflowService : IWorkflowService
                 workspaceEntry.Workspace,
                 catalog,
                 _sessionManager,
+                _blackboardRecovery,
                 projectId,
                 ct);
 
             if (workflow == null)
                 throw new KeyNotFoundException($"Project {projectId} not found");
 
-            var dbLibrary = await BuildDatabaseLibraryAsync(project, workflow.Library, ct);
+            var dbLibrary = await BuildDatabaseLibraryAsync(project, workflow.Library, workflow.ChapterArtifacts, ct);
             if (dbLibrary != null)
             {
+                var dbTimeline = ProjectWorkflow.BuildArtifactTimeline(
+                    dbLibrary,
+                    new StoryBibleDocument { AgentRuns = workflow.Runs.ToList() },
+                    workflow.ChapterArtifacts,
+                    workflow.SchedulerTasks);
+                var dbStages = ProjectWorkflow.BuildProductionStages(dbLibrary, dbTimeline, workflow.SchedulerTasks);
+
                 workflow = workflow with
                 {
                     Project = dbLibrary.ActiveBook,
                     Library = dbLibrary,
-                    IsEmptyProject = workflow.ActivityScore <= 0 && dbLibrary.PlannedChapterCount == 0 && dbLibrary.GeneratedChapterCount == 0
+                    IsEmptyProject = workflow.ActivityScore <= 0 && dbLibrary.PlannedChapterCount == 0 && dbLibrary.GeneratedChapterCount == 0,
+                    ProductionStages = dbStages,
+                    ArtifactTimeline = dbTimeline
                 };
             }
 
@@ -274,6 +288,7 @@ public class WorkflowService : IWorkflowService
     private async Task<NovelLibraryDocument?> BuildDatabaseLibraryAsync(
         NovelProject project,
         NovelLibraryDocument currentLibrary,
+        IReadOnlyList<WorkflowChapterArtifactSummary> chapterArtifacts,
         CancellationToken ct)
     {
         var volumeArcs = await _db.VolumeArcs
@@ -288,9 +303,13 @@ public class WorkflowService : IWorkflowService
         if (volumeArcs.Count == 0 && chapters.Count == 0)
             return null;
 
-        var volumes = BuildDatabaseVolumes(volumeArcs, chapters).ToList();
+        var chapterContents = await LoadChapterContentsAsync(chapters, ct);
+        var volumes = BuildDatabaseVolumes(volumeArcs, chapters, chapterArtifacts, chapterContents).ToList();
         var allChapters = volumes.SelectMany(v => v.Chapters).ToList();
         var generatedCount = allChapters.Count(c => c.HasGeneratedContent || IsCommitted(c.Status));
+        var plannedChapterCount = Math.Max(
+            allChapters.Count,
+            volumeArcs.Sum(v => Math.Max(v.TargetChapters ?? 0, v.CurrentChapters)));
         var needsRewriteCount = allChapters.Count(c => c.NeedsRewrite);
         var selectedChapter = allChapters
             .OrderByDescending(c => c.HasGeneratedContent)
@@ -309,7 +328,7 @@ public class WorkflowService : IWorkflowService
             currentLibrary.ActiveBook?.IsActive ?? project.Status != "archived",
             volumeArcs.Count,
             generatedCount,
-            allChapters.Count,
+            plannedChapterCount,
             needsRewriteCount,
             project.UpdatedAt.ToString("O"),
             selectedChapter);
@@ -327,24 +346,65 @@ public class WorkflowService : IWorkflowService
             volumes,
             selectedChapter,
             generatedCount,
-            allChapters.Count,
+            plannedChapterCount,
             needsRewriteCount);
     }
 
     private static IEnumerable<NovelVolumeView> BuildDatabaseVolumes(
         IReadOnlyList<VolumeArc> volumeArcs,
-        IReadOnlyList<Chapter> chapters)
+        IReadOnlyList<Chapter> chapters,
+        IReadOnlyList<WorkflowChapterArtifactSummary> chapterArtifacts,
+        IReadOnlyDictionary<string, string> chapterContents)
     {
         var assignedChapterIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var syntheticChapters = BuildSyntheticWorkflowChapters(chapterArtifacts);
+        var assignedSyntheticIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var databaseChapterIds = chapters.Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var titleByChapterId = chapterArtifacts
+            .Where(a => !string.IsNullOrWhiteSpace(a.ChapterId) && !string.IsNullOrWhiteSpace(a.CandidateTitle))
+            .GroupBy(a => a.ChapterId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                ChapterId = group.Key,
+                Title = group
+                    .OrderByDescending(a => a.UpdatedAt)
+                    .Select(a => a.CandidateTitle)
+                    .FirstOrDefault(title => !IsWeakChapterTitle(title))
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Title))
+            .ToDictionary(item => item.ChapterId, item => item.Title!, StringComparer.OrdinalIgnoreCase);
+        var nextChapterStart = 1;
 
         foreach (var volume in volumeArcs)
         {
+            var targetCount = Math.Max(volume.TargetChapters ?? 0, volume.CurrentChapters);
+            var chapterEnd = targetCount > 0 ? nextChapterStart + targetCount - 1 : int.MaxValue;
             var volumeChapters = chapters
                 .Where(c => string.Equals(c.VolumeId, volume.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber))
+                .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber, chapterContents, titleByChapterId))
                 .ToList();
+            if (volumeChapters.Count == 0)
+            {
+                volumeChapters = chapters
+                    .Where(c => !assignedChapterIds.Contains(c.Id))
+                    .Where(c => string.IsNullOrWhiteSpace(c.VolumeId))
+                    .Where(c => c.ChapterNumber >= nextChapterStart && c.ChapterNumber <= chapterEnd)
+                    .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber, chapterContents, titleByChapterId))
+                    .ToList();
+            }
+            if (volumeChapters.Count == 0 && volume.VolumeNumber == 1)
+            {
+                volumeChapters.AddRange(syntheticChapters
+                    .Where(artifact => !databaseChapterIds.Contains(artifact.ChapterId))
+                    .Select((artifact, index) =>
+                    MapWorkflowArtifactChapter(artifact, volume.Id, volume.VolumeTitle, volume.VolumeNumber, index + 1)));
+                foreach (var chapter in volumeChapters)
+                    assignedSyntheticIds.Add(chapter.ChapterId);
+            }
             foreach (var chapter in volumeChapters)
                 assignedChapterIds.Add(chapter.ChapterId);
+            if (targetCount > 0)
+                nextChapterStart = chapterEnd + 1;
 
             yield return new NovelVolumeView(
                 volume.Id,
@@ -358,8 +418,12 @@ public class WorkflowService : IWorkflowService
 
         var unassigned = chapters
             .Where(c => !assignedChapterIds.Contains(c.Id))
-            .Select(chapter => MapDatabaseChapter(chapter, "database-chapters", "数据库章节", 0))
+            .Select(chapter => MapDatabaseChapter(chapter, "database-chapters", "数据库章节", 0, chapterContents, titleByChapterId))
             .ToList();
+        unassigned.AddRange(syntheticChapters
+            .Where(a => !assignedSyntheticIds.Contains(a.ChapterId))
+            .Where(a => !databaseChapterIds.Contains(a.ChapterId))
+            .Select((artifact, index) => MapWorkflowArtifactChapter(artifact, "workflow-artifacts", "工作流章节", 0, index + 1)));
 
         if (unassigned.Count > 0 || volumeArcs.Count == 0)
         {
@@ -374,14 +438,165 @@ public class WorkflowService : IWorkflowService
         }
     }
 
-    private static NovelChapterView MapDatabaseChapter(Chapter chapter, string volumeId, string volumeTitle, int volumeNumber)
+    private static List<WorkflowChapterArtifactSummary> BuildSyntheticWorkflowChapters(
+        IReadOnlyList<WorkflowChapterArtifactSummary> chapterArtifacts)
+    {
+        return chapterArtifacts
+            .Where(a => !string.IsNullOrWhiteSpace(a.ChapterId) && (a.HasDraft || a.GateStatus.Length > 0 || a.DraftStatus.Length > 0))
+            .GroupBy(a => a.ChapterId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(a => a.HasDraft)
+                .ThenByDescending(a => string.Equals(a.GateStatus, "validated", StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(a => a.UpdatedAt)
+                .First())
+            .OrderBy(a => ExtractChapterNumber(a.ChapterId))
+            .ToList();
+    }
+
+    private static NovelChapterView MapWorkflowArtifactChapter(
+        WorkflowChapterArtifactSummary artifact,
+        string volumeId,
+        string volumeTitle,
+        int volumeNumber,
+        int fallbackIndex)
+    {
+        var beatIndex = ExtractChapterNumber(artifact.ChapterId);
+        if (beatIndex <= 0)
+            beatIndex = fallbackIndex;
+        var status = string.IsNullOrWhiteSpace(artifact.Status) ? artifact.DraftStatus : artifact.Status;
+        var writingStatus = ResolveArtifactWritingStatus(artifact);
+        var title = string.IsNullOrWhiteSpace(artifact.CandidateTitle)
+            ? $"第 {beatIndex} 章"
+            : artifact.CandidateTitle;
+
+        return new NovelChapterView(
+            artifact.ChapterId,
+            title,
+            volumeId,
+            volumeTitle,
+            beatIndex,
+            volumeNumber > 0 ? $"第 {volumeNumber} 卷" : string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            status,
+            artifact.RunId,
+            artifact.Intent,
+            artifact.UpdatedAt,
+            artifact.HasDraft,
+            string.Equals(artifact.QualityStatus, "quality_failed", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(artifact.Status, "blocked", StringComparison.OrdinalIgnoreCase),
+            0,
+            artifact.CandidateTitle,
+            artifact.DraftPreview,
+            artifact.CandidateTitle,
+            artifact.QualityScore,
+            0,
+            artifact.QualityIssues,
+            Array.Empty<string>(),
+            writingStatus,
+            string.Join("; ", artifact.ContextWarnings),
+            artifact.DraftStatus,
+            artifact.GateStatus,
+            string.Equals(artifact.GateStatus, "validated", StringComparison.OrdinalIgnoreCase),
+            string.Equals(artifact.GateStatus, "validated", StringComparison.OrdinalIgnoreCase),
+            string.Equals(artifact.GateStatus, "validated", StringComparison.OrdinalIgnoreCase),
+            artifact.RagRecallCount > 0,
+            artifact.RagRecallCount,
+            0,
+            artifact.GateIssues,
+            artifact.RepairHints,
+            artifact.DependencyWarnings,
+            artifact.ContextWarnings,
+            true,
+            false,
+            ArtifactUserVisibleStatus(artifact),
+            writingStatus,
+            artifact.RunId,
+            artifact.GateStatus,
+            artifact.QualityStatus);
+    }
+
+    private static string ResolveArtifactWritingStatus(WorkflowChapterArtifactSummary artifact)
+    {
+        if (string.Equals(artifact.GateStatus, "validated", StringComparison.OrdinalIgnoreCase))
+            return "validated";
+        if (artifact.HasDraft)
+            return "draft_generated";
+        if (!string.IsNullOrWhiteSpace(artifact.DraftStatus))
+            return artifact.DraftStatus;
+        return "planned";
+    }
+
+    private static string ArtifactUserVisibleStatus(WorkflowChapterArtifactSummary artifact)
+    {
+        if (string.Equals(artifact.GateStatus, "validated", StringComparison.OrdinalIgnoreCase))
+            return "硬门禁已通过";
+        if (artifact.HasDraft)
+            return "草稿在工作流中";
+        return "工作流章节";
+    }
+
+    private static int ExtractChapterNumber(string chapterId)
+    {
+        var digits = new string((chapterId ?? string.Empty).Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var value) ? value : 0;
+    }
+
+    private async Task<Dictionary<string, string>> LoadChapterContentsAsync(
+        IReadOnlyList<Chapter> chapters,
+        CancellationToken ct)
+    {
+        var documentIds = chapters
+            .Select(c => c.CurrentDocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (documentIds.Count == 0)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var chunks = await _db.ContentChunks
+            .AsNoTracking()
+            .Where(chunk => documentIds.Contains(chunk.DocumentId))
+            .OrderBy(chunk => chunk.ChunkIndex)
+            .Select(chunk => new { chunk.DocumentId, chunk.ChunkText })
+            .ToListAsync(ct);
+
+        var contentByDocumentId = chunks
+            .GroupBy(chunk => chunk.DocumentId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => string.Join(string.Empty, group.Select(chunk => chunk.ChunkText)),
+                StringComparer.OrdinalIgnoreCase);
+
+        return chapters
+            .Where(chapter => !string.IsNullOrWhiteSpace(chapter.CurrentDocumentId))
+            .Where(chapter => contentByDocumentId.ContainsKey(chapter.CurrentDocumentId!))
+            .ToDictionary(
+                chapter => chapter.Id,
+                chapter => contentByDocumentId[chapter.CurrentDocumentId!],
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static NovelChapterView MapDatabaseChapter(
+        Chapter chapter,
+        string volumeId,
+        string volumeTitle,
+        int volumeNumber,
+        IReadOnlyDictionary<string, string> chapterContents,
+        IReadOnlyDictionary<string, string> titleByChapterId)
     {
         var writingStatus = ResolveChapterWritingStatus(chapter);
-        var hasContent = chapter.WordCount > 0 || IsCommitted(chapter.Status);
+        var content = chapterContents.TryGetValue(chapter.Id, out var value) ? value : string.Empty;
+        var wordCount = chapter.WordCount > 0 ? chapter.WordCount : CountWords(content);
+        var hasContent = wordCount > 0 || !string.IsNullOrWhiteSpace(content) || IsCommitted(chapter.Status);
+        var committed = IsCommitted(chapter.Status);
+        titleByChapterId.TryGetValue(chapter.Id, out var artifactTitle);
+        var displayTitle = ResolveReadableChapterTitle(chapter.Title, content, chapter.ChapterNumber, artifactTitle);
 
         return new NovelChapterView(
             chapter.Id,
-            chapter.Title,
+            displayTitle,
             volumeId,
             volumeTitle,
             chapter.ChapterNumber,
@@ -395,9 +610,9 @@ public class WorkflowService : IWorkflowService
             chapter.UpdatedAt.ToString("O"),
             hasContent,
             IsRewriteStatus(chapter.Status),
-            chapter.WordCount,
-            chapter.Title,
-            string.Empty,
+            wordCount,
+            displayTitle,
+            content,
             string.Empty,
             0,
             0,
@@ -405,11 +620,11 @@ public class WorkflowService : IWorkflowService
             Array.Empty<string>(),
             writingStatus,
             string.Empty,
-            IsCommitted(chapter.Status) ? "committed" : string.Empty,
-            string.Empty,
-            false,
-            false,
-            false,
+            committed ? "committed" : string.Empty,
+            committed ? "validated" : string.Empty,
+            committed,
+            committed,
+            committed,
             false,
             0,
             0,
@@ -418,12 +633,127 @@ public class WorkflowService : IWorkflowService
             Array.Empty<string>(),
             Array.Empty<string>(),
             true,
-            IsCommitted(chapter.Status),
-            IsCommitted(chapter.Status) ? "已入库" : "数据库章节",
+            committed,
+            committed ? "已入库" : "数据库章节",
             writingStatus,
             string.Empty,
-            string.Empty,
+            committed ? $"gate:{chapter.Id}" : string.Empty,
             string.Empty);
+    }
+
+    private static string ResolveReadableChapterTitle(
+        string storedTitle,
+        string content,
+        int chapterNumber,
+        string? artifactTitle = null)
+    {
+        var heading = ExtractChapterHeading(content);
+        if (!string.IsNullOrWhiteSpace(heading))
+            return heading;
+
+        if (!IsMachineChapterTitle(storedTitle))
+            return storedTitle;
+
+        if (!IsWeakChapterTitle(artifactTitle))
+            return artifactTitle!.Trim();
+
+        return chapterNumber > 0 ? $"第 {chapterNumber} 章" : storedTitle;
+    }
+
+    private static bool IsMachineChapterTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return true;
+
+        var normalized = title.Trim();
+        if (!normalized.StartsWith("chapter-", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return normalized.Skip("chapter-".Length).All(c => char.IsDigit(c) || c == '_' || c == '-');
+    }
+
+    private static bool IsWeakChapterTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return true;
+
+        var normalized = title.Trim();
+        return normalized.Equals("目标推进", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("章节推进", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("正文已经提交到书城", StringComparison.OrdinalIgnoreCase)
+            || IsMachineChapterTitle(normalized);
+    }
+
+    private static string ExtractChapterHeading(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return string.Empty;
+
+        var lineEnd = content.IndexOfAny(new[] { '\r', '\n' });
+        var firstLine = (lineEnd >= 0 ? content[..lineEnd] : content).Trim();
+        if (firstLine.StartsWith("#", StringComparison.Ordinal))
+            firstLine = firstLine.TrimStart('#').Trim();
+        if (firstLine.Length == 0)
+            return string.Empty;
+
+        var chapterStart = firstLine.IndexOf('第');
+        var chapterEnd = firstLine.IndexOf('章', chapterStart >= 0 ? chapterStart : 0);
+        if (chapterStart < 0 || chapterEnd <= chapterStart)
+            return firstLine.Length <= 24 ? firstLine : string.Empty;
+
+        var prefix = firstLine[chapterStart..(chapterEnd + 1)].Trim();
+        var rest = firstLine[(chapterEnd + 1)..].TrimStart(' ', '\t', ':', '：', '-', '—');
+        if (string.IsNullOrWhiteSpace(rest))
+            return prefix;
+
+        var subtitle = TakeCompactSubtitle(rest);
+        return string.IsNullOrWhiteSpace(subtitle) ? prefix : $"{prefix}：{subtitle}";
+    }
+
+    private static string TakeCompactSubtitle(string text)
+    {
+        var chars = new List<char>(capacity: 8);
+        foreach (var c in text)
+        {
+            if (char.IsWhiteSpace(c) || "，,。.!！?？；;：:、\"“”'‘’（）()【】[]".Contains(c))
+                break;
+            chars.Add(c);
+            if (chars.Count >= 6)
+                break;
+        }
+
+        if (chars.Count >= 6 && chars[^1] == chars[0])
+            chars.RemoveAt(chars.Count - 1);
+
+        return new string(chars.ToArray()).Trim();
+    }
+
+    private static int CountWords(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return 0;
+
+        var count = 0;
+        var inWord = false;
+        foreach (var c in content)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                inWord = false;
+            }
+            else if (c is >= '\u4E00' and <= '\u9FFF')
+            {
+                count++;
+                inWord = false;
+            }
+            else if (!inWord)
+            {
+                count++;
+                inWord = true;
+            }
+        }
+
+        return count;
     }
 
     private static string ResolveChapterWritingStatus(Chapter chapter)

@@ -45,6 +45,9 @@ App_Data/Qdrant/
 **/App_Data/KnowledgeUploads/
 **/App_Data/Projects/
 **/App_Data/Backup/
+Web/NovelAgentWeb/novel_agent.db
+Web/NovelAgentWeb/novel_agent.db-shm
+Web/NovelAgentWeb/novel_agent.db-wal
 
 # Logs, temp files, and local environment
 logs/

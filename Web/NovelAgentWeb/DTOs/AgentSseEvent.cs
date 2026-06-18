@@ -22,6 +22,7 @@ public static class AgentSseEventType
     public const string AgentReflecting = "agent_reflecting";
     public const string MissionUpdated = "mission_updated";
     public const string RunCreated = "run_created";
+    public const string ArtifactPreview = "artifact_preview";
     public const string StepStart = "step_start";
     public const string StepComplete = "step_complete";
     public const string StepFail = "step_fail";

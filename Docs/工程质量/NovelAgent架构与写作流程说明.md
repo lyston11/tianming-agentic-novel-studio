@@ -52,47 +52,35 @@
 
 ### 1.2 核心组件
 
-#### 阶段推断系统 (PhaseInference) ⭐ 新增
+#### 工具发现与自主决策 (tool_search + AgentPlanner)
 
-根据用户意图 + 任务状态动态推断对话阶段：
+当前主链路不再使用后端硬编码的 `PhaseInference`。Agent 在 Observe 阶段读取产品空间、记忆层、工作台状态提示、最近观察和已发现工具；Planner 由 LLM 自主判断是否需要 `tool_search`、`QueryWorkspaceState`、`ResolveNovelProject` 或创作工具。
 
 ```csharp
-// 意图分类 (7种)
-StatusQuery       // "章节写完了吗" → Conversation (2工具)
-Confirmation      // "好的" (有 pending action) → Conversation
-FreeChat          // "你好" → Conversation
-CreativeBrief     // "写一本玄幻小说" → 根据任务状态推断
-ContinueMission   // "继续写" → 根据任务状态推断
-RevisionRequest   // "修改第一章" → Creation (4工具)
-NewProjectSeed    // "创建新书" → Conversation
+// AgentPlanner receives:
+product_space        // 小说书城、创作工作流、知识库、记忆系统、Agent Runtime
+memory_layers        // chat/session/project/author/execution memory
+workspace_state_hint // 轻量提示；真实状态由 QueryWorkspaceState 查询
+available_tools      // tool_search 缓存或刚发现的工具语义
 
-// 阶段推断逻辑
-if (intent == CreativeBrief || ContinueMission) {
-    var task = GetCurrentTask();
-    
-    if (task == null || task.Status == "unstarted")
-        return Planning;      // 需要规划
-    
-    if (task.Status == "context_ready")
-        return Creation;      // 准备写正文
-    
-    if (task.Status == "draft_generated" || "validated")
-        return Review;        // 评审阶段
-}
+// Runtime boundary:
+// - LLM 决定业务动作
+// - Runtime 只负责工具发现、执行、安全边界、防越权和反重复
 ```
 
-#### 分层工具集 (AgentToolRegistry) ⭐ 新增
+#### 分层工具集 (AgentToolRegistry)
 
-不是限制 Agent，而是精准化上下文：
+工具按阶段暴露语义，但不是硬编码路由。`tool_search` 会返回工具名称、风险、参数、读写面、产物类型和用户可见位置，让模型自己选择下一步。
 
 ```csharp
-// Conversation: 2 工具 (轻量查询)
-QueryProjectStatus          // 查询项目状态
-StartNewNovelProject        // 开始新项目
+// Conversation: 状态、知识、项目解析
+QueryWorkspaceState         // 查询书城/知识库/工作流真实状态
+QueryProjectStatus          // 查询当前项目状态
+ResolveNovelProject         // 创建、绑定或切换项目
 
-// Planning: 8 工具 (规划决策)
+// Planning: 规划决策
 QueryProjectStatus
-StartNewNovelProject
+ResolveNovelProject
 SearchCreativeKnowledge     // 检索创意素材
 PlanStoryFoundation         // 规划故事地基
 PlanVolumeArc               // 规划卷结构
@@ -145,9 +133,9 @@ RefreshProjectIndexes       // 刷新索引
 
 - **AgentMemoryService**: Session/Project/Execution 三层记忆持久化
 - **AgentRecoveryEngine**: 智能失败恢复，自动推理前置工具链
-- **ProjectRouter**: 新对话时智能路由到新项目或已有项目
 - **ConversationKernel**: 用户意图识别、对话行为分类
 - **AgentPlanner**: LLM 决策引擎，从可用工具中自主选择
+- **ResolveNovelProject 工具**: 由 AgentPlanner 在理解用户意图后自主调用，用于创建、绑定或切换小说项目
 - **ToolPolicyEngine**: 工具前置条件检查、参数验证
 - **ReflectionEngine**: 执行后质量反思、改进建议
 
@@ -160,8 +148,8 @@ RefreshProjectIndexes       // 刷新索引
 ```
 用户: "我要写一本修仙小说"
   ↓
-[PhaseInference] → NewProjectSeed → Conversation
-[ProjectRouter] → 创建新项目 (project_123)
+[AgentPlanner] → 根据产品空间、记忆层和工具语义自主决策
+[Tool] ResolveNovelProject → 创建或绑定项目 (project_123)
   ↓
 Agent: "好的，我们来规划这本修仙小说的基础设定。"
   ↓
@@ -197,7 +185,7 @@ Agent: "好的，我们来规划这本修仙小说的基础设定。"
 ```
 用户: "规划第一章"
   ↓
-[PhaseInference] → CreativeBrief + 无任务 → Planning (8工具可用)
+[AgentPlanner] → 如缓存不足，调用 tool_search(phase="Planning")
 [Context] 加载: ProjectMemory摘要 + RAG(top=5) (2-3K tokens)
   ↓
 [Tool] PlanChapter
@@ -256,7 +244,7 @@ Agent: "我生成了 3 个开篇方案，推荐【候选 3】，它能快速切�
 ```
 用户: "开始写第一章"
   ↓
-[PhaseInference] → ContinueMission + context_ready → Creation (4工具)
+[AgentPlanner] → 根据任务状态和工具语义选择生成链路
 [Context] 全量加载: ContextPackage + StoryBible (15K tokens)
   ↓
 [Tool] GenerateChapterWithChanges
@@ -297,7 +285,7 @@ Agent: "第一章草稿已生成 (3,200字)，请审阅..."
 ### 第四阶段：质量评审 (Review Phase)
 
 ```
-[PhaseInference] → 任务 draft_generated → Review (4工具)
+[AgentPlanner] → 根据草稿、门禁和工作流状态选择 Review 阶段工具
 [Context] 加载: Draft + GateReports (5-10K tokens)
   ↓
 [Tool] ValidateChapterDraft (自动门禁)
@@ -438,18 +426,21 @@ if (state == "planned") {
 }
 → Agent 没有选择权，只能执行预定流程
 
-// ✅ 当前架构 (Phase-Based Tool Filtering)
-if (phase == Planning) {
-    tools = [Search, Plan, Select, Build, AskUser];  // 8个工具
-    context = Checkpoint + ProjectSummary + RAG(5);
+// ✅ 当前架构 (LLM 自主决策 + 语义工具发现)
+if (needsPlanningTools && !availableTools.Contains("PlanChapter")) {
+    tool_search(phase: "Planning");
+}
+
+if (availableTools.Contains("PlanChapter")) {
+    context = ProductSpace + MemoryLayers + WorkspaceStateHint + ProjectSummary + RAG;
     
-    Agent 从 8 个工具中自主决策:
+    Agent 基于工具语义自主决策:
       - 可能先 SearchCreativeKnowledge 查类型套路
-      - 可能先 AskUser 询问用户偏好
+      - 可能先 clarify 询问用户偏好
       - 可能直接 PlanChapter 生成大纲
       - 可能先 Plan 再 Select 再 Build (多步骤)
 }
-→ Agent 仍然自主，只是选择空间更精准
+→ Agent 仍然自主，Runtime 只提供能力发现和安全边界
 ```
 
 **实际案例：**
@@ -649,7 +640,7 @@ NovelAgent 通过 **Phase-Based Tool & Memory Layering** 实现了：
 4. **可靠性**: 质量门禁 + 智能恢复
 5. **可扩展**: 新增工具无需修改核心逻辑
 
-**设计哲学**: 
+**设计哲学**:
 
 > "不是限制 Agent，而是为 Agent 提供精准的上下文和工具集，让它在合适的阶段做合适的事。"
 
@@ -657,5 +648,5 @@ NovelAgent 通过 **Phase-Based Tool & Memory Layering** 实现了：
 
 **附录**:
 - 实现细节: `Docs/工程质量/工具与记忆分层设计.md`
-- 单元测试: `Tests/NovelAgentRegression/PhaseInferenceTests.cs`
+- 单元测试: `Tests/Unit/Architecture/RuntimePurityTests.cs`
 - 核心代码: `Web/NovelAgentWeb/Support/`

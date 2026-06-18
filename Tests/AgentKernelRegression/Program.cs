@@ -5,13 +5,17 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net;
+using System.Diagnostics;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Services.Framework.AI.NovelAgent.Services;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Support;
 using DbKnowledgeBase = TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase;
@@ -26,36 +30,56 @@ internal static class Program
     {
         ("ConversationKernel routes status queries away from creation tools", ConversationKernelRoutesStatusQuery),
         ("ToolPolicy blocks raw userGoal PlanChapter", ToolPolicyBlocksRawUserGoalPlanChapter),
+        ("ToolPolicy repairs PlanChapter missing creative brief", ToolPolicyRepairsPlanChapterMissingCreativeBrief),
         ("ToolPolicy preflights confirmed story foundation commit", ToolPolicyPreflightsConfirmedStoryFoundationCommit),
         ("ToolPolicy blocks commit when quality gate still has issues", ToolPolicyBlocksCommitWithQualityIssues),
         ("Scheduler continue uses active blackboard task", SchedulerContinueUsesActiveBlackboardTask),
         ("Scheduler continue uses repairable policy observations", SchedulerContinueUsesRepairablePolicyObservation),
-        ("ToolPolicy repairs missing context package before draft generation", ToolPolicyRepairsMissingContextPackageBeforeDraft),
+        ("Recovery keeps repair draft gate failures recoverable", RecoveryKeepsRepairDraftGateFailuresRecoverable),
+        ("ToolPolicy allows draft generation to build missing context", ToolPolicyAllowsDraftGenerationToBuildMissingContext),
         ("ToolPolicy repairs missing draft before validation", ToolPolicyRepairsMissingDraftBeforeValidation),
         ("ToolPolicy keeps hard boundaries terminal", ToolPolicyKeepsHardBoundariesTerminal),
-        ("ToolPolicy blocks undiscovered tools", ToolPolicyBlocksUndiscoveredTools),
+        ("ToolPolicy allows registered tools without discovery gate", ToolPolicyAllowsRegisteredToolsWithoutDiscoveryGate),
         ("ToolPolicy blocks draft generation when context rebuild is required", ToolPolicyBlocksDraftWhenContextRebuildRequired),
         ("ToolPolicy blocks commit when revalidation is required", ToolPolicyBlocksCommitWhenRevalidationRequired),
+        ("ToolPolicy repairs premature draft repair to validation", ToolPolicyRepairsPrematureDraftRepairToValidation),
         ("Mission blackboard recovery rebuilds scheduler state", MissionBlackboardRecoveryRebuildsSchedulerState),
         ("Mission blackboard exposes drafts before library commit", MissionBlackboardExposesDraftsBeforeLibraryCommit),
-        ("New project reflection stops for foundation input", NewProjectReflectionStopsForFoundationInput),
+        ("New project reflection continues when foundation brief is already sufficient", NewProjectReflectionContinuesWhenFoundationBriefIsSufficient),
+        ("Planner reflection uses bounded fallback when model is slow", PlannerReflectionUsesBoundedFallbackWhenModelIsSlow),
+        ("Story foundation candidates stop for user review", StoryFoundationCandidatesStopForUserReview),
+        ("Runtime continues process tools with structured next hints", RuntimeContinuesProcessToolsWithStructuredNextHints),
         ("Runtime governance observations do not leak guard text", RuntimeGovernanceObservationDoesNotLeakGuardText),
+        ("Runtime governance observations do not leak tool names", RuntimeGovernanceObservationDoesNotLeakToolNames),
+        ("Tool execution snapshots expose user-visible progress", ToolExecutionSnapshotsExposeUserVisibleProgress),
         ("Runtime returns user-facing chat replies before no-action fallback", RuntimeReturnsUserFacingChatRepliesBeforeNoActionFallback),
+        ("Foreground does not finish creative work after tool search", ForegroundDoesNotFinishCreativeWorkAfterToolSearch),
         ("Planner missing LLM settings returns local identity for free chat", PlannerMissingLlmSettingsReturnsLocalIdentityForFreeChat),
         ("Planner missing LLM settings leaves status query to no-action fallback", PlannerMissingLlmSettingsLeavesStatusQueryToNoActionFallback),
         ("ConversationKernel builds stable user turn envelopes", ConversationKernelBuildsUserTurnEnvelope),
+        ("ConversationKernel treats explicit new novel request as project creation", ConversationKernelTreatsExplicitNewNovelRequestAsProjectCreation),
+        ("ConversationKernel does not keyword-route continuation", ConversationKernelDoesNotKeywordRouteContinuation),
         ("ConversationKernel models numeric candidate selection", ConversationKernelModelsCandidateSelection),
         ("Candidate selection confirmation reply is user-visible", CandidateSelectionConfirmationReplyIsUserVisible),
         ("Runtime normalizes story foundation candidate selection", RuntimeNormalizesStoryFoundationCandidateSelection),
         ("Native tool calls still pass through ToolPolicy", NativeToolCallsPassThroughToolPolicy),
         ("Provider tool calling diagnostics parse mock responses", ProviderToolCallingDiagnosticsParseMockResponses),
+        ("Hardcore writing engine builds Anthropic messages URL like tool client", HardcoreWritingEngineBuildsAnthropicMessagesUrlLikeToolClient),
+        ("Hardcore writing engine normalizes provider model suffixes like tool client", HardcoreWritingEngineNormalizesProviderModelSuffixesLikeToolClient),
+        ("Hardcore writing engine reserves enough output tokens for CHANGES", HardcoreWritingEngineReservesEnoughOutputTokensForChanges),
+        ("Hardcore writing fallback gate accepts XML changes on first chapter", HardcoreWritingFallbackGateAcceptsXmlChangesOnFirstChapter),
+        ("Hardcore writing fallback gate normalizes array CHANGES", HardcoreWritingFallbackGateNormalizesArrayChanges),
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
-        ("Tool registry phase search exposes commit and maintenance tools", ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools),
+        ("Tool registry semantic search treats phase as hint", ToolRegistrySemanticSearchTreatsPhaseAsHint),
         ("Tool registry declares side effects for every tool", ToolRegistryDeclaresSideEffectsForEveryTool),
+        ("Tool registry scoped workspace overrides stale ambient workspace", ToolRegistryScopedWorkspaceOverridesStaleAmbientWorkspace),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
         ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
         ("ResolveNovelProject is idempotent while awaiting foundation", ResolveNovelProjectIsIdempotentWhileAwaitingFoundation),
+        ("ResolveNovelProject create_new does not bind active old project", ResolveNovelProjectCreateNewDoesNotBindActiveOldProject),
+        ("ResolveNovelProject create_new honors projectTitle as new title", ResolveNovelProjectCreateNewHonorsProjectTitle),
+        ("ResolveNovelProject complete brief is ready for foundation planning", ResolveNovelProjectCompleteBriefIsReadyForFoundationPlanning),
     };
 
     public static async Task<int> Main()
@@ -140,6 +164,69 @@ internal static class Program
                    result.Message.Contains("状态查询", StringComparison.OrdinalIgnoreCase) ||
                    result.Message.Contains("userGoal", StringComparison.OrdinalIgnoreCase),
             "Blocked raw status/userGoal input should be routed to status or explain the hard block.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyRepairsPlanChapterMissingCreativeBrief()
+    {
+        var policy = new ToolPolicyEngine();
+        var session = new AgentSession
+        {
+            WorkingMemory = new AgentWorkingMemory
+            {
+                MissionPlan = new AgentMissionPlan
+                {
+                    SchedulerState = new AgentTaskSchedulerState
+                    {
+                        ActiveChapterId = "chapter-001"
+                    }
+                }
+            }
+        };
+        var bible = new StoryBibleDocument
+        {
+            Constitution = new StoryCreativeConstitution
+            {
+                Genre = "深海废土",
+                SubGenre = "机甲打怪升级爽文",
+                CoreHook = "沉船修理工修复旧式潜航机甲，猎杀深海异变体升级，探索失落海城。",
+                ReaderPromise = "一路打怪、改装机甲、解锁海域并碾压更强敌人。",
+                MainPleasure = "战斗升级和装备改造爽感",
+                WorldCoreRule = "深海异变体核心可驱动机甲进化。"
+            },
+            VolumeArcs =
+            {
+                new VolumeArcPlan
+                {
+                    VolumeId = "volume-001",
+                    Title = "沉船区崛起",
+                    StartChapterId = "chapter-001",
+                    EndChapterId = "chapter-012",
+                    VolumePromise = "主角从贫民区修理工成长为沉船区最强机甲猎手。",
+                    CoreQuestion = "旧式潜航机甲能否帮助他夺回生存权？"
+                }
+            }
+        };
+        var context = new AgentObservationContext
+        {
+            UserMessage = "把第一个方向作为正式故事地基，然后推进第一卷、前三章和第一章草稿。",
+            MissionPlan = session.WorkingMemory.MissionPlan,
+        };
+        var call = new AgentToolCall { Name = "PlanChapter" };
+
+        var result = policy.BeforeCall(call, session, bible, context, confirmed: false);
+
+        Check.True(!result.AllowsExecution && result.IsRepairable,
+            "PlanChapter without creativeBrief should be repaired before tool execution.");
+        Check.Equal("PlanChapter", result.RecommendedToolName,
+            "Missing chapter brief should repair to PlanChapter with generated arguments.");
+        Check.Equal("PlanChapter", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
+            "Policy should provide a replacement PlanChapter action.");
+        Check.True(result.ReplacementAction!.ToolCall!.Arguments.TryGetValue("creativeBrief", out var creativeBrief) &&
+                   creativeBrief.Contains("沉船修理工", StringComparison.OrdinalIgnoreCase) &&
+                   creativeBrief.Contains("chapter-001", StringComparison.OrdinalIgnoreCase),
+            "Generated creativeBrief should be derived from Story Bible and active chapter state.");
 
         return Task.CompletedTask;
     }
@@ -254,6 +341,41 @@ internal static class Program
             "Valid candidateIndex must win over a misspelled LLM-provided title.");
         Check.Equal("规则反噬型", wrongTitleWithIndex.Arguments["selectedMacroCandidateTitle"],
             "Policy should normalize misspelled title to the canonical candidate title when index is valid.");
+
+        var zeroBasedIndex = new AgentToolCall
+        {
+            Name = "CommitStoryFoundation",
+            Arguments =
+            {
+                ["runId"] = runId,
+                ["selectedMacroCandidateIndex"] = "0"
+            }
+        };
+        var zeroBasedAllowed = policy.BeforeCall(
+            zeroBasedIndex,
+            session,
+            new StoryBibleDocument
+            {
+                AgentRuns =
+                {
+                    new NovelAgentRun
+                    {
+                        RunId = runId,
+                        Intent = NovelAgentIntent.CreateStoryFoundation,
+                        StoryConstitution = new StoryCreativeConstitution { Genre = "玄幻", CoreHook = "规则会反噬使用者" },
+                        MacroCandidates =
+                        {
+                            new MacroStoryConceptCandidate { CandidateId = "macro-001-rule-backlash", Title = "规则反噬型" }
+                        }
+                    }
+                }
+            },
+            context,
+            confirmed: true);
+        Check.True(zeroBasedAllowed.AllowsExecution,
+            "LLM-provided zero-based candidate index should be normalized to the first story foundation candidate.");
+        Check.Equal("1", zeroBasedIndex.Arguments["selectedMacroCandidateIndex"],
+            "Policy should rewrite zero-based candidate index into the canonical one-based value.");
 
         var invalidIndex = new AgentToolCall
         {
@@ -457,7 +579,47 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static Task ToolPolicyRepairsMissingContextPackageBeforeDraft()
+    private static Task RecoveryKeepsRepairDraftGateFailuresRecoverable()
+    {
+        const string runId = "run-chapter-003";
+        var recovery = new AgentRecoveryEngine(new object(), new object());
+
+        var analysis = recovery.AnalyzeFailure(
+            new AgentToolCall
+            {
+                Name = "RepairChapterDraft",
+                Arguments =
+                {
+                    ["runId"] = runId,
+                    ["repairStrategy"] = "rewrite_continuity_scene",
+                    ["repairAttempt"] = "2"
+                }
+            },
+            new AgentToolExecutionResult
+            {
+                Success = false,
+                Phase = "gate_failed",
+                Message = "章节草稿修复后仍未通过硬门禁：核心连续性失败：未承接「逆潮夜临近，威胁增加」。"
+            },
+            new AgentSession { ActiveRunId = runId },
+            new StoryBibleDocument());
+
+        Check.True(analysis.IsRecoverable,
+            "RepairChapterDraft gate failures should stay recoverable until the repair budget is exhausted.");
+        Check.True(analysis.RecommendedChains.Count > 0,
+            "Repairable repair failures must expose a follow-up repair chain.");
+        var next = analysis.RecommendedChains[0].Steps[0].ToolCall;
+        Check.Equal("RepairChapterDraft", next.Name,
+            "The follow-up chain should keep repairing the draft instead of forcing user input.");
+        Check.Equal(runId, next.Arguments["runId"],
+            "The follow-up repair call should preserve the runId.");
+        Check.Equal("rewrite_continuity_scene", next.Arguments["repairStrategy"],
+            "The follow-up repair call should preserve the strategy marker.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyAllowsDraftGenerationToBuildMissingContext()
     {
         const string runId = "run-missing-context";
         var policy = new ToolPolicyEngine();
@@ -508,14 +670,10 @@ internal static class Program
             context,
             confirmed: true);
 
-        Check.True(!result.AllowsExecution && result.IsRepairable,
-            "Missing context package should be a repairable policy block, not a terminal stop.");
-        Check.Equal("BuildChapterContextPackage", result.RecommendedToolName,
-            "Missing context package should recommend building chapter context.");
-        Check.Equal("BuildChapterContextPackage", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Repairable policy should provide a replacement prerequisite action.");
-        Check.Equal(runId, result.RecommendedArguments["runId"],
-            "Repair recommendation should preserve runId.");
+        Check.True(result.AllowsExecution,
+            "GenerateChapterWithChanges can build a missing context package itself; policy must not bounce it back to context generation.");
+        Check.True(!result.IsRepairable,
+            "Missing context alone should not create a repair loop.");
         return Task.CompletedTask;
     }
 
@@ -631,7 +789,75 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static Task ToolPolicyBlocksUndiscoveredTools()
+    private static Task ToolPolicyRepairsPrematureDraftRepairToValidation()
+    {
+        const string runId = "run-premature-repair";
+        var policy = new ToolPolicyEngine();
+        var session = new AgentSession
+        {
+            ActiveRunId = runId,
+            WorkingMemory = new AgentWorkingMemory
+            {
+                MissionPlan = BuildPlanWithChapter(runId, chapter =>
+                {
+                    chapter.Status = "draft_generated";
+                    chapter.DraftStatus = "draft_generated";
+                    chapter.GateStatus = "none";
+                    chapter.NextAction = "ValidateChapterDraft";
+                })
+            }
+        };
+        var bible = new StoryBibleDocument
+        {
+            AgentRuns =
+            {
+                new NovelAgentRun
+                {
+                    RunId = runId,
+                    TargetChapterId = "chapter-premature-repair",
+                    ContextPackage = new ChapterContextPackageSummary
+                    {
+                        ChapterId = "chapter-premature-repair",
+                        Status = "context_ready"
+                    },
+                    DraftArtifact = new ChapterDraftArtifact
+                    {
+                        ChapterId = "chapter-premature-repair",
+                        DraftContent = "正文\n<chapter_changes>{}</chapter_changes>",
+                        ChangesJson = "{}",
+                        HasChanges = true
+                    }
+                }
+            }
+        };
+        var context = new AgentObservationContext
+        {
+            AvailableTools =
+            {
+                new AgentToolDefinition { Name = "RepairChapterDraft" },
+                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+            },
+            MissionPlan = session.WorkingMemory.MissionPlan,
+            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+        };
+
+        var result = policy.BeforeCall(
+            new AgentToolCall { Name = "RepairChapterDraft", Arguments = { ["runId"] = runId } },
+            session,
+            bible,
+            context,
+            confirmed: true);
+
+        Check.True(!result.AllowsExecution && result.IsRepairable,
+            "Repairing before any gate report should be repaired into validation, not terminally blocked.");
+        Check.Equal("ValidateChapterDraft", result.RecommendedToolName,
+            "A draft without gate report should recommend validation before repair.");
+        Check.Equal("ValidateChapterDraft", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
+            "Policy should replace premature repair with ValidateChapterDraft.");
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyAllowsRegisteredToolsWithoutDiscoveryGate()
     {
         var policy = new ToolPolicyEngine();
         var session = new AgentSession();
@@ -658,10 +884,10 @@ internal static class Program
             context,
             confirmed: false);
 
-        Check.True(!skippedDiscovery.AllowsExecution && !skippedDiscovery.IsRepairable,
-            "Planner must not execute ResolveNovelProject before tool_search has discovered it.");
-        Check.Contains("tool_search", skippedDiscovery.Message,
-            "Discovery boundary block should instruct the planner to call tool_search.");
+        Check.True(skippedDiscovery.AllowsExecution,
+            "Registered low-risk tools must not be blocked just because they were not returned by tool_search.");
+        Check.True(!skippedDiscovery.Message.Contains("tool_search", StringComparison.OrdinalIgnoreCase),
+            "Policy must not leak or enforce tool_search as a discovery gate.");
 
         var discovery = policy.BeforeCall(
             new AgentToolCall { Name = "tool_search", Arguments = { ["phase"] = "Planning" } },
@@ -680,7 +906,7 @@ internal static class Program
             context,
             confirmed: false);
         Check.True(discovered.AllowsExecution,
-            "Once tool_search exposes ResolveNovelProject, policy should allow its normal tool preflight.");
+            "Adding a tool to AvailableTools should remain compatible, but it is no longer required for low-risk registered tools.");
         return Task.CompletedTask;
     }
 
@@ -934,13 +1160,13 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static async Task NewProjectReflectionStopsForFoundationInput()
+    private static async Task NewProjectReflectionContinuesWhenFoundationBriefIsSufficient()
     {
         var planner = new AgentPlanner(new UserSettingsManager(
             Path.Combine(Path.GetTempPath(), "agent-kernel-regression-settings"),
             "AgentKernelRegression"),
             new HttpClient());
-        var reflection = await planner.ReflectAsync(
+        var insufficient = await planner.ReflectAsync(
             new AgentObservationContext
             {
                 UserMessage = "你好，我想写一本像斗罗大陆一样风格的小说"
@@ -954,10 +1180,218 @@ internal static class Program
             },
             CancellationToken.None);
 
+        Check.True(insufficient.RequiresUserInput,
+            "New project creation may ask for foundation input when the user has not supplied a usable brief.");
+        Check.True(!insufficient.ShouldContinue,
+            "Insufficient new project brief should not auto-continue into another tool call.");
+
+        var sufficient = await planner.ReflectAsync(
+            new AgentObservationContext
+            {
+                UserMessage = "写一本新小说《废土神国：我靠吞噬怪物升级》。末世玄幻爽文，男主从底层幸存者开始，系统吞噬怪物晶核升级，一路打怪升级、建基地、收伙伴。不要绑定旧项目，不要规则反噬/真相递进/关系代价，直接创建新书并推进故事地基。"
+            },
+            new AgentRuntimeObservation
+            {
+                ToolName = "ResolveNovelProject",
+                Success = true,
+                Phase = "awaiting_user_foundation",
+                Message = "已创建新小说「废土神国：我靠吞噬怪物升级」，它会作为独立作品进入书城，不会覆盖旧书。"
+            },
+            CancellationToken.None);
+
+        Check.True(!sufficient.RequiresUserInput,
+            "Complete new-project brief should not be forced to ask the same foundation questions again.");
+        Check.True(sufficient.ShouldContinue,
+            "Complete new-project brief should let the LLM continue to choose the next concrete planning tool.");
+    }
+
+    private static async Task PlannerReflectionUsesBoundedFallbackWhenModelIsSlow()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-slow-reflection-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        await settings.SaveAsync(new UserSettings
+        {
+            LlmProvider = "openai",
+            LlmBaseUrl = "https://example.test/v1",
+            LlmApiKey = "test-key",
+            LlmModel = "test-model",
+            LlmMaxTokens = 512
+        });
+        using var http = new HttpClient(new SlowHandler(TimeSpan.FromSeconds(5)));
+        var planner = new AgentPlanner(settings, http);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var elapsed = Stopwatch.StartNew();
+
+        var reflection = await planner.ReflectAsync(
+            new AgentObservationContext
+            {
+                UserMessage = "写一本新小说《黑潮领主：我吞噬异兽晶核升级》。末世玄幻爽文，男主从海港贫民窟幸存者开始，系统吞噬异兽晶核升级，打怪升级、建基地、收伙伴。不要绑定旧项目，直接创建新书并推进故事地基。"
+            },
+            new AgentRuntimeObservation
+            {
+                ToolName = "ResolveNovelProject",
+                Success = true,
+                Phase = "awaiting_user_foundation",
+                Message = "已创建新小说「黑潮领主：我吞噬异兽晶核升级」。"
+            },
+            timeout.Token);
+        elapsed.Stop();
+
+        Check.True(elapsed.Elapsed < TimeSpan.FromSeconds(3),
+            "Reflection should have its own short fallback budget instead of waiting for the full model HTTP timeout.");
+        Check.True(reflection.ShouldContinue,
+            "Slow model reflection should fall back to local reflection so the runtime can continue.");
+        Check.True(!reflection.RequiresUserInput,
+            "Fallback reflection should respect sufficient new-project brief instead of forcing a repeated question.");
+    }
+
+    private static async Task StoryFoundationCandidatesStopForUserReview()
+    {
+        var planner = new AgentPlanner(new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-foundation-candidates"),
+            "AgentKernelRegression"),
+            new HttpClient());
+        var reflection = await planner.ReflectAsync(
+            new AgentObservationContext
+            {
+                UserMessage = "这些都不要，就要一路打怪升级的",
+                TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "free_chat" },
+                MissionPlan = new AgentMissionPlan
+                {
+                    Stage = "foundation",
+                    Status = "active",
+                    AllowedNextActions = { "CommitStoryFoundation" }
+                }
+            },
+            new AgentRuntimeObservation
+            {
+                ObservationType = "tool_result",
+                ToolName = "PlanStoryFoundation",
+                Success = true,
+                Phase = "foundation_candidates",
+                RunId = "run-foundation-candidates",
+                Message = "生成了 3 个故事地基候选：规则反噬型、真相递进型、关系代价型。",
+                Artifact = new AgentToolArtifact
+                {
+                    ArtifactType = "story_foundation_candidates",
+                    ArtifactId = "run-foundation-candidates",
+                    RunId = "run-foundation-candidates",
+                    Summary = "生成 3 个故事地基候选。",
+                    VisibleInWorkflow = true,
+                    UserVisibleStatus = "故事地基候选已生成"
+                }
+            },
+            CancellationToken.None);
+
         Check.True(reflection.RequiresUserInput,
-            "New project creation must stop and ask for foundation input.");
+            "Story foundation candidates are process artifacts that must be shown to the user before committing.");
         Check.True(!reflection.ShouldContinue,
-            "New project creation must not auto-continue into another tool call.");
+            "Runtime must not auto-continue from generated foundation candidates into commit or another planning loop.");
+        Check.Contains("故事地基候选", reflection.ReplyDraft,
+            "Final reply should preserve the successful tool artifact instead of falling through to no-result governance text.");
+        Check.DoesNotContain("没有新的工具执行结果", reflection.ReplyDraft,
+            "A successful tool result must not be reported as no new execution result.");
+    }
+
+    private static Task RuntimeContinuesProcessToolsWithStructuredNextHints()
+    {
+        var result = new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "foundation_committed",
+            Message = "故事地基已固化。",
+            Artifact = new AgentToolArtifact
+            {
+                ArtifactType = "story_foundation_commit",
+                ArtifactId = "run-foundation-commit",
+                RunId = "run-foundation-commit",
+                Summary = "故事地基已固化。",
+                NextHints = new[] { "规划第一卷" },
+                VisibleInWorkflow = true,
+                UserVisibleStatus = "故事地基已固化"
+            },
+            Suggestions = new[] { "规划第一卷", "查看当前状态" }
+        };
+        var conservativeReflection = new AgentReflection
+        {
+            Summary = "故事地基已固化。",
+            GoalSatisfied = true,
+            ShouldContinue = false,
+            RequiresUserInput = false
+        };
+
+        Check.True(!AgentRuntime.ShouldStopAfterToolResult(result, conservativeReflection, new AgentMissionPlan
+        {
+            TodoQueue = { "规划第一卷" }
+        }), "Successful process tools with structured next hints should continue into the next LLM planning turn.");
+
+        var completeBriefProjectResult = new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "awaiting_user_foundation",
+            Message = "已创建新小说，当前 brief 已包含类型、主角引擎、爽点和禁区。",
+            Artifact = new AgentToolArtifact
+            {
+                ArtifactType = "novel_project",
+                ArtifactId = "project-new",
+                ProjectId = "project-new",
+                Summary = "新小说已创建。",
+                NextHints = new[] { "PlanStoryFoundation" },
+                VisibleInWorkflow = true,
+                UserVisibleStatus = "新小说已创建"
+            }
+        };
+        var continueReflection = new AgentReflection
+        {
+            Summary = "新小说已创建，信息足够继续生成地基候选。",
+            GoalSatisfied = false,
+            ShouldContinue = true,
+            RequiresUserInput = false
+        };
+
+        Check.True(!AgentRuntime.ShouldStopAfterToolResult(completeBriefProjectResult, continueReflection, new AgentMissionPlan
+        {
+            TodoQueue = { "生成故事地基候选" }
+        }), "awaiting_user_foundation should not force-stop when reflection says the brief is sufficient and next work is structured.");
+
+        var candidateResult = new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "foundation_candidates",
+            Message = "故事地基候选已生成。",
+            Artifact = new AgentToolArtifact
+            {
+                ArtifactType = "story_foundation_candidates",
+                ArtifactId = "run-foundation-candidates",
+                RunId = "run-foundation-candidates",
+                Summary = "故事地基候选已生成。",
+                NextHints = new[] { "选第1个" },
+                VisibleInWorkflow = true,
+                UserVisibleStatus = "故事地基候选已生成"
+            },
+            Suggestions = new[] { "选第1个" }
+        };
+
+        Check.True(AgentRuntime.ShouldStopAfterToolResult(candidateResult, conservativeReflection),
+            "Candidate artifacts still stop for user review even when they expose next hints.");
+
+        var toolSearchResult = new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "idle",
+            Message = "检索到 12 个工具候选，已更新工具语义缓存。",
+            Artifact = new AgentToolArtifact
+            {
+                ArtifactType = "tool_search_result",
+                ArtifactId = "tool-search-scope",
+                Summary = "检索到 12 个工具候选。",
+                VisibleInWorkflow = true
+            }
+        };
+
+        Check.True(!AgentRuntime.ShouldStopAfterToolResult(toolSearchResult, conservativeReflection),
+            "tool_search is internal capability discovery and must continue into another LLM planning turn.");
+        return Task.CompletedTask;
     }
 
     private static async Task RuntimeGovernanceObservationDoesNotLeakGuardText()
@@ -998,6 +1432,73 @@ internal static class Program
             "Reflect fallback must not expose runtime internals.");
     }
 
+    private static async Task RuntimeGovernanceObservationDoesNotLeakToolNames()
+    {
+        var planner = new AgentPlanner(new UserSettingsManager(
+            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-governance-natural"),
+            "AgentKernelRegression"),
+            new HttpClient());
+        var reflection = await planner.ReflectAsync(
+            new AgentObservationContext
+            {
+                UserMessage = "这是什么意思？不是开始写小说了吗",
+                TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "free_chat" },
+                MissionPlan = new AgentMissionPlan
+                {
+                    Stage = "foundation",
+                    Status = "blocked",
+                    AllowedNextActions = { "PlanStoryFoundation", "PlanVolumeArc" }
+                }
+            },
+            new AgentRuntimeObservation
+            {
+                ObservationType = "runtime_observation",
+                ToolName = "runtime",
+                Success = false,
+                Phase = "runtime_repeated_tool_observation",
+                Message = "本轮没有执行新的工具。"
+            },
+            CancellationToken.None);
+
+        Check.DoesNotContain("PlanStoryFoundation", reflection.ReplyDraft,
+            "Governance reply must not expose internal planning tool names.");
+        Check.DoesNotContain("PlanVolumeArc", reflection.ReplyDraft,
+            "Governance reply must not expose internal planning tool names.");
+        Check.Contains("故事地基", reflection.ReplyDraft,
+            "Governance reply should translate internal tools into product language.");
+    }
+
+    private static Task ToolExecutionSnapshotsExposeUserVisibleProgress()
+    {
+        var running = AgentToolProgressPresenter.Describe(new AgentToolExecutionSnapshot
+        {
+            ToolName = "PlanStoryFoundation",
+            Status = "running",
+            Phase = "planning",
+            StartedAt = DateTime.UtcNow
+        });
+        var completed = AgentToolProgressPresenter.Describe(new AgentToolExecutionSnapshot
+        {
+            ToolName = "CommitValidatedChapter",
+            Status = "succeeded",
+            Phase = "review",
+            ResultPhase = "chapter_committed",
+            ResultMessage = "章节已提交。",
+            StartedAt = DateTime.UtcNow.AddSeconds(-3),
+            CompletedAt = DateTime.UtcNow
+        });
+
+        Check.Equal("正在生成故事地基候选", running.Title,
+            "Running tool progress should use product language.");
+        Check.True(running.IsRunning,
+            "Running snapshot should be marked as in progress.");
+        Check.DoesNotContain("PlanStoryFoundation", running.Title,
+            "Tool progress title must not leak internal tool names.");
+        Check.Contains("书城", completed.Detail,
+            "Committed chapter progress should tell the user where the final artifact appears.");
+        return Task.CompletedTask;
+    }
+
     private static Task RuntimeReturnsUserFacingChatRepliesBeforeNoActionFallback()
     {
         var normalChat = new AgentAction
@@ -1026,6 +1527,13 @@ internal static class Program
             Source = "provider_raw_error",
             IsNoTool = true
         };
+        var timeoutError = new AgentAction
+        {
+            Type = AgentActionType.ChatReply,
+            Reply = "模型响应超时，请稍后重试。",
+            Source = "error_timeout",
+            IsNoTool = true
+        };
         var authError = new AgentAction
         {
             Type = AgentActionType.ChatReply,
@@ -1042,6 +1550,8 @@ internal static class Program
             "No-action fallback without reply should not be treated as chat.");
         Check.True(!AgentRuntime.ShouldReturnUserFacingReply(internalErrorText),
             "Raw provider/planner internals should not return directly.");
+        Check.True(!AgentRuntime.ShouldReturnUserFacingReply(timeoutError),
+            "Planner timeouts should fall through to runtime status/scheduler fallback instead of becoming normal chat.");
         Check.True(AgentRuntime.ShouldReturnUserFacingReply(authError),
             "User-fixable auth errors may be returned directly.");
         return Task.CompletedTask;
@@ -1135,6 +1645,51 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task ForegroundDoesNotFinishCreativeWorkAfterToolSearch()
+    {
+        var method = typeof(AgentRuntime).GetMethod(
+            "IsForegroundReadableToolAction",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (method == null)
+            throw new RegressionAssertException("AgentRuntime.IsForegroundReadableToolAction was not found.");
+
+        bool IsForegroundReadable(string toolName)
+        {
+            var action = new AgentAction
+            {
+                Type = AgentActionType.ToolCall,
+                ToolCall = new AgentToolCall { Name = toolName }
+            };
+            return (bool)(method.Invoke(null, new object[] { action }) ?? false);
+        }
+
+        Check.True(!IsForegroundReadable("tool_search"),
+            "tool_search is internal capability discovery; foreground must hand it to the background loop instead of returning a final chat reply.");
+        Check.True(IsForegroundReadable("QueryWorkspaceState"),
+            "Workspace state snapshots should still be readable in the foreground.");
+        Check.True(IsForegroundReadable("QueryProjectStatus"),
+            "Project status snapshots should still be readable in the foreground.");
+        Check.True(IsForegroundReadable("SearchCreativeKnowledge"),
+            "Knowledge searches should still be readable in the foreground.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ConversationKernelTreatsExplicitNewNovelRequestAsProjectCreation()
+    {
+        var envelope = new ConversationKernel().BuildEnvelope(
+            new AgentSession { Phase = "idle" },
+            "我想写一本新的末世玄幻爽文，书名《废土神国：我靠吞噬怪物升级》，不要绑定旧项目，直接创建新小说。");
+
+        Check.Equal(TurnIntentType.NewProjectSeed, envelope.Intent.Type,
+            "Explicit new novel requests should be classified as project creation, not as switching to an existing project.");
+        Check.Equal(DialogueAct.StartProject, envelope.DialogueAct,
+            "Explicit new novel requests should ask the LLM to create or resolve a new project context.");
+        Check.Contains("废土神国", envelope.CreativeBrief,
+            "The creative brief should preserve the requested new book identity.");
+        return Task.CompletedTask;
+    }
+
     private static Task ConversationKernelModelsCandidateSelection()
     {
         var foundationSession = new AgentSession
@@ -1186,6 +1741,34 @@ internal static class Program
         var casual = new ConversationKernel().BuildEnvelope(new AgentSession { Phase = "idle" }, "1");
         Check.Equal(TurnIntentType.FreeChat, casual.Intent.Type,
             "Numeric input without candidate context must not become candidate selection.");
+        return Task.CompletedTask;
+    }
+
+    private static Task ConversationKernelDoesNotKeywordRouteContinuation()
+    {
+        var kernel = new ConversationKernel();
+        var session = new AgentSession
+        {
+            Phase = "foundation",
+            WorkingMemory = new AgentWorkingMemory
+            {
+                MissionPlan = new AgentMissionPlan
+                {
+                    Stage = "foundation",
+                    AllowedNextActions = { "PlanStoryFoundation" }
+                }
+            }
+        };
+
+        foreach (var message in new[] { "继续", "下一步", "开始写", "这是什么意思？不是开始写小说了吗" })
+        {
+            var envelope = kernel.BuildEnvelope(session, message);
+            Check.True(envelope.Intent.Type is TurnIntentType.FreeChat or TurnIntentType.CreativeBrief or TurnIntentType.StatusQuery,
+                $"Message '{message}' should remain natural language for the planner, not a keyword-routed ContinueMission.");
+            Check.True(envelope.DialogueAct != DialogueAct.ContinueTask,
+                $"Message '{message}' must not force a ContinueTask dialogue act.");
+        }
+
         return Task.CompletedTask;
     }
 
@@ -1461,6 +2044,194 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task HardcoreWritingEngineBuildsAnthropicMessagesUrlLikeToolClient()
+    {
+        var method = typeof(HardcoreWritingEngine).GetMethod(
+            "BuildAnthropicMessagesUrl",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Check.True(method != null,
+            "HardcoreWritingEngine should share the same Anthropic messages URL rules as planner/tool clients.");
+
+        var customProxy = (string)method!.Invoke(null, new object[] { "https://token-plan-cn.xiaomimimo.com/anthropic" })!;
+        Check.Equal("https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages", customProxy,
+            "Custom Anthropic-compatible proxies without /v1 should be normalized before /messages.");
+
+        var anthropicRoot = (string)method.Invoke(null, new object[] { "https://api.anthropic.com" })!;
+        Check.Equal("https://api.anthropic.com/v1/messages", anthropicRoot,
+            "Anthropic root URL should target /v1/messages.");
+
+        var anthropicV1 = (string)method.Invoke(null, new object[] { "https://api.anthropic.com/v1" })!;
+        Check.Equal("https://api.anthropic.com/v1/messages", anthropicV1,
+            "Anthropic v1 URL should append /messages only once.");
+
+        var fullEndpoint = (string)method.Invoke(null, new object[] { "https://api.anthropic.com/v1/messages" })!;
+        Check.Equal("https://api.anthropic.com/v1/messages", fullEndpoint,
+            "Full Anthropic messages endpoint should be preserved.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task HardcoreWritingEngineNormalizesProviderModelSuffixesLikeToolClient()
+    {
+        var method = typeof(HardcoreWritingEngine).GetMethod(
+            "NormalizeProviderModelId",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Check.True(method != null,
+            "HardcoreWritingEngine should normalize provider model ids before calling writing models.");
+
+        var mimoLongContext = (string)method!.Invoke(null, new object[] { "mimo-v2.5-pro[1m]" })!;
+        Check.Equal("mimo-v2.5-pro", mimoLongContext,
+            "Long-context display suffix should not be sent to Anthropic-compatible providers.");
+
+        var prefixedLongContext = (string)method.Invoke(null, new object[] { "anthropic/mimo-v2.5-pro[1m]" })!;
+        Check.Equal("mimo-v2.5-pro", prefixedLongContext,
+            "Provider prefix and display suffix should both be stripped.");
+
+        var extendedSuffix = (string)method.Invoke(null, new object[] { "mimo-v2.5-pro:extended" })!;
+        Check.Equal("mimo-v2.5-pro", extendedSuffix,
+            "Extended display suffix should not be sent to model providers.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task HardcoreWritingEngineReservesEnoughOutputTokensForChanges()
+    {
+        var method = typeof(HardcoreWritingEngine).GetMethod(
+            "NormalizeWritingMaxTokens",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Check.True(method != null,
+            "HardcoreWritingEngine should normalize writing output budget separately from short planner calls.");
+
+        var defaultBudget = (int)method!.Invoke(null, new object[] { 4096 })!;
+        Check.True(defaultBudget >= 8192,
+            "Chapter writing must reserve enough output tokens for the full draft plus CHANGES.");
+
+        var explicitLargerBudget = (int)method.Invoke(null, new object[] { 12000 })!;
+        Check.Equal(12000, explicitLargerBudget,
+            "Explicitly larger user output budgets should be preserved.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task HardcoreWritingFallbackGateAcceptsXmlChangesOnFirstChapter()
+    {
+        var method = typeof(HardcoreWritingEngine).GetMethod(
+            "BuildFallbackGateReport",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Check.True(method != null,
+            "HardcoreWritingEngine should expose a single fallback gate path for Web runtime validation.");
+
+        var run = new NovelAgentRun
+        {
+            RunId = "run-fallback-gate",
+            TargetChapterId = "chapter-001",
+            ChapterBrief = new ChapterCreativeBrief { ChapterId = "chapter-001" }
+        };
+        var context = new ChapterContextPackageSummary
+        {
+            ChapterId = "chapter-001",
+            Status = "context_ready",
+            WorldRules = { "深海废土世界规则" },
+            ChapterBlueprints = { "开篇建立修理工处境并发现机甲伏笔" }
+        };
+        var draft = new ChapterDraftArtifact
+        {
+            ChapterId = "chapter-001",
+            DraftContent = """
+            第一章正文。
+            <chapter_changes>{"CharacterStateChanges":[],"ConflictProgress":[],"NewPlotPoints":[],"ForeshadowingActions":[],"LocationStateChanges":[],"FactionStateChanges":[],"TimeProgression":[],"CharacterMovements":[],"ItemTransfers":[],"SecretRevealChanges":[],"PledgeConstraintChanges":[],"DeadlineConstraintChanges":[]}</chapter_changes>
+            """,
+            ChangesJson = "{\"CharacterStateChanges\":[],\"ConflictProgress\":[],\"NewPlotPoints\":[],\"ForeshadowingActions\":[],\"LocationStateChanges\":[],\"FactionStateChanges\":[],\"TimeProgression\":[],\"CharacterMovements\":[],\"ItemTransfers\":[],\"SecretRevealChanges\":[],\"PledgeConstraintChanges\":[],\"DeadlineConstraintChanges\":[]}",
+            HasChanges = true
+        };
+
+        var report = (GenerationGateReport)method!.Invoke(null, new object[] { run, context, draft })!;
+
+        Check.Equal("validated", report.Status,
+            "First chapter fallback gate should pass XML CHANGES when structure and blueprint exist.");
+        Check.True(report.ChangesDetected,
+            "Fallback gate should recognize XML chapter_changes, not only legacy separator text.");
+        Check.True(report.RagPassed,
+            "First chapter should not require previous summary or long-distance recall.");
+        return Task.CompletedTask;
+    }
+
+    private static Task HardcoreWritingFallbackGateNormalizesArrayChanges()
+    {
+        var method = typeof(HardcoreWritingEngine).GetMethod(
+            "BuildFallbackGateReport",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Check.True(method != null,
+            "HardcoreWritingEngine should expose a single fallback gate path for Web runtime validation.");
+
+        var run = new NovelAgentRun
+        {
+            RunId = "run-array-changes",
+            TargetChapterId = "chapter-003",
+            ChapterBrief = new ChapterCreativeBrief { ChapterId = "chapter-003" }
+        };
+        var context = new ChapterContextPackageSummary
+        {
+            ChapterId = "chapter-003",
+            Status = "context_ready",
+            WorldRules = { "逆潮夜临近，威胁增加" },
+            CharacterStates = { "林澈：第二章后继续追查蓝磷骨光" },
+            PreviousSummaries = { "第二章以逆潮夜临近、威胁增加收束。" },
+            ChapterBlueprints = { "第三章逆潮夜露出第七平台钟楼" }
+        };
+        var draft = new ChapterDraftArtifact
+        {
+            ChapterId = "chapter-003",
+            DraftContent = """
+            第三章正文承接逆潮夜临近，威胁增加。
+            <chapter_changes>[
+              {"CharacterStateChanges":[]},
+              {"ConflictProgress":[]},
+              {"NewPlotPoints":[{"Keywords":["逆潮夜"],"Context":"逆潮夜临近，威胁增加。","InvolvedCharacters":[],"Importance":"high","Storyline":"main","CausedBy":"chapter-003"}]},
+              {"ForeshadowingActions":[]},
+              {"LocationStateChanges":[]},
+              {"FactionStateChanges":[]},
+              {"TimeProgression":[]},
+              {"CharacterMovements":[]},
+              {"ItemTransfers":[]},
+              {"SecretRevealChanges":[]},
+              {"PledgeConstraintChanges":[]},
+              {"DeadlineConstraintChanges":[]}
+            ]</chapter_changes>
+            """,
+            ChangesJson = """
+            [
+              {"CharacterStateChanges":[]},
+              {"ConflictProgress":[]},
+              {"NewPlotPoints":[{"Keywords":["逆潮夜"],"Context":"逆潮夜临近，威胁增加。","InvolvedCharacters":[],"Importance":"high","Storyline":"main","CausedBy":"chapter-003"}]},
+              {"ForeshadowingActions":[]},
+              {"LocationStateChanges":[]},
+              {"FactionStateChanges":[]},
+              {"TimeProgression":[]},
+              {"CharacterMovements":[]},
+              {"ItemTransfers":[]},
+              {"SecretRevealChanges":[]},
+              {"PledgeConstraintChanges":[]},
+              {"DeadlineConstraintChanges":[]}
+            ]
+            """,
+            HasChanges = true
+        };
+
+        var report = (GenerationGateReport)method!.Invoke(null, new object[] { run, context, draft })!;
+
+        Check.True(report.ProtocolPassed,
+            "Fallback gate should normalize array-shaped CHANGES the same way the real GenerationGate does.");
+        Check.Equal("validated", report.Status,
+            "Recoverable CHANGES shapes must not block a valid chapter in Web runtime fallback.");
+        return Task.CompletedTask;
+    }
+
     private static Task QualityReviewSuiteBlocksWeakChapterQuality()
     {
         var suite = new AgentQualityReviewSuite();
@@ -1528,7 +2299,7 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static Task ToolRegistryPhaseSearchExposesCommitAndMaintenanceTools()
+    private static Task ToolRegistrySemanticSearchTreatsPhaseAsHint()
     {
         var settings = new UserSettingsManager(
             Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
@@ -1551,11 +2322,15 @@ internal static class Program
             var review = registry.ListToolSchemasForPhase(ConversationPhase.Review).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             Check.True(planning.Contains("CommitStoryFoundation"),
-                "Planning phase discovery should include CommitStoryFoundation after foundation candidates are generated.");
-            Check.True(planning.Contains("CommitVolumeArc"),
-                "Planning phase discovery should include CommitVolumeArc after volume plans are generated.");
+                "Phase hint Planning should still include foundation commit tools.");
+            Check.True(planning.Contains("GenerateChapterWithChanges"),
+                "Phase hint Planning must not hide writing tools; the model may need to choose across the global catalog.");
+            Check.True(planning.Contains("AnalyzeDependencyImpact"),
+                "Phase hint Planning must not hide maintenance tools; phase is ordering context, not a whitelist.");
             Check.True(review.Contains("AnalyzeDependencyImpact"),
-                "Review phase discovery should include AnalyzeDependencyImpact for maintenance/review flows.");
+                "Phase hint Review should still include maintenance/review flows.");
+            Check.True(review.Contains("PlanStoryFoundation"),
+                "Phase hint Review must not hide planning tools; the model keeps final tool choice.");
         }
         finally
         {
@@ -1609,6 +2384,40 @@ internal static class Program
         finally
         {
             workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolRegistryScopedWorkspaceOverridesStaleAmbientWorkspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-scope-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var staleWorkspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, "user-scope", "temp-user-scope");
+        var staleCatalog = new NovelProjectCatalog(staleWorkspace);
+        AgentToolRegistry.SetWorkspace(staleWorkspace, staleCatalog);
+
+        var realWorkspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, "user-scope", "project-real-scope");
+        var realCatalog = new NovelProjectCatalog(realWorkspace);
+        var registry = CreateToolRegistry(settings);
+        registry.SetWorkspaceContext(realWorkspace, realCatalog);
+        realWorkspace.SetRequestContext();
+        try
+        {
+            Check.Equal("project-real-scope", registry.CurrentWorkspaceProjectIdForTests(),
+                "Instance-scoped workspace should override stale static AsyncLocal workspace when executing tools.");
+        }
+        finally
+        {
+            realWorkspace.ClearRequestContext();
+            registry.ClearWorkspaceContext();
             AgentToolRegistry.ClearWorkspace();
         }
         return Task.CompletedTask;
@@ -1718,6 +2527,182 @@ internal static class Program
                 "Second ResolveNovelProject call while awaiting foundation must not create another project.");
             Check.Equal("existing_novel_project", second.Artifact?.ArtifactType ?? string.Empty,
                 "Second call should return an existing-project artifact.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+    }
+
+    private static async Task ResolveNovelProjectCreateNewDoesNotBindActiveOldProject()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-create-new-project-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        var oldProject = await catalog.CreateAsync(new NovelProjectCreateRequest(
+            "末世觉醒：系统在手，美女我有",
+            "末世",
+            "旧项目"), CancellationToken.None);
+        await catalog.ActivateAsync(oldProject.Id, CancellationToken.None);
+        var session = new AgentSession
+        {
+            SessionId = "session-create-new",
+            ActiveProjectId = oldProject.Id,
+            Phase = "idle"
+        };
+        var call = new AgentToolCall
+        {
+            Name = "ResolveNovelProject",
+            Arguments =
+            {
+                ["mode"] = "create_new",
+                ["title"] = "废土神国：我靠吞噬怪物升级",
+                ["seed"] = "新的末世玄幻爽文，系统吞噬怪物晶核升级，建基地，打怪升级。",
+                ["genre"] = "末世玄幻"
+            }
+        };
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        try
+        {
+            workspace.SetRequestContext();
+            var registry = CreateToolRegistry(settings);
+            var result = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+            var projects = await catalog.GetAsync(CancellationToken.None);
+            var created = projects.Projects.SingleOrDefault(p => p.Title == "废土神国：我靠吞噬怪物升级");
+
+            Check.True(result.Success, "Explicit create_new should succeed.");
+            Check.True(created != null, "Explicit create_new with a new title should create the requested new project.");
+            Check.Equal(created!.Id, session.ActiveProjectId,
+                "The current session should bind to the newly created project, not the previously active old project.");
+            Check.True(!string.Equals(oldProject.Id, session.ActiveProjectId, StringComparison.OrdinalIgnoreCase),
+                "Explicit new novel requests must not silently reuse the old active project.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+    }
+
+    private static async Task ResolveNovelProjectCreateNewHonorsProjectTitle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-create-new-project-title-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        var oldProject = await catalog.CreateAsync(new NovelProjectCreateRequest(
+            "星骸武神：我吞噬星兽进化",
+            "末世星际",
+            "旧项目"), CancellationToken.None);
+        await catalog.ActivateAsync(oldProject.Id, CancellationToken.None);
+        var session = new AgentSession
+        {
+            SessionId = "session-create-new-project-title",
+            ActiveProjectId = oldProject.Id,
+            Phase = "idle"
+        };
+        var call = new AgentToolCall
+        {
+            Name = "ResolveNovelProject",
+            Arguments =
+            {
+                ["mode"] = "create_new",
+                ["projectTitle"] = "黑潮领主：我吞噬异兽晶核升级",
+                ["seed"] = "末世玄幻爽文，男主从海港贫民窟幸存者开始，系统吞噬异兽晶核升级。",
+                ["genre"] = "末世玄幻"
+            }
+        };
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        try
+        {
+            workspace.SetRequestContext();
+            var registry = CreateToolRegistry(settings);
+            var result = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+            var projects = await catalog.GetAsync(CancellationToken.None);
+            var created = projects.Projects.SingleOrDefault(p => p.Title == "黑潮领主：我吞噬异兽晶核升级");
+
+            Check.True(result.Success, "Explicit create_new with projectTitle should succeed.");
+            Check.True(created != null, "projectTitle should be treated as the requested new title when mode=create_new.");
+            Check.Equal(created!.Id, session.ActiveProjectId,
+                "The session should bind to the requested new projectTitle project.");
+            Check.True(!string.Equals(oldProject.Id, session.ActiveProjectId, StringComparison.OrdinalIgnoreCase),
+                "Explicit create_new must not bind the old active project just because projectTitle is present.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+    }
+
+    private static async Task ResolveNovelProjectCompleteBriefIsReadyForFoundationPlanning()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-complete-brief-" + Guid.NewGuid().ToString("N"));
+        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
+        var catalog = new NovelProjectCatalog(workspace);
+        var session = new AgentSession
+        {
+            SessionId = "session-complete-brief",
+            Phase = "idle"
+        };
+        var call = new AgentToolCall
+        {
+            Name = "ResolveNovelProject",
+            Arguments =
+            {
+                ["mode"] = "create_new",
+                ["projectTitle"] = "霜铁荒原：从流放矿工到星甲战神",
+                ["seed"] = "打怪升级爽文。靠爆材料、改装战甲、升级和扩大地图变强。需要世界观、升级体系、核心爽点循环、前三卷方向和首批角色。",
+                ["genre"] = "废土机甲"
+            }
+        };
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        try
+        {
+            workspace.SetRequestContext();
+            var registry = CreateToolRegistry(settings);
+            var result = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+
+            Check.True(result.Success, "Complete new-novel brief should create the project.");
+            Check.Equal("foundation_ready", result.Phase,
+                "A complete creative brief must not be returned as awaiting missing foundation input.");
+            Check.Equal("ready_for_foundation_planning", session.WorkingMemory.Mission.CreativePhase,
+                "Session mission should be ready for foundation planning when the seed already contains enough details.");
+            Check.Equal("plan_story_foundation", session.WorkingMemory.Mission.NextIntent,
+                "The next intent should guide the LLM toward foundation planning without hard-routing a tool call.");
+            Check.Equal(0, session.WorkingMemory.OpenQuestions.Count,
+                "Complete briefs should not leave a stale open question asking for the same foundation details.");
+            Check.Contains("故事地基候选", result.Message,
+                "User-visible project confirmation should say the agent can proceed to foundation candidates.");
+            Check.Contains("生成故事地基候选", string.Join(" ", result.Suggestions),
+                "Suggestions should point to the product action, not another intake question.");
         }
         finally
         {
@@ -1985,6 +2970,25 @@ internal sealed class EmptyChatHistoryRepository : IChatHistoryRepository
 
     public Task<IReadOnlyList<ChatHistoryTurnDto>> GetHotWindowAsync(string userId, string? projectId, string sessionId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ChatHistoryTurnDto>>(Array.Empty<ChatHistoryTurnDto>());
+}
+
+internal sealed class SlowHandler : HttpMessageHandler
+{
+    private readonly TimeSpan _delay;
+
+    public SlowHandler(TimeSpan delay)
+    {
+        _delay = delay;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        await Task.Delay(_delay, cancellationToken);
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"{}\"}}]}")
+        };
+    }
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

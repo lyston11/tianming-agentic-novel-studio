@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -151,9 +152,24 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
     {
         var payload = new
         {
-            instruction = "Use a native tool call when a tool is needed. For real workspace/library/knowledge/workflow facts use QueryWorkspaceState; for active project status use QueryProjectStatus. Otherwise answer in text if your provider supports it. Never put raw user text into userGoal.",
+            instruction = "Use a native tool call when a tool is needed. Choose the concrete tool from the complete registered tool list by reading each tool description and semantic fields such as Surface, ReadsFrom, Output and Visible. Otherwise answer in text if your provider supports it. Never put raw user text into deprecated or unsupported arguments.",
             product_space = context.ProductSpace,
             memory_layers = context.ProductSpace.MemoryLayers,
+            memory_context = new
+            {
+                session_memory = context.SessionMemory,
+                project_memory = context.ProjectMemory,
+                author_memory = new
+                {
+                    display_name = context.AuthorMemory.DisplayName,
+                    style_likes = context.AuthorMemory.StyleLikes,
+                    style_dislikes = context.AuthorMemory.StyleDislikes,
+                    confirmation_tolerance = context.AuthorMemory.ConfirmationTolerance,
+                    genre_habits = context.AuthorMemory.GenreHabits,
+                    favorite_knowledge_ids = context.AuthorMemory.FavoriteKnowledgeIds,
+                },
+                execution_memory = context.ExecutionMemory,
+            },
             workspace_state = context.WorkspaceState,
             user_turn = context.UserTurn,
             user_message = context.UserMessage,
@@ -163,7 +179,11 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
             recent_messages = context.RecentMessages,
             recent_observations = context.RecentObservations,
         };
-        return JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
     }
 
     public static AgentAction? ParseOpenAiActionForDiagnostics(string json) => ParseOpenAiAction(json);

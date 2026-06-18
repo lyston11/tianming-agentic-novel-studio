@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listMaterials,
-  uploadMaterial,
+  uploadKnowledgeFile,
   deleteMaterialById,
   updateMaterialById,
   createMaterialFromText,
@@ -29,6 +29,7 @@ export default function MaterialsPage() {
   const [editTitle, setEditTitle] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editTags, setEditTags] = useState('');
+  const [lastKnowledgeTask, setLastKnowledgeTask] = useState<{ taskId: string; fileName: string } | null>(null);
 
   const { isAnalyzing, analysisStages, currentStage } = useMaterialStore();
 
@@ -38,15 +39,15 @@ export default function MaterialsPage() {
     enabled: !!currentProjectId
   });
 
-  const uploadMutation = useMutation({
+  const uploadKnowledgeMutation = useMutation({
     mutationFn: (file: File) => {
       if (!currentProjectId) throw new Error('No project selected');
-      return uploadMaterial(currentProjectId, file, 'Research');
+      return uploadKnowledgeFile(currentProjectId, file, file.name);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['materials', currentProjectId] });
+    onSuccess: (result, file) => {
       queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
-      addLog('素材上传成功');
+      setLastKnowledgeTask({ taskId: result.taskId, fileName: file.name });
+      addLog(`知识文件已上传，taskId=${result.taskId}`);
     },
     onError: (err) => addLog(`上传失败: ${err}`),
   });
@@ -102,7 +103,7 @@ export default function MaterialsPage() {
   });
 
   const handleFile = async (file: File) => {
-    uploadMutation.mutate(file);
+    uploadKnowledgeMutation.mutate(file);
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -168,8 +169,8 @@ export default function MaterialsPage() {
 
             <div className="ingest-panel">
               <div className="ingest-panel-head">
-                <span>摄取素材</span>
-                <small>上传或粘贴后自动拆解</small>
+                <span>摄取知识</span>
+                <small>上传文件进入知识处理队列</small>
               </div>
 
               <div
@@ -188,10 +189,23 @@ export default function MaterialsPage() {
                 />
                 <div className="upload-icon">+</div>
                 <div className="upload-text">
-                  {uploadMutation.isPending ? '上传中...' : '选择文件'}
+                  {uploadKnowledgeMutation.isPending ? '上传中...' : '选择知识文件'}
                 </div>
                 <div className="upload-hint">.txt / .epub / .pdf</div>
               </div>
+
+              {lastKnowledgeTask && (
+                <div className="knowledge-task-note">
+                  <div>
+                    <span>已上传知识文件</span>
+                    <strong>{lastKnowledgeTask.fileName}</strong>
+                  </div>
+                  <code>{lastKnowledgeTask.taskId}</code>
+                  <p>
+                    可在 Agent 对话中发送：处理知识文件 taskId={lastKnowledgeTask.taskId}，再基于知识库继续创作。
+                  </p>
+                </div>
+              )}
 
               <div className="paste-area">
                 <div className="paste-header">

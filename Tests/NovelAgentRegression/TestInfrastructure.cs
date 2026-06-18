@@ -178,5 +178,11 @@ namespace TM.Tests.NovelAgentRegression
             if (actual?.Contains(expectedFragment, StringComparison.OrdinalIgnoreCase) != true)
                 throw new RegressionAssertException($"{message} Missing fragment: {expectedFragment}; Actual: {actual}");
         }
+
+        public static void DoesNotContain(string unexpectedFragment, string actual, string message)
+        {
+            if (actual?.Contains(unexpectedFragment, StringComparison.OrdinalIgnoreCase) == true)
+                throw new RegressionAssertException($"{message} Unexpected fragment: {unexpectedFragment}; Actual: {actual}");
+        }
     }
 }

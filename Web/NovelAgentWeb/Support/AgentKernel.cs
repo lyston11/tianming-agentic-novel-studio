@@ -57,9 +57,6 @@ public sealed class ConversationKernel
         if (IsStatusQuery(normalized))
             return Fill(intent, TurnIntentType.StatusQuery, "status_query", confidence: 0.9);
 
-        if (IsContinue(normalized))
-            return Fill(intent, TurnIntentType.ContinueMission, "continue_mission", confidence: 0.86);
-
         if (TryResolveCandidateSelection(session, msg, intent, out var selectionIntent))
             return selectionIntent;
 
@@ -194,10 +191,6 @@ public sealed class ConversationKernel
 
     private static bool IsStatusQuery(string msg) =>
         ContainsAny(msg, "准备好了吗", "写完了吗", "生成了吗", "在哪", "哪里", "进度", "状态", "怎么样了", "刚才那章", "刚才生成", "草稿呢", "那章呢", "到哪了");
-
-    private static bool IsContinue(string msg) =>
-        msg is "继续" or "下一步" or "接着" or "往下" or "继续推进" ||
-        ContainsAny(msg, "继续推进", "接着来", "下一步");
 
     private static bool IsProjectSwitch(string msg) =>
         ContainsAny(msg, "切换到", "换到", "打开项目", "打开小说");
@@ -460,23 +453,15 @@ public sealed class ToolPolicyEngine
     {
         var name = call.Name.Trim();
 
-        if (!IsDiscoveredOrAuthorized(name, context, confirmed))
-        {
-            var result = ToolPolicyResult.Block(
-                $"工具 {name} 尚未通过 tool_search 暴露。请先调用 tool_search 发现当前阶段工具，再从已发现工具中选择执行。");
-            result.UserFacingMessage = "请先调用 tool_search 发现当前阶段工具。";
-            return result;
-        }
-
         return name switch
         {
             "tool_search" => ToolPolicyResult.Allow(),
-            "QueryWorkspaceState" or "QueryProjectStatus" or "SearchCreativeKnowledge" or "ResolveNovelProject" => ToolPolicyResult.Allow(),
+            "QueryWorkspaceState" or "QueryProjectStatus" or "SearchCreativeKnowledge" or "ResolveNovelProject" or "ProcessKnowledgeFile" => ToolPolicyResult.Allow(),
             "PlanStoryFoundation" => ToolPolicyResult.Allow(),  // LLM decided, trust it
             "CommitStoryFoundation" => PolicyCommitStoryFoundation(call, session, bible, confirmed),
             "PlanVolumeArc" => PolicyPlanVolumeArc(bible),  // Only structural check
             "CommitVolumeArc" => AllowAutopilot("High", "提交卷规划。"),
-            "PlanChapter" => PolicyPlanChapter(call),  // Only structural check
+            "PlanChapter" => PolicyPlanChapter(call, session, bible, context),
             "SelectChapterCandidate" => PolicyRunExists(call, session, bible, "选择章节候选需要已有章节 Run。"),
             "BuildChapterContextPackage" => PolicyBuildContext(call, session, bible),
             "GenerateChapterWithChanges" => PolicyGenerateDraft(call, session, bible, confirmed),
@@ -488,18 +473,6 @@ public sealed class ToolPolicyEngine
         };
     }
 
-    private static bool IsDiscoveredOrAuthorized(string name, AgentObservationContext context, bool confirmed)
-    {
-        if (string.Equals(name, "tool_search", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (confirmed)
-            return true;
-
-        return context.AvailableTools.Any(tool =>
-            string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
-    }
-
     // PlanVolumeArc: only check structural prerequisite (Story Bible must exist)
     private static ToolPolicyResult PolicyPlanVolumeArc(StoryBibleDocument bible)
     {
@@ -508,12 +481,107 @@ public sealed class ToolPolicyEngine
         return ToolPolicyResult.Allow();
     }
 
-    // PlanChapter: only check parameter validity
-    private static ToolPolicyResult PolicyPlanChapter(AgentToolCall call)
+    private static ToolPolicyResult PolicyPlanChapter(
+        AgentToolCall call,
+        AgentSession session,
+        StoryBibleDocument bible,
+        AgentObservationContext context)
     {
         if (call.Arguments.ContainsKey("userGoal"))
             return ToolPolicyResult.Block("PlanChapter 已废弃 userGoal 参数。必须使用 creativeBrief/sourceTurnId。");
+        if (string.IsNullOrWhiteSpace(Arg(call, "creativeBrief")))
+        {
+            var creativeBrief = BuildChapterCreativeBrief(call, session, bible, context);
+            if (!string.IsNullOrWhiteSpace(creativeBrief))
+                return ToolPolicyResult.RepairableBlock(
+                    "章节规划需要结构化 creativeBrief。",
+                    "PlanChapter",
+                    BuildRecommendedArgs(call, null, session, creativeBrief),
+                    "chapter_creative_brief",
+                    "我已经从当前故事地基和卷规划整理出章节创作简报，会继续生成章节候选。");
+
+            return ToolPolicyResult.Block("章节规划缺少可用的创作简报，需要先补齐故事地基或卷规划。");
+        }
         return ToolPolicyResult.Allow("Medium");
+    }
+
+    private static string BuildChapterCreativeBrief(
+        AgentToolCall call,
+        AgentSession session,
+        StoryBibleDocument bible,
+        AgentObservationContext context)
+    {
+        var constitution = bible.Constitution;
+        if (constitution == null)
+            return string.Empty;
+
+        var chapterId = FirstNonEmpty(
+            Arg(call, "chapterId"),
+            context.MissionPlan?.SchedulerState?.ActiveChapterId,
+            session.WorkingMemory?.MissionPlan?.SchedulerState?.ActiveChapterId,
+            "chapter-001");
+        var volume = FindVolumeForChapter(bible, chapterId) ?? bible.VolumeArcs.FirstOrDefault();
+
+        var parts = new List<string>
+        {
+            $"为 {chapterId} 规划章节候选。",
+            $"故事地基：{FirstNonEmpty(constitution.Genre, "未标注类型")}/{FirstNonEmpty(constitution.SubGenre, "未标注子类型")}；核心钩子：{constitution.CoreHook}",
+        };
+        if (!string.IsNullOrWhiteSpace(constitution.ReaderPromise))
+            parts.Add($"读者承诺：{constitution.ReaderPromise}");
+        if (!string.IsNullOrWhiteSpace(constitution.MainPleasure))
+            parts.Add($"主要爽点：{constitution.MainPleasure}");
+        if (!string.IsNullOrWhiteSpace(constitution.WorldCoreRule))
+            parts.Add($"世界规则：{constitution.WorldCoreRule}");
+        if (!string.IsNullOrWhiteSpace(constitution.ProtagonistEngine))
+            parts.Add($"主角成长引擎：{constitution.ProtagonistEngine}");
+        if (volume != null)
+        {
+            parts.Add($"当前卷：{FirstNonEmpty(volume.Title, volume.VolumeId)}；卷目标：{volume.VolumePromise}");
+            if (!string.IsNullOrWhiteSpace(volume.CoreQuestion))
+                parts.Add($"卷核心问题：{volume.CoreQuestion}");
+            var beat = FindVolumeBeat(volume, chapterId);
+            if (beat != null)
+                parts.Add($"章节节拍：{FirstNonEmpty(beat.Role, beat.Goal, beat.Turn)}；目标：{beat.Goal}；转折：{beat.Turn}；代价：{beat.Cost}");
+        }
+
+        return string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+    }
+
+    private static VolumeArcPlan? FindVolumeForChapter(StoryBibleDocument bible, string chapterId)
+    {
+        if (string.IsNullOrWhiteSpace(chapterId))
+            return null;
+        return bible.VolumeArcs.FirstOrDefault(v => IsChapterInsideArc(chapterId, v));
+    }
+
+    private static VolumeChapterBeat? FindVolumeBeat(VolumeArcPlan volume, string chapterId)
+    {
+        if (volume.ChapterBeats.Count == 0)
+            return null;
+        var chapterNumber = ExtractChapterNumber(chapterId);
+        if (chapterNumber <= 0)
+            return volume.ChapterBeats.FirstOrDefault();
+        var startNumber = ExtractChapterNumber(volume.StartChapterId);
+        var index = startNumber > 0 ? chapterNumber - startNumber + 1 : chapterNumber;
+        return volume.ChapterBeats.FirstOrDefault(b => b.Index == index) ?? volume.ChapterBeats.FirstOrDefault();
+    }
+
+    private static bool IsChapterInsideArc(string chapterId, VolumeArcPlan volume)
+    {
+        var chapterNumber = ExtractChapterNumber(chapterId);
+        var startNumber = ExtractChapterNumber(volume.StartChapterId);
+        var endNumber = ExtractChapterNumber(volume.EndChapterId);
+        return chapterNumber > 0 && startNumber > 0 && endNumber > 0 &&
+               chapterNumber >= startNumber && chapterNumber <= endNumber;
+    }
+
+    private static int ExtractChapterNumber(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return 0;
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var number) ? number : 0;
     }
 
     private static ToolPolicyResult PolicyCommitStoryFoundation(AgentToolCall call, AgentSession session, StoryBibleDocument bible, bool confirmed)
@@ -567,6 +635,12 @@ public sealed class ToolPolicyEngine
                 return null;
             }
 
+            if (selectedIndex == 0)
+            {
+                selectedIndex = 1;
+                call.Arguments["selectedMacroCandidateIndex"] = "1";
+            }
+
             if (selectedIndex >= 1 && selectedIndex <= run.MacroCandidates.Count)
                 return run.MacroCandidates[selectedIndex - 1];
 
@@ -613,13 +687,6 @@ public sealed class ToolPolicyEngine
     private static ToolPolicyResult PolicyGenerateDraft(AgentToolCall call, AgentSession session, StoryBibleDocument bible, bool confirmed)
     {
         var run = FindRun(call, session, bible);
-        if (run?.ContextPackage == null || run.ContextPackage.Status is not ("ready" or "context_ready"))
-            return ToolPolicyResult.RepairableBlock(
-                "生成正文前必须先构建章节上下文包。",
-                "BuildChapterContextPackage",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_context_package",
-                "现在还不能生成正文，因为缺章节上下文包。我会先构建上下文包。");
         var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
         if (chapter?.RequiresContextRebuild == true || chapter?.Status == "needs_context_rebuild")
             return ToolPolicyResult.RepairableBlock(
@@ -664,6 +731,20 @@ public sealed class ToolPolicyEngine
         if (chapter?.Status == "committed")
             return ToolPolicyResult.Block("已提交章节不能自动修复或覆盖正文，只能复盘或分析依赖影响。");
         var qualityFailed = chapter?.QualityStatus is "quality_failed" or "blocked" || chapter?.Status == "quality_failed";
+        if (run?.DraftArtifact == null || string.IsNullOrWhiteSpace(run.DraftArtifact.DraftContent))
+            return ToolPolicyResult.RepairableBlock(
+                "修复章节前必须先生成草稿和 CHANGES。",
+                "GenerateChapterWithChanges",
+                BuildRecommendedArgs(call, run, session),
+                "chapter_draft",
+                "现在还不能修复章节，因为还没有草稿。我会先生成草稿。");
+        if (!gateFailed && !qualityFailed && run.GateReport == null)
+            return ToolPolicyResult.RepairableBlock(
+                "修复章节前必须先执行门禁校验，确认具体失败项。",
+                "ValidateChapterDraft",
+                BuildRecommendedArgs(call, run, session),
+                "generation_gate",
+                "现在还不能修复章节，因为草稿还没有门禁报告。我会先校验草稿。");
         if (!gateFailed && !qualityFailed)
             return ToolPolicyResult.Block("修复草稿需要已有 GenerationGate 或质量门禁失败项。");
         return AllowAutopilot("High", "修复章节草稿。");
@@ -700,15 +781,41 @@ public sealed class ToolPolicyEngine
                 BuildRecommendedArgs(call, run, session),
                 "chapter_context_package",
                 "章节上下文已过期，需要先重建上下文。");
-        if (chapter != null && chapter.QualityStatus is not ("quality_passed" or "quality_warn"))
-            return ToolPolicyResult.RepairableBlock(
-                "质量门禁未通过，不能提交成稿。",
-                "ValidateChapterDraft",
-                BuildRecommendedArgs(call, run, session),
-                "quality_gate",
-                "质量门禁还没通过，我会先重新校验草稿状态。");
+
+        var review = run?.PostGenerationReview;
+        var qualityStatus = chapter?.QualityStatus ?? string.Empty;
         if (chapter != null && !string.IsNullOrWhiteSpace(chapter.QualityIssueSummary))
             return ToolPolicyResult.Block("质量门禁仍有问题，不能提交成稿。");
+
+        if (review == null || qualityStatus is "" or "not_reviewed" or "pending_quality_review")
+        {
+            if (qualityStatus is "quality_passed" or "quality_warn")
+                return RequireConfirmation(confirmed, "提交已校验章节进书城。");
+
+            return ToolPolicyResult.RepairableBlock(
+                "提交成稿前必须先执行质量评审。",
+                "ReviewChapter",
+                BuildRecommendedArgs(call, run, session),
+                "quality_gate",
+                "质量评审还没执行，我会先评审章节。");
+        }
+
+        if (review.RequiresRewrite ||
+            review.OverallResult is "Fail" or "Failed" ||
+            qualityStatus is "quality_failed" or "blocked")
+            return ToolPolicyResult.RepairableBlock(
+                "质量门禁未通过，不能提交成稿。",
+                "RepairChapterDraft",
+                BuildRecommendedArgs(call, run, session),
+                "quality_gate",
+                "质量评审未通过，我会先修复草稿。");
+        if (chapter != null && qualityStatus is not ("quality_passed" or "quality_warn"))
+            return ToolPolicyResult.RepairableBlock(
+                "质量状态还没有确认通过，不能提交成稿。",
+                "ReviewChapter",
+                BuildRecommendedArgs(call, run, session),
+                "quality_gate",
+                "质量状态还没确认通过，我会先评审章节。");
 
         return RequireConfirmation(confirmed, "提交已校验章节进书城。");
     }

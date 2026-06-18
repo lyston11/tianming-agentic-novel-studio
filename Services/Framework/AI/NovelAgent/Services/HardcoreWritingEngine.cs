@@ -34,10 +34,12 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private readonly IMicroEmbeddingService? _embeddingService;
         private readonly object? _versionTrackingService;
         private readonly object? _settingsManager;
+        private readonly StoryBibleService? _storyBibleService;
 
         public HardcoreWritingEngine(StoryStateSnapshotService storyStateSnapshotService)
         {
             _storyStateSnapshotService = storyStateSnapshotService;
+            _storyBibleService = storyStateSnapshotService.StoryBibleService;
         }
 
         public HardcoreWritingEngine(
@@ -62,6 +64,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             _embeddingService = embeddingService;
             _versionTrackingService = versionTrackingService;
             _settingsManager = settingsManager;
+            _storyBibleService = storyStateSnapshotService.StoryBibleService;
         }
 
         public async Task<ChapterContextPackageSummary> BuildContextPackageAsync(
@@ -126,8 +129,14 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 package.ActiveConflicts.Insert(0, $"主冲突引擎：{document.Constitution.MainConflictEngine}");
             }
 
+            ApplyContinuityPack(document, run, package);
+            await BackfillPreviousChapterSummaryAsync(run, package, ct).ConfigureAwait(false);
+
             package.WorldRules = package.WorldRules.Where(HasText).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            package.CharacterStates = package.CharacterStates.Where(HasText).Distinct(StringComparer.OrdinalIgnoreCase).Take(18).ToList();
             package.ActiveConflicts = package.ActiveConflicts.Where(HasText).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            package.PreviousSummaries = package.PreviousSummaries.Where(HasText).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            package.HardContinuityFacts = package.HardContinuityFacts.Where(HasText).Distinct(StringComparer.OrdinalIgnoreCase).Take(24).ToList();
             return package;
         }
 
@@ -188,31 +197,40 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                         snapshot,
                         BuildDesignElements(context),
                         context?.ContextIds ?? new ContextIdCollection()).ConfigureAwait(false);
-                    return MapGateResult(gate, contextPackage);
+                    var report = MapGateResult(gate, contextPackage);
+                    ApplyCoreContinuityGate(report, contextPackage, draft);
+                    return report;
                 }
                 catch (Exception ex)
                 {
-                    return new GenerationGateReport
-                    {
-                        Status = "gate_failed",
-                        ChangesDetected = GenerationGate.HasChangesRegion(draft.DraftContent),
-                        ProtocolPassed = false,
-                        FactSnapshotPassed = false,
-                        BlueprintPassed = contextPackage.ChapterBlueprints.Count > 0 || run.ChapterBrief != null,
-                        RagPassed = contextPackage.LongDistanceRecall.Count > 0 || contextPackage.PreviousSummaries.Count > 0,
-                        Issues = { $"真实 GenerationGate 校验异常：{ex.Message}" },
-                        RepairHints = { "重新构建章节上下文包后再校验；若仍失败，请检查 ProjectData 结构化设定。"}
-                    };
+                    var fallback = BuildFallbackGateReport(run, contextPackage, draft);
+                    fallback.RepairHints.Add($"真实 GenerationGate 当前不可用，已使用 Web runtime fallback 校验：{ex.Message}");
+                    return fallback;
                 }
             }
 
+            return BuildFallbackGateReport(run, contextPackage, draft);
+        }
+
+        private static GenerationGateReport BuildFallbackGateReport(
+            NovelAgentRun run,
+            ChapterContextPackageSummary contextPackage,
+            ChapterDraftArtifact draft)
+        {
+            var hasChangesRegion = GenerationGate.HasChangesRegion(draft.DraftContent);
+            var changesJson = !string.IsNullOrWhiteSpace(draft.ChangesJson)
+                ? draft.ChangesJson
+                : ExtractChangesJson(draft.DraftContent);
+            if (GenerationGate.TryNormalizeChangesJsonShape(changesJson, out var normalizedChangesJson))
+                changesJson = normalizedChangesJson;
+            var isFirstChapter = ExtractChapterNumber(run.TargetChapterId) <= 1;
             var report = new GenerationGateReport
             {
-                ChangesDetected = draft.HasChanges && draft.DraftContent.Contains(ChangesSeparator, StringComparison.Ordinal),
-                ProtocolPassed = draft.HasChanges && IsValidJsonObject(draft.ChangesJson),
+                ChangesDetected = hasChangesRegion,
+                ProtocolPassed = hasChangesRegion && IsValidJsonObject(changesJson),
                 FactSnapshotPassed = contextPackage.ActiveConflicts.Count > 0 || contextPackage.CharacterStates.Count > 0 || contextPackage.WorldRules.Count > 0,
                 BlueprintPassed = contextPackage.ChapterBlueprints.Count > 0 || run.ChapterBrief != null,
-                RagPassed = contextPackage.LongDistanceRecall.Count > 0 || contextPackage.PreviousSummaries.Count > 0
+                RagPassed = isFirstChapter || contextPackage.LongDistanceRecall.Count > 0 || contextPackage.PreviousSummaries.Count > 0
             };
 
             if (!report.ChangesDetected)
@@ -245,8 +263,128 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 report.RepairHints.Add("刷新章节摘要和长距离 RAG 索引后再生成。");
             }
 
+            ApplyCoreContinuityGate(report, contextPackage, draft);
             report.Status = report.Issues.Count == 0 ? "validated" : "gate_failed";
             return report;
+        }
+
+        private static int ExtractChapterNumber(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            var digits = new string(value.Where(char.IsDigit).ToArray());
+            return int.TryParse(digits, out var number) ? number : 0;
+        }
+
+        private async Task BackfillPreviousChapterSummaryAsync(
+            NovelAgentRun run,
+            ChapterContextPackageSummary package,
+            CancellationToken ct)
+        {
+            if (package.PreviousSummaries.Count > 0)
+                return;
+
+            var currentNumber = ExtractChapterNumber(run.TargetChapterId);
+            if (currentNumber <= 1)
+                return;
+
+            var summaries = await LoadPreviousSummariesFromStoreAsync(run.TargetChapterId, ct).ConfigureAwait(false);
+            if (summaries.Count == 0)
+                summaries = await LoadPreviousSummariesFromCommittedContentAsync(run.TargetChapterId, currentNumber, ct)
+                    .ConfigureAwait(false);
+
+            foreach (var summary in summaries.Where(HasText))
+                package.PreviousSummaries.Add(summary);
+        }
+
+        private static async Task<List<string>> LoadPreviousSummariesFromStoreAsync(
+            string currentChapterId,
+            CancellationToken ct)
+        {
+            var summaryStore = TM.Framework.Common.Services.ServiceLocator.TryGet<TM.Services.Modules.ProjectData.Implementations.ChapterSummaryStore>();
+            if (summaryStore == null)
+                return new List<string>();
+
+            try
+            {
+                var summaries = await summaryStore.GetPreviousSummariesAsync(currentChapterId, 3).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                return summaries
+                    .Where(kv => ChapterParserHelper.CompareChapterId(kv.Key, currentChapterId) < 0)
+                    .OrderByDescending(kv => ChapterParserHelper.ParseChapterId(kv.Key)?.chapterNumber ?? 0)
+                    .Take(3)
+                    .Select(kv => $"{kv.Key}: {kv.Value}")
+                    .Where(HasText)
+                    .ToList();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                TM.App.Log($"[HardcoreWritingEngine] 摘要链兜底读取失败: {ex.Message}");
+                return new List<string>();
+            }
+        }
+
+        private async Task<List<string>> LoadPreviousSummariesFromCommittedContentAsync(
+            string currentChapterId,
+            int currentNumber,
+            CancellationToken ct)
+        {
+            var previousChapterId = FormatSiblingChapterId(currentChapterId, currentNumber - 1);
+            var previousContent = await LoadCommittedChapterContentAsync(previousChapterId, ct).ConfigureAwait(false);
+            if (!HasText(previousContent))
+                return new List<string>();
+
+            return new List<string>
+            {
+                $"{previousChapterId}: {BuildCommittedChapterSummary(previousContent!)}"
+            };
+        }
+
+        private async Task<string?> LoadCommittedChapterContentAsync(string chapterId, CancellationToken ct)
+        {
+            if (_generatedContentService != null)
+            {
+                try
+                {
+                    var content = await _generatedContentService.GetChapterAsync(chapterId).ConfigureAwait(false);
+                    if (HasText(content))
+                        return content;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    TM.App.Log($"[HardcoreWritingEngine] 读取已提交章节 {chapterId} 失败: {ex.Message}");
+                }
+            }
+
+            if (_contentChunkSearch != null)
+            {
+                var chunks = await _contentChunkSearch.SearchByChapterAsync(chapterId, topK: 3).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                var content = string.Join("\n", chunks.OrderBy(c => c.Position).Select(c => c.Content));
+                if (HasText(content))
+                    return content;
+            }
+
+            return null;
+        }
+
+        private static string FormatSiblingChapterId(string currentChapterId, int chapterNumber)
+        {
+            if (chapterNumber <= 0)
+                return string.Empty;
+
+            var match = Regex.Match(currentChapterId ?? string.Empty, @"^(.*?)(\d+)(\D*)$");
+            if (!match.Success)
+                return $"chapter-{chapterNumber:000}";
+
+            var width = match.Groups[2].Value.Length;
+            return $"{match.Groups[1].Value}{chapterNumber.ToString().PadLeft(width, '0')}{match.Groups[3].Value}";
+        }
+
+        private static string BuildCommittedChapterSummary(string content)
+        {
+            var body = Regex.Replace(content ?? string.Empty, @"\s+", " ").Trim();
+            if (body.Length > 600) body = body[..600] + "...";
+            return body;
         }
 
         public GenerationGateReport ValidateDraft(
@@ -309,8 +447,30 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
             var committed = StripChanges(draft.DraftContent);
             await _generatedContentService.SaveChapterAsync(run.TargetChapterId, committed).ConfigureAwait(false);
-            await RefreshIndexesAsync(run, draft, committed, ct).ConfigureAwait(false);
+            StartPostCommitRefresh(run, contextPackage, draft, committed);
             return RefreshIndexesAndAnalyzeImpact(run, draft);
+        }
+
+        private void StartPostCommitRefresh(
+            NovelAgentRun run,
+            ChapterContextPackageSummary contextPackage,
+            ChapterDraftArtifact draft,
+            string committedContent)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ExtractAndPersistContinuityFactsAsync(run, contextPackage, committedContent, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    await RefreshIndexesAsync(run, draft, committedContent, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    TM.App.Log($"[HardcoreWritingEngine] 提交后后台沉淀/索引刷新失败（章节已提交）：{ex.Message}");
+                }
+            });
         }
 
         public DependencyImpactReport RefreshIndexesAndAnalyzeImpact(
@@ -330,6 +490,20 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         public string StripChanges(string content)
         {
             if (string.IsNullOrWhiteSpace(content)) return string.Empty;
+            var xml = Regex.Match(
+                content,
+                @"<\s*(?:chapter_changes|changes)\b[^>]*>[\s\S]*?</\s*(?:chapter_changes|changes)\s*>",
+                RegexOptions.IgnoreCase);
+            if (xml.Success)
+                return content[..xml.Index].Trim();
+
+            var xmlStart = Regex.Match(
+                content,
+                @"<\s*(?:chapter_changes|changes)\b[^>]*>",
+                RegexOptions.IgnoreCase);
+            if (xmlStart.Success)
+                return content[..xmlStart.Index].Trim();
+
             var index = content.IndexOf(ChangesSeparator, StringComparison.Ordinal);
             return index >= 0 ? content[..index].Trim() : content.Trim();
         }
@@ -344,6 +518,378 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             if (HasText(brief.CharacterChoice)) yield return $"角色选择：{brief.CharacterChoice}";
             if (HasText(brief.CostOrConsequence)) yield return $"代价后果：{brief.CostOrConsequence}";
             if (HasText(brief.ForeshadowingAction)) yield return $"伏笔动作：{brief.ForeshadowingAction}";
+        }
+
+        private static void ApplyContinuityPack(
+            StoryBibleDocument document,
+            NovelAgentRun run,
+            ChapterContextPackageSummary package)
+        {
+            var currentNumber = ExtractChapterNumber(run.TargetChapterId);
+            var previousFacts = document.ContinuityFacts
+                .Where(f => !string.IsNullOrWhiteSpace(f.ChapterId))
+                .Select(f => new { Facts = f, Number = ExtractChapterNumber(f.ChapterId) })
+                .Where(x => x.Number > 0 && (currentNumber <= 0 || x.Number < currentNumber))
+                .OrderByDescending(x => x.Number)
+                .Take(3)
+                .Select(x => x.Facts)
+                .ToList();
+
+            foreach (var facts in previousFacts)
+            {
+                foreach (var line in FormatContinuityFactLines(facts))
+                    package.HardContinuityFacts.Add(line);
+
+                if (HasText(facts.ProtagonistName))
+                {
+                    package.CharacterStates.Insert(0,
+                        $"{facts.ProtagonistName}：{FirstNonEmpty(facts.ProtagonistIdentity, "主角")}；当前状态={facts.ProtagonistStatus}；位置={facts.CurrentLocation}；系统={facts.SystemState}；装备={facts.EquipmentState}");
+                }
+
+                if (HasText(facts.EndingState))
+                    package.PreviousSummaries.Insert(0, $"{facts.ChapterId}: {facts.EndingState}");
+            }
+
+            var activeCharacters = document.CharacterLedger
+                .Where(c => c.Status is CharacterLedgerStatus.Active
+                    or CharacterLedgerStatus.GoalUpdated
+                    or CharacterLedgerStatus.SecretSeeded
+                    or CharacterLedgerStatus.RelationshipChanged
+                    or CharacterLedgerStatus.AbilityChanged
+                    or CharacterLedgerStatus.PsychologicalShifted
+                    or CharacterLedgerStatus.BeliefShifted)
+                .OrderByDescending(c => c.Importance)
+                .ThenByDescending(c => c.UpdatedAt)
+                .Take(8)
+                .Select(c => $"{c.CharacterName}：{FirstNonEmpty(c.Role, c.IdentityState)}；{FirstNonEmpty(c.Summary, c.CurrentGoal, c.NextPressure)}");
+            package.CharacterStates.AddRange(activeCharacters);
+
+            var activeVolume = document.VolumeArcs
+                .Select(v => new
+                {
+                    Plan = v,
+                    Start = ExtractChapterNumber(v.StartChapterId),
+                    End = ExtractChapterNumber(v.EndChapterId)
+                })
+                .Where(x => x.Start <= 0 || currentNumber <= 0 || currentNumber >= x.Start)
+                .Where(x => x.End <= 0 || currentNumber <= 0 || currentNumber <= x.End)
+                .OrderByDescending(x => x.Start)
+                .Select(x => x.Plan)
+                .FirstOrDefault();
+            if (activeVolume != null)
+            {
+                package.WorldRules.Insert(0, $"当前卷目标：{FirstNonEmpty(activeVolume.Title, activeVolume.VolumeId)}；{activeVolume.VolumePromise}");
+                if (HasText(activeVolume.ExitState))
+                    package.ActiveConflicts.Insert(0, $"卷出口状态目标：{activeVolume.ExitState}");
+            }
+        }
+
+        private static IEnumerable<string> FormatContinuityFactLines(ChapterContinuityFacts facts)
+        {
+            if (HasText(facts.ProtagonistName)) yield return $"主角姓名：{facts.ProtagonistName}";
+            if (HasText(facts.ProtagonistIdentity)) yield return $"主角身份：{facts.ProtagonistIdentity}";
+            if (HasText(facts.ProtagonistStatus)) yield return $"主角当前状态：{facts.ProtagonistStatus}";
+            if (HasText(facts.CurrentLocation)) yield return $"当前位置：{facts.CurrentLocation}";
+            if (HasText(facts.SystemState)) yield return $"系统状态：{facts.SystemState}";
+            if (HasText(facts.EquipmentState)) yield return $"装备状态：{facts.EquipmentState}";
+            foreach (var keyEvent in facts.KeyEvents.Where(HasText).Take(8))
+                yield return $"已发生事件：{keyEvent}";
+            if (HasText(facts.EndingState)) yield return $"上一章结尾状态：{facts.EndingState}";
+            foreach (var carry in facts.NextChapterMustCarry.Where(HasText).Take(8))
+                yield return $"下一章必须承接：{carry}";
+        }
+
+        private static void ApplyCoreContinuityGate(
+            GenerationGateReport report,
+            ChapterContextPackageSummary contextPackage,
+            ChapterDraftArtifact draft)
+        {
+            var body = NormalizeContinuityText(Regex.Replace(StripChangesStatic(draft.DraftContent), @"<\s*(?:chapter_changes|changes)\b[\s\S]*$", string.Empty, RegexOptions.IgnoreCase));
+            var protagonistName = ExtractFactValue(contextPackage.HardContinuityFacts, "主角姓名");
+            if (HasText(protagonistName) && !body.Contains(NormalizeContinuityText(protagonistName!), StringComparison.Ordinal))
+            {
+                report.Issues.Add($"核心连续性失败：本章没有承接硬事实主角「{protagonistName}」。");
+                report.RepairHints.Add($"重写正文，主角姓名、身份和当前状态必须继续使用「{protagonistName}」。");
+            }
+
+            var protagonistStatus = ExtractFactValue(contextPackage.HardContinuityFacts, "主角当前状态");
+            if (HasText(protagonistStatus) && !ContainsEnoughContinuityKeywords(body, protagonistStatus!))
+            {
+                report.Issues.Add("核心连续性失败：主角当前状态没有从上一章硬事实自然承接。");
+                report.RepairHints.Add($"承接主角状态：{protagonistStatus}");
+            }
+
+            var systemState = ExtractFactValue(contextPackage.HardContinuityFacts, "系统状态");
+            if (HasText(systemState) && body.Contains("系统", StringComparison.Ordinal) && !ContainsEnoughContinuityKeywords(body, systemState!))
+            {
+                report.Issues.Add("核心连续性失败：系统状态与上一章硬事实不一致或发生无解释跳变。");
+                report.RepairHints.Add($"系统状态必须从这里承接：{systemState}");
+            }
+
+            foreach (var carry in ExtractFactValues(contextPackage.HardContinuityFacts, "上一章结尾状态", "下一章必须承接").Take(8))
+            {
+                if (!ContainsEnoughContinuityKeywords(body, carry))
+                {
+                    report.Issues.Add($"核心连续性失败：未承接「{TrimForIssue(carry)}」。");
+                    report.RepairHints.Add($"开章或关键场景必须回应上一章结尾/必须承接项：{carry}");
+                }
+            }
+
+            if (report.Issues.Count > 0)
+            {
+                report.FactSnapshotPassed = false;
+                report.RagPassed = false;
+                report.Status = "gate_failed";
+            }
+        }
+
+        private async Task ExtractAndPersistContinuityFactsAsync(
+            NovelAgentRun run,
+            ChapterContextPackageSummary contextPackage,
+            string committedContent,
+            CancellationToken ct)
+        {
+            if (_storyBibleService == null || !HasText(committedContent))
+                return;
+
+            try
+            {
+                var settings = await LoadSettingsAsync(ct).ConfigureAwait(false);
+                if (!settings.IsConfigured)
+                {
+                    TM.App.Log("[HardcoreWritingEngine] LLM 未配置，跳过章节连续性事实沉淀；不会使用规则抽取伪造事实。");
+                    return;
+                }
+
+                var raw = await CompleteWritingAsync(
+                    settings,
+                    BuildContinuityExtractionSystemPrompt(),
+                    BuildContinuityExtractionUserPrompt(run, contextPackage, committedContent),
+                    ct).ConfigureAwait(false);
+                if (!TryDeserializeContinuityFacts(raw, out var facts))
+                {
+                    TM.App.Log($"[HardcoreWritingEngine] LLM 连续性事实 JSON 不可解析，跳过沉淀：{TrimForIssue(raw)}");
+                    return;
+                }
+
+                facts.ChapterId = FirstNonEmpty(facts.ChapterId, run.TargetChapterId);
+                facts.SourceRunId = FirstNonEmpty(facts.SourceRunId, run.RunId);
+                facts.ExtractedAt = DateTime.Now;
+                var result = await _storyBibleService.UpsertContinuityFactsAsync(facts, ct).ConfigureAwait(false);
+                if (result.Success)
+                    run.Notes.Add($"已沉淀章节连续性事实：{FirstNonEmpty(facts.ChapterTitle, facts.ChapterId)}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                TM.App.Log($"[HardcoreWritingEngine] 章节连续性事实沉淀失败（章节已提交）：{ex.Message}");
+            }
+        }
+
+        private static string BuildContinuityExtractionSystemPrompt() =>
+            """
+            你是长篇小说事实沉淀模型。只从给定成稿中抽取已经发生且明确写出的事实，不推测、不补设定。
+            必须只输出一个合法 JSON 对象，不要 Markdown，不要解释。
+            JSON 字段必须包含：
+            chapterId, chapterTitle, protagonistName, protagonistIdentity, protagonistStatus, currentLocation,
+            systemState, equipmentState, keyEvents, endingState, nextChapterMustCarry。
+            keyEvents 和 nextChapterMustCarry 必须是字符串数组；没有明确事实时填空字符串或空数组。
+            """;
+
+        private static string BuildContinuityExtractionUserPrompt(
+            NovelAgentRun run,
+            ChapterContextPackageSummary contextPackage,
+            string committedContent)
+        {
+            var payload = new
+            {
+                task = "extract_chapter_continuity_facts",
+                chapterId = run.TargetChapterId,
+                existingHardContinuityFacts = contextPackage.HardContinuityFacts,
+                chapterText = committedContent
+            };
+            return JsonSerializer.Serialize(payload, JsonHelper.CnDefault);
+        }
+
+        private static bool TryDeserializeContinuityFacts(string raw, out ChapterContinuityFacts facts)
+        {
+            facts = new ChapterContinuityFacts();
+            var json = ExtractJsonObject(raw);
+            if (!HasText(json))
+                return false;
+
+            try
+            {
+                facts = JsonSerializer.Deserialize<ChapterContinuityFacts>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    ReadCommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                }) ?? new ChapterContinuityFacts();
+                return HasText(facts.ChapterId) ||
+                       HasText(facts.ProtagonistName) ||
+                       HasText(facts.EndingState) ||
+                       facts.KeyEvents.Count > 0 ||
+                       facts.NextChapterMustCarry.Count > 0;
+            }
+            catch
+            {
+                facts = new ChapterContinuityFacts();
+                return false;
+            }
+        }
+
+        private static string ExtractJsonObject(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+            var text = raw.Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                text = Regex.Replace(text, @"^```(?:json)?", string.Empty, RegexOptions.IgnoreCase).Trim();
+                text = Regex.Replace(text, @"```$", string.Empty).Trim();
+            }
+
+            var start = text.IndexOf('{');
+            var end = text.LastIndexOf('}');
+            return start >= 0 && end > start ? text[start..(end + 1)] : text;
+        }
+
+        private static string? ExtractFactValue(IEnumerable<string> facts, string key) =>
+            ExtractFactValues(facts, key).FirstOrDefault();
+
+        private static IEnumerable<string> ExtractFactValues(IEnumerable<string> facts, params string[] keys)
+        {
+            foreach (var fact in facts.Where(HasText))
+            {
+                foreach (var key in keys)
+                {
+                    var prefix = key + "：";
+                    if (fact.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        yield return fact[prefix.Length..].Trim();
+                    prefix = key + ":";
+                    if (fact.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        yield return fact[prefix.Length..].Trim();
+                }
+            }
+        }
+
+        private static bool ContainsEnoughContinuityKeywords(string body, string expected)
+        {
+            var searchableBody = ExpandContinuityAliases(body);
+            var keywords = ExtractContinuityKeywords(ExpandContinuityAliases(expected))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (keywords.Count == 0)
+                return true;
+            var hits = keywords.Count(keyword => searchableBody.Contains(keyword, StringComparison.Ordinal));
+            var required = keywords.Count <= 2 ? keywords.Count : Math.Min(3, keywords.Count);
+            return hits >= required;
+        }
+
+        private static string ExpandContinuityAliases(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            var expanded = value;
+            if (ContainsAny(expanded, "临近", "将至", "来临", "即将", "逼近", "接近"))
+                expanded += "临近将至来临即将逼近";
+
+            if (ContainsAny(expanded, "提前", "爆发", "开始", "已开始", "已经开始", "发生"))
+                expanded += "来临临近升级增加";
+
+            if (ContainsAny(expanded, "威胁", "危险", "危机", "风险", "戒备", "预警", "告警"))
+                expanded += "威胁危险危机风险戒备";
+
+            if (ContainsAny(expanded, "增加", "加剧", "升级", "飙升", "超预期", "增强", "扩大"))
+                expanded += "增加加剧升级飙升增强";
+
+            if (expanded.Contains("逆潮现象", StringComparison.Ordinal) &&
+                !expanded.Contains("逆潮夜", StringComparison.Ordinal))
+            {
+                expanded += "逆潮夜";
+            }
+
+            if (expanded.Contains("逆潮夜", StringComparison.Ordinal) &&
+                !expanded.Contains("逆潮现象", StringComparison.Ordinal))
+            {
+                expanded += "逆潮现象";
+            }
+
+            if (expanded.Contains("蓝磷骨光", StringComparison.Ordinal) &&
+                !expanded.Contains("蓝光现象", StringComparison.Ordinal))
+            {
+                expanded += "蓝光现象蓝光";
+            }
+
+            if (expanded.Contains("蓝光", StringComparison.Ordinal) &&
+                !expanded.Contains("蓝磷骨光", StringComparison.Ordinal))
+            {
+                expanded += "蓝磷骨光";
+            }
+
+            return expanded;
+        }
+
+        private static bool ContainsAny(string value, params string[] candidates) =>
+            candidates.Any(candidate => value.Contains(candidate, StringComparison.Ordinal));
+
+        private static IEnumerable<string> ExtractContinuityKeywords(string value)
+        {
+            foreach (Match match in Regex.Matches(value ?? string.Empty, @"[\u4e00-\u9fffA-Za-z0-9]{2,}"))
+            {
+                var token = match.Value.Trim();
+                if (token.Length < 2)
+                    continue;
+                if (IsContinuityStopword(token))
+                    continue;
+
+                if (Regex.IsMatch(token, @"^[\u4e00-\u9fff]+$"))
+                {
+                    if (token.Length <= 4)
+                    {
+                        yield return token;
+                        continue;
+                    }
+
+                    yield return token[..4];
+                    for (var i = 0; i <= token.Length - 2; i++)
+                    {
+                        var slice = token.Substring(i, 2);
+                        if (!IsContinuityStopword(slice))
+                            yield return slice;
+                    }
+                    continue;
+                }
+
+                yield return token.Length > 8 ? token[..8] : token;
+            }
+        }
+
+        private static bool IsContinuityStopword(string token) =>
+            token is "必须" or "承接" or "当前" or "状态" or "主角" or "下一章" or
+                "正在" or "已经" or "没有" or "解释" or "查看" or "前往" or "身份" or
+                "位置" or "发生" or "事件";
+
+        private static string NormalizeContinuityText(string? value) =>
+            Regex.Replace(value ?? string.Empty, @"\s+", string.Empty).Trim();
+
+        private static string TrimForIssue(string value)
+        {
+            var text = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+            return text.Length <= 80 ? text : text[..80] + "...";
+        }
+
+        private static string StripChangesStatic(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) return string.Empty;
+            var xml = Regex.Match(
+                content,
+                @"<\s*(?:chapter_changes|changes)\b[^>]*>[\s\S]*?</\s*(?:chapter_changes|changes)\s*>",
+                RegexOptions.IgnoreCase);
+            if (xml.Success)
+                return content[..xml.Index].Trim();
+            var index = content.IndexOf(ChangesSeparator, StringComparison.Ordinal);
+            return index >= 0 ? content[..index].Trim() : content.Trim();
         }
 
         private static string? ExtractCharacterName(IEnumerable<string> characterStates)
@@ -513,6 +1059,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             var provider = settings.Provider;
             var baseUrl = settings.BaseUrl.TrimEnd('/');
             var model = NormalizeProviderModelId(settings.Model);
+            var maxTokens = NormalizeWritingMaxTokens(settings.MaxTokens);
 
             if (string.Equals(provider, "anthropic", StringComparison.OrdinalIgnoreCase))
             {
@@ -523,19 +1070,17 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     model,
                     system,
-                    max_tokens = settings.MaxTokens,
+                    max_tokens = maxTokens,
                     temperature = settings.Temperature,
                     messages = new[] { new { role = "user", content = user } }
                 };
-                var anthropicUrl = baseUrl.EndsWith("/messages", StringComparison.OrdinalIgnoreCase)
-                    ? baseUrl
-                    : $"{baseUrl}/messages";
                 using var response = await http.PostAsync(
-                    anthropicUrl,
+                    BuildAnthropicMessagesUrl(baseUrl),
                     new StringContent(JsonSerializer.Serialize(anthropicPayload), Encoding.UTF8, "application/json"),
                     ct).ConfigureAwait(false);
                 var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"写作模型接口返回 {(int)response.StatusCode}: {text}");
                 using var doc = JsonDocument.Parse(text);
                 if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
                     return string.Join("\n", content.EnumerateArray()
@@ -549,7 +1094,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 model,
                 temperature = settings.Temperature,
-                max_tokens = settings.MaxTokens,
+                max_tokens = maxTokens,
                 messages = new[]
                 {
                     new { role = "system", content = system },
@@ -564,10 +1109,26 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
                 ct).ConfigureAwait(false);
             var json = await openAiResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            openAiResponse.EnsureSuccessStatusCode();
+            if (!openAiResponse.IsSuccessStatusCode)
+                throw new InvalidOperationException($"写作模型接口返回 {(int)openAiResponse.StatusCode}: {json}");
             using var openAiDoc = JsonDocument.Parse(json);
             return openAiDoc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()
                    ?? json;
+        }
+
+        private static string BuildAnthropicMessagesUrl(string baseUrl)
+        {
+            var url = baseUrl.Trim().TrimEnd('/');
+            if (url.EndsWith("/v1/messages", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+            {
+                return url;
+            }
+            if (url.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{url}/messages";
+            }
+            return $"{url}/v1/messages";
         }
 
         private static string BuildWritingSystemPrompt() =>
@@ -604,6 +1165,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 task = "repair_chapter_draft_with_changes",
                 chapterId = run.TargetChapterId,
+                repairAttempt = draft.RepairAttemptCount + 1,
+                repairStrategy = SelectRepairStrategy(draft.RepairAttemptCount + 1),
                 gateIssues = report.Issues,
                 repairHints = report.RepairHints,
                 contextPackage,
@@ -613,19 +1176,39 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             return JsonSerializer.Serialize(payload, JsonHelper.CnDefault);
         }
 
+        private static string SelectRepairStrategy(int attempt) =>
+            attempt switch
+            {
+                <= 1 => "patch_missing_continuity_facts_without_changing_valid_plot",
+                2 => "rewrite_scene_that_failed_continuity_gate",
+                _ => "regenerate_opening_and_key_scene_around_hard_continuity_facts"
+            };
+
         private static string ExtractChangesJson(string content)
         {
             if (string.IsNullOrWhiteSpace(content)) return string.Empty;
             var xml = Regex.Match(content, @"<\s*(?:chapter_changes|changes)\s*>([\s\S]*?)</\s*(?:chapter_changes|changes)\s*>", RegexOptions.IgnoreCase);
-            if (xml.Success) return xml.Groups[1].Value.Trim();
+            if (xml.Success)
+            {
+                var extracted = xml.Groups[1].Value.Trim();
+                return GenerationGate.TryNormalizeChangesJsonShape(extracted, out var normalized)
+                    ? normalized
+                    : extracted;
+            }
             var index = content.LastIndexOf(ChangesSeparator, StringComparison.OrdinalIgnoreCase);
-            return index >= 0 ? content[(index + ChangesSeparator.Length)..].Trim() : string.Empty;
+            if (index < 0) return string.Empty;
+            var changes = content[(index + ChangesSeparator.Length)..].Trim();
+            return GenerationGate.TryNormalizeChangesJsonShape(changes, out var normalizedChanges)
+                ? normalizedChanges
+                : changes;
         }
 
         private static bool TryDeserializeChanges(string json, out ChapterChanges changes)
         {
             try
             {
+                if (GenerationGate.TryNormalizeChangesJsonShape(json, out var normalized))
+                    json = normalized;
                 changes = JsonSerializer.Deserialize<ChapterChanges>(json, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true,
@@ -651,8 +1234,21 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private static string NormalizeProviderModelId(string model)
         {
             if (string.IsNullOrWhiteSpace(model)) return model;
-            var slash = model.IndexOf('/');
-            return slash >= 0 && slash < model.Length - 1 ? model[(slash + 1)..] : model;
+            var value = model.Trim();
+            var slash = value.IndexOf('/');
+            if (slash >= 0 && slash < value.Length - 1)
+                value = value[(slash + 1)..].Trim();
+            if (value.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase))
+                value = value[..^4].Trim();
+            if (value.EndsWith(":extended", StringComparison.OrdinalIgnoreCase))
+                value = value[..^9].Trim();
+            return value;
+        }
+
+        private static int NormalizeWritingMaxTokens(int maxTokens)
+        {
+            const int minimumWritingOutputTokens = 8192;
+            return Math.Max(maxTokens, minimumWritingOutputTokens);
         }
 
         private sealed record LlmRuntimeSettings(

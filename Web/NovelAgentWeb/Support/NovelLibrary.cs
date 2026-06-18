@@ -299,9 +299,9 @@ public static class NovelLibrary
         var draftCommitted = string.Equals(run.DraftArtifact.Status, "committed", StringComparison.OrdinalIgnoreCase) &&
                              !string.IsNullOrWhiteSpace(run.DraftArtifact.CommittedContent);
         var gatePassed = string.Equals(run.GateReport?.Status, "validated", StringComparison.OrdinalIgnoreCase);
-        var qualityOk = run.PostGenerationReview == null ||
-                        (!run.PostGenerationReview.RequiresRewrite &&
-                         run.PostGenerationReview.OverallResult is not "Fail" and not "Failed");
+        var qualityOk = run.PostGenerationReview != null &&
+                        !run.PostGenerationReview.RequiresRewrite &&
+                        run.PostGenerationReview.OverallResult is not "Fail" and not "Failed";
         return draftCommitted && gatePassed && qualityOk;
     }
 

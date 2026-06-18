@@ -50,7 +50,7 @@ public class AgentController : ControllerBase
     {
         var sessionId = request.SessionId;
         var response = await _router.HandleAsync(sessionId, request.Message ?? "", ct);
-        return Ok(response);
+        return Ok(AgentChatResponsePublicProjection.ToPublic(response));
     }
 
     [HttpGet("agent/sse/{sessionId}")]
@@ -68,7 +68,7 @@ public class AgentController : ControllerBase
         {
             await foreach (var evt in reader.ReadAllAsync(ct))
             {
-                var json = JsonSerializer.Serialize(evt, new JsonSerializerOptions
+                var json = JsonSerializer.Serialize(ToPublicSseEvent(evt), new JsonSerializerOptions
                 {
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 });
@@ -77,6 +77,23 @@ public class AgentController : ControllerBase
             }
         }
         catch (OperationCanceledException) { /* client disconnected */ }
+    }
+
+    private static AgentSseEvent ToPublicSseEvent(AgentSseEvent evt)
+    {
+        if (evt.Type != AgentSseEventType.AgentReply || evt.Data is not AgentChatResponse response)
+            return evt;
+
+        return new AgentSseEvent
+        {
+            Type = evt.Type,
+            SessionId = evt.SessionId,
+            RunId = evt.RunId,
+            StepId = evt.StepId,
+            Message = evt.Message,
+            Data = AgentChatResponsePublicProjection.ToPublic(response),
+            Timestamp = evt.Timestamp
+        };
     }
 
     [HttpGet("agent/session/{sessionId}")]

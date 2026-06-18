@@ -45,7 +45,6 @@
     <Compile Include="..\..\Services\Framework\AI\NovelAgent\Services\NovelAgentOrchestrator.cs" Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\AgentRecoveryEngine.cs" Link="NovelAgentWeb\Support\AgentRecoveryEngine.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\AgentMemoryService.cs" Link="NovelAgentWeb\Support\AgentMemoryService.cs" />
-    <Compile Include="..\..\Web\NovelAgentWeb\Support\ProjectRouter.cs" Link="NovelAgentWeb\Support\ProjectRouter.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\NovelProjectCatalog.cs" Link="NovelAgentWeb\Support\NovelProjectCatalog.cs" />
     <Compile Include="..\..\Web\NovelAgentWeb\Support\PhaseContextBuilder.cs" Link="NovelAgentWeb\Support\PhaseContextBuilder.cs" />
   </ItemGroup>

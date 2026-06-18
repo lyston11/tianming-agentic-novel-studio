@@ -98,6 +98,13 @@ public sealed class AgentRecoveryEngine
             Reason = failedResult.Message,
         };
 
+        if (IsRepairableDraftGateFailure(failedCall, message))
+        {
+            analysis.IsRecoverable = true;
+            analysis.RecommendedChains = BuildDraftRepairChains(failedCall, session);
+            return analysis;
+        }
+
         // Determine if recoverable and build chains
         switch (failureType)
         {
@@ -126,6 +133,61 @@ public sealed class AgentRecoveryEngine
         }
 
         return analysis;
+    }
+
+    private static bool IsRepairableDraftGateFailure(AgentToolCall failedCall, string message)
+    {
+        if (!string.Equals(failedCall.Name, "ValidateChapterDraft", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(failedCall.Name, "RepairChapterDraft", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return message.Contains("硬门禁", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("gate_failed", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("核心连续性失败", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("changes json", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("json 不是可解析", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("未识别到 changes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<PrerequisiteToolChain> BuildDraftRepairChains(
+        AgentToolCall failedCall,
+        AgentSession session)
+    {
+        var runId = failedCall.Arguments.TryGetValue("runId", out var rid)
+            ? rid
+            : session.ActiveRunId ?? string.Empty;
+        var repairStrategy = failedCall.Arguments.TryGetValue("repairStrategy", out var strategy) && !string.IsNullOrWhiteSpace(strategy)
+            ? strategy
+            : "patch_missing_continuity";
+        var repairAttempt = failedCall.Arguments.TryGetValue("repairAttempt", out var attempt) && !string.IsNullOrWhiteSpace(attempt)
+            ? attempt
+            : "1";
+
+        return new List<PrerequisiteToolChain>
+        {
+            new()
+            {
+                Steps = new()
+                {
+                    new PrerequisiteToolStep
+                    {
+                        ToolCall = new AgentToolCall
+                        {
+                            Name = "RepairChapterDraft",
+                            Arguments = new()
+                            {
+                                ["runId"] = runId,
+                                ["repairStrategy"] = repairStrategy,
+                                ["repairAttempt"] = repairAttempt,
+                            },
+                        },
+                        MissingPrerequisiteTag = "chapter_draft_repair",
+                    },
+                },
+                Priority = 2,
+                Description = "章节草稿门禁失败，需要先修复正文和修订记录",
+            }
+        };
     }
 
     public async Task<RecoveryResult> RecoverFromFailureAsync(
@@ -159,13 +221,25 @@ public sealed class AgentRecoveryEngine
         var chain = analysis.RecommendedChains.OrderByDescending(c => c.Priority).First();
 
         // 4. Execute prerequisite tool chain
+        AgentToolExecutionResult? lastStepResult = null;
         foreach (var step in chain.Steps)
         {
             var stepResult = await _toolRegistry.ExecuteAsync(step.ToolCall, session, bible, false, ct).ConfigureAwait(false);
+            lastStepResult = stepResult;
             if (!stepResult.Success)
             {
+                if (stepResult.IsRepairable && !string.IsNullOrWhiteSpace(stepResult.RecommendedToolName))
+                    return RecoveryResult.FromRetry(stepResult);
+
                 return RecoveryResult.ChainFailed(step.ToolCall.Name, stepResult.Message);
             }
+        }
+
+        if (lastStepResult != null &&
+            chain.Steps.Count == 1 &&
+            string.Equals(chain.Steps[0].ToolCall.Name, failedCall.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return RecoveryResult.FromRetry(lastStepResult);
         }
 
         // 5. Retry original tool (最多 1 次完整链路)

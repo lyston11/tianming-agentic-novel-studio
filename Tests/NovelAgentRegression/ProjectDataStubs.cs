@@ -169,6 +169,7 @@ namespace TM.Services.Modules.ProjectData.Interfaces
     public interface IGeneratedContentService
     {
         Task SaveChapterAsync(string chapterId, string content);
+        Task<string?> GetChapterAsync(string chapterId) => Task.FromResult<string?>(null);
     }
 }
 

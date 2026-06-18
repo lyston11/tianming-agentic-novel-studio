@@ -134,7 +134,7 @@ export interface StoryCreativeConstitution {
   protagonistEngine: string;
   noveltyPoint: string;
   depthLayer: string;
-  forbiddenDirections: string;
+  forbiddenDirections: string[];
   commercialRhythm: string;
   genreProfile: GenreDirectionProfile | null;
 }
@@ -729,6 +729,8 @@ export interface StoryFoundationRequest {
   subGenre: string;
   targetReader: string;
   desiredDirection: string;
+  candidateDirections?: string[];
+  forbiddenDirections?: string[];
 }
 
 export interface VolumeArcPlanningRequest {
@@ -738,6 +740,8 @@ export interface VolumeArcPlanningRequest {
   startChapterId: string;
   endChapterId: string;
   expectedChapterCount: number;
+  candidateDirections?: string[];
+  forbiddenDirections?: string[];
 }
 
 export interface ChapterCreativeRequest {
@@ -745,6 +749,8 @@ export interface ChapterCreativeRequest {
   chapterId: string;
   constitution?: StoryCreativeConstitution;
   volumeArc?: VolumeArcPlan;
+  candidateDirections?: string[];
+  forbiddenDirections?: string[];
 }
 
 export interface NovelProjectCreateRequest {
@@ -766,6 +772,19 @@ export interface NovelProjectInfo {
   coreHook: string;
   readerPromise: string;
   status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChapterResponse {
+  id: string;
+  projectId: string;
+  volumeId: string | null;
+  title: string;
+  chapterNumber: number;
+  status: string;
+  wordCount: number;
+  content?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -888,6 +907,8 @@ export interface ProjectWorkflowDocument {
   activeSessionId: string;
   activeRunId: string;
   updatedAt: string;
+  productionStages: WorkflowProductionStage[];
+  artifactTimeline: WorkflowArtifactTimelineItem[];
 }
 
 export interface WorkflowSessionSummary {
@@ -922,6 +943,41 @@ export interface WorkflowChapterArtifactSummary {
   sourceRunIds: string[];
   lifecycleRank: number;
   isCurrent: boolean;
+}
+
+export interface WorkflowProductionStage {
+  key: string;
+  label: string;
+  surface: string;
+  status: string;
+  summary: string;
+  detail: string;
+  artifactCount: number;
+  currentCount: number;
+  totalCount: number;
+  updatedAt: string;
+  primaryArtifactId: string;
+  primaryRunId: string;
+  emptyReason: string;
+  nextIntentHint: string;
+}
+
+export interface WorkflowArtifactTimelineItem {
+  id: string;
+  kind: string;
+  label: string;
+  surface: string;
+  status: string;
+  title: string;
+  summary: string;
+  preview: string;
+  volumeId: string;
+  chapterId: string;
+  runId: string;
+  updatedAt: string;
+  isFinal: boolean;
+  isUserVisible: boolean;
+  source: string;
 }
 
 export interface MaterialReference {
@@ -1074,6 +1130,7 @@ export interface AgentChatResponse {
   runtimeTrace?: AgentRuntimeStep[] | null;
   missionPlan?: AgentMissionPlan | null;
   pendingConfirmation?: AgentPendingConfirmation | null;
+  activeProjectId?: string;
 }
 
 export interface AgentDecisionTrace {
@@ -1156,6 +1213,28 @@ export interface AgentToolExecutionSnapshot {
   recommendedNextTool: string;
   startedAt: string;
   completedAt?: string | null;
+}
+
+export interface AgentToolProgressView {
+  executionId: string;
+  toolName: string;
+  status: string;
+  title: string;
+  detail: string;
+  resultLocation: string;
+  runId?: string | null;
+  isRunning: boolean;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+export interface AgentArtifactPreviewView {
+  title: string;
+  summary: string;
+  resultLocation: string;
+  runId?: string | null;
+  items: string[];
+  createdAt: string;
 }
 
 export interface AgentPendingConfirmation {
@@ -1503,6 +1582,14 @@ export interface AgentSseEvent {
   timestamp: string;
 }
 
+export interface AgentRuntimeEventView {
+  type: string;
+  runId?: string | null;
+  message: string;
+  data?: unknown;
+  timestamp: string;
+}
+
 export interface AgentSessionInfo {
   sessionId: string;
   title: string;
@@ -1530,6 +1617,7 @@ export interface AgentSessionResumeResponse extends AgentSessionInfo {
   toolSearchCacheFresh: boolean;
   toolSearchCacheSource: 'restored' | 'none' | string;
   recentToolExecutions: AgentToolExecutionSnapshot[];
+  recentRuntimeEvents: AgentRuntimeEventView[];
 }
 
 export interface AgentSessionSummary {

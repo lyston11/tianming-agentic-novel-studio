@@ -9,10 +9,14 @@ namespace TM.Web.NovelAgentWeb.Services.Auth;
 public class CurrentUserService : ICurrentUserService
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IBackgroundUserContext _backgroundUserContext;
 
-    public CurrentUserService(IHttpContextAccessor httpContextAccessor)
+    public CurrentUserService(
+        IHttpContextAccessor httpContextAccessor,
+        IBackgroundUserContext backgroundUserContext)
     {
         _httpContextAccessor = httpContextAccessor;
+        _backgroundUserContext = backgroundUserContext;
     }
 
     public string GetUserId()
@@ -27,6 +31,9 @@ public class CurrentUserService : ICurrentUserService
 
     public string GetUsername()
     {
+        if (_backgroundUserContext.Current is { } background)
+            return background.Username;
+
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext?.User?.Identity?.IsAuthenticated != true)
         {
@@ -44,6 +51,9 @@ public class CurrentUserService : ICurrentUserService
 
     public string GetEmail()
     {
+        if (_backgroundUserContext.Current is { } background)
+            return background.Email;
+
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext?.User?.Identity?.IsAuthenticated != true)
         {
@@ -61,6 +71,9 @@ public class CurrentUserService : ICurrentUserService
 
     public string GetRole()
     {
+        if (_backgroundUserContext.Current is { } background)
+            return background.Role;
+
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext?.User?.Identity?.IsAuthenticated != true)
         {
@@ -96,12 +109,18 @@ public class CurrentUserService : ICurrentUserService
 
     public bool IsAuthenticated()
     {
+        if (_backgroundUserContext.Current != null)
+            return true;
+
         var httpContext = _httpContextAccessor.HttpContext;
         return httpContext?.User?.Identity?.IsAuthenticated == true;
     }
 
     public string? TryGetUserId()
     {
+        if (_backgroundUserContext.Current is { } background)
+            return background.UserId;
+
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext?.User?.Identity?.IsAuthenticated != true)
         {

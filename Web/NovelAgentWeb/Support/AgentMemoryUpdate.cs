@@ -24,6 +24,7 @@ public class ProjectMemoryUpdate
 
 public class AuthorMemoryUpdate
 {
+    public string? DisplayName { get; set; }
     public List<string> StyleLikes { get; set; } = new();
     public List<string> StyleDislikes { get; set; } = new();
     public string? ConfirmationTolerance { get; set; }

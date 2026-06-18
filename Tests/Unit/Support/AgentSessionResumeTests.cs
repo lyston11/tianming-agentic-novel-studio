@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Auth;
@@ -131,13 +132,28 @@ public class AgentSessionResumeTests
                 }
             });
 
-        var service = new AgentSessionResumeService(manager, toolCache.Object, toolLedger.Object);
+        var runtimeRuns = new AgentRuntimeRunService(db);
+        var runtimeEvents = new AgentRuntimeEventService(db);
+        var activeRun = await runtimeRuns.CreateQueuedAsync(new CreateAgentRuntimeRunRequest(
+            UserId: "user-1",
+            SessionId: "session-1",
+            ProjectId: "project-1",
+            UserMessage: "继续生成章节候选"));
+        await runtimeEvents.AppendAsync(new CreateAgentRuntimeEventRequest(
+            activeRun.Id,
+            "user-1",
+            "session-1",
+            "project-1",
+            "run_update",
+            "后台执行已完成。",
+            new { status = "completed", phase = "validated" }));
+        var service = new AgentSessionResumeService(manager, toolCache.Object, toolLedger.Object, runtimeRuns, runtimeEvents);
 
         var response = await service.ResumeAsync("session-1");
 
         Assert.Equal("session-1", response.SessionId);
         Assert.Equal("project-1", response.ActiveProjectId);
-        Assert.Equal("run-1", response.ActiveRunId);
+        Assert.Equal(activeRun.Id, response.ActiveRunId);
         Assert.True(response.ToolSearchCacheFresh);
         Assert.Equal("sqlite-snapshot", response.ToolSearchCacheSource);
         Assert.Equal("Planning", response.DiscoveredPhase);
@@ -149,6 +165,10 @@ public class AgentSessionResumeTests
         Assert.Single(response.RecentToolExecutions);
         Assert.Equal("PlanChapter", response.RecentToolExecutions[0].ToolName);
         Assert.Equal("chapter_candidates", response.RecentToolExecutions[0].ResultPhase);
+        Assert.Single(response.RecentRuntimeEvents);
+        Assert.Equal("run_update", response.RecentRuntimeEvents[0].Type);
+        Assert.Equal(activeRun.Id, response.RecentRuntimeEvents[0].RunId);
+        Assert.Equal("completed", response.RecentRuntimeEvents[0].Data.GetProperty("status").GetString());
     }
 
     [Fact]

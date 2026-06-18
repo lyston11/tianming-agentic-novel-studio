@@ -26,11 +26,16 @@ public class AgentMemoryRepository : IAgentMemoryRepository
     private static readonly HashSet<string> UnionListMemoryTypes = new(StringComparer.Ordinal)
     {
         "project.referenced_knowledge_ids",
+        "project.constraints",
+        "project.unresolved_threads",
         "project.used_trope_patterns",
         "execution.successful_repairs",
         "execution.repeated_blockers",
         "execution.tool_failures",
         "execution.knowledge_processing_failures",
+        "author.style_likes",
+        "author.genre_habits",
+        "author.favorite_knowledge_ids",
         "author.style_dislikes"
     };
 
@@ -158,6 +163,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
                 var memory = new AuthorMemory
                 {
+                    DisplayName = GetField<string>(rows, "author.display_name"),
                     StyleLikes = GetField<List<string>>(rows, "author.style_likes") ?? new(),
                     StyleDislikes = GetField<List<string>>(rows, "author.style_dislikes") ?? new(),
                     ConfirmationTolerance = GetField<string>(rows, "author.confirmation_tolerance"),

@@ -22,11 +22,13 @@ public AgentRuntime(
 )
 ```
 
-## 临时修复
+## 历史临时修复
 
-已移除ProjectRouter的auto-fallback逻辑，强制用户明确选择项目：
+曾移除 ProjectRouter 的 auto-fallback 逻辑，强制用户明确选择项目：
 - Commit: `b5fd7b6` - "fix(agent): remove fallback to active project to prevent cross-user data leak"
 - 影响：新用户不会自动加载其他用户的active project
+
+当前主链路已不再使用 ProjectRouter。项目创建、绑定和切换由 LLM 在 AgentPlanner 中基于产品空间、记忆层和工具语义自主决策，并通过 `ResolveNovelProject` 工具执行；Runtime 只负责工作区隔离、工具执行和安全边界。
 
 ## 正确架构方案
 
@@ -89,7 +91,6 @@ public sealed class AgentRuntime
 
 缺点：
 - 需要重构RunAsync内部逻辑
-- ProjectRouter需要改为每次请求创建
 
 ## 实施步骤
 
@@ -97,8 +98,7 @@ public sealed class AgentRuntime
 
 1. [ ] 修改AgentRuntime构造函数，移除workspace/catalog参数，添加IWorkspaceFactory和ICurrentUserService
 2. [ ] 修改RunAsync方法，在开始时acquire workspace，结束时release
-3. [ ] 修改ProjectRouter，改为每次请求创建（不再在构造时注入catalog）
-4. [ ] 更新Program.cs的依赖注入配置
+3. [ ] 更新Program.cs的依赖注入配置
 
 ### Phase 2: 测试多用户隔离
 
@@ -118,7 +118,6 @@ public sealed class AgentRuntime
 ## 相关代码位置
 
 - `Support/AgentRuntime.cs` - 主要重构目标
-- `Support/ProjectRouter.cs` - 需要改为动态创建
 - `Services/Workspace/WorkspaceFactory.cs` - 已实现用户隔离，无需修改
 - `Program.cs` - 依赖注入配置
 

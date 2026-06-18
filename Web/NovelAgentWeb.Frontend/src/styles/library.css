@@ -529,17 +529,17 @@
 
 .magazine-shelf {
   overflow-y: auto;
-  padding: clamp(12px, 1.6vw, 20px);
+  padding: clamp(12px, 1.4vw, 18px);
   border: 1px solid rgba(244, 236, 217, 0.1);
   border-radius: 8px;
   background:
-    linear-gradient(120deg, rgba(184, 137, 63, 0.1), transparent 32%),
+    linear-gradient(120deg, rgba(184, 137, 63, 0.08), transparent 32%),
     rgba(14, 10, 7, 0.58);
 }
 
 .magazine-shelf-head {
-  min-height: 76px;
-  margin-bottom: 16px;
+  min-height: 62px;
+  margin-bottom: 12px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
@@ -574,7 +574,7 @@
   margin: 6px 0 0;
   color: var(--paper-2);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .magazine-shelf-head > strong {
@@ -601,28 +601,35 @@
 
 .magazine-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
 }
 
 .magazine-book {
-  min-height: 300px;
+  min-height: 188px;
   display: grid;
-  grid-template-columns: 136px minmax(0, 1fr);
-  gap: 16px;
-  padding: 14px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
   border: 1px solid rgba(244, 236, 217, 0.1);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(244, 236, 217, 0.055), rgba(244, 236, 217, 0.025)),
+    linear-gradient(180deg, rgba(244, 236, 217, 0.045), rgba(244, 236, 217, 0.02)),
     rgba(0, 0, 0, 0.18);
+}
+
+.magazine-book:hover {
+  border-color: rgba(184, 137, 63, 0.38);
+  background:
+    linear-gradient(180deg, rgba(184, 137, 63, 0.075), rgba(244, 236, 217, 0.02)),
+    rgba(0, 0, 0, 0.2);
 }
 
 .magazine-cover,
 .profile-cover {
   position: relative;
-  min-height: 270px;
-  padding: 16px;
+  min-height: 168px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -634,14 +641,14 @@
   background:
     linear-gradient(150deg, rgba(184, 59, 47, 0.78), rgba(18, 12, 8, 0.95) 56%, rgba(184, 137, 63, 0.34)),
     var(--ink);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
 }
 
 .magazine-cover::after,
 .profile-cover::after {
   content: "";
   position: absolute;
-  inset: 14px;
+  inset: 10px;
   border: 1px solid rgba(244, 236, 217, 0.16);
   pointer-events: none;
 }
@@ -652,27 +659,36 @@
   z-index: 1;
   color: var(--gold);
   font-family: Avenir, "Helvetica Neue", sans-serif;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .magazine-cover strong,
 .profile-cover strong {
   position: relative;
   z-index: 1;
+  max-height: 78px;
+  overflow: hidden;
   color: var(--paper);
-  font-size: 22px;
+  font-size: 17px;
   line-height: 1.15;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .magazine-cover em,
 .profile-cover em {
   position: absolute;
   right: 10px;
-  bottom: -18px;
+  bottom: -12px;
   color: rgba(244, 236, 217, 0.08);
-  font-size: 128px;
+  font-size: 86px;
   font-style: normal;
   font-weight: 800;
   line-height: 1;
@@ -680,37 +696,115 @@
 
 .magazine-book-copy {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-rows: auto auto minmax(52px, 1fr) auto auto;
+  align-content: start;
+  gap: 8px;
 }
 
 .magazine-book-copy h3 {
-  margin: 8px 0 0;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--paper);
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .magazine-book-copy p {
-  margin: 10px 0 0;
+  margin: 0;
+  overflow: hidden;
   color: var(--paper-2);
   font-size: 13px;
-  line-height: 1.75;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.magazine-book-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.magazine-book-meta span,
+.magazine-book-meta em {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.magazine-book-meta span {
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.magazine-book-meta em {
+  max-width: 88px;
+  padding: 3px 6px;
+  color: rgba(244, 236, 217, 0.68);
+  border: 1px solid rgba(244, 236, 217, 0.1);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.magazine-book-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(244, 236, 217, 0.08);
+}
+
+.magazine-book-progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(184, 59, 47, 0.9), rgba(184, 137, 63, 0.9));
+}
+
+.profile-cover {
+  min-height: 100%;
+  padding: 16px;
+}
+
+.profile-cover::after {
+  inset: 14px;
+}
+
+.profile-cover span {
+  font-size: 11px;
+  display: block;
+}
+
+.profile-cover strong {
+  max-height: none;
+  font-size: 22px;
+  display: block;
+}
+
+.profile-cover em {
+  bottom: -18px;
+  font-size: 128px;
 }
 
 .magazine-actions {
-  margin-top: auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 14px;
+  gap: 6px;
 }
 
 .magazine-actions button {
-  min-height: 32px;
-  padding: 7px 11px;
-  font-size: 12px;
+  min-height: 28px;
+  padding: 6px 9px;
+  font-size: 11px;
 }
 
 .magazine-profile {
@@ -950,7 +1044,7 @@
   }
 
   .magazine-cover {
-    min-height: 240px;
+    min-height: 180px;
   }
 
   .profile-stats {

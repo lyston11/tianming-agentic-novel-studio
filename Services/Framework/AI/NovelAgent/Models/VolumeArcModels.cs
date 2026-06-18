@@ -12,6 +12,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         public string StartChapterId { get; set; } = string.Empty;
         public string EndChapterId { get; set; } = string.Empty;
         public int ExpectedChapterCount { get; set; } = 12;
+        public List<string> CandidateDirections { get; set; } = new();
+        public List<string> ForbiddenDirections { get; set; } = new();
     }
 
     public sealed class VolumeArcPlan

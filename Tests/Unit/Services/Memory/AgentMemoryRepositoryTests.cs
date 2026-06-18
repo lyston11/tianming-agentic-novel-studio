@@ -94,6 +94,37 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
+    public async Task GetAuthorMemoryAsync_ReadsDisplayName()
+    {
+        var userId = "user123";
+        _dbContext.AgentMemories.Add(new AgentMemory
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = null,
+            SessionId = null,
+            MemoryType = "author.display_name",
+            MemoryKey = "display_name",
+            Content = JsonSerializer.Serialize("lyston")
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+            It.IsAny<string>(),
+            It.IsAny<Func<Task<AuthorMemory>>>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string k, Func<Task<AuthorMemory>> f, TimeSpan t, CancellationToken c) => f().Result);
+
+        _mockRedisCache.Setup(x => x.GetAsync<AuthorMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AuthorMemory?)null);
+
+        var result = await _repository.GetAuthorMemoryAsync(userId);
+
+        Assert.Equal("lyston", result.DisplayName);
+    }
+
+    [Fact]
     public async Task GetExecutionMemoryAsync_ReturnsEmptyMemory_WhenNoDataExists()
     {
         var userId = "user123";

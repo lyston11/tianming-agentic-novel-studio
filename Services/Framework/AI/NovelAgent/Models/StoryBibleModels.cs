@@ -24,6 +24,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("characterLedger")]
         public List<CharacterLedgerEntry> CharacterLedger { get; set; } = new();
 
+        [JsonPropertyName("continuityFacts")]
+        public List<ChapterContinuityFacts> ContinuityFacts { get; set; } = new();
+
         [JsonPropertyName("canonLedger")]
         public List<CanonLedgerEntry> CanonLedger { get; set; } = new();
 
