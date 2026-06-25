@@ -46,82 +46,95 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             int topK = 8,
             CancellationToken ct = default)
         {
-            var normalizedQuery = BuildQuery(query, constitution, usedPlotPatterns);
-
-            if (_vectorStore == null || _embeddingService == null || _currentUserService == null)
-            {
-                return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
-            }
-
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var userId = _currentUserService.GetUserId();
-                var projectId = _projectId;
+                var normalizedQuery = BuildQuery(query, constitution, usedPlotPatterns);
 
-                if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(projectId))
+                if (_vectorStore == null || _embeddingService == null || _currentUserService == null)
                 {
                     return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
                 }
 
-                var queryVector = await _embeddingService.EncodeAsync(normalizedQuery, EmbeddingMode.Query, ct)
-                    .ConfigureAwait(false);
-                var searchResults = await _vectorStore.SearchSimilarAsync(
-                    userId,
-                    queryVector,
-                    topK * 2,
-                    new Dictionary<string, object>
-                    {
-                        { "project_id", projectId },
-                        { "source_type", "knowledge" }
-                    },
-                    ct).ConfigureAwait(false);
-
-                ProjectMemory? projectMemory = null;
-                AuthorMemory? authorMemory = null;
-
-                if (_memoryRepository != null)
+                try
                 {
-                    try
+                    var userId = _currentUserService.GetUserId();
+                    var projectId = _projectId;
+
+                    if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(projectId))
                     {
-                        projectMemory = await _memoryRepository.GetProjectMemoryAsync(userId, projectId, ct)
-                            .ConfigureAwait(false);
-                        authorMemory = await _memoryRepository.GetAuthorMemoryAsync(userId, ct)
-                            .ConfigureAwait(false);
+                        return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
                     }
-                    catch (Exception ex)
+
+                    var queryVector = await _embeddingService.EncodeAsync(normalizedQuery, EmbeddingMode.Query, ct)
+                        .ConfigureAwait(false);
+                    var searchResults = await _vectorStore.SearchSimilarAsync(
+                        userId,
+                        queryVector,
+                        topK * 2,
+                        new Dictionary<string, object>
+                        {
+                            { "project_id", projectId },
+                            { "source_type", "knowledge" }
+                        },
+                        ct).ConfigureAwait(false);
+
+                    ProjectMemory? projectMemory = null;
+                    AuthorMemory? authorMemory = null;
+
+                    if (_memoryRepository != null)
                     {
-                        TM.App.Log($"[CreativeKnowledgeBaseService] 加载记忆失败，跳过增强: {ex.Message}");
+                        try
+                        {
+                            projectMemory = await _memoryRepository.GetProjectMemoryAsync(userId, projectId, ct)
+                                .ConfigureAwait(false);
+                            authorMemory = await _memoryRepository.GetAuthorMemoryAsync(userId, ct)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            TM.App.Log($"[CreativeKnowledgeBaseService] 加载记忆失败，跳过增强: {ex.Message}");
+                        }
                     }
+
+                    var entryMap = _builtInEntries.ToDictionary(e => e.Id, e => e, StringComparer.OrdinalIgnoreCase);
+                    var scoredResults = searchResults
+                        .Where(r => !string.IsNullOrWhiteSpace(r.SourceId) && entryMap.ContainsKey(r.SourceId))
+                        .Select(r => new
+                        {
+                            Result = r,
+                            Entry = entryMap[r.SourceId!],
+                            Score = CalculateScore(r, entryMap[r.SourceId!], constitution, projectMemory, authorMemory)
+                        })
+                        .OrderByDescending(x => x.Score)
+                        .ToList();
+
+                    var usedPatterns = NormalizeUsedPatterns(usedPlotPatterns);
+                    var hits = scoredResults
+                        .Where(x => x.Entry.Category != CreativeKnowledgeCategory.TropePattern ||
+                                    !usedPatterns.Any(p => HasTokenOverlap(x.Entry.Content, p)))
+                        .Take(Math.Clamp(topK, 1, MaxHits))
+                        .Select(x => BuildVectorResult(x.Entry, x.Score, x.Result))
+                        .ToList();
+
+                    sw.Stop();
+                    RecordVectorRetrievalMetrics(sw.Elapsed, hits.Count, true);
+
+                    return BuildResult(normalizedQuery, hits, hits.Count == 0
+                        ? "创意知识库暂无命中，已返回空结果。"
+                        : $"创意知识库命中 {hits.Count} 条（向量检索）。");
                 }
-
-                var entryMap = _builtInEntries.ToDictionary(e => e.Id, e => e, StringComparer.OrdinalIgnoreCase);
-                var scoredResults = searchResults
-                    .Where(r => !string.IsNullOrWhiteSpace(r.SourceId) && entryMap.ContainsKey(r.SourceId))
-                    .Select(r => new
-                    {
-                        Result = r,
-                        Entry = entryMap[r.SourceId!],
-                        Score = CalculateScore(r, entryMap[r.SourceId!], constitution, projectMemory, authorMemory)
-                    })
-                    .OrderByDescending(x => x.Score)
-                    .ToList();
-
-                var usedPatterns = NormalizeUsedPatterns(usedPlotPatterns);
-                var hits = scoredResults
-                    .Where(x => x.Entry.Category != CreativeKnowledgeCategory.TropePattern ||
-                                !usedPatterns.Any(p => HasTokenOverlap(x.Entry.Content, p)))
-                    .Take(Math.Clamp(topK, 1, MaxHits))
-                    .Select(x => BuildVectorResult(x.Entry, x.Score, x.Result))
-                    .ToList();
-
-                return BuildResult(normalizedQuery, hits, hits.Count == 0
-                    ? "创意知识库暂无命中，已返回空结果。"
-                    : $"创意知识库命中 {hits.Count} 条（向量检索）。");
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    RecordVectorRetrievalMetrics(sw.Elapsed, 0, false);
+                    TM.App.Log($"[CreativeKnowledgeBaseService] 向量检索失败，改用内核内置知识检索: {ex.Message}");
+                    return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                TM.App.Log($"[CreativeKnowledgeBaseService] 向量检索失败，改用内核内置知识检索: {ex.Message}");
-                return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
+                if (sw.IsRunning) sw.Stop();
             }
         }
 
@@ -452,6 +465,35 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 CreatedAt = entry.CreatedAt,
                 UpdatedAt = entry.UpdatedAt
             };
+        }
+
+        /// <summary>
+        /// 记录向量检索性能指标到 AgentArchitectureMetrics
+        /// </summary>
+        private static void RecordVectorRetrievalMetrics(TimeSpan elapsed, int hitCount, bool success)
+        {
+            try
+            {
+                // 调用 AgentArchitectureMetrics（需要通过反射或依赖注入访问）
+                var metricsType = Type.GetType("TM.Web.NovelAgentWeb.Support.AgentArchitectureMetrics, NovelAgentWeb");
+                if (metricsType != null)
+                {
+                    var instanceProp = metricsType.GetProperty("Instance");
+                    var instance = instanceProp?.GetValue(null);
+                    var recordMethod = metricsType.GetMethod("RecordVectorRetrieval");
+                    recordMethod?.Invoke(instance, new object[] { elapsed, success });
+                }
+
+                // 慢查询日志
+                if (elapsed.TotalMilliseconds > 100)
+                {
+                    TM.App.Log($"[VectorRetrieval] SLOW: {elapsed.TotalMilliseconds:F0}ms, hits={hitCount}, success={success}");
+                }
+            }
+            catch
+            {
+                // 监控失败不影响业务
+            }
         }
     }
 }

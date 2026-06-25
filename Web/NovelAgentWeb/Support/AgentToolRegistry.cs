@@ -3673,9 +3673,33 @@ public sealed partial class AgentToolRegistry
             executedStages.Add(NovelAgentProductionStages.GateValidation + stageSuffix);
 
             var gateRepairAttempts = 0;
+            var consecutiveSameIssues = 0; // 连续相同 Issues 计数（智能终止）
+            string? lastIssuesFingerprint = null;
+
             while (!validateResult.Success && gateRepairAttempts < maxRepairAttempts)
             {
                 ct.ThrowIfCancellationRequested();
+
+                // 智能终止：检测 RepairHints 是否无效（连续 2 次相同 Issues）
+                var currentFingerprint = BuildIssuesFingerprint(validateResult);
+                if (currentFingerprint == lastIssuesFingerprint)
+                {
+                    consecutiveSameIssues++;
+                    if (consecutiveSameIssues >= 2)
+                    {
+                        _logger?.LogWarning(
+                            "Rewrite Loop early terminated: same issues repeated {Count} times, RepairHints may be ineffective",
+                            consecutiveSameIssues);
+                        validateResult.IsRepairable = false; // 标记为不可修复，强制终止
+                        break;
+                    }
+                }
+                else
+                {
+                    consecutiveSameIssues = 0;
+                    lastIssuesFingerprint = currentFingerprint;
+                }
+
                 interruptBlocked = await StopForInterruptBoundaryAsync($"{NovelAgentProductionStages.DraftRepair}{stageSuffix}#{gateRepairAttempts + 1}")
                     .ConfigureAwait(false);
                 if (interruptBlocked != null)
@@ -5231,6 +5255,11 @@ public sealed partial class AgentToolRegistry
             .ConfigureAwait(false);
 
         var nextTools = new[] { "QueryProjectKnowledgeBindings", "DetectKnowledgeConflicts", "ProduceChapter" };
+
+        // 智能聚合提示：检查已分类知识数量
+        var aggregationHint = await ShouldSuggestAggregationAsync(session.UserId, session.ActiveProjectId, ct)
+            .ConfigureAwait(false);
+
         var data = new KnowledgeClassificationToolResult
         {
             ClassificationId = result.Id,
@@ -5250,7 +5279,7 @@ public sealed partial class AgentToolRegistry
             NextRecommendedTools = nextTools
         };
         var message =
-            $"已将知识 {result.KnowledgeId} 分类为 {result.Role} / {result.ConstraintLevel}，生产包策略：{result.PackagePolicy}，优先级：{result.Priority}。下一步可查询绑定、检测冲突，或由 Agent 决定是否 ProduceChapter。";
+            $"已将知识 {result.KnowledgeId} 分类为 {result.Role} / {result.ConstraintLevel}，生产包策略：{result.PackagePolicy}，优先级：{result.Priority}。{aggregationHint}下一步可查询绑定、检测冲突，或由 Agent 决定是否 ProduceChapter。";
         var artifact = BuildArtifact(
             "project_knowledge_classification",
             result.KnowledgeId,
@@ -8926,6 +8955,72 @@ public sealed partial class AgentToolRegistry
             "conversation" => "Conversation",
             _ => "Conversation"
         };
+    }
+
+    /// <summary>
+    /// 构建 Issues 指纹，用于检测 Rewrite Loop 是否陷入重复。
+    /// 连续 2 次相同指纹 → RepairHints 无效 → 智能终止。
+    /// </summary>
+    private static string BuildIssuesFingerprint(AgentToolExecutionResult result)
+    {
+        if (result.Data == null) return string.Empty;
+
+        var gateReport = result.Data as GenerationGateReport;
+        if (gateReport?.Issues == null || gateReport.Issues.Count == 0)
+            return string.Empty;
+
+        // 指纹 = Issues 排序后的 hash
+        var sortedIssues = string.Join("|", gateReport.Issues.OrderBy(x => x));
+        return sortedIssues.GetHashCode().ToString();
+    }
+
+    /// <summary>
+    /// 检查是否应该提示 Agent 聚合 DesignRules。
+    /// 已分类 ≥5 个知识 且 最近一次聚合后又分类了 ≥3 个 → 建议聚合。
+    /// </summary>
+    private async Task<string> ShouldSuggestAggregationAsync(string userId, string projectId, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+
+            // 统计已分类知识数量
+            var classifiedCount = await db.KnowledgeClassifications
+                .Where(x => x.UserId == userId && x.ProjectId == projectId)
+                .CountAsync(ct)
+                .ConfigureAwait(false);
+
+            if (classifiedCount < 5)
+                return string.Empty;
+
+            // 检查最近一次聚合时间
+            var lastAggregation = await db.ProjectDesignRules
+                .Where(x => x.UserId == userId && x.ProjectId == projectId)
+                .OrderByDescending(x => x.CreatedAt)
+                .Select(x => x.CreatedAt)
+                .FirstOrDefaultAsync(ct)
+                .ConfigureAwait(false);
+
+            // 统计最近一次聚合后新增的分类数量
+            var newClassifiedCount = lastAggregation != default
+                ? await db.KnowledgeClassifications
+                    .Where(x => x.UserId == userId && x.ProjectId == projectId && x.CreatedAt > lastAggregation)
+                    .CountAsync(ct)
+                    .ConfigureAwait(false)
+                : classifiedCount;
+
+            if (newClassifiedCount >= 3)
+            {
+                return $"建议：已分类 {classifiedCount} 个知识（最近新增 {newClassifiedCount} 个），建议调用 AggregateDesignRules 聚合为结构化设计规则。";
+            }
+
+            return string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private sealed class AgentProductionStageTimeoutException : Exception

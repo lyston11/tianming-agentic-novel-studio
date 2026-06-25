@@ -35,6 +35,12 @@ public sealed class AgentArchitectureMetrics
     public long ToolDeduplicationHits { get; private set; }
     public long ToolDeduplicationMisses { get; private set; }
 
+    // #36 向量检索性能指标
+    public long VectorRetrievalCount { get; private set; }
+    public long VectorRetrievalFailureCount { get; private set; }
+    public TimeSpan TotalVectorRetrievalDuration { get; private set; }
+    public long VectorRetrievalSlowCount { get; private set; } // >100ms
+
     public static AgentArchitectureMetrics Instance
     {
         get
@@ -147,6 +153,27 @@ public sealed class AgentArchitectureMetrics
     }
 
     /// <summary>
+    /// 记录向量检索性能
+    /// </summary>
+    public void RecordVectorRetrieval(TimeSpan duration, bool success)
+    {
+        lock (_lock)
+        {
+            if (success)
+            {
+                VectorRetrievalCount++;
+                TotalVectorRetrievalDuration += duration;
+                if (duration.TotalMilliseconds > 100)
+                    VectorRetrievalSlowCount++;
+            }
+            else
+            {
+                VectorRetrievalFailureCount++;
+            }
+        }
+    }
+
+    /// <summary>
     /// 获取性能报告
     /// </summary>
     public string GetPerformanceReport()
@@ -159,6 +186,14 @@ public sealed class AgentArchitectureMetrics
 
             var deduplicationHitRate = (ToolDeduplicationHits + ToolDeduplicationMisses) > 0
                 ? (double)ToolDeduplicationHits / (ToolDeduplicationHits + ToolDeduplicationMisses) * 100
+                : 0;
+
+            var avgVectorRetrievalMs = VectorRetrievalCount > 0
+                ? TotalVectorRetrievalDuration.TotalMilliseconds / VectorRetrievalCount
+                : 0;
+
+            var vectorSlowRate = VectorRetrievalCount > 0
+                ? (double)VectorRetrievalSlowCount / VectorRetrievalCount * 100
                 : 0;
 
             return $@"
@@ -190,6 +225,12 @@ public sealed class AgentArchitectureMetrics
   去重命中: {ToolDeduplicationHits}
   去重未命中: {ToolDeduplicationMisses}
   命中率: {deduplicationHitRate:F1}%
+
+[#36 向量检索性能]
+  检索次数: {VectorRetrievalCount}
+  检索失败: {VectorRetrievalFailureCount}
+  平均耗时: {avgVectorRetrievalMs:F2} ms
+  慢查询(>100ms): {VectorRetrievalSlowCount} ({vectorSlowRate:F1}%)
 ";
         }
     }
@@ -212,6 +253,10 @@ public sealed class AgentArchitectureMetrics
             TotalMemoryRefreshDuration = TimeSpan.Zero;
             ToolDeduplicationHits = 0;
             ToolDeduplicationMisses = 0;
+            VectorRetrievalCount = 0;
+            VectorRetrievalFailureCount = 0;
+            TotalVectorRetrievalDuration = TimeSpan.Zero;
+            VectorRetrievalSlowCount = 0;
             foreach (var key in InterruptPriorityDistribution.Keys.ToList())
             {
                 InterruptPriorityDistribution[key] = 0;
