@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Support;
 using TM.Web.NovelAgentWeb.Services.Caching;
 
 namespace TM.Web.NovelAgentWeb.Services.AgentRuntime;
@@ -28,6 +29,9 @@ public sealed class AgentInterruptService : IAgentInterruptService
         // 根据 Kind 自动分配优先级（stop > direction_change > supplement > status > freeform）
         var kind = string.IsNullOrWhiteSpace(request.Kind) ? "freeform" : request.Kind;
         var priority = request.Priority > 0 ? request.Priority : ComputeInterruptPriority(kind);
+
+        // 记录中断优先级分布
+        AgentArchitectureMetrics.Instance.RecordInterruptPriority(kind);
 
         var interrupt = new AgentInterrupt
         {

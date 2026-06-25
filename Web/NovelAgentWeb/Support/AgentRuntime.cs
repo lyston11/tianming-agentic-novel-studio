@@ -377,6 +377,7 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
                 _logger.LogInformation(
                     "Agent loop early terminated at step {Step}/{MaxSteps}: {Count} consecutive chat replies (no progress)",
                     step, maxSteps, consecutiveChatReplies);
+                AgentArchitectureMetrics.Instance.RecordEarlyTerminationByNoProgress(maxSteps - step);
                 trace.Add(new AgentRuntimeStep
                 {
                     StepIndex = step,
@@ -390,6 +391,7 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
                 _logger.LogWarning(
                     "Agent loop early terminated at step {Step}/{MaxSteps}: {Count} consecutive failures",
                     step, maxSteps, consecutiveFailures);
+                AgentArchitectureMetrics.Instance.RecordEarlyTerminationByFailures(maxSteps - step);
                 trace.Add(new AgentRuntimeStep
                 {
                     StepIndex = step,
@@ -3018,6 +3020,7 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
         {
             var overflow = session.WorkingMemory.ToolExecutionHistory.Count - MaxHistorySize;
             session.WorkingMemory.ToolExecutionHistory.RemoveRange(0, overflow);
+            AgentArchitectureMetrics.Instance.RecordToolExecutionHistoryOverflow(MaxHistorySize);
         }
     }
 
@@ -3046,6 +3049,7 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
         if (string.IsNullOrWhiteSpace(session.ActiveProjectId) || session.ActiveProjectId.StartsWith("temp-"))
             return;
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
@@ -3057,12 +3061,17 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
             // 重新加载完整记忆（ProjectMemory + AuthorMemory + ExecutionMemory）
             await _memoryService.HydrateAsync(session, project, bible ?? new StoryBibleDocument(), ct).ConfigureAwait(false);
 
+            sw.Stop();
+            AgentArchitectureMetrics.Instance.RecordMemoryRefresh(sw.Elapsed, true);
+
             _logger.LogInformation(
-                "Refreshed WorkingMemory for session {SessionId} after tool execution",
-                session.SessionId);
+                "Refreshed WorkingMemory for session {SessionId} after tool execution in {ElapsedMs}ms",
+                session.SessionId, sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
+            sw.Stop();
+            AgentArchitectureMetrics.Instance.RecordMemoryRefresh(sw.Elapsed, false);
             _logger.LogWarning(ex, "Failed to refresh WorkingMemory for session {SessionId}", session.SessionId);
         }
     }
