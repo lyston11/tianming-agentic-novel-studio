@@ -727,7 +727,7 @@ public sealed partial class AgentToolRegistry
             Entry("QueryProductionOutbox", "production", "Low", false, new[] { "projectId", "status", "limit" }, "只读查询当前项目后台 outbox：索引、事实沉淀、提交后 metadata finalizer 等后台任务。用于判断后台任务是否 pending、retryable_failed、failed 或 completed，不修改任何任务。", Effects(readOnly: true, sqliteReads: new[] { "outbox_events" }), (call, session, _, _, ct) => QueryProductionOutboxAsync(call, session, ct)),
             Entry("RetryProductionOutbox", "production", "Medium", false, new[] { "eventId", "projectId" }, "重试当前项目内指定后台 outbox。用于恢复 QueryNovelProductionState 或 QueryProductionOutbox 暴露的 retryable_failed/failed/pending 后台任务；只重置并触发 outbox dispatcher，不直接改正文、不绕过门禁。", Effects(sqliteReads: new[] { "outbox_events", "novel_projects" }, sqliteWrites: new[] { "outbox_events", "production_events" }, vector: new[] { "chapter", "knowledge", "memory" }), (call, session, _, _, ct) => RetryProductionOutboxAsync(call, session, ct)),
             Entry("QueryProjectKnowledgeBindings", "knowledge", "Low", false, Array.Empty<string>(), "只读查询当前项目已绑定/引用的知识条目、约束类型、标签、来源会话、硬事实摘要、Story Bible Canon/CanonLedger 状态和知识冲突报告。用于判断项目生产包、RAG 和门禁会使用哪些知识与硬规则；不会修改知识库、Story Bible 或项目。", Effects(readOnly: true, sqliteReads: new[] { "knowledge_base", "project_knowledge_usages", "knowledge_conflict_reports", "knowledge_classifications" }), (call, session, _, _, ct) => QueryProjectKnowledgeBindingsAsync(session, ct)),
-            Entry("AttachKnowledgeToProject", "knowledge", "Medium", false, new[] { "knowledgeId", "status" }, "把 Agent 已决定采用的知识库条目绑定到当前小说项目。status 可为 imported 或 referenced：imported 表示纳入项目知识清单，referenced 表示后续生产包、RAG、门禁和事实快照应把它作为项目引用知识考虑。该工具不写正文、不替用户解决冲突。", Effects(memory: new[] { "project" }, sqliteReads: new[] { "knowledge_base", "project_knowledge_usages" }, sqliteWrites: new[] { "project_knowledge_usages", "agent_memory_events" }), (call, session, _, _, ct) => AttachKnowledgeToProjectAsync(call, session, ct)),
+            Entry("AttachKnowledgeToProject", "knowledge", "Medium", false, new[] { "knowledgeId", "status" }, "把 Agent 已决定采用的知识库条目绑定到当前小说项目。status 可为 imported 或 referenced：imported 表示纳入项目知识清单，referenced 表示后续生产包、RAG、门禁和事实快照应把它作为项目引用知识考虑。该工具不写正文、不替用户解决冲突。", Effects(memory: new[] { "project" }, sqliteReads: new[] { "knowledge_base", "project_knowledge_usages" }, sqliteWrites: new[] { "project_knowledge_usages", "agent_memory_events" }), (call, session, _, _, ct) => AttachKnowledgeToProjectAsync(call, session, ct), dedupPolicy: "per_turn"),
             Entry("ClassifyProjectKnowledge", "knowledge", "Medium", false, new[] { "knowledgeId" }, "让大模型理解某条知识在当前项目生产结构中的用途，并写入 knowledge_classifications，同时覆盖当前项目的 project_knowledge_usages 语义字段。用于把知识库条目转成天命生产包、门禁和事实快照可使用的结构化约束；不会写小说正文，不会影响其他项目。", Effects(sqliteReads: new[] { "knowledge_base", "project_knowledge_usages", "knowledge_classifications" }, sqliteWrites: new[] { "knowledge_classifications", "project_knowledge_usages" }), (call, session, _, _, ct) => ClassifyProjectKnowledgeAsync(call, session, ct)),
             Entry("DetectKnowledgeConflicts", "knowledge", "Medium", false, new[] { "knowledgeId" }, "让大模型审阅某条项目知识与当前项目已绑定知识之间的冲突，并写入 knowledge_conflict_reports。用于发现硬约束冲突、设定矛盾和生产入口冲突；只生成 ConflictReport，不自动修改知识、Story Bible 或正文。", Effects(sqliteReads: new[] { "knowledge_base", "project_knowledge_usages", "knowledge_classifications", "knowledge_conflict_reports" }, sqliteWrites: new[] { "knowledge_conflict_reports" }), (call, session, _, _, ct) => DetectKnowledgeConflictsAsync(call, session, ct)),
             Entry("ResolveKnowledgeConflict", "knowledge", "Medium", false, new[] { "conflictId", "decision", "note" }, "把 Agent 和用户已经确认的知识冲突处理决定写回 knowledge_conflict_reports。decision 支持 resolved/rejected/superseded；该工具会发出生产恢复信号，提示章节生产包可重建，但不自动改写知识条目、Story Bible 或正文。", Effects(sqliteReads: new[] { "knowledge_conflict_reports", "project_knowledge_usages" }, sqliteWrites: new[] { "knowledge_conflict_reports", "production_events", "agent_runtime_events" }), (call, session, _, _, ct) => ResolveKnowledgeConflictAsync(call, session, ct)),
@@ -741,7 +741,7 @@ public sealed partial class AgentToolRegistry
             Entry("AuditCommittedChapter", "review", "Medium", false, new[] { "chapterId", "chapterNumber", "focus" }, "只读审查已提交章节正文，复用连续性包和知识库硬事实门禁，返回问题报告但不覆盖书城正文。", Effects(readOnly: true, sqliteReads: new[] { "chapters", "content_documents", "content_chunks", "story_bible", "project_fact_snapshots", "knowledge_base" }), (call, session, bible, _, ct) => AuditCommittedChapterAsync(call, session, bible, ct)),
             Entry("ReviseCommittedChapter", "commit", "High", true, new[] { "chapterId", "chapterNumber", "revisionGoal", "revisionPlanId", "auditRunId" }, "修订已提交章节正文：必须绑定当前项目的 RevisionPlan，读取书城正文和连续性包，让模型重写完整章节，通过硬门禁后才覆盖书城正文。", Effects(memory: new[] { "project", "execution" }, sqliteReads: new[] { "chapters", "content_documents", "content_chunks", "agent_runs", "revision_plans", "story_bible", "project_fact_snapshots", "knowledge_base" }, sqliteWrites: new[] { "chapters", "content_documents", "agent_runs", "revision_plans" }, vector: new[] { "chapter" }), (call, session, bible, confirmed, ct) => ReviseCommittedChapterAsync(call, session, bible, confirmed, ct)),
             Entry("RollbackChapterVersion", "commit", "High", true, new[] { "chapterId", "chapterNumber", "targetVersionId", "reason", "runId" }, "回滚已提交章节到指定 ChapterVersion：切换书城当前正文，恢复目标 ContentDocument，失效当前章及下游章节旧生产包，写入生产事件并排队重建索引和事实快照。必须由用户确认后执行。", Effects(memory: new[] { "project", "execution" }, sqliteReads: new[] { "chapters", "content_documents", "chapter_versions", "tianming_packages", "project_fact_snapshots" }, sqliteWrites: new[] { "chapters", "content_documents", "chapter_versions", "tianming_packages", "production_events", "outbox_events" }, vector: new[] { "chapter" }), (call, session, _, confirmed, ct) => RollbackChapterVersionAsync(call, session, confirmed, ct)),
-            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", Effects(memory: new[] { "execution" }, sqliteReads: new[] { "knowledge_base", "project_knowledge_usages", "content_chunks", "content_vector_points" }, vector: new[] { "knowledge" }), (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct)),
+            Entry("SearchCreativeKnowledge", "rag", "Low", false, new[] { "query" }, "检索创意知识库、类型原则、反套路策略和项目记忆。", Effects(memory: new[] { "execution" }, sqliteReads: new[] { "knowledge_base", "project_knowledge_usages", "content_chunks", "content_vector_points" }, vector: new[] { "knowledge" }), (call, session, _, _, ct) => SearchCreativeKnowledgeAsync(call, session, ct), dedupPolicy: "per_turn"),
             Entry("PlanStoryFoundation", "planning", "Low", false, new[] { "userSeed", "genre", "subGenre", "candidateDirections", "forbiddenDirections" }, "生成故事地基和大框架候选，不直接固化。candidateDirections 必须由大模型根据用户意图给出；工具只按这些结构化方向展开，不从用户原话关键词推断候选。", Effects(memory: new[] { "session", "execution" }, sqliteReads: new[] { "novel_projects", "agent_sessions", "knowledge_base", "project_knowledge_usages" }, sqliteWrites: new[] { "agent_runs", "content_documents" }), (call, session, _, _, ct) => PlanStoryFoundationAsync(call, session, ct)),
             Entry("CommitStoryFoundation", "commit", "High", true, new[] { "runId", "selectedMacroCandidateIndex", "selectedMacroCandidateId" }, "把候选故事地基固化到 Story Bible。", Effects(memory: new[] { "project", "execution" }, sqliteReads: new[] { "agent_runs", "content_documents", "story_constitutions" }, sqliteWrites: new[] { "story_constitutions", "agent_runs", "content_documents" }, vector: new[] { "story_bible" }), (call, session, _, confirmed, ct) => CommitStoryFoundationAsync(call, session, confirmed, ct)),
             Entry("PlanVolumeArc", "planning", "Low", false, new[] { "creativeBrief", "volumeId", "volumeTitle", "sourceTurnId", "expectedChapterCount", "startChapterId", "endChapterId", "candidateDirections", "forbiddenDirections" }, "规划卷级弧线，不直接固化。expectedChapterCount 表示每卷目标章节数；creativeBrief 和 candidateDirections 必须由大模型根据上下文整理；工具只按这些结构化方向生成卷节拍，不从用户原话或 Story Bible 关键词推断。", Effects(memory: new[] { "session", "execution" }, sqliteReads: new[] { "story_constitutions", "volume_arcs", "agent_runs", "content_documents", "knowledge_base", "project_knowledge_usages" }, sqliteWrites: new[] { "agent_runs", "content_documents" }), (call, session, bible, _, ct) => PlanVolumeArcAsync(call, session, bible, ct)),
@@ -875,7 +875,8 @@ public sealed partial class AgentToolRegistry
         IReadOnlyList<string> args,
         string description,
         AgentToolSideEffectSpec sideEffects,
-        Func<AgentToolCall, AgentSession, StoryBibleDocument, bool, CancellationToken, Task<AgentToolExecutionResult>> handler) =>
+        Func<AgentToolCall, AgentSession, StoryBibleDocument, bool, CancellationToken, Task<AgentToolExecutionResult>> handler,
+        string? dedupPolicy = null) =>
         new()
         {
             Category = category,
@@ -887,12 +888,12 @@ public sealed partial class AgentToolRegistry
                 RequiresConfirmation = requiresConfirmation,
                 Arguments = args.ToList(),
                 SideEffects = sideEffects,
-                Semantic = BuildDefaultSemantic(name, category, sideEffects),
+                Semantic = BuildDefaultSemantic(name, category, sideEffects, dedupPolicy),
             },
             Handler = handler,
         };
 
-    private static AgentToolSemanticSpec BuildDefaultSemantic(string name, string category, AgentToolSideEffectSpec sideEffects)
+    private static AgentToolSemanticSpec BuildDefaultSemantic(string name, string category, AgentToolSideEffectSpec sideEffects, string? dedupPolicy = null)
     {
         var readsFrom = new List<string>();
         var writesTo = new List<string>();
@@ -1052,7 +1053,8 @@ public sealed partial class AgentToolRegistry
                 "creative" => "记录、查询或决策创意意图；已采纳创意会进入后续章节生产包，但不会直接覆盖正文。",
                 "rag" => "返回检索上下文，供推理使用，不直接改变最终作品。",
                 _ => "返回工具执行结果，模型需要结合当前任务判断下一步。"
-            }
+            },
+            DeduplicationPolicy = dedupPolicy ?? (sideEffects.BusinessReadOnly ? "per_turn" : "strict")
         };
     }
 

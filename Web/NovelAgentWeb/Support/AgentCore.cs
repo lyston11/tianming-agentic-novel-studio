@@ -761,6 +761,14 @@ public sealed class AgentToolSemanticSpec
     public string RollbackPolicy { get; set; } = string.Empty;
     public string UserVisibleWhere { get; set; } = string.Empty;
     public string ResultSemantics { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 工具去重策略:
+    /// - "strict": 同名同参数禁止重复（默认）
+    /// - "per_turn": 允许同名不同参数（适用于 SearchKnowledge 等检索类工具）
+    /// - "none": 完全不去重（谨慎使用，仅用于幂等只读工具）
+    /// </summary>
+    public string DeduplicationPolicy { get; set; } = "strict";
 }
 
 public sealed class AgentToolSideEffectSpec

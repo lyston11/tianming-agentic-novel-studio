@@ -545,12 +545,24 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
             action.RequiresConfirmation = false;
             action.Risk = policy.Risk;
 
-            // Dedup check
-            var fingerprint = BuildToolCallFingerprint(action.ToolCall);
-            if (!executedCalls.Add(fingerprint))
+            // Dedup check based on tool's deduplication policy
+            var toolDefinition = _toolRegistry.Find(action.ToolCall.Name);
+            var dedupPolicy = toolDefinition?.Semantic.DeduplicationPolicy ?? "strict";
+
+            if (dedupPolicy != "none")
             {
-                var govResult = BuildGovernanceResult(action.ToolCall.Name, "repeated_call", "本轮已有同名同参数工具结果，请基于已有观察继续。", session, "runtime_observation");
-                return await FinishGovernanceResponseAsync(session, userMessage, action, lastContext, trace, step, action.ToolCall.Name, govResult, "runtime_observation", project, ct).ConfigureAwait(false);
+                var fingerprint = dedupPolicy == "strict"
+                    ? BuildToolCallFingerprint(action.ToolCall)  // name::arg1=val1&arg2=val2
+                    : action.ToolCall.Name;  // per_turn: only check name
+
+                if (!executedCalls.Add(fingerprint))
+                {
+                    var message = dedupPolicy == "strict"
+                        ? "本轮已有同名同参数工具结果，请基于已有观察继续。"
+                        : "本轮已调用过该工具，请尝试其他工具或反思当前状态。";
+                    var govResult = BuildGovernanceResult(action.ToolCall.Name, "repeated_call", message, session, "runtime_observation");
+                    return await FinishGovernanceResponseAsync(session, userMessage, action, lastContext, trace, step, action.ToolCall.Name, govResult, "runtime_observation", project, ct).ConfigureAwait(false);
+                }
             }
 
             // Guardrail check
