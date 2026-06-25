@@ -753,6 +753,12 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
                 _guardrails.RecordSuccess(action.ToolCall.Name);
             if (!string.IsNullOrWhiteSpace(result.Phase)) session.Phase = result.Phase;
 
+            // 工具执行后触发 Memory 同步（ProjectMemory → WorkingMemory）
+            if (result.Success && ShouldRefreshMemoryAfterTool(action.ToolCall.Name))
+            {
+                await RefreshWorkingMemoryAsync(session, ct).ConfigureAwait(false);
+            }
+
             // Refresh project if tool execution set ActiveProjectId
             if (!string.IsNullOrWhiteSpace(session.ActiveProjectId) && !session.ActiveProjectId.StartsWith("temp-"))
             {
@@ -3012,6 +3018,52 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
         {
             var overflow = session.WorkingMemory.ToolExecutionHistory.Count - MaxHistorySize;
             session.WorkingMemory.ToolExecutionHistory.RemoveRange(0, overflow);
+        }
+    }
+
+    /// <summary>
+    /// 判断工具执行后是否需要刷新 WorkingMemory。
+    /// 修改 ProjectMemory 的工具需要同步到 WorkingMemory，确保 LLM 看到最新状态。
+    /// </summary>
+    private static bool ShouldRefreshMemoryAfterTool(string toolName) => toolName switch
+    {
+        "AttachKnowledgeToProject" => true,    // 修改 ProjectMemory.ReferencedKnowledgeIds
+        "ClassifyProjectKnowledge" => true,     // 修改知识分类状态
+        "ResolveKnowledgeConflict" => true,     // 修改冲突状态
+        "CommitStoryFoundation" => true,        // 修改 Story Bible
+        "CommitVolumeArc" => true,              // 修改卷规划
+        "CreateRevisionPlan" => true,           // 创建修订计划
+        "InvalidateAffectedPackages" => true,   // 失效生产包
+        _ => false
+    };
+
+    /// <summary>
+    /// 刷新 WorkingMemory：从 DB 重新加载 ProjectMemory 和 AuthorMemory。
+    /// 确保工具修改后，LLM 在下一步能看到最新的记忆状态。
+    /// </summary>
+    private async Task RefreshWorkingMemoryAsync(AgentSession session, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.ActiveProjectId) || session.ActiveProjectId.StartsWith("temp-"))
+            return;
+
+        try
+        {
+            var project = await _catalog.FindAsync(session.ActiveProjectId, ct).ConfigureAwait(false);
+            if (project == null) return;
+
+            var bible = await _catalog.WithProjectAsync(project,
+                () => _workspace.Orchestrator.GetStoryBibleAsync(ct), ct).ConfigureAwait(false);
+
+            // 重新加载完整记忆（ProjectMemory + AuthorMemory + ExecutionMemory）
+            await _memoryService.HydrateAsync(session, project, bible ?? new StoryBibleDocument(), ct).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Refreshed WorkingMemory for session {SessionId} after tool execution",
+                session.SessionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh WorkingMemory for session {SessionId}", session.SessionId);
         }
     }
 
