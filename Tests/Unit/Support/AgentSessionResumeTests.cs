@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -28,20 +29,28 @@ public class AgentSessionResumeTests
             {
                 PendingToolCall = new AgentToolCall
                 {
-                    Name = "CommitValidatedChapter",
-                    Arguments = new Dictionary<string, string> { ["runId"] = "run-1" }
+                    Name = "ProduceChapter",
+                    Arguments = new Dictionary<string, string>
+                    {
+                        ["runId"] = "run-1",
+                        ["commitPolicy"] = "auto_commit"
+                    }
                 },
                 PendingConfirmation = new AgentPendingConfirmation
                 {
                     ToolCall = new AgentToolCall
                     {
-                        Name = "CommitValidatedChapter",
-                        Arguments = new Dictionary<string, string> { ["runId"] = "run-1" }
+                        Name = "ProduceChapter",
+                        Arguments = new Dictionary<string, string>
+                        {
+                            ["runId"] = "run-1",
+                            ["commitPolicy"] = "auto_commit"
+                        }
                     },
                     Risk = "High",
                     ProjectId = "project-1",
                     RunId = "run-1",
-                    ImpactSummary = "提交已校验章节"
+                    ImpactSummary = "执行章节生产闭环并提交书城"
                 }
             }
         };
@@ -52,9 +61,9 @@ public class AgentSessionResumeTests
 
         Assert.NotNull(restored);
         Assert.NotNull(restored!.WorkingMemory.PendingToolCall);
-        Assert.Equal("CommitValidatedChapter", restored.WorkingMemory.PendingToolCall!.Name);
+        Assert.Equal("ProduceChapter", restored.WorkingMemory.PendingToolCall!.Name);
         Assert.NotNull(restored.WorkingMemory.PendingConfirmation);
-        Assert.Equal("CommitValidatedChapter", restored.WorkingMemory.PendingConfirmation!.ToolCall!.Name);
+        Assert.Equal("ProduceChapter", restored.WorkingMemory.PendingConfirmation!.ToolCall!.Name);
         Assert.Equal("run-1", restored.WorkingMemory.PendingConfirmation.RunId);
     }
 
@@ -87,7 +96,11 @@ public class AgentSessionResumeTests
             {
                 PendingConfirmation = new AgentPendingConfirmation
                 {
-                    ToolCall = new AgentToolCall { Name = "CommitValidatedChapter" },
+                    ToolCall = new AgentToolCall
+                    {
+                        Name = "ProduceChapter",
+                        Arguments = new Dictionary<string, string> { ["commitPolicy"] = "auto_commit" }
+                    },
                     ProjectId = "project-1",
                     RunId = "run-1"
                 }
@@ -100,6 +113,7 @@ public class AgentSessionResumeTests
             .Setup(x => x.GetAsync(
                 It.Is<AgentSession>(s => s.SessionId == "session-1"),
                 "Planning",
+                It.Is<string>(signature => !string.IsNullOrWhiteSpace(signature)),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ToolSearchCacheLookup(
                 new List<ToolSchema>
@@ -145,9 +159,19 @@ public class AgentSessionResumeTests
             "session-1",
             "project-1",
             "run_update",
-            "后台执行已完成。",
-            new { status = "completed", phase = "validated" }));
-        var service = new AgentSessionResumeService(manager, toolCache.Object, toolLedger.Object, runtimeRuns, runtimeEvents);
+            "正在等待模型生成正文与修订记录。",
+            new { status = "running", phase = "draft_generation" },
+            Stage: "draft_generation",
+            Status: "running",
+            ArtifactType: "chapter_draft",
+            ArtifactId: "chapter-002",
+            DisplaySurface: AgentRuntimeEventSurface.Workflow,
+            DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline));
+        var registry = new AgentToolRegistry(
+            UserSettingsTestFactory.CreateDbBacked(),
+            new ServiceCollection().BuildServiceProvider(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolRegistry>.Instance);
+        var service = new AgentSessionResumeService(manager, toolCache.Object, toolLedger.Object, runtimeRuns, runtimeEvents, registry);
 
         var response = await service.ResumeAsync("session-1");
 
@@ -161,14 +185,20 @@ public class AgentSessionResumeTests
         Assert.Equal("PlanChapter", response.DiscoveredTools[0].Name);
         Assert.True(response.HasPendingConfirmation);
         Assert.NotNull(response.PendingConfirmation);
-        Assert.Equal("CommitValidatedChapter", response.PendingConfirmation!.ToolCall!.Name);
+        Assert.Equal("ProduceChapter", response.PendingConfirmation!.ToolCall!.Name);
         Assert.Single(response.RecentToolExecutions);
         Assert.Equal("PlanChapter", response.RecentToolExecutions[0].ToolName);
         Assert.Equal("chapter_candidates", response.RecentToolExecutions[0].ResultPhase);
         Assert.Single(response.RecentRuntimeEvents);
         Assert.Equal("run_update", response.RecentRuntimeEvents[0].Type);
         Assert.Equal(activeRun.Id, response.RecentRuntimeEvents[0].RunId);
-        Assert.Equal("completed", response.RecentRuntimeEvents[0].Data.GetProperty("status").GetString());
+        Assert.Equal("draft_generation", response.RecentRuntimeEvents[0].Stage);
+        Assert.Equal("running", response.RecentRuntimeEvents[0].Status);
+        Assert.Equal("chapter_draft", response.RecentRuntimeEvents[0].ArtifactType);
+        Assert.Equal("chapter-002", response.RecentRuntimeEvents[0].ArtifactId);
+        Assert.Equal(AgentRuntimeEventSurface.Workflow, response.RecentRuntimeEvents[0].DisplaySurface);
+        Assert.Equal(AgentRuntimeEventDisplayPolicy.Timeline, response.RecentRuntimeEvents[0].DisplayPolicy);
+        Assert.Equal("running", response.RecentRuntimeEvents[0].Data.GetProperty("status").GetString());
     }
 
     [Fact]

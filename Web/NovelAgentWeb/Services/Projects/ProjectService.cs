@@ -4,8 +4,8 @@ using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Extensions;
 using TM.Web.NovelAgentWeb.Models.Common;
 using TM.Web.NovelAgentWeb.Models.Projects;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Services.Projects;
 
@@ -18,22 +18,22 @@ public class ProjectService : IProjectService
     private const int DefaultPageSize = 20;
     private static readonly TimeSpan ProjectCacheDuration = TimeSpan.FromMinutes(1);
 
-        private readonly NovelAgentDbContext _context;
-        private readonly IVectorStore _vectorStore;
-        private readonly ILogger<ProjectService> _logger;
-        private readonly IMemoryCacheService _cache;
+    private readonly NovelAgentDbContext _context;
+    private readonly ILogger<ProjectService> _logger;
+    private readonly IMemoryCacheService _cache;
+    private readonly IProductionTruthStore _truthStore;
 
-        public ProjectService(
-            NovelAgentDbContext context,
-            IVectorStore vectorStore,
-            ILogger<ProjectService> logger,
-            IMemoryCacheService cache)
-        {
-            _context = context;
-            _vectorStore = vectorStore;
-            _logger = logger;
-            _cache = cache;
-        }
+    public ProjectService(
+        NovelAgentDbContext context,
+        ILogger<ProjectService> logger,
+        IMemoryCacheService cache,
+        IProductionTruthStore truthStore)
+    {
+        _context = context;
+        _logger = logger;
+        _cache = cache;
+        _truthStore = truthStore;
+    }
 
     public async Task<PagedResponse<ProjectResponse>> GetUserProjectsAsync(
         string userId,
@@ -42,8 +42,8 @@ public class ProjectService : IProjectService
         int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
-            // Validate pagination parameters
-            pageNumber = Math.Max(1, pageNumber);
+        // Validate pagination parameters
+        pageNumber = Math.Max(1, pageNumber);
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
         // Build query with user filter
@@ -77,9 +77,9 @@ public class ProjectService : IProjectService
         bool isAdmin,
         CancellationToken cancellationToken = default)
     {
-            var cacheKey = BuildProjectCacheKey(projectId, userId, isAdmin);
+        var cacheKey = BuildProjectCacheKey(projectId, userId, isAdmin);
 
-        return await _cache.GetOrSetAsync(
+        var cachedProject = await _cache.GetOrSetAsync(
             cacheKey,
             async () =>
             {
@@ -103,6 +103,7 @@ public class ProjectService : IProjectService
             },
             ProjectCacheDuration,
             cancellationToken);
+        return cachedProject ?? throw new KeyNotFoundException($"Project with ID '{projectId}' not found");
     }
 
     public async Task<ProjectResponse> CreateProjectAsync(
@@ -110,6 +111,15 @@ public class ProjectService : IProjectService
         string userId,
         CancellationToken cancellationToken = default)
     {
+        var idempotencyKey = EmptyToNull(request.IdempotencyKey);
+        if (idempotencyKey != null)
+        {
+            var existing = await FindProjectByIdempotencyKeyAsync(userId, idempotencyKey, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapToResponse(existing);
+        }
+
         var projectId = Guid.NewGuid().ToString();
 
         var project = new NovelProject
@@ -123,26 +133,28 @@ public class ProjectService : IProjectService
             Status = "draft",
             WordCount = 0,
             CoverImageUrl = request.CoverImageUrl,
+            IdempotencyKey = idempotencyKey,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
-            _context.NovelProjects.Add(project);
-            await _context.SaveChangesAsync(cancellationToken);
-
-            _logger.LogInformation("Created project {ProjectId} for user {UserId}", projectId, userId);
-
-        // Initialize Qdrant collection for the user
+        _context.NovelProjects.Add(project);
         try
         {
-            await _vectorStore.InitializeUserCollectionAsync(userId, cancellationToken);
-            _logger.LogInformation("Initialized Qdrant collection for user {UserId}", userId);
+            await _context.SaveChangesAsync(cancellationToken);
         }
-        catch (Exception ex)
+        catch (DbUpdateException) when (idempotencyKey != null)
         {
-            _logger.LogWarning(ex, "Failed to initialize Qdrant collection for project {ProjectId}", projectId);
-            // Don't fail the project creation if Qdrant initialization fails
+            _context.Entry(project).State = EntityState.Detached;
+            var existing = await FindProjectByIdempotencyKeyAsync(userId, idempotencyKey, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapToResponse(existing);
+
+            throw;
         }
+
+        _logger.LogInformation("Created project {ProjectId} for user {UserId}", projectId, userId);
 
         return MapToResponse(project);
     }
@@ -196,7 +208,7 @@ public class ProjectService : IProjectService
 
         project.UpdatedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync(cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
 
         // Invalidate all per-user/admin views for this project.
         _cache.RemoveByPrefix(BuildProjectCachePrefix(projectId));
@@ -231,21 +243,20 @@ public class ProjectService : IProjectService
                 throw new UnauthorizedAccessException($"User does not have access to project '{projectId}'");
             }
 
+            await _truthStore.EnqueueOutboxAsync(
+                new EnqueueOutboxEventRequest(
+                    UserId: project.UserId,
+                    ProjectId: project.Id,
+                    RuntimeRunId: null,
+                    EventType: "delete_project_content",
+                    AggregateType: "project",
+                    AggregateId: project.Id,
+                    PayloadJson: "{}"),
+                cancellationToken);
+
             // Delete project (cascade will handle chapters, foreshadows, etc. via EF Core configuration)
             _context.NovelProjects.Remove(project);
             await _context.SaveChangesAsync(cancellationToken);
-
-            // Delete Qdrant vectors for this project
-            try
-            {
-                await _vectorStore.DeleteVectorsByFilterAsync(userId, new Dictionary<string, object> { ["project_id"] = projectId }, cancellationToken);
-                _logger.LogInformation("Deleted Qdrant vectors for project {ProjectId}", projectId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete Qdrant collection for project {ProjectId}", projectId);
-                // Don't fail the deletion if Qdrant deletion fails
-            }
 
             await transaction.CommitAsync(cancellationToken);
 
@@ -289,6 +300,18 @@ public class ProjectService : IProjectService
 
     private static string BuildProjectCachePrefix(string projectId) =>
         $"project:{projectId}";
+
+    private async Task<NovelProject?> FindProjectByIdempotencyKeyAsync(
+        string userId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _context.NovelProjects
+            .AsNoTracking()
+            .FirstOrDefaultAsync(project =>
+                    project.UserId == userId &&
+                    project.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
 
     private static string? EmptyToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

@@ -12,14 +12,12 @@ using TM.Services.Modules.ProjectData.Models.Generate.VolumeDesign;
 using TM.Services.Modules.ProjectData.Models.Context;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 using TM.Services.Modules.ProjectData.Models.Design.Templates;
+using TM.Services.Modules.ProjectData.Interfaces;
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
     public static class LayeredContextConfig
     {
-        private static readonly System.Text.Json.JsonSerializerOptions CaseInsensitiveJsonOptions = new() { PropertyNameCaseInsensitive = true };
-        private static readonly System.Text.Json.JsonSerializerOptions IndentedJsonOptions = new() { WriteIndented = true };
-
         public static int PreviousSummaryCount { get; set; } = 30;
 
         public const int MdFallbackMaxDistance = 1;
@@ -195,169 +193,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        private static readonly string SettingsFileName = "layered_context_settings.json";
-
-        public static async Task InitializeFromStorageAsync()
-        {
-            try
-            {
-                var path = System.IO.Path.Combine(
-                    StoragePathHelper.GetServicesStoragePath("Settings"), SettingsFileName);
-                if (!System.IO.File.Exists(path)) return;
-
-                await using var cfgStream = System.IO.File.OpenRead(path);
-                var dict = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, System.Text.Json.JsonElement>>(cfgStream, CaseInsensitiveJsonOptions).ConfigureAwait(false);
-                if (dict == null) return;
-
-                void TrySetInt(string key, Action<int> setter, int min, int max)
-                {
-                    if (dict.TryGetValue(key, out var el) && el.TryGetInt32(out var v))
-                        setter(Math.Clamp(v, min, max));
-                }
-
-                void TrySetBool(string key, Action<bool> setter)
-                {
-                    if (!dict.TryGetValue(key, out var el)) return;
-                    if (el.ValueKind == System.Text.Json.JsonValueKind.True) setter(true);
-                    else if (el.ValueKind == System.Text.Json.JsonValueKind.False) setter(false);
-                    else if (el.ValueKind == System.Text.Json.JsonValueKind.Number && el.TryGetInt32(out var n)) setter(n != 0);
-                }
-
-                void TrySetDouble(string key, Action<double> setter, double min, double max)
-                {
-                    if (!dict.TryGetValue(key, out var el)) return;
-                    if (el.ValueKind == System.Text.Json.JsonValueKind.Number && el.TryGetDouble(out var v))
-                        setter(Math.Clamp(v, min, max));
-                }
-
-                TrySetInt(nameof(ActiveEntityWindowChapters), v => ActiveEntityWindowChapters = v, 1, 1000);
-                TrySetInt(nameof(ActiveEntityWindowMaxCount), v => ActiveEntityWindowMaxCount = v, 0, 10000);
-                TrySetInt(nameof(SummaryRecentWindowCount), v => SummaryRecentWindowCount = v, 0, 2000);
-                TrySetInt(nameof(PreviousSummaryCount), v => PreviousSummaryCount = v, 0, 2000);
-                TrySetInt(nameof(MilestoneAnchorInterval), v => MilestoneAnchorInterval = v, 1, 1000);
-                TrySetInt(nameof(VolumeMilestoneMaxChars), v => VolumeMilestoneMaxChars = v, 0, 2000000);
-                TrySetInt(nameof(SummaryMaxCrossVolumeAnchors), v => SummaryMaxCrossVolumeAnchors = v, 0, 10000);
-                TrySetInt(nameof(VolumeMilestoneTailRecentCount), v => VolumeMilestoneTailRecentCount = v, 0, 2000);
-                TrySetInt(nameof(MilestoneMaxPreviousVolumes), v => MilestoneMaxPreviousVolumes = v, 0, 2000);
-                TrySetInt(nameof(ArchiveMaxPreviousVolumes), v => ArchiveMaxPreviousVolumes = v, 0, 2000);
-                TrySetInt(nameof(SnapshotMaxFactionInject), v => SnapshotMaxFactionInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxItemInject), v => SnapshotMaxItemInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxTimelineInject), v => SnapshotMaxTimelineInject = v, 1, 50);
-                TrySetInt(nameof(ArchiveInjectMaxCharacterStates), v => ArchiveInjectMaxCharacterStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxConflictProgress), v => ArchiveInjectMaxConflictProgress = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxTimelineEntries), v => ArchiveInjectMaxTimelineEntries = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxCharacterLocations), v => ArchiveInjectMaxCharacterLocations = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxFactionStates), v => ArchiveInjectMaxFactionStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxLocationStates), v => ArchiveInjectMaxLocationStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxFieldChars), v => ArchiveInjectMaxFieldChars = v, 0, 1000000);
-                TrySetInt(nameof(ArchiveInjectMaxItemStates), v => ArchiveInjectMaxItemStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxForeshadowingStatus), v => ArchiveInjectMaxForeshadowingStatus = v, 0, 10000);
-                TrySetInt(nameof(LedgerConstraintHistoryKeepRecent), v => LedgerConstraintHistoryKeepRecent = v, 0, int.MaxValue);
-                TrySetInt(nameof(ArchiveInjectMaxSecretStates), v => ArchiveInjectMaxSecretStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxPledgeStates), v => ArchiveInjectMaxPledgeStates = v, 0, 10000);
-                TrySetInt(nameof(ArchiveInjectMaxDeadlineStates), v => ArchiveInjectMaxDeadlineStates = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxCharacterInject), v => SnapshotMaxCharacterInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxLocationInject), v => SnapshotMaxLocationInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxConflictInject), v => SnapshotMaxConflictInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxForeshadowInject), v => SnapshotMaxForeshadowInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxSecretInject), v => SnapshotMaxSecretInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxPledgeInject), v => SnapshotMaxPledgeInject = v, 0, 10000);
-                TrySetInt(nameof(SnapshotMaxDeadlineInject), v => SnapshotMaxDeadlineInject = v, 0, 10000);
-
-                TrySetBool(nameof(SemanticRecallEnabled), v => SemanticRecallEnabled = v);
-                TrySetInt(nameof(SemanticForeshadowingTopK), v => SemanticForeshadowingTopK = v, 1, 20);
-                TrySetInt(nameof(SemanticCharacterTopK), v => SemanticCharacterTopK = v, 1, 20);
-                TrySetInt(nameof(SemanticGeneralTopK), v => SemanticGeneralTopK = v, 1, 20);
-                TrySetInt(nameof(SemanticQuotaForeshadowing), v => SemanticQuotaForeshadowing = v, 0, 10);
-                TrySetInt(nameof(SemanticQuotaCharacter), v => SemanticQuotaCharacter = v, 0, 10);
-                TrySetInt(nameof(SemanticQuotaGeneral), v => SemanticQuotaGeneral = v, 0, 10);
-                TrySetInt(nameof(SemanticRrfK), v => SemanticRrfK = v, 1, 200);
-                TrySetInt(nameof(FirstDescriptionWindowSize), v => FirstDescriptionWindowSize = v, 1, 5);
-                TrySetDouble(nameof(FirstDescriptionThreshold), v => FirstDescriptionThreshold = v, 0.0, 1.0);
-                TrySetInt(nameof(EmbeddingIdleReleaseMinutes), v => EmbeddingIdleReleaseMinutes = v, 0, 120);
-
-                TrySetInt(nameof(SemanticTfRecallTopK), v => SemanticTfRecallTopK = v, 1, 50);
-                TrySetInt(nameof(SemanticKeywordRecallTopK), v => SemanticKeywordRecallTopK = v, 1, 50);
-                TrySetInt(nameof(KeywordIndexMaxChaptersPerTerm), v => KeywordIndexMaxChaptersPerTerm = v, 10, 10000);
-
-                TM.App.Log("[LayeredContextConfig] 已从本地存储加载参数");
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[LayeredContextConfig] 加载本地参数失败，使用默认值: {ex.Message}");
-            }
-        }
-
-        public static async Task SaveToStorageAsync()
-        {
-            try
-            {
-                var dir = StoragePathHelper.GetServicesStoragePath("Settings");
-                System.IO.Directory.CreateDirectory(dir);
-                var path = System.IO.Path.Combine(dir, SettingsFileName);
-                var dict = new Dictionary<string, object>
-                {
-                    [nameof(ActiveEntityWindowChapters)] = ActiveEntityWindowChapters,
-                    [nameof(ActiveEntityWindowMaxCount)] = ActiveEntityWindowMaxCount,
-                    [nameof(SummaryRecentWindowCount)] = SummaryRecentWindowCount,
-                    [nameof(PreviousSummaryCount)] = PreviousSummaryCount,
-                    [nameof(MilestoneAnchorInterval)] = MilestoneAnchorInterval,
-                    [nameof(VolumeMilestoneMaxChars)] = VolumeMilestoneMaxChars,
-                    [nameof(SummaryMaxCrossVolumeAnchors)] = SummaryMaxCrossVolumeAnchors,
-                    [nameof(VolumeMilestoneTailRecentCount)] = VolumeMilestoneTailRecentCount,
-                    [nameof(MilestoneMaxPreviousVolumes)] = MilestoneMaxPreviousVolumes,
-                    [nameof(ArchiveMaxPreviousVolumes)] = ArchiveMaxPreviousVolumes,
-                    [nameof(SnapshotMaxFactionInject)] = SnapshotMaxFactionInject,
-                    [nameof(SnapshotMaxItemInject)] = SnapshotMaxItemInject,
-                    [nameof(SnapshotMaxTimelineInject)] = SnapshotMaxTimelineInject,
-                    [nameof(ArchiveInjectMaxCharacterStates)] = ArchiveInjectMaxCharacterStates,
-                    [nameof(ArchiveInjectMaxConflictProgress)] = ArchiveInjectMaxConflictProgress,
-                    [nameof(ArchiveInjectMaxTimelineEntries)] = ArchiveInjectMaxTimelineEntries,
-                    [nameof(ArchiveInjectMaxCharacterLocations)] = ArchiveInjectMaxCharacterLocations,
-                    [nameof(ArchiveInjectMaxFactionStates)] = ArchiveInjectMaxFactionStates,
-                    [nameof(ArchiveInjectMaxLocationStates)] = ArchiveInjectMaxLocationStates,
-                    [nameof(ArchiveInjectMaxFieldChars)] = ArchiveInjectMaxFieldChars,
-                    [nameof(ArchiveInjectMaxItemStates)] = ArchiveInjectMaxItemStates,
-                    [nameof(ArchiveInjectMaxForeshadowingStatus)] = ArchiveInjectMaxForeshadowingStatus,
-                    [nameof(LedgerConstraintHistoryKeepRecent)] = LedgerConstraintHistoryKeepRecent,
-                    [nameof(ArchiveInjectMaxSecretStates)] = ArchiveInjectMaxSecretStates,
-                    [nameof(ArchiveInjectMaxPledgeStates)] = ArchiveInjectMaxPledgeStates,
-                    [nameof(ArchiveInjectMaxDeadlineStates)] = ArchiveInjectMaxDeadlineStates,
-                    [nameof(SnapshotMaxCharacterInject)] = SnapshotMaxCharacterInject,
-                    [nameof(SnapshotMaxLocationInject)] = SnapshotMaxLocationInject,
-                    [nameof(SnapshotMaxConflictInject)] = SnapshotMaxConflictInject,
-                    [nameof(SnapshotMaxForeshadowInject)] = SnapshotMaxForeshadowInject,
-                    [nameof(SnapshotMaxSecretInject)] = SnapshotMaxSecretInject,
-                    [nameof(SnapshotMaxPledgeInject)] = SnapshotMaxPledgeInject,
-                    [nameof(SnapshotMaxDeadlineInject)] = SnapshotMaxDeadlineInject,
-                    [nameof(SemanticRecallEnabled)] = SemanticRecallEnabled,
-                    [nameof(SemanticForeshadowingTopK)] = SemanticForeshadowingTopK,
-                    [nameof(SemanticCharacterTopK)] = SemanticCharacterTopK,
-                    [nameof(SemanticGeneralTopK)] = SemanticGeneralTopK,
-                    [nameof(SemanticQuotaForeshadowing)] = SemanticQuotaForeshadowing,
-                    [nameof(SemanticQuotaCharacter)] = SemanticQuotaCharacter,
-                    [nameof(SemanticQuotaGeneral)] = SemanticQuotaGeneral,
-                    [nameof(SemanticRrfK)] = SemanticRrfK,
-                    [nameof(FirstDescriptionWindowSize)] = FirstDescriptionWindowSize,
-                    [nameof(FirstDescriptionThreshold)] = FirstDescriptionThreshold,
-                    [nameof(EmbeddingIdleReleaseMinutes)] = EmbeddingIdleReleaseMinutes,
-                    [nameof(SemanticTfRecallTopK)] = SemanticTfRecallTopK,
-                    [nameof(SemanticKeywordRecallTopK)] = SemanticKeywordRecallTopK,
-                    [nameof(KeywordIndexMaxChaptersPerTerm)] = KeywordIndexMaxChaptersPerTerm,
-                };
-                var tmpPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                await using (var stream = System.IO.File.Create(tmpPath))
-                {
-                    await System.Text.Json.JsonSerializer.SerializeAsync(stream, dict, IndentedJsonOptions).ConfigureAwait(false);
-                }
-                System.IO.File.Move(tmpPath, path, overwrite: true);
-                TM.App.Log("[LayeredContextConfig] 参数已保存到本地存储");
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[LayeredContextConfig] 保存本地参数失败: {ex.Message}");
-            }
-        }
     }
 
     public sealed record LayeredContextConfigSnapshot
@@ -433,30 +268,30 @@ namespace TM.Services.Modules.ProjectData.Implementations
     public partial class GuideContextService : Interfaces.IGuideContextService
     {
         private readonly FactSnapshotExtractor _factSnapshotExtractor;
-        private readonly ChapterSummaryStore _summaryStore;
-        private readonly ChapterMilestoneStore _milestoneStore;
+        private readonly IChapterSummaryService _summaryStore;
+        private readonly IChapterMilestoneService _milestoneStore;
+        private readonly IGuideRuntimeDataSource? _runtimeDataSource;
+        private readonly IRelationStrengthSourceService? _relationStrengthSource;
 
         private static string[] _cachedChapterIds = Array.Empty<string>();
         private static string _chapterIdsCachedForPath = string.Empty;
         private static DateTime _chapterIdsCachedAt = DateTime.MinValue;
         private static readonly object _chapterIdsCacheLock = new();
 
-        public GuideContextService(FactSnapshotExtractor factSnapshotExtractor, ChapterSummaryStore summaryStore, ChapterMilestoneStore milestoneStore)
+        public GuideContextService(
+            FactSnapshotExtractor factSnapshotExtractor,
+            IChapterSummaryService summaryStore,
+            IChapterMilestoneService milestoneStore,
+            IGuideRuntimeDataSource? runtimeDataSource = null,
+            IRelationStrengthSourceService? relationStrengthSource = null)
         {
             _factSnapshotExtractor = factSnapshotExtractor;
             _summaryStore = summaryStore;
             _milestoneStore = milestoneStore;
+            _runtimeDataSource = runtimeDataSource;
+            _relationStrengthSource = relationStrengthSource;
 
             CacheInvalidated += (_, _) => ClearCache();
-
-            try
-            {
-                StoragePathHelper.CurrentProjectChanged += (_, _) => ClearCache();
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[GuideContextService] 订阅项目切换事件失败: {ex.Message}");
-            }
         }
 
         public static event EventHandler? CacheInvalidated;

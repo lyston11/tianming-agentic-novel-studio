@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, resetSettings, saveSettings, testConnection } from '../api';
+import { getLlmConnectionHealth, getSettings, resetSettings, saveSettings, testConnection } from '../api';
 import type { UserSettings, LlmPreset } from '../api/types';
 import Topbar from '../components/layout/Topbar';
 import AccountTab from '../components/Settings/AccountTab';
@@ -71,6 +71,15 @@ export default function SettingsPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
+  const {
+    data: llmHealth,
+    isFetching: isLlmHealthFetching,
+    refetch: refetchLlmHealth,
+  } = useQuery({
+    queryKey: ['settings', 'llm-health'],
+    queryFn: getLlmConnectionHealth,
+    enabled: activeTab === 'ai',
+  });
 
   useEffect(() => {
     if (settings) setForm(settings);
@@ -105,8 +114,10 @@ export default function SettingsPage() {
       return saveSettings(form);
     },
     onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
-      setSaveStatus({ success: res.success, message: res.message });
+      setForm(res);
+      queryClient.setQueryData(['settings'], res);
+      queryClient.invalidateQueries({ queryKey: ['settings', 'llm-health'] });
+      setSaveStatus({ success: true, message: '设置已保存' });
       setHasUnsavedChanges(false);
     },
     onError: (err) => setSaveStatus({ success: false, message: `${err}` }),
@@ -125,6 +136,7 @@ export default function SettingsPage() {
       setTestResult(null);
       setSaveStatus({ success: true, message: '已恢复默认设置' });
       queryClient.setQueryData(['settings'], res);
+      queryClient.invalidateQueries({ queryKey: ['settings', 'llm-health'] });
     },
     onError: (err) => setSaveStatus({ success: false, message: `恢复失败: ${err}` }),
   });
@@ -235,6 +247,10 @@ export default function SettingsPage() {
               applyPreset={applyPreset}
               hasCustomConfig={hasCustomConfig}
               samePreset={samePreset}
+              llmHealth={llmHealth}
+              isLlmHealthFetching={isLlmHealthFetching}
+              onRefreshLlmHealth={() => refetchLlmHealth()}
+              hasUnsavedChanges={hasUnsavedChanges}
             />
           )}
 

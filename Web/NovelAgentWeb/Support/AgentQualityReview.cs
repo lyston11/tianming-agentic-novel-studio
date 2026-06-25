@@ -2,14 +2,6 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public sealed class AgentQualityReviewSuite
 {
-    private static readonly string[] WritingTools =
-    {
-        "GenerateChapterWithChanges",
-        "ValidateChapterDraft",
-        "RepairChapterDraft",
-        "CommitValidatedChapter"
-    };
-
     public AgentQualityGateReport Review(
         AgentObservationContext context,
         AgentRuntimeObservation observation,
@@ -42,7 +34,7 @@ public sealed class AgentQualityReviewSuite
     }
 
     private static bool IsWritingObservation(AgentRuntimeObservation observation) =>
-        WritingTools.Contains(observation.ToolName, StringComparer.OrdinalIgnoreCase) ||
+        string.Equals(observation.ToolName, "ProduceChapter", StringComparison.OrdinalIgnoreCase) ||
         observation.Phase.Contains("draft", StringComparison.OrdinalIgnoreCase) ||
         observation.Phase.Contains("validated", StringComparison.OrdinalIgnoreCase) ||
         observation.Phase.Contains("failed", StringComparison.OrdinalIgnoreCase);

@@ -127,6 +127,64 @@ public class QdrantIntegrationTests : IClassFixture<QdrantTestFixture>
     }
 
     [Fact]
+    public async Task Test_UpsertAndSearch_RoundTripsMetadataVersionId()
+    {
+        // Arrange
+        var projectId = GenerateTestProjectId();
+        var userId = GenerateTestUserId();
+        var vector = GenerateRandomVector(VectorDimension);
+
+        try
+        {
+            await _vectorStore.InitializeProjectCollectionAsync(userId);
+
+            var vectorData = new VectorData
+            {
+                Id = Guid.NewGuid().ToString(),
+                Vector = vector,
+                UserId = userId,
+                ProjectId = projectId,
+                SourceType = "chapter",
+                SourceId = "chapter_001",
+                ChapterId = "chapter_001",
+                Content = "Test chapter content",
+                Metadata = new Dictionary<string, object>
+                {
+                    ["version_id"] = "chapter-version-001",
+                    ["content_document_id"] = "doc-001",
+                    ["custom_rank"] = 7
+                }
+            };
+
+            await _vectorStore.UpsertVectorsAsync(userId, new List<VectorData> { vectorData });
+            await Task.Delay(500);
+
+            // Act
+            var results = await _vectorStore.SearchSimilarAsync(
+                userId,
+                vector,
+                topK: 1,
+                filters: new Dictionary<string, object>
+                {
+                    ["project_id"] = projectId,
+                    ["source_type"] = "chapter"
+                });
+
+            // Assert
+            var result = Assert.Single(results);
+            Assert.NotNull(result.Metadata);
+            Assert.Equal("chapter-version-001", result.Metadata["version_id"]);
+            Assert.Equal("doc-001", result.Metadata["content_document_id"]);
+            Assert.Equal(7L, result.Metadata["custom_rank"]);
+        }
+        finally
+        {
+            // Cleanup
+            await _vectorStore.DeleteCollectionAsync(userId);
+        }
+    }
+
+    [Fact]
     public async Task Test_UpsertVectors_Batch_Success()
     {
         // Arrange

@@ -118,8 +118,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                     entry.Id,
                     CanonLedgerEntryStatus.Canon,
                     string.IsNullOrWhiteSpace(entry.ConflictCheck)
-                        ? "Autopilot 升级为 Canon。"
-                        : entry.ConflictCheck + "；Autopilot 升级为 Canon。",
+                        ? "Agent 升级为 Canon。"
+                        : entry.ConflictCheck + "；Agent 升级为 Canon。",
                     confirmed: true,
                     ct).ConfigureAwait(false);
 
@@ -173,7 +173,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
             var rejected = new List<CanonLedgerEntry>();
             var normalizedReason = string.IsNullOrWhiteSpace(reason)
-                ? "Autopilot 标记该 Proposed 设定不进入 Canon。"
+                ? "Agent 标记该 Proposed 设定不进入 Canon。"
                 : reason.Trim();
 
             foreach (var entry in proposed)

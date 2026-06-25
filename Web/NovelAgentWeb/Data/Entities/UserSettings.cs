@@ -18,8 +18,8 @@ public class UserSettings
 
     // Agent Configuration
     public string AgentDefaultRisk { get; set; } = "Medium";
-    public bool AgentAutoContinue { get; set; } = true;
-    public int AgentMaxAutoSteps { get; set; } = 12;
+    public bool AgentLoopAutoProceed { get; set; } = true;
+    public int AgentLoopMaxSteps { get; set; } = 12;
 
     // Creative Defaults
     public string DefaultGenre { get; set; } = "玄幻";

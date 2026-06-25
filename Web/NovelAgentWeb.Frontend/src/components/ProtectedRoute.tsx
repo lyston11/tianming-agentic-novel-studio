@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { hasValidAuthSession } from '../services/authStorage';
 import { useAuthStore } from '../stores/authStore';
 
 interface ProtectedRouteProps {
@@ -7,7 +8,8 @@ interface ProtectedRouteProps {
 }
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated } = useAuthStore();
+  const { user, token, isAuthenticated: storedIsAuthenticated } = useAuthStore();
+  const isAuthenticated = hasValidAuthSession({ user, token, isAuthenticated: storedIsAuthenticated });
   const location = useLocation();
 
   if (!isAuthenticated) {

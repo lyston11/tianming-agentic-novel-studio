@@ -13,6 +13,14 @@ public class ProjectKnowledgeUsage
     public DateTime? LastUsedAt { get; set; }
     public int UsageCount { get; set; }
     public string? Note { get; set; }
+    public string Role { get; set; } = "Reference";
+    public string Scope { get; set; } = "ProjectWide";
+    public int Priority { get; set; } = 50;
+    public string ConstraintLevel { get; set; } = "Reference";
+    public string PackagePolicy { get; set; } = "RelevantOnly";
+    public string? BoundVersion { get; set; }
+    public string? UsedByChaptersJson { get; set; }
+    public string? UsageIdempotencyKeysJson { get; set; }
     public User User { get; set; } = null!;
     public NovelProject Project { get; set; } = null!;
 }

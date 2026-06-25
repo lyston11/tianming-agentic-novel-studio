@@ -6,6 +6,7 @@ using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 using Xunit;
 
 namespace Tests.Unit.Services.Knowledge;
@@ -18,10 +19,15 @@ public class ProjectKnowledgeUsageServiceTests
         await using var db = CreateDb();
         Seed(db);
         var events = new Mock<IAgentMemoryEventService>();
-        var service = new ProjectKnowledgeUsageService(db, events.Object, NullLogger<ProjectKnowledgeUsageService>.Instance);
+        var truthStore = new ProductionTruthStore(db);
+        var service = new ProjectKnowledgeUsageService(
+            db,
+            events.Object,
+            NullLogger<ProjectKnowledgeUsageService>.Instance,
+            new OutputArtifactRecorder(new ProductionEventWriter(truthStore)));
 
         await service.MarkImportedAsync("user-1", "project-b", "knowledge-1", "session-b", "upload", CancellationToken.None);
-        await service.MarkReferencedAsync("user-1", "project-a", "knowledge-1", "session-a", "run-a", CancellationToken.None);
+        await service.MarkReferencedAsync("user-1", "project-a", "knowledge-1", "session-a", "run-a", ct: CancellationToken.None);
 
         var a = await db.ProjectKnowledgeUsages.SingleAsync(x => x.ProjectId == "project-a");
         var b = await db.ProjectKnowledgeUsages.SingleAsync(x => x.ProjectId == "project-b");
@@ -30,6 +36,76 @@ public class ProjectKnowledgeUsageServiceTests
         Assert.Equal(1, a.UsageCount);
         Assert.Equal("imported", b.Status);
         Assert.Equal(0, b.UsageCount);
+
+        var artifacts = await db.ProductionEvents
+            .Where(evt => evt.EventType == OutputArtifactRecorder.EventType)
+            .OrderBy(evt => evt.ProjectId)
+            .ToListAsync();
+        Assert.Contains(artifacts, artifact =>
+            artifact.ProjectId == "project-a" &&
+            artifact.ArtifactType == "project_knowledge_binding" &&
+            artifact.ArtifactId == "knowledge-1" &&
+            artifact.Stage == "knowledge_referenced" &&
+            (artifact.DataJson ?? string.Empty).Contains("referenced", StringComparison.Ordinal));
+        Assert.Contains(artifacts, artifact =>
+            artifact.ProjectId == "project-b" &&
+            artifact.ArtifactType == "project_knowledge_binding" &&
+            artifact.ArtifactId == "knowledge-1" &&
+            artifact.Stage == "knowledge_imported" &&
+            (artifact.DataJson ?? string.Empty).Contains("imported", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MarkReferencedAsync_WithSameIdempotencyKeyCountsAndRecordsOnce()
+    {
+        await using var db = CreateDb();
+        Seed(db);
+        var events = new Mock<IAgentMemoryEventService>();
+        var truthStore = new ProductionTruthStore(db);
+        var service = new ProjectKnowledgeUsageService(
+            db,
+            events.Object,
+            NullLogger<ProjectKnowledgeUsageService>.Instance,
+            new OutputArtifactRecorder(new ProductionEventWriter(truthStore)));
+
+        var first = await service.MarkReferencedAsync(
+            "user-1",
+            "project-a",
+            "knowledge-1",
+            "session-a",
+            "run-a",
+            "usage-key-001",
+            CancellationToken.None);
+        var second = await service.MarkReferencedAsync(
+            "user-1",
+            "project-a",
+            "knowledge-1",
+            "session-a",
+            "run-a",
+            "usage-key-001",
+            CancellationToken.None);
+
+        Assert.True(first);
+        Assert.False(second);
+        var usage = await db.ProjectKnowledgeUsages.SingleAsync(x => x.ProjectId == "project-a");
+        Assert.Equal(1, usage.UsageCount);
+        Assert.Contains("usage-key-001", usage.UsageIdempotencyKeysJson);
+        events.Verify(x => x.AppendAsync(
+            "user-1",
+            "project-a",
+            "session-a",
+            "run-a",
+            "knowledge_used",
+            "referenced",
+            "project",
+            "referenced_knowledge_ids",
+            It.IsAny<object>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(1, await db.ProductionEvents.CountAsync(evt =>
+            evt.EventType == OutputArtifactRecorder.EventType &&
+            evt.ArtifactType == "project_knowledge_binding" &&
+            evt.ArtifactId == "knowledge-1" &&
+            evt.Stage == "knowledge_referenced"));
     }
 
     [Fact]
@@ -56,7 +132,7 @@ public class ProjectKnowledgeUsageServiceTests
             redis.Object,
             memory.Object);
 
-        await service.MarkReferencedAsync("user-1", "project-a", "knowledge-1", "session-a", "run-a", CancellationToken.None);
+        await service.MarkReferencedAsync("user-1", "project-a", "knowledge-1", "session-a", "run-a", ct: CancellationToken.None);
 
         memory.Verify(x => x.RemoveByPrefix("knowledge:search:user-1:project-a"), Times.Once);
         memory.Verify(x => x.Remove("knowledge:inventory:user-1:project-a"), Times.Once);

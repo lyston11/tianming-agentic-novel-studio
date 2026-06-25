@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -7,16 +10,18 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Diagnostics;
-using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Framework.AI.NovelAgent.Services;
+using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Support;
 using DbKnowledgeBase = TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase;
 using DbNovelProject = TM.Web.NovelAgentWeb.Data.Entities.NovelProject;
@@ -28,36 +33,41 @@ internal static class Program
 {
     private static readonly List<(string Name, Func<Task> Test)> Tests = new()
     {
-        ("ConversationKernel routes status queries away from creation tools", ConversationKernelRoutesStatusQuery),
+        ("ConversationKernel leaves natural status wording to model planner", ConversationKernelLeavesNaturalStatusWordingToModelPlanner),
         ("ToolPolicy blocks raw userGoal PlanChapter", ToolPolicyBlocksRawUserGoalPlanChapter),
-        ("ToolPolicy repairs PlanChapter missing creative brief", ToolPolicyRepairsPlanChapterMissingCreativeBrief),
+        ("ToolPolicy blocks PlanChapter missing creative directions", ToolPolicyBlocksPlanChapterMissingCreativeDirections),
+        ("ToolPolicy blocks PlanVolumeArc missing creative directions", ToolPolicyBlocksPlanVolumeArcMissingCreativeDirections),
         ("ToolPolicy preflights confirmed story foundation commit", ToolPolicyPreflightsConfirmedStoryFoundationCommit),
-        ("ToolPolicy blocks commit when quality gate still has issues", ToolPolicyBlocksCommitWithQualityIssues),
+        ("ToolPolicy delegates chapter quality handling to ProduceChapter", ToolPolicyBlocksCommitWithQualityIssues),
         ("Scheduler continue uses active blackboard task", SchedulerContinueUsesActiveBlackboardTask),
-        ("Scheduler continue uses repairable policy observations", SchedulerContinueUsesRepairablePolicyObservation),
-        ("Recovery keeps repair draft gate failures recoverable", RecoveryKeepsRepairDraftGateFailuresRecoverable),
-        ("ToolPolicy allows draft generation to build missing context", ToolPolicyAllowsDraftGenerationToBuildMissingContext),
-        ("ToolPolicy repairs missing draft before validation", ToolPolicyRepairsMissingDraftBeforeValidation),
+        ("Scheduler continue uses registered repairable production observations", SchedulerContinueUsesRepairablePolicyObservation),
+        ("Recovery keeps ProduceChapter gate failures recoverable", RecoveryKeepsRepairDraftGateFailuresRecoverable),
+        ("ToolPolicy allows ProduceChapter to own missing context recovery", ToolPolicyAllowsDraftGenerationToBuildMissingContext),
+        ("ToolPolicy rejects obsolete validate stage", ToolPolicyRepairsMissingDraftBeforeValidation),
         ("ToolPolicy keeps hard boundaries terminal", ToolPolicyKeepsHardBoundariesTerminal),
         ("ToolPolicy allows registered tools without discovery gate", ToolPolicyAllowsRegisteredToolsWithoutDiscoveryGate),
-        ("ToolPolicy blocks draft generation when context rebuild is required", ToolPolicyBlocksDraftWhenContextRebuildRequired),
-        ("ToolPolicy blocks commit when revalidation is required", ToolPolicyBlocksCommitWhenRevalidationRequired),
-        ("ToolPolicy repairs premature draft repair to validation", ToolPolicyRepairsPrematureDraftRepairToValidation),
+        ("ToolPolicy lets ProduceChapter handle context rebuild requirements", ToolPolicyBlocksDraftWhenContextRebuildRequired),
+        ("ToolPolicy rejects obsolete commit stage", ToolPolicyBlocksCommitWhenRevalidationRequired),
+        ("ToolPolicy rejects obsolete repair stage", ToolPolicyRepairsPrematureDraftRepairToValidation),
         ("Mission blackboard recovery rebuilds scheduler state", MissionBlackboardRecoveryRebuildsSchedulerState),
         ("Mission blackboard exposes drafts before library commit", MissionBlackboardExposesDraftsBeforeLibraryCommit),
-        ("New project reflection continues when foundation brief is already sufficient", NewProjectReflectionContinuesWhenFoundationBriefIsSufficient),
-        ("Planner reflection uses bounded fallback when model is slow", PlannerReflectionUsesBoundedFallbackWhenModelIsSlow),
-        ("Story foundation candidates stop for user review", StoryFoundationCandidatesStopForUserReview),
+        ("New project reflection does not locally continue foundation planning", NewProjectReflectionDoesNotLocallyContinueFoundationPlanning),
+        ("Planner reflection timeout returns bounded non-decisive fallback", PlannerReflectionTimeoutReturnsBoundedNonDecisiveFallback),
+        ("Story foundation candidates continue with structured commit action", StoryFoundationCandidatesContinueWithStructuredCommitAction),
         ("Runtime continues process tools with structured next hints", RuntimeContinuesProcessToolsWithStructuredNextHints),
+        ("Runtime continues after committed chapter when book tasks remain", RuntimeContinuesAfterCommittedChapterWhenBookTasksRemain),
         ("Runtime governance observations do not leak guard text", RuntimeGovernanceObservationDoesNotLeakGuardText),
         ("Runtime governance observations do not leak tool names", RuntimeGovernanceObservationDoesNotLeakToolNames),
         ("Tool execution snapshots expose user-visible progress", ToolExecutionSnapshotsExposeUserVisibleProgress),
         ("Runtime returns user-facing chat replies before no-action fallback", RuntimeReturnsUserFacingChatRepliesBeforeNoActionFallback),
+        ("Runtime does not expose no-tool retry loop", RuntimeDoesNotExposeNoToolRetryLoop),
         ("Foreground does not finish creative work after tool search", ForegroundDoesNotFinishCreativeWorkAfterToolSearch),
-        ("Planner missing LLM settings returns local identity for free chat", PlannerMissingLlmSettingsReturnsLocalIdentityForFreeChat),
-        ("Planner missing LLM settings leaves status query to no-action fallback", PlannerMissingLlmSettingsLeavesStatusQueryToNoActionFallback),
+        ("Foreground defers creative readable tools to background", ForegroundDefersCreativeReadableToolsToBackground),
+        ("Planner missing LLM settings returns explicit degraded no-tool reply", PlannerMissingLlmSettingsReturnsExplicitDegradedNoToolReply),
+        ("Planner missing LLM settings does not invent status results", PlannerMissingLlmSettingsDoesNotInventStatusResults),
         ("ConversationKernel builds stable user turn envelopes", ConversationKernelBuildsUserTurnEnvelope),
-        ("ConversationKernel treats explicit new novel request as project creation", ConversationKernelTreatsExplicitNewNovelRequestAsProjectCreation),
+        ("ConversationKernel leaves new novel requests as raw planner input", ConversationKernelLeavesNewNovelRequestsAsRawPlannerInput),
+        ("ConversationKernel leaves production requests as raw planner input", ConversationKernelLeavesProductionRequestsAsRawPlannerInput),
         ("ConversationKernel does not keyword-route continuation", ConversationKernelDoesNotKeywordRouteContinuation),
         ("ConversationKernel models numeric candidate selection", ConversationKernelModelsCandidateSelection),
         ("Candidate selection confirmation reply is user-visible", CandidateSelectionConfirmationReplyIsUserVisible),
@@ -67,8 +77,6 @@ internal static class Program
         ("Hardcore writing engine builds Anthropic messages URL like tool client", HardcoreWritingEngineBuildsAnthropicMessagesUrlLikeToolClient),
         ("Hardcore writing engine normalizes provider model suffixes like tool client", HardcoreWritingEngineNormalizesProviderModelSuffixesLikeToolClient),
         ("Hardcore writing engine reserves enough output tokens for CHANGES", HardcoreWritingEngineReservesEnoughOutputTokensForChanges),
-        ("Hardcore writing fallback gate accepts XML changes on first chapter", HardcoreWritingFallbackGateAcceptsXmlChangesOnFirstChapter),
-        ("Hardcore writing fallback gate normalizes array CHANGES", HardcoreWritingFallbackGateNormalizesArrayChanges),
         ("Quality review suite blocks weak chapter quality", QualityReviewSuiteBlocksWeakChapterQuality),
         ("Tool registry exposes provider tool schemas", ToolRegistryExposesToolSchemas),
         ("Tool registry semantic search treats phase as hint", ToolRegistrySemanticSearchTreatsPhaseAsHint),
@@ -79,7 +87,7 @@ internal static class Program
         ("ResolveNovelProject is idempotent while awaiting foundation", ResolveNovelProjectIsIdempotentWhileAwaitingFoundation),
         ("ResolveNovelProject create_new does not bind active old project", ResolveNovelProjectCreateNewDoesNotBindActiveOldProject),
         ("ResolveNovelProject create_new honors projectTitle as new title", ResolveNovelProjectCreateNewHonorsProjectTitle),
-        ("ResolveNovelProject complete brief is ready for foundation planning", ResolveNovelProjectCompleteBriefIsReadyForFoundationPlanning),
+        ("ResolveNovelProject foundation readiness requires explicit model flag", ResolveNovelProjectFoundationReadinessRequiresExplicitModelFlag),
     };
 
     public static async Task<int> Main()
@@ -111,18 +119,18 @@ internal static class Program
         return failed == 0 ? 0 : 1;
     }
 
-    private static Task ConversationKernelRoutesStatusQuery()
+    private static Task ConversationKernelLeavesNaturalStatusWordingToModelPlanner()
     {
         var session = new AgentSession();
         var kernel = new ConversationKernel();
         var intent = kernel.Classify(session, "你好，我叫你生成的小说章节准备好了吗");
 
-        Check.Equal(TurnIntentType.StatusQuery, intent.Type,
-            "Status wording about generated chapters must be classified as status_query.");
-        Check.Equal("status_query", intent.Label,
-            "Status query label should be stable for runtime trace and blackboard routing.");
+        Check.Equal(TurnIntentType.FreeChat, intent.Type,
+            "ConversationKernel must not keyword-route natural status wording; the LLM planner decides whether to query state.");
+        Check.Equal("free_chat", intent.Label,
+            "Natural language should remain a model-visible chat turn unless it is a structural candidate selection.");
         Check.True(string.IsNullOrWhiteSpace(intent.CreativeBrief),
-            "Status queries must not become creative briefs.");
+            "ConversationKernel should not manufacture creative briefs from natural status wording.");
 
         return Task.CompletedTask;
     }
@@ -141,7 +149,7 @@ internal static class Program
             },
             TurnIntent = new TurnIntent
             {
-                Type = TurnIntentType.StatusQuery,
+                Type = TurnIntentType.FreeChat,
                 Label = "status_query",
                 RawMessage = "我叫你生成的章节准备好了吗"
             },
@@ -168,7 +176,7 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static Task ToolPolicyRepairsPlanChapterMissingCreativeBrief()
+    private static Task ToolPolicyBlocksPlanChapterMissingCreativeDirections()
     {
         var policy = new ToolPolicyEngine();
         var session = new AgentSession
@@ -217,16 +225,82 @@ internal static class Program
 
         var result = policy.BeforeCall(call, session, bible, context, confirmed: false);
 
-        Check.True(!result.AllowsExecution && result.IsRepairable,
-            "PlanChapter without creativeBrief should be repaired before tool execution.");
-        Check.Equal("PlanChapter", result.RecommendedToolName,
-            "Missing chapter brief should repair to PlanChapter with generated arguments.");
-        Check.Equal("PlanChapter", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Policy should provide a replacement PlanChapter action.");
-        Check.True(result.ReplacementAction!.ToolCall!.Arguments.TryGetValue("creativeBrief", out var creativeBrief) &&
-                   creativeBrief.Contains("沉船修理工", StringComparison.OrdinalIgnoreCase) &&
-                   creativeBrief.Contains("chapter-001", StringComparison.OrdinalIgnoreCase),
-            "Generated creativeBrief should be derived from Story Bible and active chapter state.");
+        Check.True(!result.AllowsExecution && !result.IsRepairable,
+            "PlanChapter without creativeBrief should be blocked, not repaired by Runtime.");
+        Check.True(result.ReplacementAction == null,
+            "Runtime policy must not generate PlanChapter business arguments.");
+        Check.Contains("creativeBrief", result.Message,
+            "Block message should tell the model which structured argument is missing.");
+
+        var missingDirections = new AgentToolCall
+        {
+            Name = "PlanChapter",
+            Arguments =
+            {
+                ["creativeBrief"] = "chapter-001：沉船修理工修复旧式潜航机甲，猎杀深海异变体升级。"
+            }
+        };
+        var directionResult = policy.BeforeCall(missingDirections, session, bible, context, confirmed: false);
+        Check.True(!directionResult.AllowsExecution && !directionResult.IsRepairable,
+            "PlanChapter without candidateDirections should be blocked, not inferred from creativeBrief.");
+        Check.True(directionResult.ReplacementAction == null,
+            "Runtime policy must not infer candidateDirections.");
+        Check.Contains("candidateDirections", directionResult.Message,
+            "Block message should tell the model that structured candidate directions are required.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ToolPolicyBlocksPlanVolumeArcMissingCreativeDirections()
+    {
+        var policy = new ToolPolicyEngine();
+        var session = new AgentSession();
+        var bible = new StoryBibleDocument
+        {
+            Constitution = new StoryCreativeConstitution
+            {
+                Genre = "废土邮差冒险",
+                ReaderPromise = "邮路探索和硬事实连续性"
+            }
+        };
+        var context = new AgentObservationContext
+        {
+            UserMessage = "继续规划第一卷",
+            MissionPlan = session.WorkingMemory.MissionPlan,
+        };
+
+        var rawUserGoal = new AgentToolCall
+        {
+            Name = "PlanVolumeArc",
+            Arguments = { ["userGoal"] = "规划第一卷" }
+        };
+        var rawResult = policy.BeforeCall(rawUserGoal, session, bible, context, confirmed: false);
+        Check.True(!rawResult.AllowsExecution && !rawResult.IsRepairable,
+            "PlanVolumeArc with deprecated raw userGoal must not execute.");
+        Check.True(rawResult.ReplacementAction == null,
+            "Runtime policy must not rewrite raw userGoal into creativeBrief.");
+
+        var missingBrief = new AgentToolCall { Name = "PlanVolumeArc" };
+        var briefResult = policy.BeforeCall(missingBrief, session, bible, context, confirmed: false);
+        Check.True(!briefResult.AllowsExecution && !briefResult.IsRepairable,
+            "PlanVolumeArc without creativeBrief should be blocked, not repaired by Runtime.");
+        Check.True(briefResult.ReplacementAction == null,
+            "Runtime policy must not generate PlanVolumeArc business arguments.");
+        Check.Contains("creativeBrief", briefResult.Message,
+            "Block message should tell the model which structured volume argument is missing.");
+
+        var missingDirections = new AgentToolCall
+        {
+            Name = "PlanVolumeArc",
+            Arguments = { ["creativeBrief"] = "第一卷建立废墟邮线，并制造旧邮路危机升级。" }
+        };
+        var directionResult = policy.BeforeCall(missingDirections, session, bible, context, confirmed: false);
+        Check.True(!directionResult.AllowsExecution && !directionResult.IsRepairable,
+            "PlanVolumeArc without candidateDirections should be blocked, not inferred from creativeBrief.");
+        Check.True(directionResult.ReplacementAction == null,
+            "Runtime policy must not infer volume candidateDirections.");
+        Check.Contains("candidateDirections", directionResult.Message,
+            "Block message should tell the model that structured volume directions are required.");
 
         return Task.CompletedTask;
     }
@@ -238,7 +312,7 @@ internal static class Program
         var session = new AgentSession { ActiveRunId = runId };
         var context = new AgentObservationContext
         {
-            TurnIntent = new TurnIntent { Type = TurnIntentType.Confirmation, Label = "confirmation" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "confirmation" },
             MissionPlan = new AgentMissionPlan()
         };
         var call = new AgentToolCall
@@ -247,7 +321,7 @@ internal static class Program
             Arguments =
             {
                 ["runId"] = runId,
-                ["selectedMacroCandidateTitle"] = "规则反噬型"
+                ["selectedMacroCandidateIndex"] = "1"
             }
         };
 
@@ -306,18 +380,17 @@ internal static class Program
         Check.True(allowed.AllowsExecution && !allowed.RequiresConfirmation,
             "Confirmed CommitStoryFoundation should execute when the scoped run is commit-ready.");
 
-        var wrongTitleWithIndex = new AgentToolCall
+        var indexSelection = new AgentToolCall
         {
             Name = "CommitStoryFoundation",
             Arguments =
             {
                 ["runId"] = runId,
-                ["selectedMacroCandidateIndex"] = "1",
-                ["selectedMacroCandidateTitle"] = "规则反哺型"
+                ["selectedMacroCandidateIndex"] = "1"
             }
         };
         var indexAllowed = policy.BeforeCall(
-            wrongTitleWithIndex,
+            indexSelection,
             session,
             new StoryBibleDocument
             {
@@ -338,9 +411,9 @@ internal static class Program
             context,
             confirmed: true);
         Check.True(indexAllowed.AllowsExecution,
-            "Valid candidateIndex must win over a misspelled LLM-provided title.");
-        Check.Equal("规则反噬型", wrongTitleWithIndex.Arguments["selectedMacroCandidateTitle"],
-            "Policy should normalize misspelled title to the canonical candidate title when index is valid.");
+            "Valid candidateIndex should authorize the selected story foundation candidate.");
+        Check.Equal("macro-001-rule-backlash", indexSelection.Arguments["selectedMacroCandidateId"],
+            "Policy should persist the canonical candidateId when index is valid.");
 
         var zeroBasedIndex = new AgentToolCall
         {
@@ -373,9 +446,9 @@ internal static class Program
             context,
             confirmed: true);
         Check.True(zeroBasedAllowed.AllowsExecution,
-            "LLM-provided zero-based candidate index should be normalized to the first story foundation candidate.");
-        Check.Equal("1", zeroBasedIndex.Arguments["selectedMacroCandidateIndex"],
-            "Policy should rewrite zero-based candidate index into the canonical one-based value.");
+            "Zero-based candidate index should be normalized to the first story foundation candidate.");
+        Check.Equal("macro-001-rule-backlash", zeroBasedIndex.Arguments["selectedMacroCandidateId"],
+            "Policy should persist the canonical candidateId when zero-based index targets the first candidate.");
 
         var invalidIndex = new AgentToolCall
         {
@@ -440,7 +513,7 @@ internal static class Program
                                         RunId = runId,
                                         GateStatus = "validated",
                                         QualityIssueSummary = "角色动机不足，需要重写关键选择。",
-                                        NextAction = "RepairChapterDraft"
+                                        NextAction = "ProduceChapter"
                                     }
                                 }
                             }
@@ -466,20 +539,20 @@ internal static class Program
         var context = new AgentObservationContext
         {
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.Confirmation, Label = "confirmation" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "confirmation" },
         };
         var call = new AgentToolCall
         {
-            Name = "CommitValidatedChapter",
+            Name = "ProduceChapter",
             Arguments = { ["runId"] = runId }
         };
 
         var result = policy.BeforeCall(call, session, bible, context, confirmed: true);
 
-        Check.True(!result.AllowsExecution,
-            "GenerationGate pass alone must not allow commit when Reflect quality gate still has issues.");
-        Check.Contains("质量门禁", result.Message,
-            "Commit block should name the quality gate, not pretend this is a tool error.");
+        Check.True(result.AllowsExecution,
+            "ProduceChapter owns validation, repair, review and commit decisions inside the closed-loop production tool.");
+        Check.True(!result.IsRepairable,
+            "Policy must not synthesize old stage prerequisites for chapter quality issues.");
 
         return Task.CompletedTask;
     }
@@ -490,7 +563,7 @@ internal static class Program
         var scheduler = new AgentTaskScheduler();
         var context = new AgentObservationContext
         {
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
             MissionPlan = new AgentMissionPlan
             {
                 SchedulerState = new AgentTaskSchedulerState
@@ -502,8 +575,8 @@ internal static class Program
                             TaskId = "task-context",
                             RunId = runId,
                             ChapterId = "chapter-002",
-                            NextAction = "BuildChapterContextPackage",
-                            TaskType = "BuildChapterContextPackage",
+                            NextAction = "ProduceChapter",
+                            TaskType = "ProduceChapter",
                             Status = "queued",
                             Risk = "Medium"
                         }
@@ -514,7 +587,7 @@ internal static class Program
 
         var action = scheduler.BuildContinueAction(context);
 
-        Check.True(action?.ToolCall?.Name == "BuildChapterContextPackage",
+        Check.True(action?.ToolCall?.Name == "ProduceChapter",
             "Continue must use scheduler active task instead of keyword guessing.");
         Check.Equal(runId, action!.ToolCall!.Arguments["runId"],
             "Scheduler should carry the active task runId into tool arguments.");
@@ -527,7 +600,7 @@ internal static class Program
         var scheduler = new AgentTaskScheduler();
         var context = new AgentObservationContext
         {
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
             MissionPlan = new AgentMissionPlan
             {
                 SchedulerState = new AgentTaskSchedulerState
@@ -539,8 +612,8 @@ internal static class Program
                             TaskId = "task-stale",
                             RunId = runId,
                             ChapterId = "chapter-repair",
-                            NextAction = "GenerateChapterWithChanges",
-                            TaskType = "GenerateChapterWithChanges",
+                            NextAction = "ProduceChapter",
+                            TaskType = "ProduceChapter",
                             Status = "queued",
                             Risk = "High",
                             RequiresConfirmation = true
@@ -553,15 +626,15 @@ internal static class Program
                 new AgentRuntimeObservation
                 {
                     ObservationType = "policy_observation",
-                    ToolName = "GenerateChapterWithChanges",
+                    ToolName = "ProduceChapter",
                     Success = false,
                     IsRepairable = true,
-                    RecommendedToolName = "BuildChapterContextPackage",
+                    RecommendedToolName = "ProduceChapter",
                     RecommendedArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     {
                         ["runId"] = runId
                     },
-                    MissingPrerequisite = "chapter_context_package",
+                    MissingPrerequisite = "chapter_closed_loop_retry",
                     RunId = runId,
                     CreatedAt = DateTime.UtcNow
                 }
@@ -570,8 +643,8 @@ internal static class Program
 
         var action = scheduler.BuildContinueAction(context);
 
-        Check.Equal("BuildChapterContextPackage", action?.ToolCall?.Name ?? string.Empty,
-            "Continue should prefer the latest repairable policy observation over a stale queued task.");
+        Check.Equal("ProduceChapter", action?.ToolCall?.Name ?? string.Empty,
+            "Continue should use registered repairable production observations without mapping obsolete stage tools.");
         Check.Equal(runId, action!.ToolCall!.Arguments["runId"],
             "Repairable scheduler action should carry recommended runId.");
         Check.True(!action.RequiresConfirmation,
@@ -587,12 +660,11 @@ internal static class Program
         var analysis = recovery.AnalyzeFailure(
             new AgentToolCall
             {
-                Name = "RepairChapterDraft",
+                Name = "ProduceChapter",
                 Arguments =
                 {
                     ["runId"] = runId,
-                    ["repairStrategy"] = "rewrite_continuity_scene",
-                    ["repairAttempt"] = "2"
+                    ["commitPolicy"] = "auto_commit"
                 }
             },
             new AgentToolExecutionResult
@@ -605,16 +677,16 @@ internal static class Program
             new StoryBibleDocument());
 
         Check.True(analysis.IsRecoverable,
-            "RepairChapterDraft gate failures should stay recoverable until the repair budget is exhausted.");
+            "ProduceChapter gate failures should stay recoverable until the guardrail budget is exhausted.");
         Check.True(analysis.RecommendedChains.Count > 0,
-            "Repairable repair failures must expose a follow-up repair chain.");
+            "Repairable closed-loop failures must expose a follow-up ProduceChapter chain.");
         var next = analysis.RecommendedChains[0].Steps[0].ToolCall;
-        Check.Equal("RepairChapterDraft", next.Name,
-            "The follow-up chain should keep repairing the draft instead of forcing user input.");
+        Check.Equal("ProduceChapter", next.Name,
+            "The follow-up chain should retry the closed-loop production tool instead of exposing internal stages.");
         Check.Equal(runId, next.Arguments["runId"],
-            "The follow-up repair call should preserve the runId.");
-        Check.Equal("rewrite_continuity_scene", next.Arguments["repairStrategy"],
-            "The follow-up repair call should preserve the strategy marker.");
+            "The follow-up production call should preserve the runId.");
+        Check.Equal("auto_commit", next.Arguments["commitPolicy"],
+            "The follow-up production call should preserve the commit policy.");
 
         return Task.CompletedTask;
     }
@@ -632,7 +704,7 @@ internal static class Program
                 {
                     chapter.Status = "candidate_selected";
                     chapter.ContextStatus = "pending";
-                    chapter.NextAction = "BuildChapterContextPackage";
+                    chapter.NextAction = "ProduceChapter";
                 })
             }
         };
@@ -656,22 +728,21 @@ internal static class Program
         {
             AvailableTools =
             {
-                new AgentToolDefinition { Name = "ValidateChapterDraft" },
-                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+                new AgentToolDefinition { Name = "ProduceChapter" },
             },
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
         };
 
         var result = policy.BeforeCall(
-            new AgentToolCall { Name = "GenerateChapterWithChanges", Arguments = { ["runId"] = runId } },
+            new AgentToolCall { Name = "ProduceChapter", Arguments = { ["runId"] = runId } },
             session,
             bible,
             context,
             confirmed: true);
 
         Check.True(result.AllowsExecution,
-            "GenerateChapterWithChanges can build a missing context package itself; policy must not bounce it back to context generation.");
+            "ProduceChapter owns context construction and should not be bounced to obsolete stage tools.");
         Check.True(!result.IsRepairable,
             "Missing context alone should not create a repair loop.");
         return Task.CompletedTask;
@@ -690,7 +761,7 @@ internal static class Program
                 {
                     chapter.Status = "context_ready";
                     chapter.DraftStatus = "none";
-                    chapter.NextAction = "GenerateChapterWithChanges";
+                    chapter.NextAction = "ProduceChapter";
                 })
             }
         };
@@ -714,11 +785,10 @@ internal static class Program
         {
             AvailableTools =
             {
-                new AgentToolDefinition { Name = "ValidateChapterDraft" },
-                new AgentToolDefinition { Name = "GenerateChapterWithChanges" },
+                new AgentToolDefinition { Name = "ProduceChapter" },
             },
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
         };
 
         var result = policy.BeforeCall(
@@ -728,12 +798,10 @@ internal static class Program
             context,
             confirmed: false);
 
-        Check.True(!result.AllowsExecution && result.IsRepairable,
-            "Missing draft should be a repairable policy block before validation.");
-        Check.Equal("GenerateChapterWithChanges", result.RecommendedToolName,
-            "Missing draft should recommend generating the draft.");
-        Check.Equal("GenerateChapterWithChanges", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Repairable policy should provide the draft generation prerequisite action.");
+        Check.True(!result.AllowsExecution && !result.IsRepairable,
+            "Obsolete ValidateChapterDraft must be terminal at policy level instead of synthesizing old prerequisites.");
+        Check.Contains("未知工具", result.Message,
+            "Policy should reject obsolete stage tools as unregistered tools.");
         return Task.CompletedTask;
     }
 
@@ -743,7 +811,7 @@ internal static class Program
         var session = new AgentSession();
         var context = new AgentObservationContext
         {
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
             MissionPlan = new AgentMissionPlan()
         };
 
@@ -774,18 +842,20 @@ internal static class Program
             {
                 AvailableTools =
                 {
-                    new AgentToolDefinition { Name = "CommitValidatedChapter" },
+                    new AgentToolDefinition { Name = "ProduceChapter" },
                 },
                 MissionPlan = BuildPlanWithChapter("run-hard-boundary", chapter =>
                 {
                     chapter.GateStatus = "validated";
                     chapter.QualityStatus = "quality_passed";
                 }),
-                TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" }
+                TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" }
             },
             confirmed: false);
-        Check.True(unconfirmedCommit.AllowsExecution && unconfirmedCommit.RequiresConfirmation && !unconfirmedCommit.IsRepairable,
-            "Confirmation gates must remain confirmation gates, not repairable auto-execution.");
+        Check.True(!unconfirmedCommit.AllowsExecution && !unconfirmedCommit.IsRepairable,
+            "Obsolete CommitValidatedChapter must be rejected as an unregistered tool.");
+        Check.Contains("未知工具", unconfirmedCommit.Message,
+            "Obsolete stage tools should not behave as confirmation gates.");
         return Task.CompletedTask;
     }
 
@@ -803,7 +873,7 @@ internal static class Program
                     chapter.Status = "draft_generated";
                     chapter.DraftStatus = "draft_generated";
                     chapter.GateStatus = "none";
-                    chapter.NextAction = "ValidateChapterDraft";
+                    chapter.NextAction = "ProduceChapter";
                 })
             }
         };
@@ -834,11 +904,10 @@ internal static class Program
         {
             AvailableTools =
             {
-                new AgentToolDefinition { Name = "RepairChapterDraft" },
-                new AgentToolDefinition { Name = "ValidateChapterDraft" },
+                new AgentToolDefinition { Name = "ProduceChapter" },
             },
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
         };
 
         var result = policy.BeforeCall(
@@ -848,12 +917,10 @@ internal static class Program
             context,
             confirmed: true);
 
-        Check.True(!result.AllowsExecution && result.IsRepairable,
-            "Repairing before any gate report should be repaired into validation, not terminally blocked.");
-        Check.Equal("ValidateChapterDraft", result.RecommendedToolName,
-            "A draft without gate report should recommend validation before repair.");
-        Check.Equal("ValidateChapterDraft", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Policy should replace premature repair with ValidateChapterDraft.");
+        Check.True(!result.AllowsExecution && !result.IsRepairable,
+            "Obsolete RepairChapterDraft must be terminal at policy level.");
+        Check.Contains("未知工具", result.Message,
+            "Policy should reject obsolete repair stages as unregistered tools.");
         return Task.CompletedTask;
     }
 
@@ -871,9 +938,15 @@ internal static class Program
                     Name = "tool_search",
                     Description = "discover tools",
                     Risk = "Low"
+                },
+                new AgentToolDefinition
+                {
+                    Name = "ResolveNovelProject",
+                    Description = "resolve or create project",
+                    Risk = "Low"
                 }
             },
-            TurnIntent = new TurnIntent { Type = TurnIntentType.NewProjectSeed, Label = "new_project_seed" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "new_project_seed" },
             MissionPlan = new AgentMissionPlan()
         };
 
@@ -885,7 +958,7 @@ internal static class Program
             confirmed: false);
 
         Check.True(skippedDiscovery.AllowsExecution,
-            "Registered low-risk tools must not be blocked just because they were not returned by tool_search.");
+            "Registered low-risk tools must not be blocked just because the model did not call tool_search first.");
         Check.True(!skippedDiscovery.Message.Contains("tool_search", StringComparison.OrdinalIgnoreCase),
             "Policy must not leak or enforce tool_search as a discovery gate.");
 
@@ -898,7 +971,6 @@ internal static class Program
         Check.True(discovery.AllowsExecution,
             "tool_search itself must always pass the discovery boundary.");
 
-        context.AvailableTools.Add(new AgentToolDefinition { Name = "ResolveNovelProject", Risk = "Low" });
         var discovered = policy.BeforeCall(
             new AgentToolCall { Name = "ResolveNovelProject", Arguments = { ["mode"] = "create_new", ["seed"] = "玄幻学院流" } },
             session,
@@ -923,7 +995,7 @@ internal static class Program
                 {
                     chapter.Status = "needs_context_rebuild";
                     chapter.RequiresContextRebuild = true;
-                    chapter.NextAction = "BuildChapterContextPackage";
+                    chapter.NextAction = "ProduceChapter";
                 })
             }
         };
@@ -946,26 +1018,20 @@ internal static class Program
         var context = new AgentObservationContext
         {
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.ContinueMission, Label = "continue_mission" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "continue_mission" },
         };
 
         var result = policy.BeforeCall(
-            new AgentToolCall { Name = "GenerateChapterWithChanges", Arguments = { ["runId"] = runId } },
+            new AgentToolCall { Name = "ProduceChapter", Arguments = { ["runId"] = runId } },
             session,
             bible,
             context,
             confirmed: true);
 
-        Check.True(!result.AllowsExecution,
-            "Draft generation must be blocked when MissionBlackboard requires context rebuild.");
-        Check.True(result.IsRepairable,
-            "Context rebuild requirement should be repairable so runtime can rebuild context first.");
-        Check.Equal("BuildChapterContextPackage", result.RecommendedToolName,
-            "Context rebuild requirement should recommend BuildChapterContextPackage.");
-        Check.Equal("BuildChapterContextPackage", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Repairable context rebuild should provide a replacement action.");
-        Check.Contains("重新构建上下文包", result.Message,
-            "Policy message should point to context rebuild.");
+        Check.True(result.AllowsExecution,
+            "ProduceChapter should own context rebuild requirements inside the closed-loop tool.");
+        Check.True(!result.IsRepairable,
+            "Policy must not synthesize obsolete context-package repair actions.");
         return Task.CompletedTask;
     }
 
@@ -984,7 +1050,7 @@ internal static class Program
                     chapter.RequiresRevalidation = true;
                     chapter.GateStatus = "validated";
                     chapter.QualityStatus = "quality_passed";
-                    chapter.NextAction = "ValidateChapterDraft";
+                    chapter.NextAction = "ProduceChapter";
                 })
             }
         };
@@ -1003,7 +1069,7 @@ internal static class Program
         var context = new AgentObservationContext
         {
             MissionPlan = session.WorkingMemory.MissionPlan,
-            TurnIntent = new TurnIntent { Type = TurnIntentType.Confirmation, Label = "confirmation" },
+            TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "confirmation" },
         };
 
         var result = policy.BeforeCall(
@@ -1013,16 +1079,10 @@ internal static class Program
             context,
             confirmed: true);
 
-        Check.True(!result.AllowsExecution,
-            "Commit must be blocked when MissionBlackboard requires revalidation.");
-        Check.True(result.IsRepairable,
-            "Revalidation requirement should be repairable so runtime can validate first.");
-        Check.Equal("ValidateChapterDraft", result.RecommendedToolName,
-            "Revalidation requirement should recommend ValidateChapterDraft.");
-        Check.Equal("ValidateChapterDraft", result.ReplacementAction?.ToolCall?.Name ?? string.Empty,
-            "Repairable revalidation should provide a replacement action.");
-        Check.Contains("重新校验", result.Message,
-            "Policy message should point to revalidation.");
+        Check.True(!result.AllowsExecution && !result.IsRepairable,
+            "Obsolete CommitValidatedChapter must be rejected instead of creating revalidation repair chains.");
+        Check.Contains("未知工具", result.Message,
+            "Policy should reject obsolete commit stages as unregistered tools.");
         return Task.CompletedTask;
     }
 
@@ -1066,8 +1126,8 @@ internal static class Program
             "Recovery should rebuild scheduler tasks from StoryBible runs.");
         Check.True(session.WorkingMemory.MissionPlan.LastRecoveredAt != null,
             "Recovery should record LastRecoveredAt.");
-        Check.Equal("BuildChapterContextPackage", session.WorkingMemory.MissionPlan.SchedulerState.Tasks[0].NextAction,
-            "Recovered selected chapter candidate should continue with context package construction.");
+        Check.Equal("ProduceChapter", session.WorkingMemory.MissionPlan.SchedulerState.Tasks[0].NextAction,
+            "Recovered selected chapter candidate should continue with the closed-loop production tool.");
         return Task.CompletedTask;
     }
 
@@ -1108,7 +1168,7 @@ internal static class Program
                 ArtifactId = "draft-visibility",
                 ChapterId = "chapter-visibility",
                 Status = "draft_generated",
-                DraftContent = "草稿正文\n\n---CHANGES---\n{}",
+                DraftContent = "草稿正文\n<chapter_changes>{}</chapter_changes>",
                 HasChanges = true
             }
         };
@@ -1160,12 +1220,9 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static async Task NewProjectReflectionContinuesWhenFoundationBriefIsSufficient()
+    private static async Task NewProjectReflectionDoesNotLocallyContinueFoundationPlanning()
     {
-        var planner = new AgentPlanner(new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-settings"),
-            "AgentKernelRegression"),
-            new HttpClient());
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var insufficient = await planner.ReflectAsync(
             new AgentObservationContext
             {
@@ -1199,17 +1256,17 @@ internal static class Program
             },
             CancellationToken.None);
 
-        Check.True(!sufficient.RequiresUserInput,
-            "Complete new-project brief should not be forced to ask the same foundation questions again.");
-        Check.True(sufficient.ShouldContinue,
-            "Complete new-project brief should let the LLM continue to choose the next concrete planning tool.");
+        Check.True(sufficient.RequiresUserInput,
+            "Without an LLM reflection result, runtime must not locally infer that a long creative brief is sufficient.");
+        Check.True(!sufficient.ShouldContinue,
+            "Rule reflection must not continue into foundation planning by parsing natural-language completeness.");
+        Check.Contains("已创建新小说", sufficient.ReplyDraft,
+            "Fallback reflection should preserve the real tool result instead of inventing a next tool.");
     }
 
-    private static async Task PlannerReflectionUsesBoundedFallbackWhenModelIsSlow()
+    private static async Task PlannerReflectionTimeoutReturnsBoundedNonDecisiveFallback()
     {
-        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-slow-reflection-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
-        await settings.SaveAsync(new UserSettings
+        var settings = CreateDbBackedSettingsManager(settings: new UserSettings
         {
             LlmProvider = "openai",
             LlmBaseUrl = "https://example.test/v1",
@@ -1239,18 +1296,15 @@ internal static class Program
 
         Check.True(elapsed.Elapsed < TimeSpan.FromSeconds(3),
             "Reflection should have its own short fallback budget instead of waiting for the full model HTTP timeout.");
-        Check.True(reflection.ShouldContinue,
-            "Slow model reflection should fall back to local reflection so the runtime can continue.");
-        Check.True(!reflection.RequiresUserInput,
-            "Fallback reflection should respect sufficient new-project brief instead of forcing a repeated question.");
+        Check.True(!reflection.ShouldContinue,
+            "Slow model reflection must not use a local natural-language completeness guess to continue production.");
+        Check.True(reflection.RequiresUserInput,
+            "Bounded fallback should return control instead of pretending the model approved the next tool.");
     }
 
-    private static async Task StoryFoundationCandidatesStopForUserReview()
+    private static async Task StoryFoundationCandidatesContinueWithStructuredCommitAction()
     {
-        var planner = new AgentPlanner(new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-foundation-candidates"),
-            "AgentKernelRegression"),
-            new HttpClient());
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var reflection = await planner.ReflectAsync(
             new AgentObservationContext
             {
@@ -1283,10 +1337,10 @@ internal static class Program
             },
             CancellationToken.None);
 
-        Check.True(reflection.RequiresUserInput,
-            "Story foundation candidates are process artifacts that must be shown to the user before committing.");
-        Check.True(!reflection.ShouldContinue,
-            "Runtime must not auto-continue from generated foundation candidates into commit or another planning loop.");
+        Check.True(!reflection.RequiresUserInput,
+            "Story foundation candidates should not force user input when the mission blackboard has a structured commit action.");
+        Check.True(reflection.ShouldContinue,
+            "Runtime should allow the model to continue from generated foundation candidates into the structured next action.");
         Check.Contains("故事地基候选", reflection.ReplyDraft,
             "Final reply should preserve the successful tool artifact instead of falling through to no-result governance text.");
         Check.DoesNotContain("没有新的工具执行结果", reflection.ReplyDraft,
@@ -1394,17 +1448,108 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task RuntimeContinuesAfterCommittedChapterWhenBookTasksRemain()
+    {
+        var result = new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "chapter_committed",
+            Message = "第 1 章已提交书城。",
+            Artifact = new AgentToolArtifact
+            {
+                ArtifactType = "chapter_committed",
+                ArtifactId = "chapter-001",
+                ProjectId = "project-book",
+                RunId = "run-chapter-001",
+                Summary = "第 1 章已提交书城。",
+                UserVisibleStatus = "第 1 章已入书城",
+                VisibleInWorkflow = true,
+                VisibleInLibrary = true
+            }
+        };
+        var reflection = new AgentReflection
+        {
+            Summary = "第 1 章已完成。",
+            GoalSatisfied = true,
+            ShouldContinue = false,
+            RequiresUserInput = false
+        };
+        var plan = new AgentMissionPlan
+        {
+            CurrentObjective = "写完三章短篇并提交书城。",
+            BookTaskTree = new AgentBookTaskTree
+            {
+                Volumes =
+                {
+                    new AgentVolumeTask
+                    {
+                        VolumeId = "volume-001",
+                        Chapters =
+                        {
+                            new AgentChapterTask
+                            {
+                                ChapterId = "chapter-001",
+                                RunId = "run-chapter-001",
+                                Status = "completed",
+                                CommitStatus = "committed"
+                            },
+                            new AgentChapterTask
+                            {
+                                ChapterId = "chapter-002",
+                                Status = "queued",
+                                NextAction = "PlanChapter"
+                            },
+                            new AgentChapterTask
+                            {
+                                ChapterId = "chapter-003",
+                                Status = "queued",
+                                NextAction = "PlanChapter"
+                            }
+                        }
+                    }
+                }
+            },
+            SchedulerState = new AgentTaskSchedulerState
+            {
+                ActiveTaskId = "task-chapter-002",
+                ActiveChapterId = "chapter-002",
+                Tasks =
+                {
+                    new AgentScheduledTask
+                    {
+                        TaskId = "task-chapter-002",
+                        ProjectId = "project-book",
+                        ChapterId = "chapter-002",
+                        Status = "queued",
+                        TaskType = "PlanChapter",
+                        NextAction = "PlanChapter"
+                    },
+                    new AgentScheduledTask
+                    {
+                        TaskId = "task-chapter-003",
+                        ProjectId = "project-book",
+                        ChapterId = "chapter-003",
+                        Status = "queued",
+                        TaskType = "PlanChapter",
+                        NextAction = "PlanChapter"
+                    }
+                }
+            }
+        };
+
+        Check.True(!AgentRuntime.ShouldStopAfterToolResult(result, reflection, plan),
+            "A committed chapter is terminal only for that chapter; a whole-book mission must continue while later chapter tasks are queued.");
+        return Task.CompletedTask;
+    }
+
     private static async Task RuntimeGovernanceObservationDoesNotLeakGuardText()
     {
-        var planner = new AgentPlanner(new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-governance-reflect"),
-            "AgentKernelRegression"),
-            new HttpClient());
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var reflection = await planner.ReflectAsync(
             new AgentObservationContext
             {
                 UserMessage = "你好，我想写一本像斗罗大陆一样风格的小说",
-                TurnIntent = new TurnIntent { Type = TurnIntentType.NewProjectSeed, Label = "new_project_seed" },
+                TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "new_project_seed" },
                 MissionPlan = new AgentMissionPlan
                 {
                     Stage = "foundation",
@@ -1434,10 +1579,7 @@ internal static class Program
 
     private static async Task RuntimeGovernanceObservationDoesNotLeakToolNames()
     {
-        var planner = new AgentPlanner(new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-governance-natural"),
-            "AgentKernelRegression"),
-            new HttpClient());
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var reflection = await planner.ReflectAsync(
             new AgentObservationContext
             {
@@ -1479,7 +1621,7 @@ internal static class Program
         });
         var completed = AgentToolProgressPresenter.Describe(new AgentToolExecutionSnapshot
         {
-            ToolName = "CommitValidatedChapter",
+            ToolName = NovelAgentProductionStages.ChapterCommit,
             Status = "succeeded",
             Phase = "review",
             ResultPhase = "chapter_committed",
@@ -1517,7 +1659,7 @@ internal static class Program
         var noAction = new AgentAction
         {
             Type = AgentActionType.ChatReply,
-            Source = "planner_error_fallback",
+            Source = "planner_no_action",
             IsNoTool = true
         };
         var internalErrorText = new AgentAction
@@ -1557,10 +1699,23 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static async Task PlannerMissingLlmSettingsReturnsLocalIdentityForFreeChat()
+    private static Task RuntimeDoesNotExposeNoToolRetryLoop()
     {
-        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-missing-llm-" + Guid.NewGuid().ToString("N"));
-        var planner = new AgentPlanner(new UserSettingsManager(root, "AgentKernelRegression"), new HttpClient());
+        var method = typeof(AgentRuntime).GetMethod(
+            "ShouldRetryNoToolPlanning",
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.Instance);
+
+        Check.True(method == null,
+            "Runtime must not keep the old no-tool retry loop; production continuation should be decided by model-visible task state and scheduler context.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task PlannerMissingLlmSettingsReturnsExplicitDegradedNoToolReply()
+    {
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var action = await planner.PlanActionAsync(new AgentObservationContext
         {
             UserMessage = "你是谁",
@@ -1574,23 +1729,26 @@ internal static class Program
         }, CancellationToken.None);
 
         Check.Equal(AgentActionType.ChatReply, action.Type,
-            "Missing LLM settings free chat should produce a local ChatReply.");
-        Check.True(!action.IsNoTool,
-            "Local identity fallback is a valid chat reply, not planner_failed_or_no_action.");
-        Check.Contains("天命小说 Agent", action.Reply,
-            "Missing LLM settings identity fallback should introduce the agent instead of returning Story Bible status.");
+            "Missing LLM settings should still produce an explicit user-facing degraded reply.");
+        Check.True(action.IsNoTool,
+            "Missing LLM settings is a degraded no-tool state, not a normal local identity decision.");
+        Check.Contains("降级模式", action.Reply,
+            "The reply should clearly say the agent is degraded instead of pretending to be a complete planner.");
+        Check.DoesNotContain("天命小说 Agent", action.Reply,
+            "Missing LLM fallback must not masquerade as a normal identity chat reply.");
+        Check.True(AgentRuntime.ShouldReturnUserFacingReply(action),
+            "Configuration problems should be visible to the user.");
     }
 
-    private static async Task PlannerMissingLlmSettingsLeavesStatusQueryToNoActionFallback()
+    private static async Task PlannerMissingLlmSettingsDoesNotInventStatusResults()
     {
-        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-missing-llm-status-" + Guid.NewGuid().ToString("N"));
-        var planner = new AgentPlanner(new UserSettingsManager(root, "AgentKernelRegression"), new HttpClient());
+        var planner = new AgentPlanner(CreateDbBackedSettingsManager(), new HttpClient());
         var action = await planner.PlanActionAsync(new AgentObservationContext
         {
             UserMessage = "刚才那章呢",
             TurnIntent = new TurnIntent
             {
-                Type = TurnIntentType.StatusQuery,
+                Type = TurnIntentType.FreeChat,
                 Label = "status_query",
                 RawMessage = "刚才那章呢"
             },
@@ -1598,11 +1756,13 @@ internal static class Program
         }, CancellationToken.None);
 
         Check.True(action.IsNoTool,
-            "Missing LLM settings status query should remain planner_failed_or_no_action for Runtime status fallback.");
-        Check.True(string.IsNullOrWhiteSpace(action.Reply),
-            "Missing LLM settings status query must not be swallowed by local identity chat.");
-        Check.True(!AgentRuntime.ShouldReturnUserFacingReply(action),
-            "Status no-action should not be returned as direct chat.");
+            "Missing LLM settings status query should remain a no-tool degraded response.");
+        Check.Contains("没有配置可用的模型服务", action.Reply,
+            "Missing LLM fallback must report configuration state, not fabricate project progress.");
+        Check.DoesNotContain("刚才那章", action.Reply,
+            "Missing LLM fallback must not pretend it inspected chapter state.");
+        Check.True(AgentRuntime.ShouldReturnUserFacingReply(action),
+            "Configuration problems should be returned directly so the user can fix settings.");
     }
 
     private static Task ConversationKernelBuildsUserTurnEnvelope()
@@ -1625,7 +1785,7 @@ internal static class Program
                                 TaskId = "task-active",
                                 RunId = "run-active",
                                 Status = "queued",
-                                NextAction = "ValidateChapterDraft"
+                                NextAction = "ProduceChapter"
                             }
                         }
                     }
@@ -1634,12 +1794,12 @@ internal static class Program
         };
         var envelope = new ConversationKernel().BuildEnvelope(session, "刚才那章呢，准备好了吗");
 
-        Check.Equal(DialogueAct.AskStatus, envelope.DialogueAct,
-            "Status query should become an ask-status dialogue act.");
-        Check.Equal("chapter", envelope.StatusQueryScope,
-            "Chapter wording should scope the status query to chapter artifacts.");
-        Check.Equal("draft-run-active", envelope.TargetArtifact,
-            "Recent chapter wording should point at the blackboard artifact cursor.");
+        Check.Equal(DialogueAct.Chat, envelope.DialogueAct,
+            "ConversationKernel should not keyword-route natural status wording into an ask-status act.");
+        Check.Equal(string.Empty, envelope.StatusQueryScope,
+            "Status scope should only be produced by model/tool decisions, not local keyword parsing.");
+        Check.Equal("run-active", envelope.TargetArtifact,
+            "Envelope should preserve scheduler context for the model without forcing artifact-cursor status routing.");
         Check.Equal("task-active", envelope.ReferencedTask,
             "Envelope should preserve the active scheduler task reference.");
         return Task.CompletedTask;
@@ -1675,18 +1835,56 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static Task ConversationKernelTreatsExplicitNewNovelRequestAsProjectCreation()
+    private static Task ForegroundDefersCreativeReadableToolsToBackground()
+    {
+        var method = typeof(AgentRuntime).GetMethod(
+            "ShouldDeferForegroundReadableToolToBackground",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (method == null)
+            throw new RegressionAssertException("AgentRuntime.ShouldDeferForegroundReadableToolToBackground was not found.");
+
+        bool ShouldDefer(string toolName, string actionIntent)
+        {
+            var action = new AgentAction
+            {
+                Type = AgentActionType.ToolCall,
+                Intent = actionIntent,
+                ToolCall = new AgentToolCall { Name = toolName }
+            };
+            var context = new AgentObservationContext
+            {
+                TurnIntent = new TurnIntent { Type = TurnIntentType.FreeChat, Label = "free_chat" },
+                UserTurn = new UserTurnEnvelope { DialogueAct = DialogueAct.Chat }
+            };
+            return (bool)(method.Invoke(null, new object[] { action, context }) ?? false);
+        }
+
+        Check.True(ShouldDefer("SearchCreativeKnowledge", "creative_production"),
+            "A creative production turn may start by reading knowledge, but foreground must defer to the background loop so the LLM can continue planning/writing.");
+        Check.True(ShouldDefer("QueryProjectStatus", "continue_mission"),
+            "A continuation turn may read project status, then should continue in the background instead of ending as a status dump.");
+        Check.True(!ShouldDefer("QueryWorkspaceState", "status_query"),
+            "A direct status query should remain a foreground-readable reply.");
+        Check.True(!ShouldDefer("SearchCreativeKnowledge", "free_chat"),
+            "Casual chat should not be converted into background work just because a readable tool was selected.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ConversationKernelLeavesNewNovelRequestsAsRawPlannerInput()
     {
         var envelope = new ConversationKernel().BuildEnvelope(
             new AgentSession { Phase = "idle" },
             "我想写一本新的末世玄幻爽文，书名《废土神国：我靠吞噬怪物升级》，不要绑定旧项目，直接创建新小说。");
 
-        Check.Equal(TurnIntentType.NewProjectSeed, envelope.Intent.Type,
-            "Explicit new novel requests should be classified as project creation, not as switching to an existing project.");
-        Check.Equal(DialogueAct.StartProject, envelope.DialogueAct,
-            "Explicit new novel requests should ask the LLM to create or resolve a new project context.");
-        Check.Contains("废土神国", envelope.CreativeBrief,
-            "The creative brief should preserve the requested new book identity.");
+        Check.Equal(TurnIntentType.FreeChat, envelope.Intent.Type,
+            "ConversationKernel must not keyword-route new-novel wording into project creation.");
+        Check.Equal(DialogueAct.Chat, envelope.DialogueAct,
+            "Project creation should be chosen by the LLM planner from tool semantics.");
+        Check.Equal(string.Empty, envelope.CreativeBrief,
+            "ConversationKernel must not manufacture creative briefs from raw natural language.");
+        Check.Contains("废土神国", envelope.Intent.RawMessage,
+            "The raw user request must remain available for the model planner.");
         return Task.CompletedTask;
     }
 
@@ -1744,6 +1942,23 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task ConversationKernelLeavesProductionRequestsAsRawPlannerInput()
+    {
+        var envelope = new ConversationKernel().BuildEnvelope(
+            new AgentSession { Phase = "idle", ActiveProjectId = "project-1" },
+            "我们正式开始《星渊邮差》的完整生产。请先理解当前项目、真实知识库硬事实和工作台状态，再建立完整创作工作流：6卷60章，每章正文不少于3000字，并开始第一章生成、校验和提交书城。");
+
+        Check.Equal(TurnIntentType.FreeChat, envelope.Intent.Type,
+            "ConversationKernel must not locally decide that a production request is a creative brief.");
+        Check.Equal(DialogueAct.Chat, envelope.DialogueAct,
+            "The LLM planner should decide whether this starts background production.");
+        Check.Equal(string.Empty, envelope.CreativeBrief,
+            "ConversationKernel must not prefill creative briefs from natural language.");
+        Check.Contains("星渊邮差", envelope.Intent.RawMessage,
+            "The raw production request must remain available for the model planner.");
+        return Task.CompletedTask;
+    }
+
     private static Task ConversationKernelDoesNotKeywordRouteContinuation()
     {
         var kernel = new ConversationKernel();
@@ -1763,10 +1978,10 @@ internal static class Program
         foreach (var message in new[] { "继续", "下一步", "开始写", "这是什么意思？不是开始写小说了吗" })
         {
             var envelope = kernel.BuildEnvelope(session, message);
-            Check.True(envelope.Intent.Type is TurnIntentType.FreeChat or TurnIntentType.CreativeBrief or TurnIntentType.StatusQuery,
+            Check.Equal(TurnIntentType.FreeChat, envelope.Intent.Type,
                 $"Message '{message}' should remain natural language for the planner, not a keyword-routed ContinueMission.");
-            Check.True(envelope.DialogueAct != DialogueAct.ContinueTask,
-                $"Message '{message}' must not force a ContinueTask dialogue act.");
+            Check.Equal(DialogueAct.Chat, envelope.DialogueAct,
+                $"Message '{message}' must remain a neutral chat act for the LLM planner.");
         }
 
         return Task.CompletedTask;
@@ -1827,8 +2042,7 @@ internal static class Program
                 Name = "CommitStoryFoundation",
                 Arguments =
                 {
-                    ["runId"] = runId,
-                    ["selectedMacroCandidateTitle"] = "规则反哺型"
+                    ["runId"] = runId
                 }
             }
         };
@@ -1870,8 +2084,8 @@ internal static class Program
             "Runtime should persist the structured 1-based selected option into tool args.");
         Check.Equal("macro-001-rule-backlash", action.ToolCall.Arguments["selectedMacroCandidateId"],
             "Runtime should persist candidateId when the selected candidate has one.");
-        Check.Equal("规则反噬型", action.ToolCall.Arguments["selectedMacroCandidateTitle"],
-            "Runtime should overwrite misspelled LLM titles with the canonical candidate title.");
+        Check.True(!action.ToolCall.Arguments.ContainsKey("selectedMacroCandidateTitle"),
+            "Runtime should not write title-based story foundation selection args.");
         return Task.CompletedTask;
     }
 
@@ -1887,7 +2101,7 @@ internal static class Program
             },
             TurnIntent = new TurnIntent
             {
-                Type = TurnIntentType.StatusQuery,
+                Type = TurnIntentType.FreeChat,
                 Label = "status_query",
                 RawMessage = "刚才生成的章节在哪里"
             },
@@ -1899,6 +2113,7 @@ internal static class Program
             Arguments =
             {
                 ["creativeBrief"] = "刚才生成的章节在哪里",
+                ["candidateDirections"] = "读取当前章节产物位置并整理状态",
                 ["sourceTurnId"] = "native-tool"
             }
         };
@@ -2109,126 +2324,10 @@ internal static class Program
         Check.True(defaultBudget >= 8192,
             "Chapter writing must reserve enough output tokens for the full draft plus CHANGES.");
 
-        var explicitLargerBudget = (int)method.Invoke(null, new object[] { 12000 })!;
-        Check.Equal(12000, explicitLargerBudget,
+        var explicitLargerBudget = (int)method.Invoke(null, new object[] { 20000 })!;
+        Check.Equal(20000, explicitLargerBudget,
             "Explicitly larger user output budgets should be preserved.");
 
-        return Task.CompletedTask;
-    }
-
-    private static Task HardcoreWritingFallbackGateAcceptsXmlChangesOnFirstChapter()
-    {
-        var method = typeof(HardcoreWritingEngine).GetMethod(
-            "BuildFallbackGateReport",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
-        Check.True(method != null,
-            "HardcoreWritingEngine should expose a single fallback gate path for Web runtime validation.");
-
-        var run = new NovelAgentRun
-        {
-            RunId = "run-fallback-gate",
-            TargetChapterId = "chapter-001",
-            ChapterBrief = new ChapterCreativeBrief { ChapterId = "chapter-001" }
-        };
-        var context = new ChapterContextPackageSummary
-        {
-            ChapterId = "chapter-001",
-            Status = "context_ready",
-            WorldRules = { "深海废土世界规则" },
-            ChapterBlueprints = { "开篇建立修理工处境并发现机甲伏笔" }
-        };
-        var draft = new ChapterDraftArtifact
-        {
-            ChapterId = "chapter-001",
-            DraftContent = """
-            第一章正文。
-            <chapter_changes>{"CharacterStateChanges":[],"ConflictProgress":[],"NewPlotPoints":[],"ForeshadowingActions":[],"LocationStateChanges":[],"FactionStateChanges":[],"TimeProgression":[],"CharacterMovements":[],"ItemTransfers":[],"SecretRevealChanges":[],"PledgeConstraintChanges":[],"DeadlineConstraintChanges":[]}</chapter_changes>
-            """,
-            ChangesJson = "{\"CharacterStateChanges\":[],\"ConflictProgress\":[],\"NewPlotPoints\":[],\"ForeshadowingActions\":[],\"LocationStateChanges\":[],\"FactionStateChanges\":[],\"TimeProgression\":[],\"CharacterMovements\":[],\"ItemTransfers\":[],\"SecretRevealChanges\":[],\"PledgeConstraintChanges\":[],\"DeadlineConstraintChanges\":[]}",
-            HasChanges = true
-        };
-
-        var report = (GenerationGateReport)method!.Invoke(null, new object[] { run, context, draft })!;
-
-        Check.Equal("validated", report.Status,
-            "First chapter fallback gate should pass XML CHANGES when structure and blueprint exist.");
-        Check.True(report.ChangesDetected,
-            "Fallback gate should recognize XML chapter_changes, not only legacy separator text.");
-        Check.True(report.RagPassed,
-            "First chapter should not require previous summary or long-distance recall.");
-        return Task.CompletedTask;
-    }
-
-    private static Task HardcoreWritingFallbackGateNormalizesArrayChanges()
-    {
-        var method = typeof(HardcoreWritingEngine).GetMethod(
-            "BuildFallbackGateReport",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
-        Check.True(method != null,
-            "HardcoreWritingEngine should expose a single fallback gate path for Web runtime validation.");
-
-        var run = new NovelAgentRun
-        {
-            RunId = "run-array-changes",
-            TargetChapterId = "chapter-003",
-            ChapterBrief = new ChapterCreativeBrief { ChapterId = "chapter-003" }
-        };
-        var context = new ChapterContextPackageSummary
-        {
-            ChapterId = "chapter-003",
-            Status = "context_ready",
-            WorldRules = { "逆潮夜临近，威胁增加" },
-            CharacterStates = { "林澈：第二章后继续追查蓝磷骨光" },
-            PreviousSummaries = { "第二章以逆潮夜临近、威胁增加收束。" },
-            ChapterBlueprints = { "第三章逆潮夜露出第七平台钟楼" }
-        };
-        var draft = new ChapterDraftArtifact
-        {
-            ChapterId = "chapter-003",
-            DraftContent = """
-            第三章正文承接逆潮夜临近，威胁增加。
-            <chapter_changes>[
-              {"CharacterStateChanges":[]},
-              {"ConflictProgress":[]},
-              {"NewPlotPoints":[{"Keywords":["逆潮夜"],"Context":"逆潮夜临近，威胁增加。","InvolvedCharacters":[],"Importance":"high","Storyline":"main","CausedBy":"chapter-003"}]},
-              {"ForeshadowingActions":[]},
-              {"LocationStateChanges":[]},
-              {"FactionStateChanges":[]},
-              {"TimeProgression":[]},
-              {"CharacterMovements":[]},
-              {"ItemTransfers":[]},
-              {"SecretRevealChanges":[]},
-              {"PledgeConstraintChanges":[]},
-              {"DeadlineConstraintChanges":[]}
-            ]</chapter_changes>
-            """,
-            ChangesJson = """
-            [
-              {"CharacterStateChanges":[]},
-              {"ConflictProgress":[]},
-              {"NewPlotPoints":[{"Keywords":["逆潮夜"],"Context":"逆潮夜临近，威胁增加。","InvolvedCharacters":[],"Importance":"high","Storyline":"main","CausedBy":"chapter-003"}]},
-              {"ForeshadowingActions":[]},
-              {"LocationStateChanges":[]},
-              {"FactionStateChanges":[]},
-              {"TimeProgression":[]},
-              {"CharacterMovements":[]},
-              {"ItemTransfers":[]},
-              {"SecretRevealChanges":[]},
-              {"PledgeConstraintChanges":[]},
-              {"DeadlineConstraintChanges":[]}
-            ]
-            """,
-            HasChanges = true
-        };
-
-        var report = (GenerationGateReport)method!.Invoke(null, new object[] { run, context, draft })!;
-
-        Check.True(report.ProtocolPassed,
-            "Fallback gate should normalize array-shaped CHANGES the same way the real GenerationGate does.");
-        Check.Equal("validated", report.Status,
-            "Recoverable CHANGES shapes must not block a valid chapter in Web runtime fallback.");
         return Task.CompletedTask;
     }
 
@@ -2267,9 +2366,7 @@ internal static class Program
 
     private static Task ToolRegistryExposesToolSchemas()
     {
-        var settings = new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-schema"),
-            "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2277,8 +2374,16 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-schema"),
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(
+            new TestWebHostEnvironment(),
+            config,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         AgentToolRegistry.SetWorkspace(workspace, catalog);
         workspace.SetRequestContext();
         try
@@ -2286,10 +2391,10 @@ internal static class Program
             var registry = CreateToolRegistry(settings);
             var schemas = registry.ListToolSchemas();
 
-            Check.True(schemas.Any(s => s.Name == "BuildChapterContextPackage"),
-                "Registry should expose tool schemas for provider adapters.");
-            Check.True(schemas.Any(s => s.Name == "GenerateChapterWithChanges" && s.RequiresConfirmation),
-                "High-risk writing tools should preserve confirmation metadata in schemas.");
+            Check.True(schemas.Any(s => s.Name == "ProduceChapter" && s.RequiresConfirmation),
+                "Registry should expose the closed-loop chapter production tool for provider adapters.");
+            Check.True(!schemas.Any(s => s.Name == "BuildChapterContextPackage" || s.Name == "GenerateChapterWithChanges"),
+                "Low-level chapter production stages must stay internal to ProduceChapter.");
         }
         finally
         {
@@ -2301,9 +2406,7 @@ internal static class Program
 
     private static Task ToolRegistrySemanticSearchTreatsPhaseAsHint()
     {
-        var settings = new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
-            "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2311,20 +2414,28 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-phase"),
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(
+            new TestWebHostEnvironment(),
+            config,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         AgentToolRegistry.SetWorkspace(workspace, catalog);
         workspace.SetRequestContext();
         try
         {
             var registry = CreateToolRegistry(settings);
-            var planning = registry.ListToolSchemasForPhase(ConversationPhase.Planning).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var review = registry.ListToolSchemasForPhase(ConversationPhase.Review).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var planning = registry.ListToolSchemasRankedByPhaseHint(ConversationPhase.Planning).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var review = registry.ListToolSchemasRankedByPhaseHint(ConversationPhase.Review).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             Check.True(planning.Contains("CommitStoryFoundation"),
                 "Phase hint Planning should still include foundation commit tools.");
-            Check.True(planning.Contains("GenerateChapterWithChanges"),
-                "Phase hint Planning must not hide writing tools; the model may need to choose across the global catalog.");
+            Check.True(planning.Contains("ProduceChapter"),
+                "Phase hint Planning must not hide the closed-loop writing tool; the model may need to choose across the global catalog.");
             Check.True(planning.Contains("AnalyzeDependencyImpact"),
                 "Phase hint Planning must not hide maintenance tools; phase is ordering context, not a whitelist.");
             Check.True(review.Contains("AnalyzeDependencyImpact"),
@@ -2342,9 +2453,7 @@ internal static class Program
 
     private static Task ToolRegistryDeclaresSideEffectsForEveryTool()
     {
-        var settings = new UserSettingsManager(
-            Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
-            "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2352,8 +2461,16 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-effects"),
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment(), config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(
+            new TestWebHostEnvironment(),
+            config,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         AgentToolRegistry.SetWorkspace(workspace, catalog);
         workspace.SetRequestContext();
         try
@@ -2375,11 +2492,11 @@ internal static class Program
             Check.True(knowledge.SideEffects.WritesVectorIndexes.Contains("knowledge"),
                 "ProcessKnowledgeFile must declare Qdrant knowledge index writes.");
 
-            var commitChapter = tools.Single(t => t.Name == "CommitValidatedChapter");
-            Check.True(commitChapter.SideEffects.WritesSqliteEntities.Contains("chapters"),
-                "CommitValidatedChapter must declare chapter truth writes.");
-            Check.True(commitChapter.SideEffects.WritesVectorIndexes.Contains("chapter"),
-                "CommitValidatedChapter must declare chapter vector index writes.");
+            var produceChapter = tools.Single(t => t.Name == "ProduceChapter");
+            Check.True(produceChapter.SideEffects.WritesSqliteEntities.Contains("chapters"),
+                "ProduceChapter must declare chapter truth writes.");
+            Check.True(produceChapter.SideEffects.WritesVectorIndexes.Contains("chapter"),
+                "ProduceChapter must declare chapter vector index writes.");
         }
         finally
         {
@@ -2392,7 +2509,7 @@ internal static class Program
     private static Task ToolRegistryScopedWorkspaceOverridesStaleAmbientWorkspace()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-tool-scope-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2400,12 +2517,28 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var staleWorkspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, "user-scope", "temp-user-scope");
-        var staleCatalog = new NovelProjectCatalog(staleWorkspace);
+        var staleWorkspace = WithTestProductionKernel(new NovelAgentWorkspace(
+            new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root },
+            config,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory("user-scope", "temp-user-scope"),
+            "user-scope",
+            "temp-user-scope"
+            ), new UnsupportedProductionKernel());
+        var staleCatalog = CreateDbBackedCatalog(staleWorkspace);
         AgentToolRegistry.SetWorkspace(staleWorkspace, staleCatalog);
 
-        var realWorkspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, "user-scope", "project-real-scope");
-        var realCatalog = new NovelProjectCatalog(realWorkspace);
+        var realWorkspace = WithTestProductionKernel(new NovelAgentWorkspace(
+            new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root },
+            config,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory("user-scope", "project-real-scope"),
+            "user-scope",
+            "project-real-scope"
+            ), new UnsupportedProductionKernel());
+        var realCatalog = CreateDbBackedCatalog(realWorkspace);
         var registry = CreateToolRegistry(settings);
         registry.SetWorkspaceContext(realWorkspace, realCatalog);
         realWorkspace.SetRequestContext();
@@ -2426,7 +2559,7 @@ internal static class Program
     private static async Task SearchCreativeKnowledgeReturnsDbKnowledge()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-db-knowledge-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2434,8 +2567,12 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         var knowledgeService = new FixedKnowledgeService(new KnowledgeSearchResult
         {
             Id = "db-knowledge-001",
@@ -2446,7 +2583,7 @@ internal static class Program
         });
         var registry = new AgentToolRegistry(
             settings,
-            new FixedServiceProvider(knowledgeService),
+            CreateToolServiceProvider(knowledgeService),
             NullLogger<AgentToolRegistry>.Instance);
         var session = new AgentSession
         {
@@ -2489,7 +2626,7 @@ internal static class Program
     private static async Task ResolveNovelProjectIsIdempotentWhileAwaitingFoundation()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-start-project-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2497,8 +2634,12 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         var session = new AgentSession { SessionId = "session-idempotent" };
         var call = new AgentToolCall
         {
@@ -2538,7 +2679,7 @@ internal static class Program
     private static async Task ResolveNovelProjectCreateNewDoesNotBindActiveOldProject()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-create-new-project-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2546,8 +2687,12 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         var oldProject = await catalog.CreateAsync(new NovelProjectCreateRequest(
             "末世觉醒：系统在手，美女我有",
             "末世",
@@ -2597,7 +2742,7 @@ internal static class Program
     private static async Task ResolveNovelProjectCreateNewHonorsProjectTitle()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-create-new-project-title-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2605,8 +2750,12 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         var oldProject = await catalog.CreateAsync(new NovelProjectCreateRequest(
             "星骸武神：我吞噬星兽进化",
             "末世星际",
@@ -2653,10 +2802,10 @@ internal static class Program
         }
     }
 
-    private static async Task ResolveNovelProjectCompleteBriefIsReadyForFoundationPlanning()
+    private static async Task ResolveNovelProjectFoundationReadinessRequiresExplicitModelFlag()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-complete-brief-" + Guid.NewGuid().ToString("N"));
-        var settings = new UserSettingsManager(root, "AgentKernelRegression");
+        var settings = CreateDbBackedSettingsManager();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -2664,8 +2813,12 @@ internal static class Program
                 ["NovelAgent:StorageRoot"] = root,
             })
             .Build();
-        var workspace = new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings);
-        var catalog = new NovelProjectCatalog(workspace);
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
         var session = new AgentSession
         {
             SessionId = "session-complete-brief",
@@ -2691,18 +2844,31 @@ internal static class Program
             var result = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
 
             Check.True(result.Success, "Complete new-novel brief should create the project.");
-            Check.Equal("foundation_ready", result.Phase,
-                "A complete creative brief must not be returned as awaiting missing foundation input.");
+            Check.Equal("awaiting_user_foundation", result.Phase,
+                "ResolveNovelProject must not infer foundation readiness by parsing natural-language seed completeness.");
+            Check.Equal("foundation_intake", session.WorkingMemory.Mission.CreativePhase,
+                "Without an explicit model flag, the session remains in foundation intake.");
+            Check.Equal("ask_foundation_question", session.WorkingMemory.Mission.NextIntent,
+                "Without an explicit model flag, the tool should not locally choose foundation planning.");
+            Check.True(session.WorkingMemory.OpenQuestions.Count > 0,
+                "Without an explicit model flag, the tool may keep a foundation question instead of guessing readiness.");
+
+            call.Arguments["foundationBriefReady"] = "true";
+            var ready = await registry.ExecuteAsync(call, session, new StoryBibleDocument(), confirmed: false, CancellationToken.None);
+
+            Check.True(ready.Success, "Explicit foundationBriefReady should succeed.");
+            Check.Equal("foundation_ready", ready.Phase,
+                "Only the explicit model-provided foundationBriefReady flag should mark the project ready.");
             Check.Equal("ready_for_foundation_planning", session.WorkingMemory.Mission.CreativePhase,
-                "Session mission should be ready for foundation planning when the seed already contains enough details.");
+                "Explicit readiness should update the session mission for foundation planning.");
             Check.Equal("plan_story_foundation", session.WorkingMemory.Mission.NextIntent,
-                "The next intent should guide the LLM toward foundation planning without hard-routing a tool call.");
+                "Explicit readiness should guide the LLM toward foundation planning without hard-routing a tool call.");
             Check.Equal(0, session.WorkingMemory.OpenQuestions.Count,
-                "Complete briefs should not leave a stale open question asking for the same foundation details.");
-            Check.Contains("故事地基候选", result.Message,
-                "User-visible project confirmation should say the agent can proceed to foundation candidates.");
-            Check.Contains("生成故事地基候选", string.Join(" ", result.Suggestions),
-                "Suggestions should point to the product action, not another intake question.");
+                "Explicit readiness should clear stale intake questions.");
+            Check.Contains("故事地基候选", ready.Message,
+                "User-visible project confirmation should say the agent can proceed to foundation candidates after explicit readiness.");
+            Check.Contains("生成故事地基候选", string.Join(" ", ready.Suggestions),
+                "Suggestions should point to the product action after explicit readiness.");
         }
         finally
         {
@@ -2741,9 +2907,8 @@ internal static class Program
             db,
             new NoopDistributedCacheService(),
             new DirectMemoryCacheService(),
-            new NoopVectorStore(),
-            new FixedEmbeddingService(),
-            NullLogger<AgentMemoryRepository>.Instance);
+            NullLogger<AgentMemoryRepository>.Instance,
+            new ProductionTruthStore(db));
         var usageService = new ProjectKnowledgeUsageService(
             db,
             new NoopMemoryEventService(),
@@ -2778,7 +2943,7 @@ internal static class Program
             Status = "validated",
             GateStatus = "validated",
             QualityStatus = "quality_passed",
-            NextAction = "CommitValidatedChapter"
+            NextAction = "ProduceChapter"
         };
         configure(chapter);
         return new AgentMissionPlan
@@ -2797,34 +2962,211 @@ internal static class Program
         };
     }
 
+    private static UserSettingsManager CreateDbBackedSettingsManager(
+        string userId = "regression-user",
+        UserSettings? settings = null)
+    {
+        var services = new ServiceCollection();
+        var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+
+        services.AddSingleton(connection);
+        services.AddSingleton<ILlmApiKeyProtector>(
+            new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider()));
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseSqlite(connection));
+        var provider = services.BuildServiceProvider();
+
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Database.EnsureCreated();
+            db.Users.Add(new DbUser
+            {
+                Id = userId,
+                Username = $"author-{userId}",
+                Email = $"{userId}@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.SaveChanges();
+        }
+
+        var manager = new UserSettingsManager(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new HttpContextAccessor(),
+            new FixedBackgroundUserContext(userId),
+            provider.GetRequiredService<ILlmApiKeyProtector>());
+
+        manager.SaveAsync(settings ?? new UserSettings
+        {
+            LlmProvider = "openai",
+            LlmBaseUrl = string.Empty,
+            LlmModel = string.Empty,
+            LlmApiKey = string.Empty
+        }).GetAwaiter().GetResult();
+        return manager;
+    }
+
     private static AgentToolRegistry CreateToolRegistry(UserSettingsManager settings)
     {
-        return new AgentToolRegistry(settings, EmptyServiceProvider.Instance, NullLogger<AgentToolRegistry>.Instance);
+        return new AgentToolRegistry(settings, CreateToolServiceProvider(), NullLogger<AgentToolRegistry>.Instance);
+    }
+
+    private static NovelProjectCatalog CreateDbBackedCatalog(NovelAgentWorkspace workspace)
+    {
+        return new NovelProjectCatalog(workspace, workspace.ScopeFactory);
+    }
+
+    private static IServiceScopeFactory CreateWorkspaceScopeFactory(
+        string userId = "regression-user",
+        string projectId = "")
+    {
+        var services = new ServiceCollection();
+        var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+
+        services.AddSingleton(connection);
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseSqlite(connection));
+        services.AddSingleton<IDistributedCacheService, NoopDistributedCacheService>();
+        services.AddSingleton<IMemoryCacheService, DirectMemoryCacheService>();
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        var provider = services.BuildServiceProvider();
+
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        db.Database.EnsureCreated();
+        db.Users.Add(new DbUser
+        {
+            Id = userId,
+            Username = $"author-{userId}",
+            Email = $"{userId}@example.com",
+            PasswordHash = "hash",
+            Role = "author"
+        });
+        if (!string.IsNullOrWhiteSpace(projectId))
+        {
+            db.NovelProjects.Add(new DbNovelProject
+            {
+                Id = projectId,
+                UserId = userId,
+                Title = projectId,
+                Status = "draft",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        db.SaveChanges();
+
+        return provider.GetRequiredService<IServiceScopeFactory>();
+    }
+
+    private static NovelAgentWorkspace WithTestProductionKernel(
+        NovelAgentWorkspace workspace,
+        ITianmingProductionKernel productionKernel)
+    {
+        var field = typeof(NovelAgentOrchestrator)
+            .GetField("_productionKernel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Check.True(field != null, "NovelAgentOrchestrator must keep a production kernel field for regression inspection.");
+        field!.SetValue(workspace.Orchestrator, productionKernel);
+        return workspace;
+    }
+
+    private static ServiceProvider CreateToolServiceProvider(IKnowledgeService? knowledgeService = null)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IAgentToolExecutionLedger, RecordingAgentToolExecutionLedger>();
+        if (knowledgeService != null)
+            services.AddSingleton(knowledgeService);
+
+        return services.BuildServiceProvider();
     }
 }
 
-internal sealed class EmptyServiceProvider : IServiceProvider
+internal sealed class RecordingAgentToolExecutionLedger : IAgentToolExecutionLedger
 {
-    public static readonly EmptyServiceProvider Instance = new();
+    private readonly Dictionary<string, TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution> _executions = new(StringComparer.OrdinalIgnoreCase);
 
-    private EmptyServiceProvider()
+    public Task<TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution> StartAsync(
+        AgentToolExecutionStart start,
+        CancellationToken ct = default)
     {
+        var execution = new TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = start.UserId,
+            ProjectId = start.ProjectId,
+            SessionId = start.SessionId,
+            RunId = start.RunId,
+            ToolName = start.Call.Name,
+            Phase = start.Phase,
+            Risk = start.Risk,
+            ArgumentsHash = Guid.NewGuid().ToString("N"),
+            Status = "running",
+            StartedAt = DateTime.UtcNow
+        };
+        _executions[execution.Id] = execution;
+        return Task.FromResult(execution);
     }
 
-    public object? GetService(Type serviceType) => null;
+    public Task RebindProjectAsync(string executionId, string projectId, CancellationToken ct = default)
+    {
+        if (_executions.TryGetValue(executionId, out var execution))
+            execution.ProjectId = projectId;
+        return Task.CompletedTask;
+    }
+
+    public Task CompleteAsync(string executionId, AgentToolExecutionResult result, CancellationToken ct = default)
+    {
+        if (_executions.TryGetValue(executionId, out var execution))
+        {
+            execution.Status = result.Success ? "completed" : "failed";
+            execution.ResultPhase = result.Phase;
+            execution.ResultMessage = result.Message;
+            execution.CompletedAt = DateTime.UtcNow;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<int> FailRunningForSessionAsync(
+        string userId,
+        string sessionId,
+        string? projectId,
+        string reason,
+        CancellationToken ct = default) =>
+        Task.FromResult(0);
+
+    public Task<int> FailAllRunningAsync(string reason, CancellationToken ct = default) =>
+        Task.FromResult(0);
+
+    public Task<IReadOnlyList<AgentToolExecutionSnapshot>> GetRecentAsync(
+        string userId,
+        string sessionId,
+        string? projectId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<AgentToolExecutionSnapshot>>(Array.Empty<AgentToolExecutionSnapshot>());
 }
 
-internal sealed class FixedServiceProvider : IServiceProvider
+internal sealed class FixedBackgroundUserContext : IBackgroundUserContext
 {
-    private readonly object _service;
-
-    public FixedServiceProvider(object service)
+    public FixedBackgroundUserContext(string userId)
     {
-        _service = service;
+        Current = new BackgroundUserSnapshot(userId, "author", "author@example.com", "author");
     }
 
-    public object? GetService(Type serviceType) =>
-        serviceType.IsInstanceOfType(_service) ? _service : null;
+    public BackgroundUserSnapshot? Current { get; }
+
+    public IDisposable Push(string userId, string username = "background-agent", string email = "", string role = "author") =>
+        new NoopDisposable();
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public void Dispose()
+        {
+        }
+    }
 }
 
 internal sealed class FixedKnowledgeService : IKnowledgeService
@@ -2847,6 +3189,18 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
     public Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
+    public Task<List<KnowledgeDirectoryResponse>> ListKnowledgeDirectoriesAsync(CancellationToken ct = default) =>
+        Task.FromResult(new List<KnowledgeDirectoryResponse>());
+
+    public Task<KnowledgeDirectoryResponse> CreateKnowledgeDirectoryAsync(CreateKnowledgeDirectoryRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task<KnowledgeDirectoryResponse> UpdateKnowledgeDirectoryAsync(string key, UpdateKnowledgeDirectoryRequest request, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
+    public Task DeleteKnowledgeDirectoryAsync(string key, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
     public Task<KnowledgeResponse> GetKnowledgeAsync(string knowledgeId, CancellationToken ct = default) =>
         throw new NotSupportedException();
 
@@ -2867,6 +3221,7 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
         string projectId,
         string? sessionId = null,
         string? runId = null,
+        string? idempotencyKey = null,
         CancellationToken ct = default) =>
         Task.CompletedTask;
 }
@@ -2901,37 +3256,6 @@ internal sealed class DirectMemoryCacheService : IMemoryCacheService
     public void RemoveByPrefix(string keyPrefix) { }
 }
 
-internal sealed class NoopVectorStore : IVectorStore
-{
-    public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<List<SearchResult>> SearchSimilarAsync(
-        string userId,
-        float[] queryVector,
-        int topK = 10,
-        Dictionary<string, object>? filters = null,
-        CancellationToken ct = default) =>
-        Task.FromResult(new List<SearchResult>());
-
-    public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
-    public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) => Task.FromResult<CollectionInfo?>(null);
-    public Task DeleteVectorsByFilterAsync(string userId, Dictionary<string, object> filters, CancellationToken ct = default) => Task.CompletedTask;
-}
-
-internal sealed class FixedEmbeddingService : IMicroEmbeddingService
-{
-    public int Dimension => 3;
-    public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
-        Task.FromResult(new[] { 1f, 0f, 0f });
-
-    public Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
-        Task.FromResult(texts.Select(_ => new[] { 1f, 0f, 0f }).ToArray());
-
-    public void ReleaseSession() { }
-    public bool IsModelReady() => true;
-}
-
 internal sealed class NoopMemoryEventService : IAgentMemoryEventService
 {
     public Task AppendAsync(
@@ -2952,6 +3276,15 @@ internal sealed class EmptyChatHistoryRepository : IChatHistoryRepository
 {
     public Task AppendAsync(string userId, string? projectId, string sessionId, string role, string content, CancellationToken ct = default) =>
         Task.CompletedTask;
+
+    public Task<bool> ReplaceLastAssistantTurnAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        string expectedContent,
+        string replacementContent,
+        CancellationToken ct = default) =>
+        Task.FromResult(false);
 
     public Task SaveSummaryAsync(
         string userId,
@@ -2989,6 +3322,65 @@ internal sealed class SlowHandler : HttpMessageHandler
             Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"{}\"}}]}")
         };
     }
+}
+
+internal sealed class UnsupportedProductionKernel : ITianmingProductionKernel
+{
+    public Task<ChapterContextPackageSummary> BuildContextPackageAsync(
+        NovelAgentRun run,
+        StoryBibleDocument document,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<ChapterDraftArtifact> GenerateDraftWithChangesAsync(
+        NovelAgentRun run,
+        ChapterContextPackageSummary package,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<GenerationGateReport> ValidateDraftAsync(
+        NovelAgentRun run,
+        ChapterContextPackageSummary package,
+        ChapterDraftArtifact draft,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<ChapterDraftArtifact> RepairDraftAsync(
+        NovelAgentRun run,
+        ChapterContextPackageSummary package,
+        ChapterDraftArtifact draft,
+        GenerationGateReport gate,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<DependencyImpactReport> CommitChapterAsync(
+        NovelAgentRun run,
+        ChapterContextPackageSummary package,
+        ChapterDraftArtifact draft,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<GenerationGateReport> AuditCommittedChapterAsync(
+        string chapterId,
+        string committedContent,
+        ChapterContextPackageSummary contextPackage,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public Task<NovelAgentExecutionResult> ReviseCommittedChapterAsync(
+        string chapterId,
+        string committedContent,
+        ChapterContextPackageSummary contextPackage,
+        string revisionGoal,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public DependencyImpactReport RefreshIndexesAndAnalyzeImpact(
+        NovelAgentRun run,
+        ChapterDraftArtifact draft) =>
+        throw new NotSupportedException("Agent kernel regression workspace tests do not execute the production kernel.");
+
+    public string StripChanges(string content) => content;
 }
 
 internal sealed class TestWebHostEnvironment : IWebHostEnvironment

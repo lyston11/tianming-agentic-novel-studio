@@ -57,17 +57,17 @@ public class AgentMemoryContextServiceTests
                 new[] { new ChatHistoryTurnDto("user", "刚上传了知识", DateTime.UtcNow) }));
 
         var repo = new Mock<IAgentMemoryRepository>();
-        repo.Setup(x => x.GetSessionMemoryAsync("user-1", "project-1", "session-1", It.IsAny<CancellationToken>()))
+        repo.Setup(x => x.GetSessionMemoryAsync("user-1", "project-1", "session-1", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync(new SessionMemory { CurrentGoal = "继续整理知识使用策略" });
-        repo.Setup(x => x.GetProjectMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>()))
+        repo.Setup(x => x.GetProjectMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync(new ProjectMemory
             {
                 ImportedKnowledgeIds = new List<string> { "knowledge-1" },
                 ReferencedKnowledgeIds = new List<string>()
             });
-        repo.Setup(x => x.GetAuthorMemoryAsync("user-1", It.IsAny<CancellationToken>()))
+        repo.Setup(x => x.GetAuthorMemoryAsync("user-1", It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync(new AuthorMemory());
-        repo.Setup(x => x.GetExecutionMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>()))
+        repo.Setup(x => x.GetExecutionMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync(new ExecutionMemory());
 
         var service = new AgentMemoryContextService(chat.Object, repo.Object);
@@ -78,5 +78,35 @@ public class AgentMemoryContextServiceTests
         Assert.Equal("继续整理知识使用策略", context.Session.CurrentGoal);
         Assert.Contains("knowledge-1", context.Project.ImportedKnowledgeIds);
         Assert.Empty(context.Project.ReferencedKnowledgeIds);
+    }
+
+    [Fact]
+    public async Task BuildAsync_PassesRuntimeRunIdToAllMemoryReads()
+    {
+        var chat = new Mock<IChatHistoryRepository>();
+        chat.Setup(x => x.GetPromptWindowAsync("user-1", "project-1", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatPromptWindowDto(
+                "总体摘要",
+                Array.Empty<ChatHistorySummaryDto>(),
+                Array.Empty<ChatHistoryTurnDto>()));
+
+        var repo = new Mock<IAgentMemoryRepository>();
+        repo.Setup(x => x.GetSessionMemoryAsync("user-1", "project-1", "session-1", It.IsAny<CancellationToken>(), "runtime-run-1"))
+            .ReturnsAsync(new SessionMemory());
+        repo.Setup(x => x.GetProjectMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"))
+            .ReturnsAsync(new ProjectMemory());
+        repo.Setup(x => x.GetAuthorMemoryAsync("user-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"))
+            .ReturnsAsync(new AuthorMemory());
+        repo.Setup(x => x.GetExecutionMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"))
+            .ReturnsAsync(new ExecutionMemory());
+
+        var service = new AgentMemoryContextService(chat.Object, repo.Object);
+
+        await service.BuildAsync("user-1", "project-1", "session-1", CancellationToken.None, runId: "runtime-run-1");
+
+        repo.Verify(x => x.GetSessionMemoryAsync("user-1", "project-1", "session-1", It.IsAny<CancellationToken>(), "runtime-run-1"), Times.Once);
+        repo.Verify(x => x.GetProjectMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"), Times.Once);
+        repo.Verify(x => x.GetAuthorMemoryAsync("user-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"), Times.Once);
+        repo.Verify(x => x.GetExecutionMemoryAsync("user-1", "project-1", It.IsAny<CancellationToken>(), "runtime-run-1", "session-1"), Times.Once);
     }
 }

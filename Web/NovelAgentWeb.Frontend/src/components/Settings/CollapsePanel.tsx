@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import '../../styles/collapse-panel.css';
 
 interface CollapsePanelProps {
@@ -9,20 +9,41 @@ interface CollapsePanelProps {
   onToggle?: (isOpen: boolean) => void;
 }
 
-export default function CollapsePanel({ id, title, children, defaultOpen = false, onToggle }: CollapsePanelProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+function storageKey(id: string) {
+  return `settings-collapse-${id}`;
+}
 
-  useEffect(() => {
-    const stored = localStorage.getItem(`settings-collapse-${id}`);
-    if (stored !== null) {
-      setIsOpen(stored === 'true');
-    }
-  }, [id]);
+function readInitialOpenState(id: string, defaultOpen: boolean) {
+  if (typeof window === 'undefined') return defaultOpen;
+
+  try {
+    const stored = window.localStorage.getItem(storageKey(id));
+    if (stored === 'true') return true;
+    if (stored === 'false') return false;
+  } catch {
+    return defaultOpen;
+  }
+
+  return defaultOpen;
+}
+
+function persistOpenState(id: string, isOpen: boolean) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(storageKey(id), String(isOpen));
+  } catch {
+    // Ignore storage failures so the panel remains usable in restricted browser modes.
+  }
+}
+
+export default function CollapsePanel({ id, title, children, defaultOpen = false, onToggle }: CollapsePanelProps) {
+  const [isOpen, setIsOpen] = useState(() => readInitialOpenState(id, defaultOpen));
 
   const toggle = () => {
     const newState = !isOpen;
     setIsOpen(newState);
-    localStorage.setItem(`settings-collapse-${id}`, String(newState));
+    persistOpenState(id, newState);
     onToggle?.(newState);
   };
 

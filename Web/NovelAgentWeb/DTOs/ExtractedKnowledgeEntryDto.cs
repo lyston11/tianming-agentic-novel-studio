@@ -12,7 +12,7 @@ public class ExtractedKnowledgeEntryDto
 
     /// <summary>
     /// Knowledge category type.
-    /// Valid values: GenrePrinciple, TropePattern, AntiTropeStrategy, StyleExample.
+    /// Valid values: GenrePrinciple, TropePattern, AntiTropeStrategy, StyleExample, HardFact.
     /// </summary>
     public string Category { get; set; } = string.Empty;
 

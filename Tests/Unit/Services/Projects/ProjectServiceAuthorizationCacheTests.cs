@@ -1,18 +1,44 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.Projects;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
 using Xunit;
 
 namespace Tests.Unit.Services.Projects;
 
 public sealed class ProjectServiceAuthorizationCacheTests
 {
+    [Fact]
+    public async Task CreateProjectAsync_WithSameIdempotencyKey_ReturnsExistingProject()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        var cache = new MemoryCacheService(new MemoryCache(new MemoryCacheOptions()), NullLogger<MemoryCacheService>.Instance);
+        var service = new ProjectService(
+            db,
+            NullLogger<ProjectService>.Instance,
+            cache,
+            new ProductionTruthStore(db));
+        var request = new TM.Web.NovelAgentWeb.Models.Projects.CreateProjectRequest
+        {
+            Title = "雾城邮路",
+            Genre = "末世",
+            CoreHook = "旧邮路在怪物围城中重启。",
+            IdempotencyKey = "project-key-001"
+        };
+
+        var first = await service.CreateProjectAsync(request, "user-1");
+        var second = await service.CreateProjectAsync(request, "user-1");
+
+        Assert.Equal(first.Id, second.Id);
+        var project = await db.NovelProjects.SingleAsync();
+        Assert.Equal("project-key-001", project.IdempotencyKey);
+    }
+
     [Fact]
     public async Task GetProjectByIdAsync_DoesNotServeOwnerCacheEntryToAnotherUser()
     {
@@ -30,9 +56,9 @@ public sealed class ProjectServiceAuthorizationCacheTests
         var cache = new MemoryCacheService(new MemoryCache(new MemoryCacheOptions()), NullLogger<MemoryCacheService>.Instance);
         var service = new ProjectService(
             db,
-            Mock.Of<IVectorStore>(),
             NullLogger<ProjectService>.Instance,
-            cache);
+            cache,
+            new ProductionTruthStore(db));
 
         var ownerProject = await service.GetProjectByIdAsync("project-1", "owner-user", isAdmin: false);
         Assert.Equal("Owner Project", ownerProject.Title);
@@ -47,5 +73,19 @@ public sealed class ProjectServiceAuthorizationCacheTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         return new NovelAgentDbContext(options);
+    }
+
+    private static void SeedUser(NovelAgentDbContext db, string userId)
+    {
+        db.Users.Add(new User
+        {
+            Id = userId,
+            Username = userId,
+            Email = $"{userId}@example.test",
+            PasswordHash = "hash",
+            Role = "User",
+            CreatedAt = DateTime.UtcNow
+        });
+        db.SaveChanges();
     }
 }

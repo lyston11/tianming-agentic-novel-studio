@@ -11,6 +11,7 @@ using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using Xunit;
 
 namespace Tests.Unit.Controllers;
@@ -88,6 +89,93 @@ public class KnowledgeControllerTests
     }
 
     [Fact]
+    public async Task UploadFile_WithSameIdempotencyKey_ReturnsExistingTaskWithoutDuplicatingRawDocument()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        db.NovelProjects.Add(new NovelProject
+        {
+            Id = "project-1",
+            UserId = "user-1",
+            Title = "Project One",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, "user-1");
+        controller.ControllerContext.HttpContext.Request.Headers["Idempotency-Key"] = "knowledge-upload-key-001";
+
+        var firstResult = await controller.UploadFile(CreateFormFile("知识原文"), "project-1", "上传知识");
+        var secondResult = await controller.UploadFile(CreateFormFile("知识原文"), "project-1", "上传知识");
+
+        var firstTaskId = ReadTaskId(Assert.IsType<OkObjectResult>(firstResult).Value);
+        var secondTaskId = ReadTaskId(Assert.IsType<OkObjectResult>(secondResult).Value);
+        Assert.Equal(firstTaskId, secondTaskId);
+        var task = await db.KnowledgeProcessingTasks.SingleAsync();
+        Assert.Equal("knowledge-upload-key-001", task.IdempotencyKey);
+        Assert.Equal(1, await db.ContentDocuments.CountAsync(d =>
+            d.SourceType == "knowledge_upload" &&
+            d.SourceId == task.Id &&
+            d.DocumentRole == "upload_raw"));
+    }
+
+    [Fact]
+    public async Task CreateKnowledge_WithSameIdempotencyKey_ReturnsExistingKnowledge()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        db.NovelProjects.Add(new NovelProject
+        {
+            Id = "project-1",
+            UserId = "user-1",
+            Title = "Project One",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var controller = CreateRealController(db, "user-1");
+        controller.ControllerContext.HttpContext.Request.Headers["Idempotency-Key"] = "knowledge-key-001";
+        var request = new CreateKnowledgeRequest
+        {
+            ProjectId = "project-1",
+            EntryType = "ReaderPromise",
+            Title = "胜利代价原则",
+            Content = "主角每次胜利都必须付出清晰代价。"
+        };
+
+        var firstResult = await controller.CreateKnowledge(request, CancellationToken.None);
+        var secondResult = await controller.CreateKnowledge(request, CancellationToken.None);
+
+        var first = Assert.IsType<KnowledgeResponse>(Assert.IsType<OkObjectResult>(firstResult).Value);
+        var second = Assert.IsType<KnowledgeResponse>(Assert.IsType<OkObjectResult>(secondResult).Value);
+        Assert.Equal(first.Id, second.Id);
+        var knowledge = await db.KnowledgeBases.SingleAsync();
+        Assert.Equal("knowledge-key-001", knowledge.IdempotencyKey);
+    }
+
+    [Fact]
+    public async Task CreateDirectory_WithSameIdempotencyKey_ReturnsExistingDirectory()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        var controller = CreateRealController(db, "user-1");
+        controller.ControllerContext.HttpContext.Request.Headers["Idempotency-Key"] = "directory-key-001";
+        var request = new CreateKnowledgeDirectoryRequest
+        {
+            Name = "人物设定"
+        };
+
+        var firstResult = await controller.CreateDirectory(request, CancellationToken.None);
+        var secondResult = await controller.CreateDirectory(request, CancellationToken.None);
+
+        var first = Assert.IsType<KnowledgeDirectoryResponse>(Assert.IsType<OkObjectResult>(firstResult).Value);
+        var second = Assert.IsType<KnowledgeDirectoryResponse>(Assert.IsType<OkObjectResult>(secondResult).Value);
+        Assert.Equal(first.Key, second.Key);
+        var directory = await db.KnowledgeDirectories.SingleAsync();
+        Assert.Equal("directory-key-001", directory.IdempotencyKey);
+    }
+
+    [Fact]
     public async Task IncrementUsage_RequiresProjectContext()
     {
         await using var db = CreateDb();
@@ -100,6 +188,11 @@ public class KnowledgeControllerTests
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db));
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext()
+        };
+        controller.ControllerContext.HttpContext.Request.Headers["Idempotency-Key"] = "usage-key-001";
 
         var result = await controller.IncrementUsage(
             "knowledge-1",
@@ -112,6 +205,7 @@ public class KnowledgeControllerTests
             "project-1",
             "session-1",
             "run-1",
+            "usage-key-001",
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -120,12 +214,43 @@ public class KnowledgeControllerTests
         var currentUser = new Mock<ICurrentUserService>();
         currentUser.Setup(x => x.GetUserId()).Returns(userId);
 
-        return new KnowledgeController(
+        return WithHttpContext(new KnowledgeController(
             Mock.Of<IKnowledgeService>(),
             db,
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
-            new ContentDocumentService(db));
+            new ContentDocumentService(db)));
+    }
+
+    private static KnowledgeController CreateRealController(NovelAgentDbContext db, string userId)
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(x => x.GetUserId()).Returns(userId);
+        var service = new KnowledgeService(
+            db,
+            currentUser.Object,
+            new SemanticSearchService(
+                Mock.Of<IVectorStore>(),
+                Mock.Of<TM.Services.Framework.AI.Embedding.IMicroEmbeddingService>(),
+                NullLogger<SemanticSearchService>.Instance),
+            NullLogger<KnowledgeService>.Instance,
+            new TM.Web.NovelAgentWeb.Services.Production.ProductionTruthStore(db));
+
+        return WithHttpContext(new KnowledgeController(
+            service,
+            db,
+            currentUser.Object,
+            NullLogger<KnowledgeController>.Instance,
+            new ContentDocumentService(db)));
+    }
+
+    private static KnowledgeController WithHttpContext(KnowledgeController controller)
+    {
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext()
+        };
+        return controller;
     }
 
     private static NovelAgentDbContext CreateDb()
@@ -152,5 +277,13 @@ public class KnowledgeControllerTests
     {
         var bytes = Encoding.UTF8.GetBytes(content);
         return new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "knowledge.txt");
+    }
+
+    private static string ReadTaskId(object? value)
+    {
+        Assert.NotNull(value);
+        var property = value!.GetType().GetProperty("taskId");
+        Assert.NotNull(property);
+        return Assert.IsType<string>(property!.GetValue(value));
     }
 }

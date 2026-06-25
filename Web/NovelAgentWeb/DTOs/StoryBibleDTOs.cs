@@ -10,6 +10,9 @@ public class CreateStoryConstitutionRequest
     [Required]
     public string ProjectId { get; set; } = null!;
 
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
+
     [Required]
     public string Genre { get; set; } = null!;
 
@@ -64,6 +67,9 @@ public class CreateCharacterRequest
 {
     [Required]
     public string ProjectId { get; set; } = null!;
+
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
 
     [Required]
     public string Name { get; set; } = null!;

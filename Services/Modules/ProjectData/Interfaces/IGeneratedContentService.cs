@@ -24,4 +24,9 @@ namespace TM.Services.Modules.ProjectData.Interfaces
 
         #endregion
     }
+
+    public interface IGeneratedChapterMetadataWriter
+    {
+        Task SaveChapterAsync(string chapterId, string content, string? title);
+    }
 }

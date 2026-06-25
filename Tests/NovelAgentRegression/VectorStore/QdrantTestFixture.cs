@@ -32,8 +32,7 @@ public class QdrantTestFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         // Build Qdrant container with v1.8.0 image
-        _container = new QdrantBuilder()
-            .WithImage("qdrant/qdrant:v1.8.0")
+        _container = new QdrantBuilder("qdrant/qdrant:v1.8.0")
             .Build();
 
         // Start container

@@ -425,7 +425,7 @@ namespace Tests.Unit.Services.Memory;
         await using var db = new NovelAgentDbContext(options);
         await db.Database.EnsureCreatedAsync();
         SeedUserProjectAndSession(db);
-        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-global", UserId = "user-1", Title = "Global Session" });
+        InsertSqliteSession(db, "session-global", projectId: null, title: "Global Session");
         await db.SaveChangesAsync();
 
         db.AgentChatSummaries.Add(CreateSummary("summary-a", projectId, sessionId, "旧摘要"));
@@ -463,7 +463,7 @@ namespace Tests.Unit.Services.Memory;
         {
             await db.GetService<IMigrator>().MigrateAsync(UnifiedMemoryMigration);
             SeedUserProjectAndSession(db);
-            db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-global", UserId = "user-1", Title = "Global Session" });
+            InsertSqliteSession(db, "session-global", projectId: null, title: "Global Session");
             db.AgentChatSummaries.AddRange(
                 CreateSummary("project-old", "project-1", "session-1", "项目旧摘要", new DateTime(2026, 6, 13, 8, 0, 0, DateTimeKind.Utc)),
                 CreateSummary("project-new", "project-1", "session-1", "项目新摘要", new DateTime(2026, 6, 13, 8, 1, 0, DateTimeKind.Utc)),
@@ -527,9 +527,62 @@ namespace Tests.Unit.Services.Memory;
 
     private static void SeedUserProjectAndSession(NovelAgentDbContext db)
     {
+        if (db.Database.IsSqlite())
+        {
+            db.Database.ExecuteSqlRaw("""
+                INSERT INTO users (id, username, email, password_hash, role)
+                VALUES ('user-1', 'u', 'u@example.com', 'h', 'author');
+                """);
+            db.Database.ExecuteSqlRaw("""
+                INSERT INTO novel_projects (id, user_id, title)
+                VALUES ('project-1', 'user-1', 'Project');
+                """);
+            db.Database.ExecuteSqlRaw("""
+                INSERT INTO agent_sessions (id, user_id, project_id, title)
+                VALUES ('session-1', 'user-1', 'project-1', 'Session');
+                """);
+            return;
+        }
+
         db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
         db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
         db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession { Id = "session-1", UserId = "user-1", ProjectId = "project-1", Title = "Session" });
+    }
+
+    private static void InsertSqliteSession(NovelAgentDbContext db, string sessionId, string? projectId, string title)
+    {
+        if (db.Database.IsSqlite())
+        {
+            if (projectId == null)
+            {
+                db.Database.ExecuteSqlRaw(
+                    """
+                    INSERT INTO agent_sessions (id, user_id, project_id, title)
+                    VALUES ({0}, 'user-1', NULL, {1});
+                    """,
+                    sessionId,
+                    title);
+                return;
+            }
+
+            db.Database.ExecuteSqlRaw(
+                """
+                INSERT INTO agent_sessions (id, user_id, project_id, title)
+                VALUES ({0}, 'user-1', {1}, {2});
+                """,
+                sessionId,
+                projectId,
+                title);
+            return;
+        }
+
+        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+        {
+            Id = sessionId,
+            UserId = "user-1",
+            ProjectId = projectId,
+            Title = title
+        });
     }
 
     private static AgentChatSummary CreateSummary(string id, string? projectId, string sessionId, string content, DateTime? createdAt = null) =>

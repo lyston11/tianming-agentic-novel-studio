@@ -10,27 +10,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
     {
         private readonly GuideManager _guideManager;
 
-        private static readonly System.Collections.Generic.HashSet<string> PlotPointEscalationKeywords =
-            new(System.StringComparer.OrdinalIgnoreCase)
-            {
-                "转折", "揭示", "决战", "牺牲", "死亡", "背叛", "觉醒", "终章",
-                "最终", "真相", "关键", "逆转", "崩溃", "覆灭", "重生", "突破",
-                "心理", "内心", "心境", "转变", "暗线", "隐线", "伏线", "暗示",
-                "预兆", "推进", "心魔", "执念", "动摇", "崩塌", "觉察", "发现",
-                "危机", "危急", "绝境", "抉择", "选择", "誓言", "羁绊", "信念",
-                "契机", "机缘", "顿悟", "历劫", "渡劫", "天劫", "重逢", "告别",
-                "承诺", "复仇", "复活", "陨落", "继承", "传承", "秘密", "线索"
-            };
-
-        private static bool HasEscalationKeyword(PlotPointEntry p)
-        {
-            if (string.IsNullOrEmpty(p.Context)) return false;
-            foreach (var kw in PlotPointEscalationKeywords)
-                if (p.Context.Contains(kw, System.StringComparison.OrdinalIgnoreCase))
-                    return true;
-            return false;
-        }
-
         private static bool IsCritical(string? importance) =>
             string.Equals(importance, "critical", System.StringComparison.OrdinalIgnoreCase);
 
@@ -48,7 +27,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             public int TotalStatesTrimmed { get; set; }
             public int ConflictsTrimmed { get; set; }
             public int TotalProgressTrimmed { get; set; }
-            public int PlotPointsTrimmed { get; set; }
             public int LocationsTrimmed { get; set; }
             public int TotalLocationStatesTrimmed { get; set; }
             public int FactionsTrimmed { get; set; }
@@ -75,7 +53,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             await Task.WhenAll(
                 TrimCharacterStateHistoryAsync(result, cfg),
                 TrimConflictProgressAsync(result, cfg),
-                TrimPlotPointsAsync(result, cfg),
                 TrimLocationStateHistoryAsync(result, cfg),
                 TrimFactionStateHistoryAsync(result, cfg),
                 TrimTimelineAsync(result, cfg),
@@ -88,7 +65,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             if (result.TotalStatesTrimmed > 0 ||
                 result.TotalProgressTrimmed > 0 ||
-                result.PlotPointsTrimmed > 0 ||
                 result.TotalLocationStatesTrimmed > 0 ||
                 result.TotalFactionStatesTrimmed > 0 ||
                 result.TimelineEntriesTrimmed > 0 ||
@@ -99,10 +75,9 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 result.TotalPledgeHistoryTrimmed > 0 ||
                 result.TotalDeadlineHistoryTrimmed > 0)
             {
-                await _guideManager.FlushAllAsync().ConfigureAwait(false);
+                await _guideManager.ClearDirtyMarksAsync().ConfigureAwait(false);
                 TM.App.Log($"[LedgerTrim] 裁剪完成: 角色{result.CharactersTrimmed}个({result.TotalStatesTrimmed}条状态), " +
                            $"冲突{result.ConflictsTrimmed}个({result.TotalProgressTrimmed}条进度), " +
-                           $"情节点{result.PlotPointsTrimmed}条, " +
                            $"地点{result.LocationsTrimmed}个({result.TotalLocationStatesTrimmed}条状态), " +
                            $"势力{result.FactionsTrimmed}个({result.TotalFactionStatesTrimmed}条状态), " +
                            $"时间线{result.TimelineEntriesTrimmed}条, " +
@@ -193,34 +168,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             return anchors;
         }
 
-        private static System.Collections.Generic.List<PlotPointEntry> BuildPlotPointAnchors(
-            System.Collections.Generic.List<PlotPointEntry> normals, LayeredContextConfigSnapshot cfg)
-        {
-            var anchors = new System.Collections.Generic.List<PlotPointEntry>();
-            if (normals.Count == 0) return anchors;
-
-            var interval = cfg.LedgerNormalSampleInterval;
-            var first = normals.First();
-            first.Context = $"[起始锚点] {first.Context}（归档{normals.Count}条）";
-            anchors.Add(first);
-
-            for (int i = interval; i < normals.Count - 1; i += interval)
-            {
-                var sample = normals[i];
-                sample.Context = $"[中间快照@{i}] {sample.Context}";
-                anchors.Add(sample);
-            }
-
-            if (normals.Count > 1)
-            {
-                var last = normals.Last();
-                last.Context = $"[截止快照] {last.Context}";
-                anchors.Add(last);
-            }
-
-            return anchors;
-        }
-
         private async Task TrimConflictProgressAsync(TrimResult result, LayeredContextConfigSnapshot cfg)
         {
             var _volFiles = GetVolFiles("conflict_progress_guide.json");
@@ -272,47 +219,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 }
 
                 if (result.TotalProgressTrimmed > cpPrev) _guideManager.MarkDirty(cpFile);
-            }
-        }
-
-        private async Task TrimPlotPointsAsync(TrimResult result, LayeredContextConfigSnapshot cfg)
-        {
-            var store = ServiceLocator.Get<PlotPointsIndexService>();
-            var volNumbers = store.GetExistingVolumeNumbers();
-            var _allPoints = await Task.WhenAll(volNumbers.Select(v => store.GetVolumeEntriesAsync(v))).ConfigureAwait(false);
-
-            for (int _pi = 0; _pi < volNumbers.Count; _pi++)
-            {
-                var vol = volNumbers[_pi];
-                var points = _allPoints[_pi];
-                if (points.Count <= cfg.LedgerPlotPointsKeepRecent)
-                    continue;
-
-                var trimCount = points.Count - cfg.LedgerPlotPointsKeepRecent;
-                var trimZone = points.Take(trimCount).ToList();
-                var keepZone = points.Skip(trimCount).ToList();
-
-                foreach (var p in trimZone)
-                    if (!IsCritical(p.Importance) && HasEscalationKeyword(p))
-                        p.Importance = "critical";
-
-                var criticalEntries = trimZone.Where(p => IsCritical(p.Importance)).ToList();
-                if (criticalEntries.Count > cfg.LedgerMaxCriticalPerEntity)
-                    criticalEntries = criticalEntries.TakeLast(cfg.LedgerMaxCriticalPerEntity).ToList();
-
-                var importantEntries = trimZone.Where(p => IsImportant(p.Importance)).TakeLast(cfg.LedgerImportantKeepRecent).ToList();
-                var trueNormalEntries = trimZone.Where(p => !IsCritical(p.Importance) && !IsImportant(p.Importance)).ToList();
-                var normalAnchors = BuildPlotPointAnchors(trueNormalEntries, cfg);
-                var actualTrimmed = System.Math.Max(0, trueNormalEntries.Count - normalAnchors.Count);
-
-                var rebuilt = new List<PlotPointEntry>(criticalEntries.Count + importantEntries.Count + normalAnchors.Count + keepZone.Count);
-                rebuilt.AddRange(criticalEntries);
-                rebuilt.AddRange(importantEntries);
-                rebuilt.AddRange(normalAnchors);
-                rebuilt.AddRange(keepZone);
-
-                await store.SetVolumeEntriesAsync(vol, rebuilt).ConfigureAwait(false);
-                result.PlotPointsTrimmed += System.Math.Max(0, actualTrimmed);
             }
         }
 

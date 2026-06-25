@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using TM.Services.Framework.AI.NovelAgent.Models;
 
 namespace TM.Web.NovelAgentWeb.Support;
@@ -5,15 +6,6 @@ namespace TM.Web.NovelAgentWeb.Support;
 public enum TurnIntentType
 {
     FreeChat,
-    StatusQuery,
-    Confirmation,
-    Cancel,
-    NewProjectSeed,
-    CreativeBrief,
-    ContinueMission,
-    RevisionRequest,
-    UserFeedback,
-    ProjectSwitch,
     CandidateSelection,
 }
 
@@ -31,7 +23,7 @@ public sealed class TurnIntent
     public string SelectionKind { get; set; } = string.Empty;
     public List<string> Constraints { get; set; } = new();
     public double Confidence { get; set; } = 0.7;
-    public string Source { get; set; } = "rule";
+    public string Source { get; set; } = "conversation_context";
 }
 
 public sealed class ConversationKernel
@@ -40,42 +32,25 @@ public sealed class ConversationKernel
     {
         var raw = userMessage ?? string.Empty;
         var msg = raw.Trim();
-        var normalized = msg.ToLowerInvariant();
         var intent = new TurnIntent
         {
             RawMessage = raw,
+            ReferencedChapterId = AgentChapterReferenceResolver.ResolveChapterId(raw),
             Confidence = 0.72,
             Source = "conversation_kernel",
         };
 
-        if (IsCancel(normalized))
-            return Fill(intent, TurnIntentType.Cancel, "cancel", confidence: 0.95);
-
-        if (IsConfirmation(normalized))
-            return Fill(intent, TurnIntentType.Confirmation, "confirmation", confidence: 0.95);
-
-        if (IsStatusQuery(normalized))
-            return Fill(intent, TurnIntentType.StatusQuery, "status_query", confidence: 0.9);
-
         if (TryResolveCandidateSelection(session, msg, intent, out var selectionIntent))
             return selectionIntent;
 
-        if (IsProjectSwitch(normalized))
-            return Fill(intent, TurnIntentType.ProjectSwitch, "project_switch", confidence: 0.78);
+        if (HasProject(session) && LooksLikeProductionStatusQuestion(msg))
+        {
+            var statusIntent = Fill(intent, TurnIntentType.FreeChat, "status_query", confidence: 0.86);
+            statusIntent.SelectionKind = "production";
+            return statusIntent;
+        }
 
-        if (IsRevisionRequest(normalized))
-            return Fill(intent, TurnIntentType.RevisionRequest, "revision_request", msg, confidence: 0.82);
-
-        if (IsUserFeedback(normalized))
-            return Fill(intent, TurnIntentType.UserFeedback, "user_feedback", msg, confidence: 0.78);
-
-        if (IsNewProjectSeed(normalized, session))
-            return Fill(intent, TurnIntentType.NewProjectSeed, "new_project_seed", msg, confidence: 0.8);
-
-        if (LooksLikeCreativeBrief(normalized))
-            return Fill(intent, TurnIntentType.CreativeBrief, "creative_brief", msg, confidence: 0.78);
-
-        return Fill(intent, TurnIntentType.FreeChat, "free_chat", confidence: 0.65);
+        return Fill(intent, TurnIntentType.FreeChat, "free_chat", confidence: 0.72);
     }
 
     public UserTurnEnvelope BuildEnvelope(AgentSession session, string userMessage)
@@ -88,18 +63,11 @@ public sealed class ConversationKernel
             Intent = intent,
             DialogueAct = MapDialogueAct(intent.Type),
             CreativeBrief = intent.CreativeBrief,
-            ConfirmationDecision = intent.Type switch
-            {
-                TurnIntentType.Confirmation => "confirm",
-                TurnIntentType.Cancel => "cancel",
-                _ => string.Empty,
-            },
+            ConfirmationDecision = string.Empty,
             ReferencedTask = activeTask?.TaskId ?? string.Empty,
             TargetArtifact = ResolveTargetArtifact(plan, intent, activeTask),
-            StatusQueryScope = ResolveStatusScope(intent.RawMessage),
-            FeedbackPatch = intent.Type is TurnIntentType.RevisionRequest or TurnIntentType.UserFeedback
-                ? intent.RawMessage.Trim()
-                : string.Empty,
+            StatusQueryScope = intent.Label == "status_query" ? FirstNonEmpty(intent.SelectionKind, "production") : string.Empty,
+            FeedbackPatch = string.Empty,
             SelectedOption = intent.SelectedOption,
             SelectedOptionIndex = intent.SelectedOptionIndex,
             SelectionKind = intent.SelectionKind,
@@ -127,24 +95,13 @@ public sealed class ConversationKernel
     {
         intent.Type = type;
         intent.Label = label;
-        intent.CreativeBrief = type is TurnIntentType.CreativeBrief or TurnIntentType.NewProjectSeed
-            ? creativeBrief
-            : string.Empty;
+        intent.CreativeBrief = string.Empty;
         intent.Confidence = confidence;
         return intent;
     }
 
     private static DialogueAct MapDialogueAct(TurnIntentType type) => type switch
     {
-        TurnIntentType.StatusQuery => DialogueAct.AskStatus,
-        TurnIntentType.Confirmation => DialogueAct.Confirm,
-        TurnIntentType.Cancel => DialogueAct.Cancel,
-        TurnIntentType.NewProjectSeed => DialogueAct.StartProject,
-        TurnIntentType.CreativeBrief => DialogueAct.ProvideBrief,
-        TurnIntentType.ContinueMission => DialogueAct.ContinueTask,
-        TurnIntentType.RevisionRequest => DialogueAct.ReviseArtifact,
-        TurnIntentType.UserFeedback => DialogueAct.GiveFeedback,
-        TurnIntentType.ProjectSwitch => DialogueAct.SwitchProject,
         TurnIntentType.CandidateSelection => DialogueAct.SelectCandidate,
         _ => DialogueAct.Chat,
     };
@@ -167,49 +124,8 @@ public sealed class ConversationKernel
     {
         if (!string.IsNullOrWhiteSpace(intent.ReferencedRunId)) return intent.ReferencedRunId;
         if (!string.IsNullOrWhiteSpace(intent.ReferencedChapterId)) return intent.ReferencedChapterId;
-        if (intent.Type is TurnIntentType.StatusQuery or TurnIntentType.RevisionRequest or TurnIntentType.UserFeedback)
-            return FirstNonEmpty(plan.ArtifactCursor, plan.ActiveArtifactCursor, activeTask?.RunId, plan.CurrentRunId);
         return FirstNonEmpty(activeTask?.RunId, plan.CurrentRunId);
     }
-
-    private static string ResolveStatusScope(string raw)
-    {
-        var msg = raw.Trim().ToLowerInvariant();
-        if (ContainsAny(msg, "章节", "章", "草稿", "正文", "那章", "刚才那章")) return "chapter";
-        if (ContainsAny(msg, "项目", "新书", "小说", "书")) return "project";
-        if (ContainsAny(msg, "任务", "进度", "状态")) return "mission";
-        return "general";
-    }
-
-    private static bool IsConfirmation(string msg) =>
-        msg is "确认" or "确定" or "同意" or "好" or "好的" or "可以" or "ok" or "yes" or "行" or "继续执行" ||
-        ContainsAny(msg, "确认执行", "确认提交", "提交吧", "就这样", "就选", "用这个", "按推荐");
-
-    private static bool IsCancel(string msg) =>
-        msg is "取消" or "不" or "不要" or "停" or "先不" or "算了" or "no" ||
-        ContainsAny(msg, "取消", "先不要", "先别", "不要执行", "不提交", "暂停");
-
-    private static bool IsStatusQuery(string msg) =>
-        ContainsAny(msg, "准备好了吗", "写完了吗", "生成了吗", "在哪", "哪里", "进度", "状态", "怎么样了", "刚才那章", "刚才生成", "草稿呢", "那章呢", "到哪了");
-
-    private static bool IsProjectSwitch(string msg) =>
-        ContainsAny(msg, "切换到", "换到", "打开项目", "打开小说");
-
-    private static bool IsRevisionRequest(string msg) =>
-        ContainsAny(msg, "重写", "改写", "修改", "润色", "修一下", "调整", "按我刚才说的改");
-
-    private static bool IsUserFeedback(string msg) =>
-        ContainsAny(msg, "我不喜欢", "我喜欢", "以后", "记住", "偏好", "不要这样", "这种风格");
-
-    private static bool IsNewProjectSeed(string msg, AgentSession session)
-    {
-        if (session.Phase == "awaiting_user_foundation") return false;
-        return ContainsAny(msg, "新小说", "新书", "开一本", "写一本", "创建一本", "我要写") &&
-               ContainsAny(msg, "小说", "故事", "书");
-    }
-
-    private static bool LooksLikeCreativeBrief(string msg) =>
-        ContainsAny(msg, "写", "生成", "规划", "章节", "卷纲", "角色", "设定", "剧情", "冲突", "主角", "反派", "场景", "大纲");
 
     private static bool TryResolveCandidateSelection(
         AgentSession session,
@@ -267,6 +183,82 @@ public sealed class ConversationKernel
         }
     }
 
+    private static bool HasProject(AgentSession session) =>
+        !string.IsNullOrWhiteSpace(session.ActiveProjectId) &&
+        !session.ActiveProjectId.StartsWith("temp-", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeProductionStatusQuestion(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var text = message.Trim();
+        if (ContainsAny(text, "不要现在执行", "先不要执行", "不要执行"))
+            return false;
+        if (LooksLikeCompoundMutationRequest(text))
+            return false;
+
+        var asksState = ContainsAny(text,
+            "执行到哪",
+            "执行了吗",
+            "还在执行",
+            "正在执行",
+            "正在写",
+            "是不是正在",
+            "当前状态",
+            "现在状态",
+            "什么状态",
+            "进度",
+            "卡在哪",
+            "卡住",
+            "跑到哪",
+            "做到哪",
+            "有没有开始",
+            "是否还在",
+            "是不是还在");
+        if (!asksState)
+            return false;
+
+        var productionScope = ContainsAny(text,
+            "执行",
+            "生产",
+            "生成",
+            "写",
+            "章节",
+            "第",
+            "工具",
+            "任务",
+            "后台",
+            "门禁",
+            "提交",
+            "书城",
+            "工作流");
+
+        return productionScope || text.Length <= 18;
+    }
+
+    private static bool LooksLikeCompoundMutationRequest(string text)
+    {
+        var hasSequence = ContainsAny(text, "然后", "并", "再", "之后");
+        if (!hasSequence)
+            return false;
+
+        return ContainsAny(text,
+            "覆盖",
+            "修改",
+            "修订",
+            "重写",
+            "重新",
+            "创建",
+            "生成",
+            "生产",
+            "写",
+            "提交",
+            "推进",
+            "修成",
+            "改成");
+    }
+
     private static bool TryParseOption(string message, out int optionIndex, out string selectedOption)
     {
         selectedOption = message.Trim();
@@ -295,6 +287,125 @@ public sealed class ConversationKernel
 
     private static string FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? string.Empty;
+}
+
+internal static class AgentChapterReferenceResolver
+{
+    private static readonly Regex CanonicalChapterRegex = new(
+        @"\bchapter[-_\s]*0*(\d{1,4})\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex ChineseChapterRegex = new(
+        @"第\s*([0-9０-９一二三四五六七八九十百零〇两]+)\s*章",
+        RegexOptions.Compiled);
+
+    public static string ResolveChapterId(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return string.Empty;
+
+        var canonical = CanonicalChapterRegex.Match(raw);
+        if (canonical.Success && int.TryParse(canonical.Groups[1].Value, out var canonicalNumber))
+            return FormatChapterId(canonicalNumber);
+
+        var chinese = ChineseChapterRegex.Match(raw);
+        if (chinese.Success && TryParseChapterNumber(chinese.Groups[1].Value, out var chineseNumber))
+            return FormatChapterId(chineseNumber);
+
+        return string.Empty;
+    }
+
+    public static string NormalizeChapterId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var resolved = ResolveChapterId(value);
+        if (!string.IsNullOrWhiteSpace(resolved))
+            return resolved;
+
+        var trimmed = value.Trim();
+        return trimmed.StartsWith("chapter-", StringComparison.OrdinalIgnoreCase)
+            ? trimmed.ToLowerInvariant()
+            : string.Empty;
+    }
+
+    private static string FormatChapterId(int number) =>
+        number > 0 ? $"chapter-{number:000}" : string.Empty;
+
+    private static bool TryParseChapterNumber(string raw, out int number)
+    {
+        var normalized = NormalizeNumberText(raw);
+        if (int.TryParse(normalized, out number))
+            return number > 0;
+
+        number = ParseChineseNumber(normalized);
+        return number > 0;
+    }
+
+    private static string NormalizeNumberText(string raw)
+    {
+        var chars = raw.Trim().Select(ch =>
+        {
+            if (ch is >= '０' and <= '９')
+                return (char)('0' + ch - '０');
+            return ch switch
+            {
+                '〇' => '零',
+                '两' => '二',
+                _ => ch,
+            };
+        });
+        return new string(chars.ToArray());
+    }
+
+    private static int ParseChineseNumber(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+
+        var hundredIndex = text.IndexOf('百');
+        if (hundredIndex >= 0)
+        {
+            var hundreds = hundredIndex == 0 ? 1 : ChineseDigit(text[..hundredIndex]);
+            var rest = text[(hundredIndex + 1)..];
+            return hundreds <= 0 ? 0 : hundreds * 100 + ParseChineseTens(rest);
+        }
+
+        return ParseChineseTens(text);
+    }
+
+    private static int ParseChineseTens(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+
+        var tenIndex = text.IndexOf('十');
+        if (tenIndex >= 0)
+        {
+            var tens = tenIndex == 0 ? 1 : ChineseDigit(text[..tenIndex]);
+            var onesText = text[(tenIndex + 1)..];
+            var ones = string.IsNullOrWhiteSpace(onesText) ? 0 : ChineseDigit(onesText);
+            return tens <= 0 || ones < 0 ? 0 : tens * 10 + ones;
+        }
+
+        return ChineseDigit(text);
+    }
+
+    private static int ChineseDigit(string text) => text.Trim() switch
+    {
+        "零" => 0,
+        "一" => 1,
+        "二" => 2,
+        "三" => 3,
+        "四" => 4,
+        "五" => 5,
+        "六" => 6,
+        "七" => 7,
+        "八" => 8,
+        "九" => 9,
+        _ => -1,
+    };
 }
 
 public sealed class ReflectionEngine
@@ -439,9 +550,9 @@ public sealed class ToolPolicyEngine
     private static readonly HashSet<string> CreativeTools = new(StringComparer.OrdinalIgnoreCase)
     {
         "PlanStoryFoundation", "CommitStoryFoundation", "PlanVolumeArc", "CommitVolumeArc",
-        "PlanChapter", "SelectChapterCandidate", "BuildChapterContextPackage",
-        "GenerateChapterWithChanges", "ValidateChapterDraft", "RepairChapterDraft",
-        "CommitValidatedChapter", "RefreshProjectIndexes", "AnalyzeDependencyImpact", "ReviewChapter",
+        "PlanChapter", "SelectChapterCandidate", "ProduceChapter",
+        "AuditCommittedChapter", "ReviseCommittedChapter",
+        "RefreshProjectIndexes", "AnalyzeDependencyImpact", "ReviewChapter",
     };
 
     public ToolPolicyResult BeforeCall(
@@ -456,28 +567,42 @@ public sealed class ToolPolicyEngine
         return name switch
         {
             "tool_search" => ToolPolicyResult.Allow(),
-            "QueryWorkspaceState" or "QueryProjectStatus" or "SearchCreativeKnowledge" or "ResolveNovelProject" or "ProcessKnowledgeFile" => ToolPolicyResult.Allow(),
+            "AuditCommittedChapter" => ToolPolicyResult.Allow("Medium"),
+            "ReviseCommittedChapter" => RequireConfirmation(confirmed, "修订已提交章节并覆盖书城正文。"),
             "PlanStoryFoundation" => ToolPolicyResult.Allow(),  // LLM decided, trust it
             "CommitStoryFoundation" => PolicyCommitStoryFoundation(call, session, bible, confirmed),
-            "PlanVolumeArc" => PolicyPlanVolumeArc(bible),  // Only structural check
-            "CommitVolumeArc" => AllowAutopilot("High", "提交卷规划。"),
+            "PlanVolumeArc" => PolicyPlanVolumeArc(call, bible),
+            "CommitVolumeArc" => AllowAgentAutoProceed("High", "提交卷规划。"),
             "PlanChapter" => PolicyPlanChapter(call, session, bible, context),
             "SelectChapterCandidate" => PolicyRunExists(call, session, bible, "选择章节候选需要已有章节 Run。"),
-            "BuildChapterContextPackage" => PolicyBuildContext(call, session, bible),
-            "GenerateChapterWithChanges" => PolicyGenerateDraft(call, session, bible, confirmed),
-            "ValidateChapterDraft" => PolicyValidateDraft(call, session, bible),
-            "RepairChapterDraft" => PolicyRepairDraft(call, session, bible, confirmed),
-            "CommitValidatedChapter" => PolicyCommitChapter(call, session, bible, context, confirmed),
+            "ProduceChapter" => PolicyProduceChapter(call, session, bible),
             "RefreshProjectIndexes" or "AnalyzeDependencyImpact" or "ReviewChapter" => ToolPolicyResult.Allow("Medium"),
-            _ => ToolPolicyResult.Block($"未知工具：{name}。请使用已注册的工具。"),
+            _ => AllowKnownNonCreativeTool(name, context) ?? ToolPolicyResult.Block($"未知工具：{name}。请使用已注册的工具。"),
         };
     }
 
-    // PlanVolumeArc: only check structural prerequisite (Story Bible must exist)
-    private static ToolPolicyResult PolicyPlanVolumeArc(StoryBibleDocument bible)
+    private static ToolPolicyResult? AllowKnownNonCreativeTool(string name, AgentObservationContext context)
+    {
+        var tool = context.AvailableTools.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (tool == null || CreativeTools.Contains(name))
+            return null;
+
+        return ToolPolicyResult.Allow(
+            string.IsNullOrWhiteSpace(tool.Risk) ? "Low" : tool.Risk,
+            tool.RequiresConfirmation);
+    }
+
+    private static ToolPolicyResult PolicyPlanVolumeArc(AgentToolCall call, StoryBibleDocument bible)
     {
         if (bible.Constitution == null)
             return ToolPolicyResult.Block("Story Bible 尚未固化，不能规划卷纲。应先补齐并确认故事地基。");
+        if (call.Arguments.ContainsKey("userGoal"))
+            return ToolPolicyResult.Block("PlanVolumeArc 已废弃 userGoal 参数。必须使用 creativeBrief/sourceTurnId。");
+        if (string.IsNullOrWhiteSpace(Arg(call, "creativeBrief")))
+            return ToolPolicyResult.Block("PlanVolumeArc 需要 creativeBrief。Agent 必须先根据上下文自主整理卷级创作简报，Runtime 不会代写。");
+        if (string.IsNullOrWhiteSpace(Arg(call, "candidateDirections")))
+            return ToolPolicyResult.Block("PlanVolumeArc 需要 candidateDirections。Agent 必须先给出结构化卷级候选方向，Runtime 不会从用户原话或 Story Bible 里推断。");
         return ToolPolicyResult.Allow();
     }
 
@@ -490,98 +615,10 @@ public sealed class ToolPolicyEngine
         if (call.Arguments.ContainsKey("userGoal"))
             return ToolPolicyResult.Block("PlanChapter 已废弃 userGoal 参数。必须使用 creativeBrief/sourceTurnId。");
         if (string.IsNullOrWhiteSpace(Arg(call, "creativeBrief")))
-        {
-            var creativeBrief = BuildChapterCreativeBrief(call, session, bible, context);
-            if (!string.IsNullOrWhiteSpace(creativeBrief))
-                return ToolPolicyResult.RepairableBlock(
-                    "章节规划需要结构化 creativeBrief。",
-                    "PlanChapter",
-                    BuildRecommendedArgs(call, null, session, creativeBrief),
-                    "chapter_creative_brief",
-                    "我已经从当前故事地基和卷规划整理出章节创作简报，会继续生成章节候选。");
-
-            return ToolPolicyResult.Block("章节规划缺少可用的创作简报，需要先补齐故事地基或卷规划。");
-        }
+            return ToolPolicyResult.Block("PlanChapter 需要 creativeBrief。Agent 必须先根据上下文自主整理章节创作简报，Runtime 不会代写。");
+        if (string.IsNullOrWhiteSpace(Arg(call, "candidateDirections")))
+            return ToolPolicyResult.Block("PlanChapter 需要 candidateDirections。Agent 必须先给出结构化章节候选方向，Runtime 不会从用户原话里推断。");
         return ToolPolicyResult.Allow("Medium");
-    }
-
-    private static string BuildChapterCreativeBrief(
-        AgentToolCall call,
-        AgentSession session,
-        StoryBibleDocument bible,
-        AgentObservationContext context)
-    {
-        var constitution = bible.Constitution;
-        if (constitution == null)
-            return string.Empty;
-
-        var chapterId = FirstNonEmpty(
-            Arg(call, "chapterId"),
-            context.MissionPlan?.SchedulerState?.ActiveChapterId,
-            session.WorkingMemory?.MissionPlan?.SchedulerState?.ActiveChapterId,
-            "chapter-001");
-        var volume = FindVolumeForChapter(bible, chapterId) ?? bible.VolumeArcs.FirstOrDefault();
-
-        var parts = new List<string>
-        {
-            $"为 {chapterId} 规划章节候选。",
-            $"故事地基：{FirstNonEmpty(constitution.Genre, "未标注类型")}/{FirstNonEmpty(constitution.SubGenre, "未标注子类型")}；核心钩子：{constitution.CoreHook}",
-        };
-        if (!string.IsNullOrWhiteSpace(constitution.ReaderPromise))
-            parts.Add($"读者承诺：{constitution.ReaderPromise}");
-        if (!string.IsNullOrWhiteSpace(constitution.MainPleasure))
-            parts.Add($"主要爽点：{constitution.MainPleasure}");
-        if (!string.IsNullOrWhiteSpace(constitution.WorldCoreRule))
-            parts.Add($"世界规则：{constitution.WorldCoreRule}");
-        if (!string.IsNullOrWhiteSpace(constitution.ProtagonistEngine))
-            parts.Add($"主角成长引擎：{constitution.ProtagonistEngine}");
-        if (volume != null)
-        {
-            parts.Add($"当前卷：{FirstNonEmpty(volume.Title, volume.VolumeId)}；卷目标：{volume.VolumePromise}");
-            if (!string.IsNullOrWhiteSpace(volume.CoreQuestion))
-                parts.Add($"卷核心问题：{volume.CoreQuestion}");
-            var beat = FindVolumeBeat(volume, chapterId);
-            if (beat != null)
-                parts.Add($"章节节拍：{FirstNonEmpty(beat.Role, beat.Goal, beat.Turn)}；目标：{beat.Goal}；转折：{beat.Turn}；代价：{beat.Cost}");
-        }
-
-        return string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
-    }
-
-    private static VolumeArcPlan? FindVolumeForChapter(StoryBibleDocument bible, string chapterId)
-    {
-        if (string.IsNullOrWhiteSpace(chapterId))
-            return null;
-        return bible.VolumeArcs.FirstOrDefault(v => IsChapterInsideArc(chapterId, v));
-    }
-
-    private static VolumeChapterBeat? FindVolumeBeat(VolumeArcPlan volume, string chapterId)
-    {
-        if (volume.ChapterBeats.Count == 0)
-            return null;
-        var chapterNumber = ExtractChapterNumber(chapterId);
-        if (chapterNumber <= 0)
-            return volume.ChapterBeats.FirstOrDefault();
-        var startNumber = ExtractChapterNumber(volume.StartChapterId);
-        var index = startNumber > 0 ? chapterNumber - startNumber + 1 : chapterNumber;
-        return volume.ChapterBeats.FirstOrDefault(b => b.Index == index) ?? volume.ChapterBeats.FirstOrDefault();
-    }
-
-    private static bool IsChapterInsideArc(string chapterId, VolumeArcPlan volume)
-    {
-        var chapterNumber = ExtractChapterNumber(chapterId);
-        var startNumber = ExtractChapterNumber(volume.StartChapterId);
-        var endNumber = ExtractChapterNumber(volume.EndChapterId);
-        return chapterNumber > 0 && startNumber > 0 && endNumber > 0 &&
-               chapterNumber >= startNumber && chapterNumber <= endNumber;
-    }
-
-    private static int ExtractChapterNumber(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return 0;
-        var digits = new string(value.Where(char.IsDigit).ToArray());
-        return int.TryParse(digits, out var number) ? number : 0;
     }
 
     private static ToolPolicyResult PolicyCommitStoryFoundation(AgentToolCall call, AgentSession session, StoryBibleDocument bible, bool confirmed)
@@ -599,7 +636,6 @@ public sealed class ToolPolicyEngine
 
         if (candidate != null)
         {
-            call.Arguments["selectedMacroCandidateTitle"] = candidate.Title;
             if (!string.IsNullOrWhiteSpace(candidate.CandidateId))
                 call.Arguments["selectedMacroCandidateId"] = candidate.CandidateId;
         }
@@ -636,10 +672,7 @@ public sealed class ToolPolicyEngine
             }
 
             if (selectedIndex == 0)
-            {
-                selectedIndex = 1;
-                call.Arguments["selectedMacroCandidateIndex"] = "1";
-            }
+                return run.MacroCandidates[0];
 
             if (selectedIndex >= 1 && selectedIndex <= run.MacroCandidates.Count)
                 return run.MacroCandidates[selectedIndex - 1];
@@ -648,201 +681,24 @@ public sealed class ToolPolicyEngine
             return null;
         }
 
-        if (call.Arguments.TryGetValue("selectedMacroCandidateTitle", out var selectedTitle) &&
-            !string.IsNullOrWhiteSpace(selectedTitle))
-        {
-            var candidate = run.MacroCandidates.FirstOrDefault(c =>
-                string.Equals(c.Title, selectedTitle.Trim(), StringComparison.OrdinalIgnoreCase));
-            if (candidate != null) return candidate;
-            error = $"待确认的故事地基候选「{selectedTitle}」不在当前 run 中，我不会固化。请重新选择候选。";
-            return null;
-        }
-
         return null;
     }
 
-    private static ToolPolicyResult PolicyBuildContext(AgentToolCall call, AgentSession session, StoryBibleDocument bible)
-    {
-        var run = FindRun(call, session, bible);
-        var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
-        if (chapter?.Status == "committed")
-            return ToolPolicyResult.Block("已提交章节不能自动重建写作上下文，只能复盘或分析依赖影响。");
-        if (run?.ChapterBrief == null)
-            return ToolPolicyResult.RepairableBlock(
-                "构建上下文包需要先有章节候选。",
-                "PlanChapter",
-                BuildRecommendedArgs(call, run, session, creativeBrief: FirstNonEmpty(session.WorkingMemory.CurrentGoal, session.WorkingMemory.MissionPlan.CurrentObjective, "继续当前章节规划")),
-                "chapter_candidates",
-                "现在还不能构建上下文包，因为这一章还没有候选。我会先规划章节候选。");
-        if (string.IsNullOrWhiteSpace(run.ChapterBrief.SelectedCandidateTitle))
-            return ToolPolicyResult.RepairableBlock(
-                "构建上下文包前必须先选定章节候选。",
-                "SelectChapterCandidate",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_candidate_selection",
-                "现在还不能构建上下文包，因为章节候选还没选定。我会先选择推荐候选。");
-        return ToolPolicyResult.Allow();
-    }
-
-    private static ToolPolicyResult PolicyGenerateDraft(AgentToolCall call, AgentSession session, StoryBibleDocument bible, bool confirmed)
-    {
-        var run = FindRun(call, session, bible);
-        var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
-        if (chapter?.RequiresContextRebuild == true || chapter?.Status == "needs_context_rebuild")
-            return ToolPolicyResult.RepairableBlock(
-                "章节上下文受依赖影响已过期，必须先重新构建上下文包。",
-                "BuildChapterContextPackage",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_context_package",
-                "章节上下文已经过期。我会先重新构建上下文包。");
-        if (chapter?.Status == "committed")
-            return ToolPolicyResult.Block("已提交章节不能自动重新生成正文，只能复盘或分析依赖影响。");
-        return AllowAutopilot("High", "生成章节草稿和 CHANGES。");
-    }
-
-    private static ToolPolicyResult PolicyValidateDraft(AgentToolCall call, AgentSession session, StoryBibleDocument bible)
-    {
-        var run = FindRun(call, session, bible);
-        var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
-        if (chapter?.Status == "committed")
-            return ToolPolicyResult.Block("已提交章节不能自动重新校验并覆盖状态，只能复盘或分析依赖影响。");
-        if (chapter?.RequiresContextRebuild == true)
-            return ToolPolicyResult.RepairableBlock(
-                "章节上下文已过期，需要先重建上下文包。",
-                "BuildChapterContextPackage",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_context_package",
-                "章节上下文已经过期。我会先重建上下文包，再继续校验。");
-        if (run?.DraftArtifact == null || string.IsNullOrWhiteSpace(run.DraftArtifact.DraftContent))
-            return ToolPolicyResult.RepairableBlock(
-                "校验章节前必须先生成草稿和 CHANGES。",
-                "GenerateChapterWithChanges",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_draft",
-                "现在还不能校验章节，因为还没有草稿。我会先进入正文生成确认。");
-        return ToolPolicyResult.Allow("Medium");
-    }
-
-    private static ToolPolicyResult PolicyRepairDraft(AgentToolCall call, AgentSession session, StoryBibleDocument bible, bool confirmed)
-    {
-        var run = FindRun(call, session, bible);
-        var gateFailed = run?.GateReport?.Status is "failed" or "gate_failed";
-        var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
-        if (chapter?.Status == "committed")
-            return ToolPolicyResult.Block("已提交章节不能自动修复或覆盖正文，只能复盘或分析依赖影响。");
-        var qualityFailed = chapter?.QualityStatus is "quality_failed" or "blocked" || chapter?.Status == "quality_failed";
-        if (run?.DraftArtifact == null || string.IsNullOrWhiteSpace(run.DraftArtifact.DraftContent))
-            return ToolPolicyResult.RepairableBlock(
-                "修复章节前必须先生成草稿和 CHANGES。",
-                "GenerateChapterWithChanges",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_draft",
-                "现在还不能修复章节，因为还没有草稿。我会先生成草稿。");
-        if (!gateFailed && !qualityFailed && run.GateReport == null)
-            return ToolPolicyResult.RepairableBlock(
-                "修复章节前必须先执行门禁校验，确认具体失败项。",
-                "ValidateChapterDraft",
-                BuildRecommendedArgs(call, run, session),
-                "generation_gate",
-                "现在还不能修复章节，因为草稿还没有门禁报告。我会先校验草稿。");
-        if (!gateFailed && !qualityFailed)
-            return ToolPolicyResult.Block("修复草稿需要已有 GenerationGate 或质量门禁失败项。");
-        return AllowAutopilot("High", "修复章节草稿。");
-    }
-
-    private static ToolPolicyResult PolicyCommitChapter(
+    private static ToolPolicyResult PolicyProduceChapter(
         AgentToolCall call,
         AgentSession session,
-        StoryBibleDocument bible,
-        AgentObservationContext context,
-        bool confirmed)
+        StoryBibleDocument bible)
     {
         var run = FindRun(call, session, bible);
-        if (run?.GateReport?.Status != "validated")
-            return ToolPolicyResult.RepairableBlock(
-                "提交成稿需要 GenerationGate validated。",
-                "ValidateChapterDraft",
-                BuildRecommendedArgs(call, run, session),
-                "generation_gate",
-                "现在还不能提交成稿，因为章节还没有通过门禁校验。我会先校验草稿。");
+        var chapter = FindChapterTask(session.WorkingMemory.MissionPlan, run);
+        if (chapter?.Status == "committed")
+            return ToolPolicyResult.Block("已提交章节不能通过 ProduceChapter 重新生产；请使用 ReviseCommittedChapter 走已提交章节修订流程。");
 
-        var chapter = FindChapterTask(context.MissionPlan, run);
-        if (chapter?.RequiresRevalidation == true || chapter?.Status == "needs_revalidation")
-            return ToolPolicyResult.RepairableBlock(
-                "章节受依赖影响需要重新校验，不能提交成稿。",
-                "ValidateChapterDraft",
-                BuildRecommendedArgs(call, run, session),
-                "generation_gate",
-                "章节受依赖影响，需要先重新校验。");
-        if (chapter?.RequiresContextRebuild == true || chapter?.Status == "needs_context_rebuild")
-            return ToolPolicyResult.RepairableBlock(
-                "章节上下文已过期，需要重建上下文后才能提交。",
-                "BuildChapterContextPackage",
-                BuildRecommendedArgs(call, run, session),
-                "chapter_context_package",
-                "章节上下文已过期，需要先重建上下文。");
-
-        var review = run?.PostGenerationReview;
-        var qualityStatus = chapter?.QualityStatus ?? string.Empty;
-        if (chapter != null && !string.IsNullOrWhiteSpace(chapter.QualityIssueSummary))
-            return ToolPolicyResult.Block("质量门禁仍有问题，不能提交成稿。");
-
-        if (review == null || qualityStatus is "" or "not_reviewed" or "pending_quality_review")
-        {
-            if (qualityStatus is "quality_passed" or "quality_warn")
-                return RequireConfirmation(confirmed, "提交已校验章节进书城。");
-
-            return ToolPolicyResult.RepairableBlock(
-                "提交成稿前必须先执行质量评审。",
-                "ReviewChapter",
-                BuildRecommendedArgs(call, run, session),
-                "quality_gate",
-                "质量评审还没执行，我会先评审章节。");
-        }
-
-        if (review.RequiresRewrite ||
-            review.OverallResult is "Fail" or "Failed" ||
-            qualityStatus is "quality_failed" or "blocked")
-            return ToolPolicyResult.RepairableBlock(
-                "质量门禁未通过，不能提交成稿。",
-                "RepairChapterDraft",
-                BuildRecommendedArgs(call, run, session),
-                "quality_gate",
-                "质量评审未通过，我会先修复草稿。");
-        if (chapter != null && qualityStatus is not ("quality_passed" or "quality_warn"))
-            return ToolPolicyResult.RepairableBlock(
-                "质量状态还没有确认通过，不能提交成稿。",
-                "ReviewChapter",
-                BuildRecommendedArgs(call, run, session),
-                "quality_gate",
-                "质量状态还没确认通过，我会先评审章节。");
-
-        return RequireConfirmation(confirmed, "提交已校验章节进书城。");
+        return AllowAgentAutoProceed("High", "执行章节生产闭环。");
     }
 
     private static ToolPolicyResult PolicyRunExists(AgentToolCall call, AgentSession session, StoryBibleDocument bible, string message) =>
         FindRun(call, session, bible) == null ? ToolPolicyResult.Block(message) : ToolPolicyResult.Allow("Medium");
-
-    private static Dictionary<string, string> BuildRecommendedArgs(
-        AgentToolCall call,
-        NovelAgentRun? run,
-        AgentSession session,
-        string creativeBrief = "")
-    {
-        var args = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var runId = FirstNonEmpty(Arg(call, "runId"), run?.RunId, session.ActiveRunId);
-        if (!string.IsNullOrWhiteSpace(runId))
-            args["runId"] = runId;
-
-        if (!string.IsNullOrWhiteSpace(creativeBrief))
-            args["creativeBrief"] = creativeBrief;
-
-        var chapterId = FirstNonEmpty(run?.TargetChapterId, run?.ChapterBrief?.ChapterId);
-        if (!string.IsNullOrWhiteSpace(chapterId))
-            args["chapterId"] = chapterId;
-
-        return args;
-    }
 
     private static string Arg(AgentToolCall call, string name, string fallback = "") =>
         call.Arguments.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value.Trim() : fallback;
@@ -855,7 +711,7 @@ public sealed class ToolPolicyEngine
             ? ToolPolicyResult.Allow("High", requiresConfirmation: false, message)
             : ToolPolicyResult.Allow("High", requiresConfirmation: true, message);
 
-    private static ToolPolicyResult AllowAutopilot(string risk, string message = "") =>
+    private static ToolPolicyResult AllowAgentAutoProceed(string risk, string message = "") =>
         ToolPolicyResult.Allow(risk, requiresConfirmation: false, message);
 
     private static NovelAgentRun? FindRun(AgentToolCall call, AgentSession session, StoryBibleDocument bible)

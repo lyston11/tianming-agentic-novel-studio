@@ -23,11 +23,11 @@ public sealed class RuntimeHealthServiceTests
 
         var report = await service.CheckAsync();
 
-        Assert.Equal(RuntimeHealthStatuses.Degraded, report.Status);
+        Assert.Equal(RuntimeHealthStatuses.Healthy, report.Status);
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["redis"].Status);
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["qdrant"].Status);
-        Assert.Equal(RuntimeHealthStatuses.Degraded, report.Entries["embedding"].Status);
-        Assert.NotNull(report.Entries["embedding"].Reason);
+        Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["embedding"].Status);
+        Assert.Null(report.Entries["embedding"].Reason);
     }
 
     [Fact]

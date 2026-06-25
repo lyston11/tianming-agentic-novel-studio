@@ -34,8 +34,16 @@ public sealed class AgentSessionResumeResponse
 
 public sealed class AgentRuntimeEventView
 {
+    public string EventId { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string? RunId { get; set; }
+    public string SourceMessageId { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string ArtifactType { get; set; } = string.Empty;
+    public string ArtifactId { get; set; } = string.Empty;
+    public string DisplaySurface { get; set; } = string.Empty;
+    public string DisplayPolicy { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public JsonElement Data { get; set; }
     public DateTime Timestamp { get; set; }

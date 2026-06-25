@@ -10,7 +10,6 @@ public static class RedisCacheServiceCollectionExtensions
         IConfiguration configuration)
     {
         var redisEnabled = configuration.GetValue("Redis:Enabled", true);
-        var redisAllowFallback = configuration.GetValue("Redis:AllowInMemoryFallback", false);
         var redisConnectionString = configuration["Redis:ConnectionString"];
         var redisInstanceName = configuration["Redis:InstanceName"];
         var resilientConnectionString = NormalizeConnectionString(redisConnectionString);
@@ -25,13 +24,9 @@ public static class RedisCacheServiceCollectionExtensions
 
             services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(resilientConnectionString));
         }
-        else if (redisAllowFallback)
-        {
-            services.AddDistributedMemoryCache();
-        }
         else
         {
-            throw new InvalidOperationException("Redis is required. Set Redis:Enabled=true and Redis:ConnectionString, or set Redis:AllowInMemoryFallback=true only for tests.");
+            throw new InvalidOperationException("Redis is required. Set Redis:Enabled=true and Redis:ConnectionString.");
         }
 
         return services;

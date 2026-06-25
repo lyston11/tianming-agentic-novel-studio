@@ -7,7 +7,6 @@ public sealed class EmbeddingHealthResponse
     public int Dimension { get; init; }
     public string SemanticQuality { get; init; } = string.Empty;
     public bool Degraded { get; init; }
-    public bool DeterministicStub { get; init; }
     public bool RealEmbeddingsRequired { get; init; }
     public string Warning { get; init; } = string.Empty;
 
@@ -20,7 +19,6 @@ public sealed class EmbeddingHealthResponse
             Dimension = status.Dimension,
             SemanticQuality = status.SemanticQuality,
             Degraded = status.IsDegraded,
-            DeterministicStub = status.UsesDeterministicStub,
             RealEmbeddingsRequired = status.RealEmbeddingsRequired,
             Warning = status.Warning
         };

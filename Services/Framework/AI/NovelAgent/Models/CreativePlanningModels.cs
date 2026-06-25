@@ -8,8 +8,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         public string UserSeed { get; set; } = string.Empty;
         public string Genre { get; set; } = string.Empty;
         public string SubGenre { get; set; } = string.Empty;
-        public string TargetReader { get; set; } = string.Empty;
-        public string DesiredDirection { get; set; } = string.Empty;
         public List<string> CandidateDirections { get; set; } = new();
         public List<string> ForbiddenDirections { get; set; } = new();
     }

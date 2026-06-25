@@ -902,11 +902,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
-                    b.Property<bool>("AgentAutoContinue")
+                    b.Property<bool>("AgentLoopAutoProceed")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(true)
-                        .HasColumnName("agent_auto_continue");
+                        .HasColumnName("agent_loop_auto_proceed");
 
                     b.Property<string>("AgentDefaultRisk")
                         .IsRequired()
@@ -915,11 +915,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasDefaultValue("Medium")
                         .HasColumnName("agent_default_risk");
 
-                    b.Property<int>("AgentMaxAutoSteps")
+                    b.Property<int>("AgentLoopMaxSteps")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(12)
-                        .HasColumnName("agent_max_auto_steps");
+                        .HasColumnName("agent_loop_max_steps");
 
                     b.Property<int>("DefaultChapterWordCount")
                         .ValueGeneratedOnAdd()

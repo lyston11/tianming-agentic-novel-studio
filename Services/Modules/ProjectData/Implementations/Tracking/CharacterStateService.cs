@@ -1,9 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
@@ -12,6 +11,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
     public class CharacterStateService
     {
         private readonly GuideManager _guideManager;
+        private readonly IDesignElementLookupService _elementLookup;
 
         private static readonly string[] _escalationKeywords =
         {
@@ -23,9 +23,10 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         #region 构造函数
 
-        public CharacterStateService(GuideManager guideManager)
+        public CharacterStateService(GuideManager guideManager, IDesignElementLookupService elementLookup)
         {
             _guideManager = guideManager;
+            _elementLookup = elementLookup;
         }
 
         #endregion
@@ -244,30 +245,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
             return result;
         }
 
-        private static async Task<string?> TryResolveCharacterDisplayNameAsync(string characterId)
+        private async Task<string?> TryResolveCharacterDisplayNameAsync(string characterId)
         {
             try
             {
-                var elementsPath = Path.Combine(
-                    StoragePathHelper.GetProjectConfigPath(), "Design", "elements.json");
-                if (!File.Exists(elementsPath)) return null;
-
-                var json = await File.ReadAllTextAsync(elementsPath).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("data", out var data)) return null;
-                if (!data.TryGetProperty("characterrules", out var charModule)) return null;
-                if (!charModule.TryGetProperty("character_rules", out var characters)) return null;
-
-                foreach (var item in characters.EnumerateArray())
-                {
-                    var id = item.TryGetProperty("Id", out var idProp) ? idProp.GetString() : null;
-                    if (string.Equals(id, characterId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var name = item.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
-                        return string.IsNullOrWhiteSpace(name) ? null : name;
-                    }
-                }
+                return await _elementLookup.ResolveCharacterNameAsync(characterId).ConfigureAwait(false);
             }
             catch (Exception ex) { TM.App.Log($"[CharacterState] 读取角色名失败: {ex.Message}"); }
             return null;

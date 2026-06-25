@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -39,20 +40,20 @@ public sealed class AgentMemoryService
         session.WorkingMemory.SessionMemory ??= new AgentSessionMemory();
         var transientSessionMemory = session.WorkingMemory.SessionMemory;
 
-        var sessionMem = await _repository.GetSessionMemoryAsync(userId, project.Id, session.SessionId, ct);
+        var sessionMem = await _repository.GetSessionMemoryAsync(userId, project.Id, session.SessionId, ct, runId: session.RuntimeRunId);
         session.WorkingMemory.SessionMemory = sessionMem != null
             ? MapToAgentSessionMemory(sessionMem, transientSessionMemory)
             : transientSessionMemory;
         ApplySessionMemoryToRuntime(session.WorkingMemory);
 
-        var projectMem = await _repository.GetProjectMemoryAsync(userId, project.Id, ct);
+        var projectMem = await _repository.GetProjectMemoryAsync(userId, project.Id, ct, runId: session.RuntimeRunId, sessionId: session.SessionId);
         session.WorkingMemory.ProjectMemory = projectMem != null ? MapToAgentProjectMemory(projectMem, project.Id) : BuildProjectMemory(project, bible);
         ApplyProjectBaseline(session.WorkingMemory.ProjectMemory, BuildProjectMemory(project, bible));
 
-        var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct);
+        var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId);
         session.WorkingMemory.AuthorMemory = authorMem != null ? MapToAgentAuthorMemory(authorMem) : new AgentAuthorMemory();
 
-        var executionMem = await _repository.GetExecutionMemoryAsync(userId, project.Id, ct);
+        var executionMem = await _repository.GetExecutionMemoryAsync(userId, project.Id, ct, runId: session.RuntimeRunId, sessionId: session.SessionId);
         session.WorkingMemory.ExecutionMemory = executionMem != null ? MapToAgentExecutionMemory(executionMem) : new AgentExecutionMemory();
 
         MergeSessionPreferences(session);
@@ -68,20 +69,23 @@ public sealed class AgentMemoryService
                 userId,
                 AgentMemoryScopes.ProjectlessProjectId,
                 session.SessionId,
-                ct)
+                ct,
+                runId: session.RuntimeRunId)
             .ConfigureAwait(false);
         session.WorkingMemory.SessionMemory = sessionMem != null
             ? MapToAgentSessionMemory(sessionMem, transientSessionMemory)
             : transientSessionMemory;
         ApplySessionMemoryToRuntime(session.WorkingMemory);
 
-        var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct).ConfigureAwait(false);
+        var authorMem = await _repository.GetAuthorMemoryAsync(userId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId).ConfigureAwait(false);
         session.WorkingMemory.AuthorMemory = authorMem != null ? MapToAgentAuthorMemory(authorMem) : new AgentAuthorMemory();
 
         var executionMem = await _repository.GetExecutionMemoryAsync(
                 userId,
                 AgentMemoryScopes.ProjectlessProjectId,
-                ct)
+                ct,
+                runId: session.RuntimeRunId,
+                sessionId: session.SessionId)
             .ConfigureAwait(false);
         session.WorkingMemory.ExecutionMemory = executionMem != null ? MapToAgentExecutionMemory(executionMem) : new AgentExecutionMemory();
         session.WorkingMemory.ProjectMemory ??= new AgentProjectMemory();
@@ -127,9 +131,9 @@ public sealed class AgentMemoryService
         working.AuthorMemory ??= new AgentAuthorMemory();
         working.ExecutionMemory ??= new AgentExecutionMemory();
 
-        var currentProjectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct) ?? new ProjectMemory();
-        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct) ?? new AuthorMemory();
-        var currentExecutionMemory = await _repository.GetExecutionMemoryAsync(userId, projectId, ct) ?? new ExecutionMemory();
+        var currentProjectMemory = await _repository.GetProjectMemoryAsync(userId, projectId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId) ?? new ProjectMemory();
+        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId) ?? new AuthorMemory();
+        var currentExecutionMemory = await _repository.GetExecutionMemoryAsync(userId, projectId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId) ?? new ExecutionMemory();
 
         var updates = new Dictionary<string, object>();
         var authorUpdates = new Dictionary<string, object>();
@@ -153,15 +157,37 @@ public sealed class AgentMemoryService
                 .ToList();
 
             foreach (var preference in sedimented)
+            {
+                var wasAlreadyProjectConstraint = currentProjectMemory.Constraints.Contains(preference, StringComparer.OrdinalIgnoreCase);
                 AddUnique(working.ProjectMemory.Constraints, preference);
+                if (!wasAlreadyProjectConstraint)
+                {
+                    await _repository.RecordMemoryPromotionAsync(
+                        new MemoryPromotionRecord(
+                            UserId: userId,
+                            ProjectId: projectId,
+                            SessionId: session.SessionId,
+                            RunId: string.IsNullOrWhiteSpace(session.RuntimeRunId) ? null : session.RuntimeRunId,
+                            SourceScope: "session",
+                            TargetScope: "project",
+                            SourceMemoryKey: "session.short_term_preferences",
+                            TargetMemoryKey: "project.constraints",
+                            PromotionReason: "preference_sedimentation_threshold",
+                            PayloadJson: JsonSerializer.Serialize(new
+                            {
+                                preference,
+                                threshold = PreferenceSedimentationThreshold
+                            })),
+                        ct);
+                }
+            }
         }
 
         if (update?.ProjectMemory != null)
         {
             foreach (var item in Clean(update.ProjectMemory.NewConstraints))
                 AddUnique(working.ProjectMemory.Constraints, item);
-            foreach (var item in Clean(update.ProjectMemory.UnresolvedThreads))
-                AddUnique(working.ProjectMemory.UnresolvedThreads, item);
+            // UnresolvedThreads removed - Agent should query StoryBible.ForeshadowLedger directly
         }
 
         if (update?.AuthorMemory != null)
@@ -207,7 +233,7 @@ public sealed class AgentMemoryService
         MergeCurrentThenWorking(working.AuthorMemory.GenreHabits, currentAuthorMemory.GenreHabits);
         MergeCurrentThenWorking(working.AuthorMemory.FavoriteKnowledgeIds, currentAuthorMemory.FavoriteKnowledgeIds);
 
-        Trim(working.ProjectMemory.UnresolvedThreads, MaxUnresolvedThreads);
+        // Trim removed for UnresolvedThreads
         Trim(working.ExecutionMemory.RepeatedBlockers, MaxRepeatedBlockers);
         Trim(working.ExecutionMemory.SuccessfulRepairNotes, MaxSuccessfulRepairNotes);
         Trim(working.ExecutionMemory.ToolFailurePatterns, MaxToolFailurePatterns);
@@ -230,8 +256,7 @@ public sealed class AgentMemoryService
             updates["project.reader_promise"] = working.ProjectMemory.ReaderPromise;
         if (hasExplicitUpdate && working.ProjectMemory.Constraints.Count > 0)
             unionUpdates["project.constraints"] = working.ProjectMemory.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (hasExplicitUpdate && working.ProjectMemory.UnresolvedThreads.Count > 0)
-            unionUpdates["project.unresolved_threads"] = working.ProjectMemory.UnresolvedThreads.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // UnresolvedThreads removed from union updates
         if (working.ProjectMemory.ReferencedKnowledgeIds.Count > 0)
             unionUpdates["project.referenced_knowledge_ids"] = working.ProjectMemory.ReferencedKnowledgeIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (working.ProjectMemory.UsedTropePatterns.Count > 0)
@@ -293,11 +318,13 @@ public sealed class AgentMemoryService
         working.AuthorMemory ??= new AgentAuthorMemory();
         working.ExecutionMemory ??= new AgentExecutionMemory();
 
-        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct).ConfigureAwait(false) ?? new AuthorMemory();
+        var currentAuthorMemory = await _repository.GetAuthorMemoryAsync(userId, ct, runId: session.RuntimeRunId, sessionId: session.SessionId).ConfigureAwait(false) ?? new AuthorMemory();
         var currentExecutionMemory = await _repository.GetExecutionMemoryAsync(
                 userId,
                 AgentMemoryScopes.ProjectlessProjectId,
-                ct)
+                ct,
+                runId: session.RuntimeRunId,
+                sessionId: session.SessionId)
             .ConfigureAwait(false) ?? new ExecutionMemory();
 
         var authorUpdates = new Dictionary<string, object>();
@@ -543,10 +570,7 @@ public sealed class AgentMemoryService
             memory.ReaderPromise = bible.Constitution.ReaderPromise;
             memory.Tone = $"{bible.Constitution.Genre}/{bible.Constitution.SubGenre}";
             memory.Constraints.AddRange(bible.Constitution.ForbiddenDirections.Take(MaxForbiddenDirections));
-            memory.UnresolvedThreads.AddRange(bible.ForeshadowLedger
-                .Where(f => !string.IsNullOrWhiteSpace(f.PlannedPayoffChapterId))
-                .Select(f => $"{f.Name} -> {f.PlannedPayoffChapterId}")
-                .Take(MaxUnresolvedThreads));
+            // UnresolvedThreads removed - Agent should query StoryBible.ForeshadowLedger directly when needed
         }
         return memory;
     }
@@ -558,7 +582,7 @@ public sealed class AgentMemoryService
         target.ReaderPromise = FirstNonEmpty(target.ReaderPromise, baseline.ReaderPromise);
         target.Tone = FirstNonEmpty(target.Tone, baseline.Tone);
         CopyDistinct(target.Constraints, baseline.Constraints);
-        CopyDistinct(target.UnresolvedThreads, baseline.UnresolvedThreads);
+        // UnresolvedThreads removed
     }
 
     private static void MergeSessionPreferences(AgentSession session)
@@ -568,9 +592,6 @@ public sealed class AgentMemoryService
         {
             if (!memory.SessionMemory.ShortTermPreferences.Contains(preference))
                 memory.SessionMemory.ShortTermPreferences.Add(preference);
-            if ((preference.Contains("不要") || preference.Contains("避免")) &&
-                !memory.AuthorMemory.StyleDislikes.Contains(preference))
-                memory.AuthorMemory.StyleDislikes.Add(preference);
         }
 
         Trim(memory.SessionMemory.ShortTermPreferences, MaxShortTermPreferences);
@@ -662,7 +683,7 @@ public sealed class AgentMemoryService
         ReaderPromise = source.ReaderPromise ?? string.Empty,
         Tone = string.Empty,
         Constraints = new List<string>(source.Constraints),
-        UnresolvedThreads = new List<string>(source.UnresolvedThreads),
+        // UnresolvedThreads removed
         ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
         ImportedKnowledgeIds = new List<string>(source.ImportedKnowledgeIds),
         KnowledgeInventory = new List<KnowledgeInventoryItem>(source.KnowledgeInventory),

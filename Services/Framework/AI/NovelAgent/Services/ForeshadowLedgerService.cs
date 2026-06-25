@@ -52,7 +52,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                     if (existing == null)
                     {
                         entry.Status = ForeshadowLedgerStatus.Proposed;
-                        entry.Notes.Add("复盘提出高风险伏笔状态变化，已先作为 Proposed 导入，后续由 Autopilot 应用正式状态。");
+                        entry.Notes.Add("复盘提出高风险伏笔状态变化，已先作为 Proposed 导入，后续由 Agent 应用正式状态。");
                         var addResult = await _storyBibleService.AddForeshadowEntryAsync(entry, confirmed: false, ct)
                             .ConfigureAwait(false);
                         if (addResult.Success)

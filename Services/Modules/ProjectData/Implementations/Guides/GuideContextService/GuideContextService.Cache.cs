@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Generate.ChapterPlanning;
 using TM.Services.Modules.ProjectData.Models.Generate.ChapterBlueprint;
 using TM.Services.Modules.ProjectData.Models.Generate.VolumeDesign;
@@ -28,15 +29,15 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
                 var epoch = Volatile.Read(ref _cacheEpoch);
 
-                var worldRulesTask = LoadPackagedAsync<Models.Design.Worldview.WorldRulesData>("Design/globalsettings.json", "worldrules");
-                var charactersTask = LoadPackagedAsync<Models.Design.Characters.CharacterRulesData>("Design/elements.json", "characterrules");
-                var factionsTask = LoadPackagedAsync<Models.Design.Factions.FactionRulesData>("Design/elements.json", "factionrules");
-                var locationsTask = LoadPackagedAsync<Models.Design.Location.LocationRulesData>("Design/elements.json", "locationrules");
-                var plotRulesTask = LoadPackagedAsync<Models.Design.Plot.PlotRulesData>("Design/elements.json", "plotrules");
-                var volumesTask = LoadPackagedAsync<Models.Generate.StrategicOutline.OutlineData>("Generate/globalsettings.json", "outline");
-                var chapterPlansTask = LoadPackagedAsync<ChapterData>("Generate/elements.json", "chapter");
-                var blueprintsTask = LoadPackagedAsync<BlueprintData>("Generate/elements.json", "blueprint");
-                var volumeDesignsTask = LoadPackagedAsync<VolumeDesignData>("Generate/elements.json", "volumedesign");
+                var worldRulesTask = LoadPackagedAsync<Models.Design.Worldview.WorldRulesData>(GuideRuntimeDataKeys.WorldRules);
+                var charactersTask = LoadPackagedAsync<Models.Design.Characters.CharacterRulesData>(GuideRuntimeDataKeys.Characters);
+                var factionsTask = LoadPackagedAsync<Models.Design.Factions.FactionRulesData>(GuideRuntimeDataKeys.Factions);
+                var locationsTask = LoadPackagedAsync<Models.Design.Location.LocationRulesData>(GuideRuntimeDataKeys.Locations);
+                var plotRulesTask = LoadPackagedAsync<Models.Design.Plot.PlotRulesData>(GuideRuntimeDataKeys.PlotRules);
+                var volumesTask = LoadPackagedAsync<Models.Generate.StrategicOutline.OutlineData>(GuideRuntimeDataKeys.Outlines);
+                var chapterPlansTask = LoadPackagedAsync<ChapterData>(GuideRuntimeDataKeys.ChapterPlans);
+                var blueprintsTask = LoadPackagedAsync<BlueprintData>(GuideRuntimeDataKeys.Blueprints);
+                var volumeDesignsTask = LoadPackagedAsync<VolumeDesignData>(GuideRuntimeDataKeys.VolumeDesigns);
                 var templatesTask = LoadTemplatesAsync();
 
                 await Task.WhenAll(
@@ -142,9 +143,8 @@ namespace TM.Services.Modules.ProjectData.Implementations
             _expansionConfig = null;
             _summaryStore.InvalidateCache();
             _milestoneStore.InvalidateCache();
-            ServiceLocator.Get<VolumeFactArchiveStore>().InvalidateCache();
-            ServiceLocator.Get<KeywordChapterIndexService>().InvalidateCache();
-            ServiceLocator.Get<PlotPointsIndexService>().InvalidateCache();
+            ServiceLocator.TryGet<IVolumeFactArchiveService>()?.InvalidateCache();
+            ServiceLocator.TryGet<IPlotPointRecallService>()?.InvalidateCache();
             _cacheInitialized = false;
             TM.App.Log("[GuideContextService] 缓存已清除");
         }

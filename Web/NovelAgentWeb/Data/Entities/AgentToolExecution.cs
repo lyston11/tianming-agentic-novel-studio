@@ -53,6 +53,9 @@ public sealed class AgentToolExecution
     [Column("side_effects_json")]
     public string SideEffectsJson { get; set; } = "{}";
 
+    [Column("semantic_contract_json")]
+    public string SemanticContractJson { get; set; } = "{}";
+
     [Required]
     [Column("status")]
     [StringLength(30)]
@@ -71,6 +74,12 @@ public sealed class AgentToolExecution
 
     [Column("error_message")]
     public string ErrorMessage { get; set; } = string.Empty;
+
+    [Column("failure_json")]
+    public string FailureJson { get; set; } = "{}";
+
+    [Column("artifact_json")]
+    public string ArtifactJson { get; set; } = "{}";
 
     [Column("recommended_next_tool")]
     [StringLength(120)]

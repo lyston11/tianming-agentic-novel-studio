@@ -1,10 +1,12 @@
 import { useMutation } from '@tanstack/react-query';
 import { authService } from '../services/authService';
+import { hasValidAuthSession } from '../services/authStorage';
 import { useAuthStore } from '../stores/authStore';
 import type { LoginRequest, RegisterRequest } from '../services/authService';
 
 export function useAuth() {
-  const { user, token, isAuthenticated, setAuth, clearAuth } = useAuthStore();
+  const { user, token, isAuthenticated: storedIsAuthenticated, setAuth, clearAuth } = useAuthStore();
+  const isAuthenticated = hasValidAuthSession({ user, token, isAuthenticated: storedIsAuthenticated });
 
   const registerMutation = useMutation({
     mutationFn: (data: RegisterRequest) => authService.register(data),

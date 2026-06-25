@@ -18,5 +18,6 @@ public interface IAgentMemoryContextService
         string userId,
         string projectId,
         string sessionId,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? runId = null);
 }

@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace TM.Services.Modules.ProjectData.Implementations
@@ -19,37 +17,23 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             try
             {
-                var relationsPath = Path.Combine(
-                    StoragePathHelper.GetStorageRoot(),
-                    "Modules", "Design", "Elements", "CharacterRules", "relationships.json");
-
-                if (!File.Exists(relationsPath))
+                if (_relationStrengthSource == null)
                     return (direct, indirect);
 
-                await using var relationsStream = File.OpenRead(relationsPath);
-                var relations = await JsonSerializer.DeserializeAsync<List<Dictionary<string, JsonElement>>>(relationsStream, JsonOptions).ConfigureAwait(false);
-
-                if (relations == null)
-                    return (direct, indirect);
-
+                var relations = await _relationStrengthSource.LoadRelationStrengthFactsAsync().ConfigureAwait(false);
                 foreach (var rel in relations)
                 {
-                    var char1 = GetJsonString(rel, "Character1Id");
-                    var char2 = GetJsonString(rel, "Character2Id");
-                    var strength = GetJsonString(rel, "RelationshipType");
-
                     string? relatedId = null;
-                    if (char1 == focusId) relatedId = char2;
-                    else if (char2 == focusId) relatedId = char1;
+                    if (string.Equals(rel.LeftId, focusId, StringComparison.OrdinalIgnoreCase)) relatedId = rel.RightId;
+                    else if (string.Equals(rel.RightId, focusId, StringComparison.OrdinalIgnoreCase)) relatedId = rel.LeftId;
 
                     if (relatedId is null) continue;
 
-                    var relStrength = DetermineStrength(strength);
-                    var indexItem = await BuildRelatedIndexItemAsync(relatedId, relStrength).ConfigureAwait(false);
+                    var indexItem = await BuildRelatedIndexItemAsync(relatedId, rel.Strength).ConfigureAwait(false);
 
                     if (indexItem == null) continue;
 
-                    if (relStrength == Models.Context.RelationStrength.Strong)
+                    if (rel.Strength == Models.Context.RelationStrength.Strong)
                     {
                         if (direct.Count < 5)
                             direct.Add(indexItem);
@@ -67,18 +51,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
 
             return (direct, indirect);
-        }
-
-        private Models.Context.RelationStrength DetermineStrength(string relationshipType)
-        {
-            var strongTypes = new[] { "师徒", "血亲", "宿敌", "挚友", "恋人", "主仆" };
-            var mediumTypes = new[] { "同门", "盟友", "对手", "同伴" };
-
-            if (strongTypes.Any(t => relationshipType?.Contains(t) == true))
-                return Models.Context.RelationStrength.Strong;
-            if (mediumTypes.Any(t => relationshipType?.Contains(t) == true))
-                return Models.Context.RelationStrength.Medium;
-            return Models.Context.RelationStrength.Weak;
         }
 
         private async Task<Models.Index.IndexItem?> BuildRelatedIndexItemAsync(
@@ -116,13 +88,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 TM.App.Log($"[GuideContextService] 构建关联实体索引失败: {ex.Message}");
                 return null;
             }
-        }
-
-        private static string GetJsonString(Dictionary<string, JsonElement> dict, string key)
-        {
-            if (dict.TryGetValue(key, out var element) && element.ValueKind == JsonValueKind.String)
-                return element.GetString() ?? string.Empty;
-            return string.Empty;
         }
 
         #endregion

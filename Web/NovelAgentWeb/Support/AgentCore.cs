@@ -1,9 +1,12 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Web.NovelAgentWeb.Services.Workspace;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -40,15 +43,6 @@ public sealed class AgentToolCall
 public enum DialogueAct
 {
     Chat,
-    AskStatus,
-    Confirm,
-    Cancel,
-    StartProject,
-    ProvideBrief,
-    ContinueTask,
-    ReviseArtifact,
-    GiveFeedback,
-    SwitchProject,
     SelectCandidate,
 }
 
@@ -93,7 +87,7 @@ public sealed class AgentAction
     public IReadOnlyList<string> Suggestions { get; set; } = Array.Empty<string>();
     public double Confidence { get; set; } = 0.5;
     public string Source { get; set; } = "planner";
-    // Compatibility field: means planner_failed_or_no_action, not "chat reply does not need a tool".
+    // Planner did not produce a tool action; runtime may treat this as degraded/no-action state.
     public bool IsNoTool { get; set; }
 
     public AgentDecision ToDecision() => new()
@@ -155,6 +149,31 @@ public sealed class AgentRuntimeObservation
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+public sealed class AgentRuntimeInterruptObservation
+{
+    public string InterruptId { get; set; } = string.Empty;
+    public string RuntimeRunId { get; set; } = string.Empty;
+    public string Kind { get; set; } = "freeform";
+    public string Message { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public DateTime ReceivedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ConsumedAt { get; set; }
+}
+
+public sealed class AgentInterruptDecisionContext
+{
+    public string UserMessage { get; set; } = string.Empty;
+    public string SessionId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string RuntimeRunId { get; set; } = string.Empty;
+    public string RunStatus { get; set; } = string.Empty;
+    public string ActiveTool { get; set; } = string.Empty;
+    public string CurrentPhase { get; set; } = string.Empty;
+    public string LastMessage { get; set; } = string.Empty;
+    public string CurrentUserGoal { get; set; } = string.Empty;
+    public List<AgentRuntimeInterruptObservation> RecentInterrupts { get; set; } = new();
+}
+
 public sealed class ToolTransaction
 {
     public string TransactionId { get; set; } = Guid.NewGuid().ToString("N");
@@ -175,11 +194,22 @@ public sealed class AgentToolArtifact
     public string ArtifactId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
+    public string OutputKind { get; set; } = AgentToolOutputKind.ProcessArtifact;
+    public IReadOnlyList<string> UserVisibleWhere { get; set; } = Array.Empty<string>();
     public string Summary { get; set; } = string.Empty;
     public IReadOnlyList<string> NextHints { get; set; } = Array.Empty<string>();
     public bool VisibleInWorkflow { get; set; } = true;
     public bool VisibleInLibrary { get; set; }
     public string UserVisibleStatus { get; set; } = string.Empty;
+}
+
+public static class AgentToolOutputKind
+{
+    public const string ProcessArtifact = "ProcessArtifact";
+    public const string FinalArtifact = "FinalArtifact";
+    public const string StateSnapshot = "StateSnapshot";
+    public const string KnowledgeEntry = "KnowledgeEntry";
+    public const string RuntimeEvent = "RuntimeEvent";
 }
 
 public sealed class AgentRuntimeStep
@@ -517,6 +547,7 @@ public sealed class AgentWorkingMemory
     public List<string> OpenQuestions { get; set; } = new();
     public List<string> UserPreferences { get; set; } = new();
     public List<AgentRuntimeObservation> RecentObservations { get; set; } = new();
+    public List<AgentRuntimeInterruptObservation> RuntimeInterrupts { get; set; } = new();
     public AgentToolCall? PendingToolCall { get; set; }
     public AgentPendingConfirmation? PendingConfirmation { get; set; }
     public AgentDecision? LastDecision { get; set; }
@@ -547,7 +578,7 @@ public sealed class AgentProjectMemory
     public string ReaderPromise { get; set; } = string.Empty;
     public string Tone { get; set; } = string.Empty;
     public List<string> Constraints { get; set; } = new();
-    public List<string> UnresolvedThreads { get; set; } = new();
+    // UnresolvedThreads removed - Agent should query StoryBible.ForeshadowLedger directly
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
     public List<string> ImportedKnowledgeIds { get; set; } = new();
     public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
@@ -592,6 +623,7 @@ public sealed class AgentWorkingMemorySnapshot
     public IReadOnlyList<string> OpenQuestions { get; set; } = Array.Empty<string>();
     public IReadOnlyList<string> UserPreferences { get; set; } = Array.Empty<string>();
     public IReadOnlyList<AgentRuntimeObservation> RecentObservations { get; set; } = Array.Empty<AgentRuntimeObservation>();
+    public IReadOnlyList<AgentRuntimeInterruptObservation> RuntimeInterrupts { get; set; } = Array.Empty<AgentRuntimeInterruptObservation>();
     public string PendingToolName { get; set; } = string.Empty;
     public string LastIntent { get; set; } = string.Empty;
     public string LastMode { get; set; } = string.Empty;
@@ -609,6 +641,7 @@ public sealed class AgentWorkingMemorySnapshot
         OpenQuestions = memory.OpenQuestions.TakeLast(6).ToArray(),
         UserPreferences = memory.UserPreferences.TakeLast(8).ToArray(),
         RecentObservations = memory.RecentObservations.TakeLast(6).ToArray(),
+        RuntimeInterrupts = memory.RuntimeInterrupts.TakeLast(6).ToArray(),
         PendingToolName = memory.PendingToolCall?.Name ?? string.Empty,
         LastIntent = memory.LastDecision?.Intent ?? string.Empty,
         LastMode = memory.LastDecision?.Mode ?? string.Empty,
@@ -660,6 +693,7 @@ public sealed class AgentObservationContext
     public string ProjectSummary { get; set; } = string.Empty;
     public List<string> RecentMessages { get; set; } = new();
     public List<AgentRuntimeObservation> RecentObservations { get; set; } = new();
+    public List<AgentRuntimeInterruptObservation> RuntimeInterrupts { get; set; } = new();
     public AgentRagContext Rag { get; set; } = new();
     public AgentMissionPlan MissionPlan { get; set; } = new();
     public AgentMissionState MissionState { get; set; } = new();
@@ -708,10 +742,23 @@ public sealed class AgentToolDefinition
 
 public sealed class AgentToolSemanticSpec
 {
+    public string DisplayName { get; set; } = string.Empty;
     public string DomainSurface { get; set; } = string.Empty;
     public string OutputKind { get; set; } = string.Empty;
+    public string SideEffectLevel { get; set; } = string.Empty;
+    public string ImpactScope { get; set; } = string.Empty;
+    public string FailureContract { get; set; } = string.Empty;
+    public bool RequiresProject { get; set; }
+    public bool SupportsNoProjectSession { get; set; }
+    public string AverageDuration { get; set; } = string.Empty;
+    public List<string> ProgressEventContract { get; set; } = new();
+    public List<string> NextPossibleTools { get; set; } = new();
     public List<string> ReadsFrom { get; set; } = new();
     public List<string> WritesTo { get; set; } = new();
+    public List<string> InputArtifacts { get; set; } = new();
+    public List<string> OutputArtifacts { get; set; } = new();
+    public string IdempotencyPolicy { get; set; } = string.Empty;
+    public string RollbackPolicy { get; set; } = string.Empty;
     public string UserVisibleWhere { get; set; } = string.Empty;
     public string ResultSemantics { get; set; } = string.Empty;
 }
@@ -722,7 +769,9 @@ public sealed class AgentToolSideEffectSpec
     public bool WritesRedisRecentCache { get; set; } = true;
     public bool WritesToolSearchCache { get; set; }
     public bool WritesSqliteSnapshot { get; set; }
+    public bool BusinessReadOnly { get; set; }
     public List<string> WritesMemoryScopes { get; set; } = new();
+    public List<string> ReadsSqliteEntities { get; set; } = new();
     public List<string> WritesSqliteEntities { get; set; } = new();
     public List<string> WritesVectorIndexes { get; set; } = new();
 }
@@ -763,9 +812,84 @@ public sealed class AgentToolExecutionResult
     public string RecommendedToolName { get; set; } = string.Empty;
     public Dictionary<string, string> RecommendedArguments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string MissingPrerequisite { get; set; } = string.Empty;
+    public AgentToolFailure? Failure { get; set; }
     public object? Data { get; set; }
     public AgentToolArtifact? Artifact { get; set; }
     public IReadOnlyList<string> Suggestions { get; set; } = Array.Empty<string>();
+}
+
+public sealed class KnowledgeProcessingToolResult
+{
+    public string TaskId { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Strategy { get; set; } = string.Empty;
+    public int Progress { get; set; }
+    public int ExtractedEntriesCount { get; set; }
+    public IReadOnlyList<string> KnowledgeIds { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> ImportedKnowledgeIds { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> ReferencedKnowledgeIds { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> NextRecommendedTools { get; set; } = Array.Empty<string>();
+}
+
+public sealed class KnowledgeClassificationToolResult
+{
+    public string ClassificationId { get; set; } = string.Empty;
+    public string KnowledgeId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string Scope { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string ConstraintLevel { get; set; } = string.Empty;
+    public string PackagePolicy { get; set; } = string.Empty;
+    public IReadOnlyList<string> TargetEntities { get; set; } = Array.Empty<string>();
+    public string Rule { get; set; } = string.Empty;
+    public bool ShouldEnterGate { get; set; }
+    public bool ShouldEnterBlueprint { get; set; }
+    public bool ShouldEnterFactSnapshot { get; set; }
+    public double Confidence { get; set; }
+    public IReadOnlyList<string> NextRecommendedTools { get; set; } = Array.Empty<string>();
+}
+
+public sealed class KnowledgeConflictDetectionToolResult
+{
+    public string ReportId { get; set; } = string.Empty;
+    public string KnowledgeId { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public bool HasConflict { get; set; }
+    public string ConflictType { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
+    public string ImpactScope { get; set; } = string.Empty;
+    public IReadOnlyList<string> ConflictingKnowledgeIds { get; set; } = Array.Empty<string>();
+    public string Explanation { get; set; } = string.Empty;
+    public string RecommendedAction { get; set; } = string.Empty;
+    public bool RequiresUserDecision { get; set; }
+    public bool BlocksProduceChapter { get; set; }
+    public IReadOnlyList<string> NextRecommendedTools { get; set; } = Array.Empty<string>();
+}
+
+public sealed class AgentToolFailure
+{
+    public string Code { get; set; } = string.Empty;
+    public string FailedStage { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public bool Recoverable { get; set; }
+    public string RecommendedAction { get; set; } = string.Empty;
+    public IReadOnlyList<string> ArtifactIds { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<AgentToolProducedArtifact> ProducedArtifacts { get; set; } = Array.Empty<AgentToolProducedArtifact>();
+    public IReadOnlyList<ToolInputArtifactState> InputArtifacts { get; set; } = Array.Empty<ToolInputArtifactState>();
+    public IReadOnlyList<string> RecoverableActions { get; set; } = Array.Empty<string>();
+    public bool RequiresUserDecision { get; set; }
+}
+
+public sealed class AgentToolProducedArtifact
+{
+    public string ArtifactType { get; set; } = string.Empty;
+    public string ArtifactId { get; set; } = string.Empty;
+    public string OutputKind { get; set; } = AgentToolOutputKind.ProcessArtifact;
+    public IReadOnlyList<string> UserVisibleWhere { get; set; } = Array.Empty<string>();
+    public string Summary { get; set; } = string.Empty;
 }
 
 public static class AgentRunSelector
@@ -864,21 +988,27 @@ public sealed class AgentObservationBuilder
             session.WorkingMemory.MissionPlan.InteractionState = envelope;
         }
         EnsureMissionPlan(session, project, bible, userMessage, turnIntent);
-        var memoryContext = await _memoryContextService.BuildAsync(session.UserId, project.Id, session.SessionId, ct).ConfigureAwait(false);
+        var memoryContext = await _memoryContextService
+            .BuildAsync(session.UserId, project.Id, session.SessionId, ct, runId: session.RuntimeRunId)
+            .ConfigureAwait(false);
         ApplyMemoryContext(session, project.Id, memoryContext);
         _taskTreeService.Sync(session, project, bible);
         var rag = await BuildRagAsync(session, bible, userMessage, ct).ConfigureAwait(false);
 
+        var allToolSchemas = _toolRegistry.ListToolSchemas();
+        var toolCatalogSignature = ToolCatalogSignature.Compute(allToolSchemas);
         var toolCacheScope = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
             ? "global"
             : session.DiscoveredPhase;
-        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCacheScope, ct).ConfigureAwait(false);
+        var availableToolLookup = await _toolSearchCache.GetAsync(session, toolCacheScope, toolCatalogSignature, ct).ConfigureAwait(false);
         var availableTools = availableToolLookup.Tools;
 
         if (availableTools == null)
         {
-            availableTools = _toolRegistry.ListToolSchemas();
+            availableTools = allToolSchemas;
         }
+
+        var workspaceState = await BuildWorkspaceStateAsync(session, ct).ConfigureAwait(false);
 
         return new AgentObservationContext
         {
@@ -894,6 +1024,7 @@ public sealed class AgentObservationBuilder
                 .Select(t => $"{t.Role}: {t.Content}")
                 .ToList(),
             RecentObservations = session.WorkingMemory.RecentObservations.TakeLast(8).ToList(),
+            RuntimeInterrupts = session.WorkingMemory.RuntimeInterrupts.TakeLast(8).ToList(),
             Rag = rag,
             MissionPlan = session.WorkingMemory.MissionPlan,
             MissionState = session.WorkingMemory.Mission,
@@ -913,8 +1044,36 @@ public sealed class AgentObservationBuilder
                 Semantic = t.Semantic,
             }).ToList(),
             ProductSpace = AgentProductSpaceCatalog.Create(),
-            WorkspaceState = AgentWorkspaceState.Hint(session),
+            WorkspaceState = workspaceState,
         };
+    }
+
+    private async Task<AgentWorkspaceState> BuildWorkspaceStateAsync(AgentSession session, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _workspace.ScopeFactory.CreateScope();
+            var queryService = scope.ServiceProvider.GetService<IWorkspaceStateQueryService>();
+            if (queryService == null)
+                return AgentWorkspaceState.Hint(session);
+
+            return await queryService.QueryAsync(
+                    new WorkspaceStateQueryRequest(
+                        UserId: session.UserId,
+                        SessionId: session.SessionId,
+                        ActiveProjectId: session.ActiveProjectId ?? string.Empty,
+                        Phase: session.Phase,
+                        AuthorDisplayName: session.WorkingMemory.AuthorMemory?.DisplayName ?? string.Empty,
+                        StyleLikeCount: session.WorkingMemory.AuthorMemory?.StyleLikes.Count ?? 0,
+                        StyleDislikeCount: session.WorkingMemory.AuthorMemory?.StyleDislikes.Count ?? 0,
+                        GenreHabitCount: session.WorkingMemory.AuthorMemory?.GenreHabits.Count ?? 0),
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return AgentWorkspaceState.Hint(session);
+        }
     }
 
     private static void ApplyMemoryContext(AgentSession session, string projectId, AgentMemoryContextDto memoryContext)
@@ -943,7 +1102,7 @@ public sealed class AgentObservationBuilder
         LongTermGoal = source.LongTermGoal ?? string.Empty,
         ReaderPromise = source.ReaderPromise ?? string.Empty,
         Constraints = new List<string>(source.Constraints),
-        UnresolvedThreads = new List<string>(source.UnresolvedThreads),
+        // UnresolvedThreads removed
         ReferencedKnowledgeIds = new List<string>(source.ReferencedKnowledgeIds),
         ImportedKnowledgeIds = new List<string>(source.ImportedKnowledgeIds),
         KnowledgeInventory = new List<KnowledgeInventoryItem>(source.KnowledgeInventory),
@@ -1020,12 +1179,13 @@ public sealed class AgentObservationBuilder
         plan.ProjectId = project.Id;
         plan.ProjectTitle = project.Title;
         plan.CurrentRunId = session.ActiveRunId ?? AgentRunSelector.SelectCurrentRun(bible)?.RunId ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(plan.OverallGoal) && LooksCreative(userMessage))
-            plan.OverallGoal = userMessage.Trim();
+        var currentRun = AgentRunSelector.SelectCurrentRun(bible);
+        if (string.IsNullOrWhiteSpace(plan.OverallGoal))
+            plan.OverallGoal = FirstNonEmpty(session.WorkingMemory.CurrentGoal, currentRun?.UserGoal);
         if (string.IsNullOrWhiteSpace(plan.CurrentNovelGoal))
             plan.CurrentNovelGoal = session.WorkingMemory.CurrentGoal;
-        if (string.IsNullOrWhiteSpace(plan.CurrentNovelGoal) && LooksCreative(userMessage))
-            plan.CurrentNovelGoal = userMessage.Trim();
+        if (string.IsNullOrWhiteSpace(plan.CurrentNovelGoal))
+            plan.CurrentNovelGoal = FirstNonEmpty(plan.OverallGoal, currentRun?.UserGoal);
         plan.Stage = bible.Constitution == null
             ? "foundation"
             : bible.VolumeArcs.Count == 0 ? "volume_planning" : "chapter_work";
@@ -1045,7 +1205,7 @@ public sealed class AgentObservationBuilder
 
     private static AgentRagStrategy BuildRagStrategy(AgentSession session, StoryBibleDocument bible, string userMessage)
     {
-        var stage = DetermineRagStage(session, bible, userMessage);
+        var stage = DetermineRagStage(session, bible);
         var plan = new AgentRagStrategy { Stage = stage };
         var missionGoal = FirstNonEmpty(session.WorkingMemory.MissionPlan.CurrentNovelGoal, session.WorkingMemory.CurrentGoal, userMessage);
         var constitution = bible.Constitution;
@@ -1062,8 +1222,7 @@ public sealed class AgentObservationBuilder
             }
         }
 
-        if (LooksCreative(userMessage))
-            Add("creativeKnowledge", userMessage, "用户本轮创作意图");
+        Add("currentTurn", userMessage, "用户本轮原始输入");
 
         switch (stage)
         {
@@ -1108,19 +1267,23 @@ public sealed class AgentObservationBuilder
         return plan;
     }
 
-    private static string DetermineRagStage(AgentSession session, StoryBibleDocument bible, string userMessage)
+    private static string DetermineRagStage(AgentSession session, StoryBibleDocument bible)
     {
         var phase = session.Phase;
         if (bible.Constitution == null) return "foundation";
         if (bible.VolumeArcs.Count == 0 || phase.Contains("volume", StringComparison.OrdinalIgnoreCase)) return "volume_planning";
         if (phase.Contains("context", StringComparison.OrdinalIgnoreCase)) return "context_building";
-        if (phase.Contains("draft", StringComparison.OrdinalIgnoreCase) || userMessage.Contains("正文")) return "draft_generation";
+        if (phase.Contains("draft", StringComparison.OrdinalIgnoreCase)) return "draft_generation";
         if (phase.Contains("validated", StringComparison.OrdinalIgnoreCase) || phase.Contains("gate", StringComparison.OrdinalIgnoreCase)) return "gate_validation";
-        if (phase.Contains("repair", StringComparison.OrdinalIgnoreCase) || userMessage.Contains("修复")) return "repair";
-        if (phase.Contains("commit", StringComparison.OrdinalIgnoreCase) || userMessage.Contains("提交")) return "commit";
-        if (phase.Contains("review", StringComparison.OrdinalIgnoreCase) || userMessage.Contains("复盘")) return "review";
-        if (userMessage.Contains("章节") || userMessage.Contains("下一章")) return "chapter_planning";
-        return LooksCreative(userMessage) ? "chapter_planning" : "free_chat";
+        if (phase.Contains("repair", StringComparison.OrdinalIgnoreCase)) return "repair";
+        if (phase.Contains("commit", StringComparison.OrdinalIgnoreCase)) return "commit";
+        if (phase.Contains("review", StringComparison.OrdinalIgnoreCase)) return "review";
+
+        var run = AgentRunSelector.SelectCurrentRun(bible);
+        if (run?.Intent is NovelAgentIntent.GenerateChapter or NovelAgentIntent.ValidateContinuity)
+            return "chapter_planning";
+
+        return "project_context";
     }
 
     private static void AddBucket(AgentRagContext context, string bucket, string value)
@@ -1138,7 +1301,7 @@ public sealed class AgentObservationBuilder
     private static List<string> BuildDefaultQueries(AgentSession session, StoryBibleDocument bible, string userMessage)
     {
         var queries = new List<string>();
-        if (LooksCreative(userMessage))
+        if (!string.IsNullOrWhiteSpace(userMessage))
             queries.Add(userMessage);
         if (bible.Constitution != null)
         {
@@ -1158,14 +1321,6 @@ public sealed class AgentObservationBuilder
             : $"Story Bible: {bible.Constitution.Genre}/{bible.Constitution.SubGenre}; {bible.Constitution.CoreHook}; {bible.Constitution.MainConflictEngine}.";
         var run = currentRun == null ? "无当前 Run。" : $"当前 Run: {currentRun.Intent}/{currentRun.Status}/{currentRun.RunId}.";
         return $"{constitution} 卷={bible.VolumeArcs.Count}; 章节Run={bible.AgentRuns.Count(r => !string.IsNullOrWhiteSpace(r.TargetChapterId))}; 会话阶段={session.Phase}; {run}";
-    }
-
-    private static bool LooksCreative(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return false;
-        return text.Contains("小说") || text.Contains("故事") || text.Contains("角色") || text.Contains("章节") ||
-               text.Contains("卷") || text.Contains("设定") || text.Contains("写") || text.Contains("生成") ||
-               text.Contains("规划") || text.Contains("知识库") || text.Contains("素材");
     }
 
     private static string FirstNonEmpty(params string?[] values) =>
@@ -1197,7 +1352,7 @@ public sealed class AgentPlanner
         if (string.IsNullOrWhiteSpace(settings.LlmBaseUrl) ||
             string.IsNullOrWhiteSpace(settings.LlmModel) ||
             string.IsNullOrWhiteSpace(settings.LlmApiKey))
-            return BuildActionRuleFallback(context, "missing_llm_settings");
+            return BuildMissingLlmSettingsAction();
 
         try
         {
@@ -1238,7 +1393,12 @@ public sealed class AgentPlanner
                 NormalizeAction(retryAction);
                 return retryAction;
             }
-            catch { return BuildActionRuleFallback(context, "rate_limit_fallback"); }
+            catch
+            {
+                return BuildPlannerUnavailableAction(
+                    "planner_rate_limited",
+                    "模型服务暂时限流，我暂时无法完成本轮决策。请稍后再试，或检查模型额度与配置。");
+            }
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -1253,8 +1413,37 @@ public sealed class AgentPlanner
         }
         catch (Exception)
         {
-            // Generic error — fall back to rule engine, don't expose error details to user
-            return BuildActionRuleFallback(context, "planner_error_fallback");
+            return BuildPlannerUnavailableAction(
+                "planner_unavailable_no_action",
+                "模型决策暂时不可用，我暂时无法可靠判断下一步。请稍后重试，或检查模型配置。");
+        }
+    }
+
+    public async Task<AgentInterruptDecision> PlanInterruptDecisionAsync(
+        AgentInterruptDecisionContext context,
+        CancellationToken ct)
+    {
+        var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(settings.LlmBaseUrl) ||
+            string.IsNullOrWhiteSpace(settings.LlmModel) ||
+            string.IsNullOrWhiteSpace(settings.LlmApiKey))
+        {
+            return AgentInterruptDecision.Freeform("missing_llm_settings");
+        }
+
+        try
+        {
+            var json = await CompleteJsonAsync(
+                    settings,
+                    BuildInterruptDecisionSystemPrompt(),
+                    BuildInterruptDecisionUserPrompt(context),
+                    ct)
+                .ConfigureAwait(false);
+            return ParseInterruptDecision(json);
+        }
+        catch
+        {
+            return AgentInterruptDecision.Freeform("interrupt_decision_model_unavailable");
         }
     }
 
@@ -1301,15 +1490,16 @@ public sealed class AgentPlanner
             "1. 你拥有 product_space、memory_layers、workspace_state_hint 和工具语义地图；请基于这些信息自己决策，不要依赖关键词路由。\n" +
             "1a. 用户说“继续”“下一步”“开始写”“这是什么意思”等自然表达时，不代表固定工具名或固定阶段；你必须结合 raw_message、chat history、mission blackboard、recent_observations、tool semantics 和真实执行进度判断。\n" +
             "2. 自然问候、开放闲聊可直接 chat_reply；涉及真实系统状态、小说书城、知识库、工作流进度、工具产物位置时，不要凭空猜测；从工具语义中的 Surface/ReadsFrom/Output 自主选择合适工具。\n" +
-            "3. 区分过程产物和最终产物：Plan/Generate/Validate/Repair 产物属于创作工作流；Commit 后才成为书城或 Story Bible 的最终可见结果。\n" +
-            "3a. 面向用户回复时必须使用作者能理解的产品语言，不要展示内部工具名、调度状态码、JSON 字段、fallback/Runtime/guardrail 等工程词；例如说“等待质量评审”“提交章节到书城”，不要说 pending_quality_review 或 CommitValidatedChapter。\n" +
+            "3. 区分过程产物和最终产物：规划、草稿、校验、修订产物属于创作工作流；只有提交后才成为书城或 Story Bible 的最终可见结果。\n" +
+            "3a. 面向用户回复时必须使用作者能理解的产品语言，不要展示内部工具名、调度状态码、JSON 字段、fallback/Runtime/guardrail 等工程词；例如说“等待质量评审”“提交章节到书城”，不要说内部状态码或内部提交工具名。\n" +
             "4. Project management: when user wants to bind an existing novel or create a new novel, choose the registered tool whose semantics match project binding/creation. Casual chat must not auto-bind a project.\n" +
             "4a. If turn_intent.type is NewProjectSeed or dialogue_act is StartProject, treat this as a request for an independent new work. Do not bind or continue an old active project unless the user explicitly says to open/bind/continue that existing project. Prefer project creation/resolution arguments that preserve the requested new title and seed.\n" +
             "4b. If the user provides a new book title, that title is the target work identity. An existing active project is background context only, not permission to reuse it.\n" +
             "5. Use clarify when creative info is missing for an explicit action request.\n" +
-            "6. Autopilot mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
-            "7. Chapter generation workflow: build chapter context -> generate draft with changes -> validate draft -> repair or commit according to validation and quality state. Choose concrete tools from the registered tool semantics.\n" +
+            "6. Agent loop auto-proceed mode: when executing a writing workflow, proceed through steps without asking for confirmation.\n" +
+            "7. Chapter generation workflow: for full chapter writing, prefer the closed-loop ProduceChapter capability so context, draft, validation, repair, review and library commit can run as one production task. Choose concrete tools from the registered tool semantics.\n" +
             "8. PlanChapter and PlanVolumeArc must NOT use userGoal parameter.\n" +
+            "8a. PlanStoryFoundation, PlanVolumeArc and PlanChapter require candidateDirections. You must synthesize candidateDirections yourself from raw_message, context, knowledge, memory and project state; runtime/tools will not infer them from keywords.\n" +
             "9. Do not repeat the same tool call. If result satisfies the need, use final_reply.\n" +
             "10. When more knowledge or real state is needed, choose from the complete registered tool list by reading each tool's description, Surface, ReadsFrom, Output and Visible semantics; no business tool is privileged.\n" +
             "11. Read anchor_context for working_memory, task_state, history context.\n" +
@@ -1333,7 +1523,7 @@ public sealed class AgentPlanner
             "1. 理解用户意图后，如已有足够上下文和工具语义，直接选择合适业务工具执行；不需要每次先 tool_search\n" +
             "2. 执行后告知用户结果和下一步计划\n" +
             "3. 如果用户不满意，会主动告诉你如何调整\n" +
-            "4. 工作流自带校验机制（如ValidateChapterDraft），发现问题自动修复\n\n" +
+            "4. 工作流自带校验和修复机制，发现问题时优先让闭环生产任务继续修复\n\n" +
             "**不要问**：\"我现在要调用XX工具，可以吗？\"\n" +
             "**应该做**：调用工具 → 展示结果 → \"已完成XX，现在进行YY...\"\n\n" +
             "## Output Format\n" +
@@ -1384,6 +1574,7 @@ public sealed class AgentPlanner
             mission_plan = context.MissionPlan,
             mission_state = context.MissionState,
             pending_confirmation = context.PendingConfirmation,
+            runtime_interrupts = context.RuntimeInterrupts,
             turn_intent = context.TurnIntent,
             recent_messages = context.RecentMessages,
             rag = context.Rag,
@@ -1500,6 +1691,7 @@ public sealed class AgentPlanner
                 execution = context.ExecutionMemory,
             },
             rag = context.Rag,
+            runtime_interrupts = context.RuntimeInterrupts,
             recent_messages = context.RecentMessages,
             latest_observation = observation,
             recent_observations = context.RecentObservations,
@@ -1649,8 +1841,8 @@ public sealed class AgentPlanner
         {
             update.ProjectMemory = new ProjectMemoryUpdate
             {
-                NewConstraints = ReadStringArray(project, "new_constraints", "newConstraints"),
-                UnresolvedThreads = ReadStringArray(project, "unresolved_threads", "unresolvedThreads")
+                NewConstraints = ReadStringArray(project, "new_constraints", "newConstraints")
+                // UnresolvedThreads removed
             };
         }
 
@@ -1694,82 +1886,24 @@ public sealed class AgentPlanner
         return call;
     }
 
-    private static AgentAction BuildActionRuleFallback(AgentObservationContext context, string source)
+    private static AgentAction BuildMissingLlmSettingsAction() => new()
     {
-        var msg = context.UserMessage.Trim().ToLowerInvariant();
+        Type = AgentActionType.ChatReply,
+        Intent = "degraded_missing_llm",
+        Reply = "当前没有配置可用的模型服务，我只能进入降级模式：不会冒充完整 Agent 决策，也不会自动选择写作工具。请先配置模型服务，或只让我查看已有状态。",
+        Suggestions = new[] { "查看当前状态", "配置模型服务" },
+        IsNoTool = true,
+        Source = "missing_llm_settings",
+    };
 
-        // Pending confirmations remain resumable autopilot work.
-        if (context.PendingConfirmation?.ToolCall != null && !msg.Contains("取消") && !msg.Contains("不要") && !msg.Contains("先不"))
-        {
-            return new AgentAction
-            {
-                Type = AgentActionType.ToolCall,
-                Intent = "resume_pending_tool",
-                ToolCall = context.PendingConfirmation.ToolCall,
-                Risk = context.PendingConfirmation.Risk,
-                Source = "pending_confirmation",
-            };
-        }
-
-        if (context.PendingConfirmation != null && (msg.Contains("取消") || msg.Contains("不要") || msg.Contains("先不")))
-        {
-            return new AgentAction
-            {
-                Type = AgentActionType.FinalReply,
-                Intent = "cancel_pending_confirmation",
-                Reply = "好，已取消这个待确认动作。",
-                Suggestions = new[] { "查看当前状态", "继续调整" },
-                Source = "pending_cancel",
-            };
-        }
-
-        if (source == "missing_llm_settings" && context.TurnIntent.Type == TurnIntentType.FreeChat)
-        {
-            return new AgentAction
-            {
-                Type = AgentActionType.ChatReply,
-                Intent = "free_chat",
-                Reply = "我是天命小说 Agent，负责和你一起管理长篇小说的设定、章节草稿、门禁校验、质量反思和提交入库。当前还没有配置可用的模型服务，所以我会先用本地能力回答基础问题；配置模型后，我可以进行更完整的创作决策和工具调用。",
-                Suggestions = new[] { "查看当前状态", "配置模型服务", "写一本新小说" },
-                Source = source,
-            };
-        }
-
-        if (source == "missing_llm_settings")
-        {
-            return new AgentAction
-            {
-                Type = AgentActionType.ChatReply,
-                Intent = context.TurnIntent.Label,
-                IsNoTool = true,
-                Source = source,
-            };
-        }
-
-        // Minimal fallback — report scheduler state without choosing a business tool for the model.
-        var scheduled = context.MissionPlan.SchedulerState.Tasks
-            .FirstOrDefault(t => t.Status is "running" or "queued");
-        if (scheduled != null)
-        {
-            return new AgentAction
-            {
-                Type = AgentActionType.ChatReply,
-                Intent = "continue_mission",
-                Reply = $"当前有任务处于 {scheduled.Status} 状态：{new[] { scheduled.TaskType, scheduled.ChapterId, scheduled.RunId, scheduled.TaskId }.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? scheduled.TaskId}。我需要基于完整工具语义重新选择下一步动作。",
-                IsNoTool = true,
-                Source = source,
-            };
-        }
-
-        return new AgentAction
-        {
-            Type = AgentActionType.ChatReply,
-            Intent = "free_chat",
-            Reply = "我在。告诉我你想推进什么。",
-            Suggestions = new[] { "查看当前状态", "写一本新小说" },
-            Source = source,
-        };
-    }
+    private static AgentAction BuildPlannerUnavailableAction(string source, string reply) => new()
+    {
+        Type = AgentActionType.ChatReply,
+        Intent = "planner_unavailable",
+        Reply = reply,
+        IsNoTool = true,
+        Source = source,
+    };
 
     private static AgentReflection BuildRuleReflection(AgentObservationContext context, AgentRuntimeObservation observation)
     {
@@ -1779,18 +1913,22 @@ public sealed class AgentPlanner
         var isReviewableProcessArtifact =
             observation.Artifact?.ArtifactType is "story_foundation_candidates" or "volume_arc_candidates" or "chapter_candidates" ||
             observation.Phase.Contains("candidates", StringComparison.OrdinalIgnoreCase);
+        var reviewableArtifactCanContinue =
+            isReviewableProcessArtifact &&
+            HasStructuredContinuationForReviewableArtifact(context, observation);
         var isNewProjectFoundationIntake =
             string.Equals(observation.ToolName, "ResolveNovelProject", StringComparison.OrdinalIgnoreCase) &&
             (observation.Phase.Contains("awaiting_user_foundation", StringComparison.OrdinalIgnoreCase) ||
              observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase) ||
              observation.Artifact?.ArtifactType is "novel_project" or "existing_novel_project");
-        var hasSufficientFoundationBrief = isNewProjectFoundationIntake && HasSufficientFoundationBrief(context.UserMessage);
+        var isProjectLifecycleArtifact =
+            observation.Artifact?.ArtifactType is "novel_project" or "existing_novel_project" or "project_bound";
         var requiresInput = !observation.Success ||
-                            isReviewableProcessArtifact ||
-                            (!hasSufficientFoundationBrief && observation.Phase.Contains("awaiting_user", StringComparison.OrdinalIgnoreCase)) ||
-                            (!hasSufficientFoundationBrief && observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase)) ||
-                            observation.Phase.Contains("project_", StringComparison.OrdinalIgnoreCase) ||
-                            (!hasSufficientFoundationBrief && observation.Artifact?.ArtifactType.Contains("project", StringComparison.OrdinalIgnoreCase) == true);
+                            (isReviewableProcessArtifact && !reviewableArtifactCanContinue) ||
+                            isNewProjectFoundationIntake ||
+                            observation.Phase.Contains("awaiting_user", StringComparison.OrdinalIgnoreCase) ||
+                            observation.Phase.Contains("foundation_intake", StringComparison.OrdinalIgnoreCase) ||
+                            isProjectLifecycleArtifact;
         var qualityGate = BuildRuleQualityGate(observation);
         if (qualityGate.Status is "fail" or "needs_rewrite" or "needs_user_input")
             requiresInput = qualityGate.RequiresUserInput;
@@ -1806,35 +1944,37 @@ public sealed class AgentPlanner
             NewTodoItems = observation.Success && !requiresInput ? new List<string> { "根据工具结果继续推进下一步" } : new List<string>(),
             Blockers = observation.Success ? new List<string>() : new List<string> { observation.Message },
             QualityGate = qualityGate,
-            MissionPatch = BuildRuleMissionPatch(observation, qualityGate, null),
+            MissionPatch = BuildRuleMissionPatch(observation, qualityGate),
             // Don't recommend next tool — let LLM decide
         };
     }
 
-    private static bool HasSufficientFoundationBrief(string userMessage)
+    private static bool HasStructuredContinuationForReviewableArtifact(AgentObservationContext context, AgentRuntimeObservation observation)
     {
-        if (string.IsNullOrWhiteSpace(userMessage))
+        var artifactType = observation.Artifact?.ArtifactType ?? string.Empty;
+        var allowed = context.MissionPlan.AllowedNextActions;
+        if (allowed.Count == 0 && context.MissionPlan.SchedulerState.Tasks.Count == 0)
             return false;
 
-        var text = userMessage.Trim();
-        var signalCount = 0;
-        if (TextContainsAny(text, "玄幻", "末世", "都市", "悬疑", "科幻", "仙侠", "奇幻", "爽文", "升级流", "学院流", "废土"))
-            signalCount++;
-        if (TextContainsAny(text, "主角", "男主", "女主", "底层", "幸存者", "少年", "穿越", "重生"))
-            signalCount++;
-        if (TextContainsAny(text, "系统", "金手指", "吞噬", "晶核", "升级", "打怪", "修炼", "异能", "境界", "建基地"))
-            signalCount++;
-        if (TextContainsAny(text, "爽点", "打怪", "升级", "碾压", "收伙伴", "征服", "后宫", "建基地", "成长"))
-            signalCount++;
-        if (TextContainsAny(text, "不要", "禁区", "排除", "禁止", "不想要", "别"))
-            signalCount++;
+        var continuationActions = artifactType switch
+        {
+            "story_foundation_candidates" => new[] { "CommitStoryFoundation" },
+            "volume_arc_candidates" => new[] { "CommitVolumeArc" },
+            "chapter_candidates" => new[] { "SelectChapterCandidate", "ProduceChapter" },
+            _ when observation.Phase.Contains("foundation_candidates", StringComparison.OrdinalIgnoreCase) => new[] { "CommitStoryFoundation" },
+            _ when observation.Phase.Contains("volume", StringComparison.OrdinalIgnoreCase) => new[] { "CommitVolumeArc" },
+            _ when observation.Phase.Contains("chapter", StringComparison.OrdinalIgnoreCase) => new[] { "SelectChapterCandidate", "ProduceChapter" },
+            _ => Array.Empty<string>(),
+        };
 
-        return signalCount >= 4 && text.Length >= 40;
+        if (continuationActions.Length == 0)
+            return allowed.Count > 0 || context.MissionPlan.SchedulerState.Tasks.Any(task => !string.IsNullOrWhiteSpace(task.NextAction));
+
+        return allowed.Any(action => continuationActions.Contains(action, StringComparer.OrdinalIgnoreCase)) ||
+               context.MissionPlan.SchedulerState.Tasks.Any(task =>
+                   !string.Equals(task.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
+                   continuationActions.Contains(task.NextAction, StringComparer.OrdinalIgnoreCase));
     }
-
-    private static bool TextContainsAny(string text, params string[] tokens) =>
-        tokens.Any(token => !string.IsNullOrWhiteSpace(token) &&
-                            text.Contains(token, StringComparison.OrdinalIgnoreCase));
 
     private static AgentReflection BuildGovernanceRuleReflection(AgentObservationContext context, AgentRuntimeObservation observation)
     {
@@ -1865,8 +2005,6 @@ public sealed class AgentPlanner
 
     private static string BuildNaturalGovernanceReply(AgentObservationContext context, AgentRuntimeObservation observation)
     {
-        if (context.TurnIntent.Type == TurnIntentType.StatusQuery)
-            return "我查了一下当前会话的任务黑板：这轮更像是在问进度，而不是要新建或重写内容。你可以让我查看当前状态，或直接说要继续推进哪一章。";
         if (context.MissionPlan.AllowedNextActions.Count > 0)
         {
             var actions = context.MissionPlan.AllowedNextActions
@@ -1883,7 +2021,7 @@ public sealed class AgentPlanner
 
     private static AgentQualityGateReport BuildRuleQualityGate(AgentRuntimeObservation observation)
     {
-        var isWritingStep = observation.ToolName is "GenerateChapterWithChanges" or "ValidateChapterDraft" or "RepairChapterDraft" or "CommitValidatedChapter" ||
+        var isWritingStep = string.Equals(observation.ToolName, "ProduceChapter", StringComparison.OrdinalIgnoreCase) ||
                             observation.Phase.Contains("draft", StringComparison.OrdinalIgnoreCase) ||
                             observation.Phase.Contains("validated", StringComparison.OrdinalIgnoreCase) ||
                             observation.Phase.Contains("failed", StringComparison.OrdinalIgnoreCase);
@@ -1909,7 +2047,7 @@ public sealed class AgentPlanner
             {
                 Status = "pass",
                 Evidence = new List<string> { "GenerationGate validated", observation.Message },
-                RewriteDecision = "结构化门禁通过，规则兜底未发现质量阻塞；可以继续自动提交。",
+                RewriteDecision = "结构化门禁通过，结构化检查未发现质量阻塞；可以继续自动提交。",
                 Scores = new AgentQualityScores { Pacing = 7, CharacterMotivation = 7, Conflict = 7, Continuity = 8, Prose = 7, ReaderPromise = 7 },
             };
         }
@@ -1935,16 +2073,9 @@ public sealed class AgentPlanner
         };
     }
 
-    private static AgentToolCall? BuildRuleNextTool(AgentRuntimeObservation observation, AgentQualityGateReport qualityGate)
-    {
-        // Don't recommend next tool from rules — let LLM decide
-        return null;
-    }
-
     private static AgentMissionPatch BuildRuleMissionPatch(
         AgentRuntimeObservation observation,
-        AgentQualityGateReport qualityGate,
-        AgentToolCall? nextTool)
+        AgentQualityGateReport qualityGate)
     {
         var patch = new AgentMissionPatch
         {
@@ -1960,7 +2091,7 @@ public sealed class AgentPlanner
                 Status = MapObservationToChapterStatus(observation, qualityGate),
                 GateStatus = observation.Phase is "validated" or "gate_failed" or "failed" ? observation.Phase : string.Empty,
                 QualityIssueSummary = qualityGate.Issues.Count == 0 ? string.Empty : string.Join("；", qualityGate.Issues.Take(3)),
-                NextAction = nextTool?.Name ?? string.Empty,
+                NextAction = string.Empty,
             });
         }
         return patch;
@@ -2020,11 +2151,112 @@ public sealed class AgentPlanner
             _ => AgentActionType.ChatReply,
         };
 
+    private static string BuildInterruptDecisionSystemPrompt() =>
+        """
+        你是 Agent Runtime 的中断意图判定器。
+        你只负责理解用户在后台任务执行中的插话语义，不调用业务工具，不推进小说生产，不写正文。
+
+        必须只返回一个 JSON object：
+        {
+          "kind": "status | soft_requirement | cancel | direction_change | freeform",
+          "priority": 0-100,
+          "reason": "一句话说明判定依据",
+          "userVisibleAcknowledgement": "给用户看的简短确认"
+        }
+
+        判断准则：
+        - status：用户在问当前执行进度、是否开始、做到哪一步、为什么没反馈。不中断工具。
+        - soft_requirement：用户补充可并入当前任务的要求、偏好、限制。能在下个安全边界注入。
+        - cancel：用户明确要求停止、暂停、不要继续当前后台执行。
+        - direction_change：用户想改变当前任务方向，可能需要暂停当前产物、重新决策或重建生产包。
+        - freeform：无法归类，或只是普通说明。
+
+        不要用关键词路由。必须结合 active run 状态、当前工具、用户话语的真实意图判断。
+        """;
+
+    private static string BuildInterruptDecisionUserPrompt(AgentInterruptDecisionContext context) =>
+        JsonSerializer.Serialize(new
+        {
+            userMessage = context.UserMessage,
+            activeRun = new
+            {
+                context.RuntimeRunId,
+                context.RunStatus,
+                context.ActiveTool,
+                context.CurrentPhase,
+                context.LastMessage,
+                context.ProjectId,
+                context.CurrentUserGoal
+            },
+            recentInterrupts = context.RecentInterrupts.TakeLast(6).Select(item => new
+            {
+                item.Kind,
+                item.Message,
+                item.Priority,
+                item.ReceivedAt
+            })
+        }, JsonHelper.CnDefault);
+
+    private static AgentInterruptDecision ParseInterruptDecision(string raw)
+    {
+        var json = ExtractJsonObject(raw);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var kind = ReadString(root, "kind");
+        var reason = ReadString(root, "reason");
+        var acknowledgement = FirstNonEmpty(
+            ReadString(root, "userVisibleAcknowledgement"),
+            ReadString(root, "acknowledgement"),
+            BuildInterruptAcknowledgement(kind));
+        var priority = ReadInt(root, "priority");
+
+        return new AgentInterruptDecision(
+            NormalizeInterruptKind(kind),
+            Math.Clamp(priority, 0, 100),
+            reason,
+            acknowledgement);
+    }
+
+    private static string NormalizeInterruptKind(string kind) =>
+        kind.Trim().ToLowerInvariant() switch
+        {
+            "status" => "status",
+            "soft_requirement" => "soft_requirement",
+            "cancel" => "cancel",
+            "direction_change" => "direction_change",
+            "freeform" => "freeform",
+            _ => "freeform"
+        };
+
+    private static string BuildInterruptAcknowledgement(string kind) =>
+        NormalizeInterruptKind(kind) switch
+        {
+            "status" => "我收到你的进度追问了。",
+            "soft_requirement" => "我收到你的补充要求了，会交给当前执行在安全边界处理。",
+            "cancel" => "我收到你的暂停/取消请求了。",
+            "direction_change" => "我收到你的改方向要求了，会让当前执行在安全边界重新决策。",
+            _ => "我收到你的消息了。"
+        };
+
+    private static string ReadString(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    private static int ReadInt(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.TryGetInt32(out var parsed)
+            ? parsed
+            : 0;
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
     private static string ExtractJsonObject(string raw)
     {
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
-        return start >= 0 && end > start ? raw[start..(end + 1)] : raw;
+        return ModelJsonObjectExtractor.ExtractFirstObject(
+            raw,
+            "Agent Planner 没有返回 JSON 内容。",
+            "Agent Planner 没有返回 JSON object。");
     }
 
     private static string BuildSourceTurnId(string raw) =>
@@ -2194,14 +2426,4 @@ public sealed class AgentPlanner
         return false;
     }
 
-    private static bool IsExplicitConfirmation(string msg) =>
-        msg.Contains("确认") ||
-        msg.Contains("提交") ||
-        msg.Contains("就选") ||
-        msg.Contains("选这个") ||
-        msg.Contains("按推荐") ||
-        msg == "好的" ||
-        msg == "可以" ||
-        msg == "ok" ||
-        msg == "yes";
 }

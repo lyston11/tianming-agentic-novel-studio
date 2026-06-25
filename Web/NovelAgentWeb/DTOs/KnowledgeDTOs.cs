@@ -21,6 +21,7 @@ public class CreateKnowledgeRequest
 
     public List<string>? Tags { get; set; }
     public int? Weight { get; set; }
+    public string? IdempotencyKey { get; set; }
 }
 
 /// <summary>
@@ -46,6 +47,7 @@ public class CreateExtractedKnowledgeRequest
     public string SourceUploadTaskId { get; set; } = null!;
     public int? ChunkIndex { get; set; }
     public string? ExtractionContext { get; set; }
+    public string? IdempotencyKey { get; set; }
 }
 
 /// <summary>
@@ -53,8 +55,37 @@ public class CreateExtractedKnowledgeRequest
 /// </summary>
 public class UpdateKnowledgeRequest
 {
+    public string? EntryType { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
+    public List<string>? Tags { get; set; }
+    public int? Weight { get; set; }
+    public bool? IsArchived { get; set; }
+}
+
+public class CreateKnowledgeDirectoryRequest
+{
+    [Required]
+    public string Name { get; set; } = null!;
+
+    public string? IdempotencyKey { get; set; }
+}
+
+public class UpdateKnowledgeDirectoryRequest
+{
+    [Required]
+    public string Name { get; set; } = null!;
+}
+
+public class KnowledgeDirectoryResponse
+{
+    public string Key { get; set; } = null!;
+    public string Name { get; set; } = null!;
+    public string Description { get; set; } = "";
+    public bool IsSystem { get; set; }
+    public int EntryCount { get; set; }
+    public DateTime? CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 /// <summary>
@@ -83,6 +114,7 @@ public class IncrementKnowledgeUsageRequest
 
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? IdempotencyKey { get; set; }
 }
 
 /// <summary>
@@ -93,15 +125,59 @@ public class KnowledgeResponse
     public string Id { get; set; } = null!;
     public string? UsageProjectId { get; set; }
     public string? SourceProjectId { get; set; }
+    public string? SourceProjectTitle { get; set; }
+    public string SourceType { get; set; } = "manual";
+    public string? SourceUploadTaskId { get; set; }
+    public int? ChunkIndex { get; set; }
+    public string? ExtractionContext { get; set; }
     public string EntryType { get; set; } = null!;
     public string Title { get; set; } = null!;
     public string Content { get; set; } = null!;
+    public List<string> Tags { get; set; } = new();
+    public int Weight { get; set; } = 5;
     public int UsageCount { get; set; }
     public DateTime CreatedAt { get; set; }
+    public bool IsArchived { get; set; }
     public string? VectorId { get; set; }
     public string ProjectUsageStatus { get; set; } = "none";
     public int ProjectUsageCount { get; set; }
     public DateTime? ProjectLastUsedAt { get; set; }
+    public List<KnowledgeProjectUsageResponse> ProjectUsages { get; set; } = new();
+    public List<KnowledgeConstraintEvidenceResponse> ConstraintEvidence { get; set; } = new();
+}
+
+/// <summary>
+/// Per-project usage summary for a knowledge entry.
+/// </summary>
+public class KnowledgeProjectUsageResponse
+{
+    public string ProjectId { get; set; } = null!;
+    public string ProjectTitle { get; set; } = null!;
+    public string Status { get; set; } = "imported";
+    public int UsageCount { get; set; }
+    public DateTime FirstSeenAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+public class KnowledgeConstraintEvidenceResponse
+{
+    public string KnowledgeId { get; set; } = null!;
+    public string Title { get; set; } = "";
+    public string EntryType { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string ConstraintLevel { get; set; } = "";
+    public string PackagePolicy { get; set; } = "";
+    public string EvidenceStatus { get; set; } = "";
+    public string GateStatus { get; set; } = "";
+    public string ProjectId { get; set; } = "";
+    public string ProjectTitle { get; set; } = "";
+    public string ChapterId { get; set; } = "";
+    public string FactSnapshotId { get; set; } = "";
+    public int FactSnapshotVersion { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public List<string> AllowedTerms { get; set; } = new();
+    public List<string> ForbiddenTerms { get; set; } = new();
+    public List<string> Violations { get; set; } = new();
 }
 
 /// <summary>
@@ -110,6 +186,10 @@ public class KnowledgeResponse
 public class KnowledgeSearchResult
 {
     public string Id { get; set; } = null!;
+    public string SourceType { get; set; } = "manual";
+    public string? SourceUploadTaskId { get; set; }
+    public int? ChunkIndex { get; set; }
+    public string? ExtractionContext { get; set; }
     public string EntryType { get; set; } = null!;
     public string Title { get; set; } = null!;
     public string Content { get; set; } = null!;

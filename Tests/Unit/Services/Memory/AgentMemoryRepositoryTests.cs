@@ -5,8 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Caching;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
-using TM.Services.Framework.AI.Embedding;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using System.Text.Json;
@@ -18,8 +17,6 @@ public class AgentMemoryRepositoryTests
     private readonly NovelAgentDbContext _dbContext;
     private readonly Mock<IDistributedCacheService> _mockRedisCache;
     private readonly Mock<IMemoryCacheService> _mockMemoryCache;
-    private readonly Mock<IVectorStore> _mockVectorStore;
-    private readonly Mock<IMicroEmbeddingService> _mockEmbedding;
     private readonly Mock<ILogger<AgentMemoryRepository>> _mockLogger;
     private readonly AgentMemoryRepository _repository;
 
@@ -31,17 +28,14 @@ public class AgentMemoryRepositoryTests
         _dbContext = new NovelAgentDbContext(options);
         _mockRedisCache = new Mock<IDistributedCacheService>();
         _mockMemoryCache = new Mock<IMemoryCacheService>();
-        _mockVectorStore = new Mock<IVectorStore>();
-        _mockEmbedding = new Mock<IMicroEmbeddingService>();
         _mockLogger = new Mock<ILogger<AgentMemoryRepository>>();
 
         _repository = new AgentMemoryRepository(
             _dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
-            _mockVectorStore.Object,
-            _mockEmbedding.Object,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            new ProductionTruthStore(_dbContext));
     }
 
     [Fact]
@@ -122,6 +116,115 @@ public class AgentMemoryRepositoryTests
         var result = await _repository.GetAuthorMemoryAsync(userId);
 
         Assert.Equal("lyston", result.DisplayName);
+    }
+
+    [Fact]
+    public async Task GetProjectMemoryAsync_RecordsMemoryReadAuditAfterCacheResolution()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<ProjectMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProjectMemory
+            {
+                LongTermGoal = "缓存命中的长期目标",
+                Constraints = new List<string> { "不要断更" }
+            });
+
+        var result = await _repository.GetProjectMemoryAsync(userId, projectId);
+
+        Assert.Equal("缓存命中的长期目标", result.LongTermGoal);
+        var read = await _dbContext.AgentMemoryReads.SingleAsync();
+        Assert.Equal(userId, read.UserId);
+        Assert.Equal(projectId, read.ProjectId);
+        Assert.Null(read.SessionId);
+        Assert.Null(read.RunId);
+        Assert.Equal("project", read.MemoryScope);
+        Assert.Equal("memory_repository", read.SourceType);
+        Assert.Equal("GetProjectMemoryAsync", read.Consumer);
+
+        var keys = JsonSerializer.Deserialize<List<string>>(read.MemoryKeysJson) ?? new();
+        Assert.Contains("project.long_term_goal", keys);
+        Assert.Contains("project.constraints", keys);
+    }
+
+    [Fact]
+    public async Task GetAuthorMemoryAsync_RecordsAuthorMemoryReadAudit()
+    {
+        var userId = "user123";
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<AuthorMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthorMemory
+            {
+                DisplayName = "lyston",
+                StyleLikes = new List<string> { "爽文节奏" }
+            });
+
+        await _repository.GetAuthorMemoryAsync(userId);
+
+        var read = await _dbContext.AgentMemoryReads.SingleAsync();
+        Assert.Equal(userId, read.UserId);
+        Assert.Null(read.ProjectId);
+        Assert.Null(read.SessionId);
+        Assert.Equal("author", read.MemoryScope);
+        Assert.Equal("GetAuthorMemoryAsync", read.Consumer);
+
+        var keys = JsonSerializer.Deserialize<List<string>>(read.MemoryKeysJson) ?? new();
+        Assert.Contains("author.display_name", keys);
+        Assert.Contains("author.style_likes", keys);
+    }
+
+    [Fact]
+    public async Task GetAuthorMemoryAsync_RecordsSessionIdForForegroundAudit()
+    {
+        const string userId = "user123";
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<AuthorMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthorMemory { DisplayName = "lyston" });
+
+        await _repository.GetAuthorMemoryAsync(
+            userId,
+            CancellationToken.None,
+            runId: null,
+            sessionId: "session-foreground");
+
+        var read = await _dbContext.AgentMemoryReads.SingleAsync();
+        Assert.Null(read.ProjectId);
+        Assert.Equal("session-foreground", read.SessionId);
+        Assert.Equal("author", read.MemoryScope);
+        Assert.Contains("author.display_name", read.MemoryKeysJson);
+    }
+
+    [Fact]
+    public async Task GetProjectMemoryAsync_RecordsRuntimeRunIdWhenProvided()
+    {
+        var userId = "user123";
+        var projectId = "proj456";
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<ProjectMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProjectMemory { ReaderPromise = "读者承诺" });
+
+        await _repository.GetProjectMemoryAsync(userId, projectId, CancellationToken.None, runId: "runtime-run-1");
+
+        var read = await _dbContext.AgentMemoryReads.SingleAsync();
+        Assert.Equal("runtime-run-1", read.RunId);
+        Assert.Equal("project", read.MemoryScope);
     }
 
     [Fact]
@@ -356,9 +459,8 @@ public class AgentMemoryRepositoryTests
             _dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
-            _mockVectorStore.Object,
-            _mockEmbedding.Object,
             _mockLogger.Object,
+            new ProductionTruthStore(_dbContext),
             versions);
 
         await repository.UpdateMemoryAsync(
@@ -390,9 +492,8 @@ public class AgentMemoryRepositoryTests
             _dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
-            _mockVectorStore.Object,
-            _mockEmbedding.Object,
             _mockLogger.Object,
+            new ProductionTruthStore(_dbContext),
             versions);
 
         await repository.UpdateSessionMemoryAsync(
@@ -413,15 +514,8 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
-    public async Task UpdateMemoryAsync_VectorizesProjectGoalFieldsFromBatchUpdates()
+    public async Task UpdateMemoryAsync_EnqueuesProjectGoalMemoryIndexOutbox()
     {
-        _mockEmbedding
-            .Setup(x => x.EncodeAsync(It.IsAny<string>(), EmbeddingMode.Passage, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new float[] { 0.1f, 0.2f });
-        _mockVectorStore
-            .Setup(x => x.UpsertVectorsAsync("user-1", It.IsAny<List<VectorData>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         await _repository.UpdateMemoryAsync(
             "user-1",
             "project-1",
@@ -431,14 +525,23 @@ public class AgentMemoryRepositoryTests
                 ["project.reader_promise"] = "读者承诺"
             });
 
-        _mockVectorStore.Verify(x => x.UpsertVectorsAsync(
-                "user-1",
-                It.Is<List<VectorData>>(vectors =>
-                    vectors.Count == 2 &&
-                    vectors.Any(v => v.ProjectId == "project-1" && v.SourceId == "project.long_term_goal" && v.Content == "新目标") &&
-                    vectors.Any(v => v.ProjectId == "project-1" && v.SourceId == "project.reader_promise" && v.Content == "读者承诺")),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var memoryRows = await _dbContext.AgentMemories
+            .Where(m => m.UserId == "user-1" && m.ProjectId == "project-1")
+            .ToDictionaryAsync(m => m.MemoryType, m => m.Id);
+        var outbox = await _dbContext.OutboxEvents
+            .Where(e => e.EventType == "index_memory_content")
+            .OrderBy(e => e.AggregateId)
+            .ToListAsync();
+
+        Assert.Equal(2, outbox.Count);
+        Assert.All(outbox, evt =>
+        {
+            Assert.Equal("memory", evt.AggregateType);
+            Assert.Equal("project-1", evt.ProjectId);
+            Assert.Equal("pending", evt.Status);
+        });
+        Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.long_term_goal"]);
+        Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.reader_promise"]);
     }
 
     [Fact]
@@ -542,14 +645,67 @@ public class AgentMemoryRepositoryTests
         }
     }
 
+    [Fact]
+    public async Task GetSessionMemoryAsync_ProjectlessRecordsReadAuditWithNullProjectId()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using (var setupDb = new NovelAgentDbContext(options))
+        {
+            await setupDb.Database.EnsureCreatedAsync();
+            setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            setupDb.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+            {
+                Id = "session-1",
+                UserId = "user-1",
+                Title = "新会话",
+                SessionData = "{}",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await setupDb.SaveChangesAsync();
+        }
+
+        _mockMemoryCache.Setup(x => x.GetOrSetAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<SessionMemory>>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, Func<Task<SessionMemory>> f, TimeSpan _, CancellationToken _) => f().Result);
+        _mockRedisCache.Setup(x => x.GetAsync<SessionMemory>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionMemory?)null);
+        _mockRedisCache.Setup(x => x.SetAsync(
+                It.IsAny<string>(),
+                It.IsAny<SessionMemory>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await using (var db = new NovelAgentDbContext(options))
+        {
+            var repository = CreateRepository(db);
+            await repository.GetSessionMemoryAsync(
+                "user-1",
+                AgentMemoryScopes.ProjectlessProjectId,
+                "session-1");
+        }
+
+        await using (var verifyDb = new NovelAgentDbContext(options))
+        {
+            var read = await verifyDb.AgentMemoryReads.SingleAsync();
+            Assert.Null(read.ProjectId);
+            Assert.Equal("session-1", read.SessionId);
+            Assert.Equal("session", read.MemoryScope);
+        }
+    }
+
     private AgentMemoryRepository CreateRepository(NovelAgentDbContext dbContext) =>
         new(
             dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
-            _mockVectorStore.Object,
-            _mockEmbedding.Object,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            new ProductionTruthStore(dbContext));
 
     private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
     {

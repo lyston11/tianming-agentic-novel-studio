@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TM.Web.NovelAgentWeb.Data.Entities;
@@ -7,6 +8,9 @@ public class Material
     public string Id { get; set; } = null!;
     public string UserId { get; set; } = null!;
     public string? ProjectId { get; set; }
+    [StringLength(160)]
+    [Column("idempotency_key")]
+    public string? IdempotencyKey { get; set; }
     public string Title { get; set; } = null!;
     public string? Category { get; set; }
     public string? ContentType { get; set; }

@@ -1,7 +1,5 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -33,58 +31,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
                 var epoch = Volatile.Read(ref _cacheEpoch);
 
-                var guidesDir = Path.Combine(StoragePathHelper.GetProjectConfigPath(), "guides");
-                var shardFiles = Directory.Exists(guidesDir)
-                    ? Directory.GetFiles(guidesDir, "content_guide_vol*.json")
-                        .Select(f =>
-                        {
-                            var stem = Path.GetFileNameWithoutExtension(f);
-                            const string prefix = "content_guide_vol";
-                            if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return (Path: f, Vol: -1);
-                            var suffix = stem.Substring(prefix.Length);
-                            return int.TryParse(suffix, out var num) && num > 0 ? (Path: f, Vol: num) : (Path: f, Vol: -1);
-                        })
-                        .Where(x => x.Vol > 0)
-                        .OrderBy(x => x.Vol)
-                        .Select(x => x.Path)
-                        .ToArray()
-                    : Array.Empty<string>();
-
-                ContentGuide merged;
-                if (shardFiles.Length > 0)
-                {
-                    merged = new ContentGuide();
-                    var shardTasks = shardFiles.Select(async sf =>
-                    {
-                        try
-                        {
-                            await using var sfStream = File.OpenRead(sf);
-                            return await JsonSerializer.DeserializeAsync<ContentGuide>(sfStream, JsonOptions).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            TM.App.Log($"[GuideContextService] 加载分片失败 {Path.GetFileName(sf)}: {ex.Message}");
-                            return null;
-                        }
-                    });
-                    var shards = await Task.WhenAll(shardTasks).ConfigureAwait(false);
-                    if (!IsCacheEpochCurrent(epoch))
-                        return new ContentGuide();
-                    foreach (var shard in shards)
-                    {
-                        if (shard == null) continue;
-                        foreach (var (k, v) in shard.Chapters)
-                            merged.Chapters[k] = v;
-                        foreach (var (k, v) in shard.ChapterSummaries)
-                            merged.ChapterSummaries[k] = v;
-                    }
-
-                    TM.App.Log($"[GuideContextService] content_guide 聚合 {shardFiles.Length} 个分片，共 {merged.Chapters.Count} 章");
-                }
-                else
-                {
-                    merged = await LoadGuideAsync<ContentGuide>("content_guide.json").ConfigureAwait(false);
-                }
+                var merged = await LoadGuideAsync<ContentGuide>(GuideRuntimeDataKeys.ContentGuide).ConfigureAwait(false);
 
                 if (!IsCacheEpochCurrent(epoch))
                     return new ContentGuide();
@@ -112,94 +59,42 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        public async Task<T> LoadGuideAsync<T>(string fileName) where T : new()
+        public async Task<T> LoadGuideAsync<T>(string guideKey) where T : new()
         {
-            var guidesPath = Path.Combine(StoragePathHelper.GetProjectConfigPath(), "guides", fileName);
-
-            if (!File.Exists(guidesPath))
+            if (_runtimeDataSource == null)
             {
-                TM.App.Log($"[GuideContextService] 指导文件不存在: {fileName}");
+                TM.App.Log($"[GuideContextService] 生产指导数据源未配置: {guideKey}");
                 return new T();
             }
 
             try
             {
-                T guide;
-                await using (var fs = new FileStream(guidesPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    bufferSize: 4096, useAsync: true))
-                {
-                    var sgInfo = GuideSerializerContext.Default.GetTypeInfo(typeof(T)) as System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>;
-                    guide = (sgInfo != null
-                        ? await JsonSerializer.DeserializeAsync(fs, sgInfo).ConfigureAwait(false)
-                        : await JsonSerializer.DeserializeAsync<T>(fs, JsonOptions).ConfigureAwait(false)) ?? new T();
-                }
-
-                return guide;
+                return await _runtimeDataSource.LoadGuideAsync<T>(guideKey).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                TM.App.Log($"[GuideContextService] 加载指导文件失败 [{fileName}]: {ex.Message}");
+                TM.App.Log($"[GuideContextService] 加载生产指导数据失败 [{guideKey}]: {ex.Message}");
                 return new T();
             }
         }
 
-        private async Task<List<T>> LoadPackagedAsync<T>(string relativePath, string dataKey)
+        private async Task<List<T>> LoadPackagedAsync<T>(string dataKey)
         {
-            var filePath = Path.Combine(StoragePathHelper.GetProjectConfigPath(), relativePath);
-            var items = new List<T>();
-
-            if (!File.Exists(filePath))
+            if (_runtimeDataSource == null)
             {
-                TM.App.Log($"[GuideContextService] 打包文件不存在: {relativePath}");
-                return items;
+                TM.App.Log($"[GuideContextService] 生产打包数据源未配置: {dataKey}");
+                return new List<T>();
             }
 
             try
             {
-                var json = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-
-                if (doc.RootElement.TryGetProperty("data", out var dataProp))
-                {
-                    if (!dataProp.TryGetProperty(dataKey, out var keyProp))
-                    {
-                        if (dataKey.Length > 0 && (dataKey[^1] == 's' || dataKey[^1] == 'S'))
-                        {
-                            var alt = dataKey.TrimEnd('s');
-                            dataProp.TryGetProperty(alt, out keyProp);
-                        }
-                        else
-                        {
-                            var alt = dataKey + "s";
-                            dataProp.TryGetProperty(alt, out keyProp);
-                        }
-                    }
-
-                    if (keyProp.ValueKind == JsonValueKind.Object)
-                    {
-                        foreach (var fileProp in keyProp.EnumerateObject())
-                        {
-                            if (string.Equals(fileProp.Name, "categories", StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
-
-                            if (fileProp.Value.ValueKind == JsonValueKind.Array)
-                            {
-                                var arrayJson = fileProp.Value.GetRawText();
-                                var arrayItems = JsonSerializer.Deserialize<List<T>>(arrayJson, JsonOptions);
-                                if (arrayItems != null) items.AddRange(arrayItems);
-                            }
-                        }
-                    }
-                }
+                return (await _runtimeDataSource.LoadItemsAsync<T>(dataKey).ConfigureAwait(false)).ToList();
             }
             catch (Exception ex)
             {
-                TM.App.Log($"[GuideContextService] 加载打包数据失败 [{relativePath}]: {ex.Message}");
+                TM.App.Log($"[GuideContextService] 加载生产打包数据失败 [{dataKey}]: {ex.Message}");
+                return new List<T>();
             }
-
-            return items;
         }
 
         private bool IsCacheEpochCurrent(int epoch)

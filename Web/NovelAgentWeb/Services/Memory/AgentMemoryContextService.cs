@@ -30,7 +30,8 @@ public class AgentMemoryContextService : IAgentMemoryContextService
         string userId,
         string projectId,
         string sessionId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? runId = null)
     {
         if (_versions != null)
         {
@@ -53,27 +54,28 @@ public class AgentMemoryContextService : IAgentMemoryContextService
                 }
             }
 
-            var composed = await ComposeAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
+            var composed = await ComposeAsync(userId, projectId, sessionId, ct, runId).ConfigureAwait(false);
             _memoryCache?.Set(cacheKey, composed, ContextCacheTtl);
             if (_redisCache != null)
                 await _redisCache.SetAsync(cacheKey, composed, ContextCacheTtl, ct).ConfigureAwait(false);
             return composed;
         }
 
-        return await ComposeAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
+        return await ComposeAsync(userId, projectId, sessionId, ct, runId).ConfigureAwait(false);
     }
 
     private async Task<AgentMemoryContextDto> ComposeAsync(
         string userId,
         string projectId,
         string sessionId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? runId)
     {
         var chat = await _chatHistory.GetPromptWindowAsync(userId, projectId, sessionId, ct);
-        var session = await _memoryRepository.GetSessionMemoryAsync(userId, projectId, sessionId, ct);
-        var project = await _memoryRepository.GetProjectMemoryAsync(userId, projectId, ct);
-        var author = await _memoryRepository.GetAuthorMemoryAsync(userId, ct);
-        var execution = await _memoryRepository.GetExecutionMemoryAsync(userId, projectId, ct);
+        var session = await _memoryRepository.GetSessionMemoryAsync(userId, projectId, sessionId, ct, runId: runId);
+        var project = await _memoryRepository.GetProjectMemoryAsync(userId, projectId, ct, runId: runId, sessionId: sessionId);
+        var author = await _memoryRepository.GetAuthorMemoryAsync(userId, ct, runId: runId, sessionId: sessionId);
+        var execution = await _memoryRepository.GetExecutionMemoryAsync(userId, projectId, ct, runId: runId, sessionId: sessionId);
 
         return new AgentMemoryContextDto(
             new ChatMemoryContext(chat.MetaSummary, chat.Summaries, chat.RecentMessages),

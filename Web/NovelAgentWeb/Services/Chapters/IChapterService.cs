@@ -3,17 +3,17 @@ using TM.Web.NovelAgentWeb.Models.Chapters;
 namespace TM.Web.NovelAgentWeb.Services.Chapters;
 
 /// <summary>
-/// Service interface for chapter CRUD operations backed by SQLite content
-/// documents and Qdrant vectors.
+/// Service interface for chapter CRUD operations backed by database content
+/// documents, chapter versions, and asynchronous production outbox indexing.
 /// </summary>
 public interface IChapterService
 {
     /// <summary>
-    /// Create a new chapter with atomic synchronization:
+    /// Create a new chapter with database truth records:
     /// - Insert metadata into SQLite
     /// - Persist Markdown content into SQLite content documents
-    /// - Generate and store embeddings in Qdrant
-    /// All operations succeed together or roll back.
+    /// - Create a chapter version
+    /// - Queue asynchronous indexing
     /// </summary>
     /// <param name="request">Chapter creation request</param>
     /// <param name="userId">Current user ID for ownership verification</param>
@@ -27,11 +27,10 @@ public interface IChapterService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Update an existing chapter with atomic synchronization:
+    /// Update an existing chapter with database truth records:
     /// - Update metadata in SQLite
     /// - Update SQLite content document if content changed
-    /// - Regenerate and update embeddings in Qdrant if content changed
-    /// All operations succeed together or roll back.
+    /// - Create a new chapter version and queue asynchronous indexing if content changed
     /// </summary>
     /// <param name="chapterId">Chapter ID to update</param>
     /// <param name="request">Chapter update request</param>
@@ -62,10 +61,43 @@ public interface IChapterService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Delete a chapter with atomic synchronization:
+    /// Get all persisted versions for a chapter, including production package
+    /// lineage needed by workflow, Agent tools, and future rollback flows.
+    /// </summary>
+    /// <param name="chapterId">Chapter ID</param>
+    /// <param name="userId">Current user ID for ownership verification</param>
+    /// <param name="isAdmin">Whether the current user is an admin</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Chapter versions ordered from latest to oldest</returns>
+    Task<List<ChapterVersionResponse>> GetChapterVersionsAsync(
+        string chapterId,
+        string userId,
+        bool isAdmin,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Compare two persisted chapter versions using their own content documents.
+    /// </summary>
+    /// <param name="chapterId">Chapter ID</param>
+    /// <param name="leftVersionId">Left/baseline version ID</param>
+    /// <param name="rightVersionId">Right/target version ID</param>
+    /// <param name="userId">Current user ID for ownership verification</param>
+    /// <param name="isAdmin">Whether the current user is an admin</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paragraph-level version comparison and lineage</returns>
+    Task<ChapterVersionCompareResponse> CompareChapterVersionsAsync(
+        string chapterId,
+        string leftVersionId,
+        string rightVersionId,
+        string userId,
+        bool isAdmin,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delete a chapter with database truth cleanup:
     /// - Delete metadata from SQLite (cascades to FK references)
     /// - Delete SQLite content document
-    /// - Delete embeddings from Qdrant
+    /// - Queue asynchronous index cleanup
     /// Foreign key references (foreshadows) are automatically set to NULL.
     /// </summary>
     /// <param name="chapterId">Chapter ID to delete</param>

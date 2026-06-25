@@ -119,30 +119,21 @@ Updated `Tests/NovelAgentRegression/NovelAgentRegression.csproj`:
 <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.0" />
 ```
 
-## Known Issues
-
-The test project has pre-existing compilation errors unrelated to the data access layer tests:
-- `ProjectDataStubs.cs`: Ambiguous `FactSnapshot` type references
-- `HardcoreWritingEngine.cs`: Ambiguous `GateResult` type reference
-
-These errors prevent the full test suite from building, but the data access layer test files themselves compile without errors.
-
 ## Verification Steps
 
 To verify the tests work correctly:
 
-1. **Fix pre-existing build errors** in the test project
-2. **Build the test project:**
+1. **Build the test project:**
    ```bash
    dotnet build Tests/NovelAgentRegression/NovelAgentRegression.csproj
    ```
 
-3. **Run data access layer tests:**
+2. **Run data access layer tests:**
    ```bash
    dotnet test Tests/NovelAgentRegression/NovelAgentRegression.csproj --filter "FullyQualifiedName~Data"
    ```
 
-4. **Run specific test class:**
+3. **Run specific test class:**
    ```bash
    dotnet test --filter "FullyQualifiedName~UserRepositoryTests"
    dotnet test --filter "FullyQualifiedName~ProjectRepositoryTests"

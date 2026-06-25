@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AuthUser } from '../services/authService';
+import { emptyAuthState, sanitizeAuthState } from '../services/authStorage';
 
 interface AuthState {
   user: AuthUser | null;
@@ -18,19 +19,9 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
 
-      setAuth: (user, token) =>
-        set({
-          user,
-          token,
-          isAuthenticated: true,
-        }),
+      setAuth: (user, token) => set(sanitizeAuthState({ user, token })),
 
-      clearAuth: () =>
-        set({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-        }),
+      clearAuth: () => set(emptyAuthState()),
     }),
     {
       name: 'auth-storage',
@@ -38,18 +29,19 @@ export const useAuthStore = create<AuthState>()(
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
           // Clear old flat structure data
-          return {
-            user: null,
-            token: null,
-            isAuthenticated: false,
-          };
+          return emptyAuthState();
         }
-        return persistedState;
+        return sanitizeAuthState(persistedState);
+      },
+      merge: (persistedState, currentState) => {
+        const sanitized = sanitizeAuthState(persistedState);
+        return {
+          ...currentState,
+          ...sanitized,
+        };
       },
       partialize: (state) => ({
-        user: state.user,
-        token: state.token,
-        isAuthenticated: state.isAuthenticated,
+        ...sanitizeAuthState(state),
       }),
     }
   )

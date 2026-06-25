@@ -1,3 +1,5 @@
+using TM.Services.Framework.AI.NovelAgent.Models;
+
 namespace TM.Web.NovelAgentWeb.Services.AgentTools;
 
 public sealed class AgentToolProgressView
@@ -113,6 +115,7 @@ public static class AgentToolProgressPresenter
             "ProcessKnowledgeFile",
             "QueryWorkspaceState",
             "QueryProjectStatus",
+            "QueryProjectKnowledgeBindings",
             "SearchCreativeKnowledge",
             "ResolveNovelProject"
         };
@@ -126,9 +129,19 @@ public static class AgentToolProgressPresenter
             : $"已执行约 {(int)Math.Round(elapsed.TotalSeconds / 60d)} 分钟";
         var stage = toolName switch
         {
-            "GenerateChapterWithChanges" => "正在等待模型生成正文与修订记录",
-            "RepairChapterDraft" => "正在按门禁失败项修订章节草稿",
-            "CommitValidatedChapter" => "正在写入书城，正文入库后后台会继续刷新索引和记忆",
+            "ProduceChapter" => "正在执行章节生产闭环：上下文、正文、门禁、评审和提交会依次推进",
+            NovelAgentProductionStages.PackageBuilt => "正在构建章节生产包，读取知识、事实、创意和修订计划",
+            NovelAgentProductionStages.DraftGeneration => "正在等待模型生成正文与修订记录",
+            NovelAgentProductionStages.DraftGenerated => "正在等待模型生成正文与修订记录",
+            NovelAgentProductionStages.ChangesExtracted => "正在抽取章节 CHANGES，用于事实沉淀和连续性校验",
+            NovelAgentProductionStages.GateValidated => "正在执行硬门禁校验",
+            NovelAgentProductionStages.DraftRepair => "正在按门禁失败项修订章节草稿",
+            NovelAgentProductionStages.DraftRewritten => "正在按门禁或评审失败项修订章节草稿",
+            NovelAgentProductionStages.ReviewCompleted => "正在进行 Agent 总编质量验收",
+            NovelAgentProductionStages.ChapterCommit => "正在写入书城，正文入库后后台会继续刷新索引和记忆",
+            NovelAgentProductionStages.ChapterCommitted => "正在写入书城，正文入库后后台会继续刷新索引和记忆",
+            NovelAgentProductionStages.FactsPersisted => "正在沉淀连续性事实、知识使用和创意执行证据",
+            NovelAgentProductionStages.IndexUpdated => "正在刷新正文、知识和记忆索引",
             _ => "正在执行工具"
         };
         var waiting = elapsed.TotalSeconds >= 90
@@ -145,18 +158,29 @@ public static class AgentToolProgressPresenter
             "QueryWorkspaceState" => new("读取工作台状态", "工作台状态读取", "Agent 对话", "工作台状态"),
             "QueryProjectStatus" => new("读取项目工作流", "项目状态读取", "Agent 对话", "工作流"),
             "ProcessKnowledgeFile" => new("处理知识文件", "知识文件处理", "知识库", "知识库"),
+            "QueryProjectKnowledgeBindings" => new("读取项目知识绑定", "项目知识绑定读取", "Agent 对话", "知识库"),
             "SearchCreativeKnowledge" => new("检索创意知识库", "知识检索", "Agent 对话", "知识库"),
             "PlanStoryFoundation" => new("生成故事地基候选", "故事地基候选", "创作工作流", "工作流"),
             "CommitStoryFoundation" => new("确认故事地基", "故事地基确认", "创作工作流", "工作流"),
             "PlanVolumeArc" => new("规划分卷大纲", "分卷大纲", "创作工作流", "工作流"),
             "CommitVolumeArc" => new("确认分卷大纲", "分卷大纲确认", "创作工作流", "工作流"),
             "PlanChapter" => new("规划章节候选", "章节候选", "创作工作流", "工作流"),
-            "BuildChapterContextPackage" => new("构建章节上下文包", "章节上下文包", "创作工作流", "工作流"),
-            "GenerateChapterWithChanges" => new("生成章节草稿", "章节草稿", "创作工作流", "工作流"),
-            "ValidateChapterDraft" => new("校验章节草稿", "章节校验", "创作工作流", "工作流"),
-            "RepairChapterDraft" => new("修复章节草稿", "章节修复", "创作工作流", "工作流"),
+            "ProduceChapter" => new("推进章节生产闭环", "章节生产闭环", "创作工作流和小说书城", "工作流"),
+            NovelAgentProductionStages.ContextPackage => new("构建章节上下文包", "章节上下文包", "创作工作流", "工作流"),
+            NovelAgentProductionStages.PackageBuilt => new("构建章节生产包", "章节生产包", "创作工作流", "工作流"),
+            NovelAgentProductionStages.DraftGeneration => new("生成章节草稿", "章节草稿", "创作工作流", "工作流"),
+            NovelAgentProductionStages.DraftGenerated => new("生成章节草稿", "章节草稿", "创作工作流", "工作流"),
+            NovelAgentProductionStages.ChangesExtracted => new("抽取章节 CHANGES", "章节 CHANGES", "创作工作流", "工作流"),
+            NovelAgentProductionStages.GateValidation => new("校验章节草稿", "章节校验", "创作工作流", "工作流"),
+            NovelAgentProductionStages.GateValidated => new("校验章节草稿", "章节校验", "创作工作流", "工作流"),
+            NovelAgentProductionStages.DraftRepair => new("修复章节草稿", "章节修复", "创作工作流", "工作流"),
+            NovelAgentProductionStages.DraftRewritten => new("修复章节草稿", "章节修复", "创作工作流", "工作流"),
             "ReviewChapter" => new("评审章节质量", "章节评审", "创作工作流", "工作流"),
-            "CommitValidatedChapter" => new("提交已校验章节", "章节提交", "小说书城", "小说书城"),
+            NovelAgentProductionStages.ReviewCompleted => new("评审章节质量", "章节评审", "创作工作流", "工作流"),
+            NovelAgentProductionStages.ChapterCommit => new("提交已校验章节", "章节提交", "小说书城", "小说书城"),
+            NovelAgentProductionStages.ChapterCommitted => new("提交已校验章节", "章节提交", "小说书城", "小说书城"),
+            NovelAgentProductionStages.FactsPersisted => new("沉淀章节事实", "章节事实", "创作工作流", "工作流"),
+            NovelAgentProductionStages.IndexUpdated => new("刷新生产索引", "生产索引", "创作工作流", "工作流"),
             _ => new("执行工具", "工具执行", "Agent 运行态", "工作流")
         };
 

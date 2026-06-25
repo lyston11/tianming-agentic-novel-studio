@@ -16,6 +16,7 @@ public interface IAgentSessionService
         string? sessionId,
         string userId,
         string? projectId,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default);
 
     /// <summary>

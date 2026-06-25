@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TM.Services.Modules.ProjectData.Models.Guides;
@@ -21,22 +19,8 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 return cached;
 
             var epoch = Volatile.Read(ref _cacheEpoch);
+            await Task.CompletedTask.ConfigureAwait(false);
             ExpansionConfig? loaded = null;
-            var path = Path.Combine(
-                StoragePathHelper.GetServicesStoragePath("Settings"),
-                "context_expansion_config.json");
-            if (File.Exists(path))
-            {
-                try
-                {
-                    await using var pathStream = File.OpenRead(path);
-                    loaded = await JsonSerializer.DeserializeAsync<ExpansionConfig>(pathStream, JsonOptions).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    TM.App.Log($"[GuideContextService] 加载扩展配置失败: {ex.Message}");
-                }
-            }
             loaded ??= new ExpansionConfig { Enabled = false };
             if (!IsCacheEpochCurrent(epoch))
                 return new ExpansionConfig { Enabled = false };

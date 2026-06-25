@@ -28,7 +28,13 @@ public class WorkspaceService : IWorkspaceService
 
         var projectIds = projects.Select(p => p.Id).ToList();
 
-        var volumeCounts = await _db.VolumeArcs
+        var canonicalVolumeCounts = await _db.Volumes
+            .Where(v => projectIds.Contains(v.ProjectId))
+            .GroupBy(v => v.ProjectId)
+            .Select(g => new { ProjectId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ProjectId, x => x.Count, ct);
+
+        var plannedVolumeCounts = await _db.VolumeArcs
             .Where(v => projectIds.Contains(v.ProjectId))
             .GroupBy(v => v.ProjectId)
             .Select(g => new { ProjectId = g.Key, Count = g.Count() })
@@ -64,7 +70,9 @@ public class WorkspaceService : IWorkspaceService
                 constitution?.ReaderPromise ?? string.Empty,
                 p.Status,
                 p.Status != "archived",
-                volumeCounts.GetValueOrDefault(p.Id, 0),
+                canonicalVolumeCounts.GetValueOrDefault(p.Id) > 0
+                    ? canonicalVolumeCounts[p.Id]
+                    : plannedVolumeCounts.GetValueOrDefault(p.Id, 0),
                 stats?.GeneratedCount ?? 0,
                 stats?.PlannedCount ?? 0,
                 stats?.NeedsRewriteCount ?? 0,

@@ -35,6 +35,30 @@ public sealed class AgentRuntimeEvent
     [StringLength(80)]
     public string Type { get; set; } = string.Empty;
 
+    [Column("stage")]
+    [StringLength(80)]
+    public string Stage { get; set; } = string.Empty;
+
+    [Column("status")]
+    [StringLength(40)]
+    public string Status { get; set; } = string.Empty;
+
+    [Column("artifact_type")]
+    [StringLength(80)]
+    public string ArtifactType { get; set; } = string.Empty;
+
+    [Column("artifact_id")]
+    [StringLength(80)]
+    public string ArtifactId { get; set; } = string.Empty;
+
+    [Column("display_surface")]
+    [StringLength(40)]
+    public string DisplaySurface { get; set; } = "chat";
+
+    [Column("display_policy")]
+    [StringLength(40)]
+    public string DisplayPolicy { get; set; } = "collapsible";
+
     [Required]
     [Column("message")]
     public string Message { get; set; } = string.Empty;

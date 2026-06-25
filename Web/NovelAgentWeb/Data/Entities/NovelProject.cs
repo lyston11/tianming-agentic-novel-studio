@@ -11,6 +11,7 @@ public class NovelProject
     public string Status { get; set; } = "draft";
     public int WordCount { get; set; } = 0;
     public string? CoverImageUrl { get; set; }
+    public string? IdempotencyKey { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 

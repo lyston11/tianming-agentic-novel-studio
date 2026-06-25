@@ -125,15 +125,6 @@ VectorData {
 - Unique collection names prevent conflicts
 - Clear test naming and structure
 
-## Known Issues
-
-### Pre-existing Build Errors
-The test project has existing compilation errors in other test files:
-- `ProjectDataStubs.cs`: Ambiguous `FactSnapshot` reference (CS0104)
-- `HardcoreWritingEngine.cs`: Ambiguous `GateResult` reference (CS0104)
-
-**These errors do NOT affect the Qdrant tests**, which compile correctly. The main `NovelAgentWeb` project builds successfully.
-
 ## Running the Tests
 
 ### Quick Start

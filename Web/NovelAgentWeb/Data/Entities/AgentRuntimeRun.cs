@@ -30,6 +30,11 @@ public sealed class AgentRuntimeRun
     [StringLength(30)]
     public string Status { get; set; } = "queued";
 
+    [Required]
+    [Column("mode")]
+    [StringLength(30)]
+    public string Mode { get; set; } = "inspect";
+
     [Column("current_phase")]
     [StringLength(80)]
     public string CurrentPhase { get; set; } = "queued";
@@ -44,6 +49,17 @@ public sealed class AgentRuntimeRun
     [Column("user_message")]
     public string UserMessage { get; set; } = string.Empty;
 
+    [Column("source_message_id")]
+    [StringLength(80)]
+    public string SourceMessageId { get; set; } = string.Empty;
+
+    [Column("idempotency_key")]
+    [StringLength(160)]
+    public string IdempotencyKey { get; set; } = string.Empty;
+
+    [Column("budget_json")]
+    public string BudgetJson { get; set; } = "{}";
+
     [Column("last_message")]
     public string LastMessage { get; set; } = string.Empty;
 
@@ -52,6 +68,9 @@ public sealed class AgentRuntimeRun
 
     [Column("error_message")]
     public string ErrorMessage { get; set; } = string.Empty;
+
+    [Column("failure_json")]
+    public string FailureJson { get; set; } = "{}";
 
     [Column("cancel_requested")]
     public bool CancelRequested { get; set; }

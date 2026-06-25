@@ -31,7 +31,7 @@ public class WorkflowController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -40,7 +40,7 @@ public class WorkflowController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get workflow detail for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to get workflow detail" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get workflow detail"));
         }
     }
 
@@ -51,17 +51,21 @@ public class WorkflowController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+
             var volumeArc = await _workflowService.CreateVolumeArcAsync(request, ct);
             return Ok(volumeArc);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create volume arc");
-            return StatusCode(500, new { error = "Failed to create volume arc" });
+            return StatusCode(500, ApiErrors.Internal("Failed to create volume arc"));
         }
     }
 
@@ -77,12 +81,12 @@ public class WorkflowController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list volume arcs for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to list volume arcs" });
+            return StatusCode(500, ApiErrors.Internal("Failed to list volume arcs"));
         }
     }
 
@@ -96,7 +100,7 @@ public class WorkflowController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -105,7 +109,7 @@ public class WorkflowController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get volume arc {VolumeArcId}", id);
-            return StatusCode(500, new { error = "Failed to get volume arc" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get volume arc"));
         }
     }
 
@@ -122,7 +126,7 @@ public class WorkflowController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -131,7 +135,7 @@ public class WorkflowController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update volume arc {VolumeArcId}", id);
-            return StatusCode(500, new { error = "Failed to update volume arc" });
+            return StatusCode(500, ApiErrors.Internal("Failed to update volume arc"));
         }
     }
 
@@ -145,7 +149,7 @@ public class WorkflowController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -154,7 +158,7 @@ public class WorkflowController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete volume arc {VolumeArcId}", id);
-            return StatusCode(500, new { error = "Failed to delete volume arc" });
+            return StatusCode(500, ApiErrors.Internal("Failed to delete volume arc"));
         }
     }
 }

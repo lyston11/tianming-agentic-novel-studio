@@ -44,4 +44,6 @@ public class CreateChapterRequest
     /// </summary>
     [RegularExpression("^(draft|published|archived)$", ErrorMessage = "Status must be 'draft', 'published', or 'archived'")]
     public string Status { get; set; } = "draft";
+
+    public string? IdempotencyKey { get; set; }
 }

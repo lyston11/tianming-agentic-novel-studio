@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Generate.ChapterPlanning;
 using TM.Services.Modules.ProjectData.Models.Generate.ChapterBlueprint;
@@ -356,7 +357,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             if (!string.IsNullOrEmpty(contextIds.ChapterBlueprint))
             {
-                var blueprintGuide = await LoadGuideAsync<Models.Guides.BlueprintGuide>("blueprint_guide.json").ConfigureAwait(false);
+                var blueprintGuide = await LoadGuideAsync<Models.Guides.BlueprintGuide>(GuideRuntimeDataKeys.BlueprintGuide).ConfigureAwait(false);
                 var found = blueprintGuide?.Chapters?.ContainsKey(contextIds.ChapterBlueprint) == true;
                 if (!found)
                     missingIds["ChapterBlueprint"] = new List<string> { contextIds.ChapterBlueprint };

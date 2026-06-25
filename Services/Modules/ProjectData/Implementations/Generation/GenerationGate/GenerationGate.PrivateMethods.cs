@@ -84,6 +84,9 @@ namespace TM.Services.Modules.ProjectData.Implementations
             var merged = CreateEmptyChangesObject();
             var matchedFieldCount = 0;
 
+            if (TryUnwrapChangesPayload(node, out var unwrapped))
+                node = unwrapped;
+
             if (node is JsonObject obj)
             {
                 matchedFieldCount += MergeChangesObject(merged, obj);
@@ -102,6 +105,64 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             normalized = merged.ToJsonString(ChangesJsonWriteOptions);
             return true;
+        }
+
+        private static bool TryUnwrapChangesPayload(JsonNode? node, out JsonNode? unwrapped)
+        {
+            unwrapped = node;
+            if (node is not JsonObject obj)
+                return false;
+
+            if (MergeChangesObject(new JsonObject(), obj) > 0)
+                return false;
+
+            foreach (var wrapperName in ChangesWrapperPropertyNames)
+            {
+                var prop = FindProperty(obj, wrapperName);
+                if (prop?.Value is JsonObject or JsonArray)
+                {
+                    unwrapped = prop.Value.Value?.DeepClone();
+                    return unwrapped != null;
+                }
+
+                if (prop?.Value is JsonValue value &&
+                    value.TryGetValue<string>(out var raw) &&
+                    TryNormalizeChangesJsonShape(raw, out var normalized))
+                {
+                    unwrapped = JsonNode.Parse(normalized);
+                    return unwrapped != null;
+                }
+            }
+
+            if (obj.Count == 1)
+            {
+                var only = obj.First();
+                if (only.Value is JsonObject or JsonArray)
+                {
+                    var nestedMatched = only.Value is JsonObject nestedObj
+                        ? MergeChangesObject(new JsonObject(), nestedObj)
+                        : CountArrayWrappedChangesFields((JsonArray)only.Value);
+                    if (nestedMatched > 0)
+                    {
+                        unwrapped = only.Value.DeepClone();
+                        return unwrapped != null;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static int CountArrayWrappedChangesFields(JsonArray arr)
+        {
+            var count = 0;
+            foreach (var item in arr)
+            {
+                if (item is JsonObject obj)
+                    count += MergeChangesObject(new JsonObject(), obj);
+            }
+
+            return count;
         }
 
         private static JsonObject CreateEmptyChangesObject()
@@ -147,22 +208,359 @@ namespace TM.Services.Modules.ProjectData.Implementations
             return null;
         }
 
+        private static readonly string[] ChangesWrapperPropertyNames =
+        {
+            "changes",
+            "CHANGES",
+            "chapter_changes",
+            "chapterChanges",
+            "ChapterChanges",
+            "changesJson",
+            "修订记录"
+        };
+
         private static JsonNode? NormalizeChangesField(string field, JsonNode? value)
         {
             if (field == nameof(ChapterChanges.TimeProgression))
             {
                 if (value is JsonArray arr && arr.Count == 0)
                     return null;
+                if (value is JsonValue timeValue && timeValue.TryGetValue<string>(out var timeText))
+                    return new JsonObject
+                    {
+                        [nameof(TimeProgressionChange.KeyTimeEvent)] = timeText,
+                        [nameof(TimeProgressionChange.Importance)] = "normal"
+                    };
                 return value?.DeepClone();
             }
 
             if (value is null)
                 return new JsonArray();
 
-            if (value is JsonArray)
-                return value.DeepClone();
+            if (value is JsonArray arrValue)
+                return NormalizeChangesArrayField(field, arrValue);
 
-            return new JsonArray(value.DeepClone());
+            return NormalizeChangesArrayField(field, new JsonArray(value.DeepClone()));
+        }
+
+        private static JsonArray NormalizeChangesArrayField(string field, JsonArray source)
+        {
+            var normalized = new JsonArray();
+            foreach (var item in source)
+            {
+                foreach (var mapped in NormalizeChangesArrayItem(field, item))
+                    normalized.Add(mapped);
+            }
+
+            return normalized;
+        }
+
+        private static IEnumerable<JsonNode?> NormalizeChangesArrayItem(string field, JsonNode? item)
+        {
+            if (item == null)
+                yield break;
+
+            if (item is JsonValue value && value.TryGetValue<string>(out var text))
+            {
+                yield return BuildObjectFromText(field, text);
+                yield break;
+            }
+
+            if (item is not JsonObject obj)
+            {
+                yield return item.DeepClone();
+                yield break;
+            }
+
+            if (field == nameof(ChapterChanges.ItemTransfers) &&
+                TryExpandItemTransfer(obj, out var transfers))
+            {
+                foreach (var transfer in transfers)
+                    yield return transfer;
+                yield break;
+            }
+
+            yield return field switch
+            {
+                nameof(ChapterChanges.CharacterStateChanges) => NormalizeCharacterStateChange(obj),
+                nameof(ChapterChanges.ConflictProgress) => NormalizeConflictProgressChange(obj),
+                nameof(ChapterChanges.NewPlotPoints) => NormalizePlotPointChange(obj),
+                nameof(ChapterChanges.ForeshadowingActions) => NormalizeForeshadowingAction(obj),
+                nameof(ChapterChanges.LocationStateChanges) => NormalizeLocationStateChange(obj),
+                nameof(ChapterChanges.FactionStateChanges) => NormalizeFactionStateChange(obj),
+                nameof(ChapterChanges.CharacterMovements) => NormalizeCharacterMovementChange(obj),
+                nameof(ChapterChanges.SecretRevealChanges) => NormalizeSecretRevealChange(obj),
+                nameof(ChapterChanges.PledgeConstraintChanges) => NormalizeConstraintChange(obj, "pledge"),
+                nameof(ChapterChanges.DeadlineConstraintChanges) => NormalizeConstraintChange(obj, "countdown"),
+                _ => obj.DeepClone()
+            };
+        }
+
+        private static JsonObject BuildObjectFromText(string field, string text) =>
+            field switch
+            {
+                nameof(ChapterChanges.NewPlotPoints) => new JsonObject
+                {
+                    [nameof(PlotPointChange.Keywords)] = new JsonArray(text),
+                    [nameof(PlotPointChange.Context)] = text,
+                    [nameof(PlotPointChange.Importance)] = "normal",
+                    [nameof(PlotPointChange.Storyline)] = "main"
+                },
+                nameof(ChapterChanges.ForeshadowingActions) => new JsonObject
+                {
+                    [nameof(ForeshadowingAction.Action)] = text
+                },
+                nameof(ChapterChanges.ConflictProgress) => new JsonObject
+                {
+                    [nameof(ConflictProgressChange.Event)] = text,
+                    [nameof(ConflictProgressChange.NewStatus)] = text,
+                    [nameof(ConflictProgressChange.Importance)] = "normal"
+                },
+                nameof(ChapterChanges.LocationStateChanges) => new JsonObject
+                {
+                    [nameof(LocationStateChange.Event)] = text,
+                    [nameof(LocationStateChange.NewStatus)] = text,
+                    [nameof(LocationStateChange.Importance)] = "normal"
+                },
+                nameof(ChapterChanges.CharacterMovements) => new JsonObject
+                {
+                    [nameof(CharacterMovementChange.ToLocationName)] = text,
+                    [nameof(CharacterMovementChange.Importance)] = "normal"
+                },
+                nameof(ChapterChanges.SecretRevealChanges) => new JsonObject
+                {
+                    [nameof(SecretRevealChange.KeyEvent)] = text,
+                    [nameof(SecretRevealChange.Importance)] = "normal"
+                },
+                _ => new JsonObject
+                {
+                    ["KeyEvent"] = text,
+                    ["Importance"] = "normal"
+                }
+            };
+
+        private static JsonObject NormalizeCharacterStateChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyLikelyShortIdString(target, source, nameof(CharacterStateChange.CharacterId), "characterId", "characterID", "character", "角色ID");
+            CopyJoinedString(target, source, nameof(CharacterStateChange.KeyEvent), "changes", "change", "event", "progress", "变化");
+            CopyFirstString(target, source, nameof(CharacterStateChange.NewMentalState), "mentalState", "state", "状态");
+            RemoveProperties(target, "character", "characterName", "name", "角色", "changes", "change", "progress", "变化");
+            EnsureString(target, nameof(CharacterStateChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizeConflictProgressChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyLikelyShortIdString(target, source, nameof(ConflictProgressChange.ConflictId), "conflictId", "conflictID", "冲突ID");
+            CopyJoinedString(target, source, nameof(ConflictProgressChange.Event), "progress", "event", "changes", "推进");
+            CopyFirstString(target, source, nameof(ConflictProgressChange.NewStatus), "status", "newStatus", "progress", "状态");
+            RemoveProperties(target, "conflict", "conflictName", "name", "冲突", "progress", "changes", "推进");
+            EnsureString(target, nameof(ConflictProgressChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizePlotPointChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyJoinedString(target, source, nameof(PlotPointChange.Context), "context", "details", "detail", "point", "event", "剧情");
+            RemoveProperties(target, "details", "detail", "point", "剧情");
+            if (!HasProperty(target, nameof(PlotPointChange.Keywords)))
+            {
+                var context = ReadFirstString(source, "context", "details", "detail", "point", "event", "剧情");
+                if (!string.IsNullOrWhiteSpace(context))
+                    target[nameof(PlotPointChange.Keywords)] = new JsonArray(context);
+            }
+            EnsureArray(target, nameof(PlotPointChange.InvolvedCharacters));
+            EnsureString(target, nameof(PlotPointChange.Importance), "normal");
+            EnsureString(target, nameof(PlotPointChange.Storyline), "main");
+            return target;
+        }
+
+        private static JsonObject NormalizeForeshadowingAction(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyJoinedString(target, source, nameof(ForeshadowingAction.Action), "action", "event", "text", "伏笔", "foreshadowing");
+            RemoveProperties(target, "text", "伏笔", "foreshadowing");
+            return target;
+        }
+
+        private static JsonObject NormalizeLocationStateChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyFirstString(target, source, nameof(LocationStateChange.LocationName), "location", "locationName", "name", "地点");
+            CopyJoinedString(target, source, nameof(LocationStateChange.Event), "changes", "change", "event", "变化");
+            CopyFirstString(target, source, nameof(LocationStateChange.NewStatus), "status", "newStatus", "changes", "状态");
+            RemoveProperties(target, "location", "name", "地点", "changes", "change", "变化");
+            EnsureString(target, nameof(LocationStateChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizeFactionStateChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyLikelyShortIdString(target, source, nameof(FactionStateChange.FactionId), "factionId", "factionID", "势力ID");
+            CopyJoinedString(target, source, nameof(FactionStateChange.Event), "changes", "change", "event", "变化");
+            CopyFirstString(target, source, nameof(FactionStateChange.NewStatus), "status", "newStatus", "changes", "状态");
+            RemoveProperties(target, "faction", "factionName", "name", "势力", "changes", "change", "变化");
+            EnsureString(target, nameof(FactionStateChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizeCharacterMovementChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyLikelyShortIdString(target, source, nameof(CharacterMovementChange.CharacterId), "characterId", "characterID", "character", "角色ID");
+            CopyLikelyShortIdString(target, source, nameof(CharacterMovementChange.FromLocation), "fromLocationId", "fromLocationID", "fromLocation", "来源地点ID");
+            CopyLikelyShortIdString(target, source, nameof(CharacterMovementChange.ToLocation), "toLocationId", "toLocationID", "toLocation", "目标地点ID");
+            CopyJoinedString(target, source, nameof(CharacterMovementChange.ToLocationName), "movements", "movement", "to", "destination", "去向");
+            RemoveProperties(target, "character", "characterName", "name", "角色", "movements", "movement", "to", "destination", "去向");
+            EnsureString(target, nameof(CharacterMovementChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizeSecretRevealChange(JsonObject source)
+        {
+            var target = CloneObject(source);
+            CopyFirstString(target, source, nameof(SecretRevealChange.SecretName), "secret", "secretName", "name", "秘密");
+            CopyJoinedString(target, source, nameof(SecretRevealChange.KeyEvent), "details", "detail", "event", "reveal", "揭示");
+            CopyFirstString(target, source, nameof(SecretRevealChange.Method), "method", "revealLevel", "方式");
+            RemoveProperties(target, "secret", "name", "秘密", "details", "detail", "reveal", "揭示", "revealLevel");
+            EnsureArray(target, nameof(SecretRevealChange.NewKnowerIds));
+            EnsureString(target, nameof(SecretRevealChange.Importance), "normal");
+            return target;
+        }
+
+        private static JsonObject NormalizeConstraintChange(JsonObject source, string type)
+        {
+            var target = CloneObject(source);
+            EnsureString(target, "Type", type);
+            EnsureString(target, "Importance", "normal");
+            return target;
+        }
+
+        private static bool TryExpandItemTransfer(JsonObject source, out List<JsonObject> transfers)
+        {
+            transfers = new List<JsonObject>();
+            var character = ReadFirstString(source, "character", "characterName", "name", "角色");
+            var gains = ReadStringArray(source, "gains", "gain", "获得", "items");
+            var losses = ReadStringArray(source, "losses", "loss", "失去");
+
+            foreach (var gain in gains)
+            {
+                var transfer = new JsonObject
+                {
+                    [nameof(ItemTransferChange.ItemName)] = gain,
+                    [nameof(ItemTransferChange.NewStatus)] = "active",
+                    [nameof(ItemTransferChange.Event)] = gain,
+                    [nameof(ItemTransferChange.Importance)] = "normal"
+                };
+                if (ShortIdGenerator.IsLikelyId(character))
+                    transfer[nameof(ItemTransferChange.ToHolder)] = character;
+                transfers.Add(transfer);
+            }
+
+            foreach (var loss in losses)
+            {
+                var transfer = new JsonObject
+                {
+                    [nameof(ItemTransferChange.ItemName)] = loss,
+                    [nameof(ItemTransferChange.NewStatus)] = "lost",
+                    [nameof(ItemTransferChange.Event)] = loss,
+                    [nameof(ItemTransferChange.Importance)] = "normal"
+                };
+                if (ShortIdGenerator.IsLikelyId(character))
+                    transfer[nameof(ItemTransferChange.FromHolder)] = character;
+                transfers.Add(transfer);
+            }
+
+            return transfers.Count > 0;
+        }
+
+        private static JsonObject CloneObject(JsonObject source)
+        {
+            return (JsonObject)source.DeepClone();
+        }
+
+        private static bool HasProperty(JsonObject obj, string name) =>
+            FindProperty(obj, name) != null;
+
+        private static void RemoveProperties(JsonObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var prop = FindProperty(obj, name);
+                if (prop != null)
+                    obj.Remove(prop.Value.Key);
+            }
+        }
+
+        private static void EnsureString(JsonObject obj, string name, string value)
+        {
+            if (!HasProperty(obj, name))
+                obj[name] = value;
+        }
+
+        private static void EnsureArray(JsonObject obj, string name)
+        {
+            if (!HasProperty(obj, name))
+                obj[name] = new JsonArray();
+        }
+
+        private static void CopyFirstString(JsonObject target, JsonObject source, string targetName, params string[] sourceNames)
+        {
+            if (HasProperty(target, targetName))
+                return;
+            var value = ReadFirstString(source, sourceNames);
+            if (!string.IsNullOrWhiteSpace(value))
+                target[targetName] = value;
+        }
+
+        private static void CopyLikelyShortIdString(JsonObject target, JsonObject source, string targetName, params string[] sourceNames)
+        {
+            if (HasProperty(target, targetName))
+                return;
+            var value = ReadFirstString(source, sourceNames);
+            if (ShortIdGenerator.IsLikelyId(value))
+                target[targetName] = value;
+        }
+
+        private static void CopyJoinedString(JsonObject target, JsonObject source, string targetName, params string[] sourceNames)
+        {
+            if (HasProperty(target, targetName))
+                return;
+            var values = ReadStringArray(source, sourceNames);
+            if (values.Count > 0)
+                target[targetName] = string.Join("；", values);
+        }
+
+        private static string ReadFirstString(JsonObject source, params string[] sourceNames) =>
+            ReadStringArray(source, sourceNames).FirstOrDefault() ?? string.Empty;
+
+        private static List<string> ReadStringArray(JsonObject source, params string[] sourceNames)
+        {
+            foreach (var name in sourceNames)
+            {
+                var prop = FindProperty(source, name);
+                if (prop?.Value == null)
+                    continue;
+
+                if (prop.Value.Value is JsonValue value && value.TryGetValue<string>(out var text))
+                    return string.IsNullOrWhiteSpace(text) ? new List<string>() : new List<string> { text.Trim() };
+
+                if (prop.Value.Value is JsonArray array)
+                {
+                    var values = array
+                        .Select(item => item is JsonValue v && v.TryGetValue<string>(out var text) ? text.Trim() : string.Empty)
+                        .Where(text => !string.IsNullOrWhiteSpace(text))
+                        .ToList();
+                    if (values.Count > 0)
+                        return values;
+                }
+            }
+
+            return new List<string>();
         }
 
         private static readonly JsonSerializerOptions ChangesJsonWriteOptions = new()
@@ -688,8 +1086,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 var required = meta?.Required == true;
                 if (string.IsNullOrWhiteSpace(value))
                 {
-                    if (required)
-                        result.AddError($"CHANGES协议违规：{field} 必须为 ShortId（格式：13字符、大写字母开头），收到空值或缺失");
                     return;
                 }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Design.Characters;
 using TM.Services.Modules.ProjectData.Models.Design.Worldview;
@@ -20,14 +21,14 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new OutlineGuide { Module = "OutlineGuide" };
 
-            var volumesTask = LoadAllAsync<Models.Generate.StrategicOutline.OutlineData>("Generate/GlobalSettings/Outline");
-            var charactersTask = LoadAllAsync<CharacterRulesData>("Design/Elements/CharacterRules");
-            var factionRulesTask = LoadAllAsync<Models.Design.Factions.FactionRulesData>("Design/Elements/FactionRules");
-            var locationRulesTask = LoadAllAsync<LocationRulesData>("Design/Elements/LocationRules");
-            var plotRulesTask = LoadAllAsync<PlotRulesData>("Design/Elements/PlotRules");
-            var templatesTask = LoadAllAsync<CreativeMaterialData>("Design/Templates/CreativeMaterials");
-            var worldRulesTask = LoadAllAsync<WorldRulesData>("Design/GlobalSettings/WorldRules");
-            var volumeDesignsTask = LoadAllAsync<VolumeDesignData>("Generate/Elements/VolumeDesign");
+            var volumesTask = LoadAllAsync<Models.Generate.StrategicOutline.OutlineData>(GuideRuntimeDataKeys.Outlines);
+            var charactersTask = LoadAllAsync<CharacterRulesData>(GuideRuntimeDataKeys.Characters);
+            var factionRulesTask = LoadAllAsync<Models.Design.Factions.FactionRulesData>(GuideRuntimeDataKeys.Factions);
+            var locationRulesTask = LoadAllAsync<LocationRulesData>(GuideRuntimeDataKeys.Locations);
+            var plotRulesTask = LoadAllAsync<PlotRulesData>(GuideRuntimeDataKeys.PlotRules);
+            var templatesTask = LoadAllAsync<CreativeMaterialData>(GuideRuntimeDataKeys.Templates);
+            var worldRulesTask = LoadAllAsync<WorldRulesData>(GuideRuntimeDataKeys.WorldRules);
+            var volumeDesignsTask = LoadAllAsync<VolumeDesignData>(GuideRuntimeDataKeys.VolumeDesigns);
             await Task.WhenAll(volumesTask, charactersTask, factionRulesTask, locationRulesTask, plotRulesTask, templatesTask, worldRulesTask, volumeDesignsTask).ConfigureAwait(false);
 
             var volumes = await volumesTask.ConfigureAwait(false);
@@ -129,7 +130,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new PlanningGuide { Module = "PlanningGuide" };
 
-            var chapters = await LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>("Generate/Elements/Chapter").ConfigureAwait(false);
+            var chapters = await LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>(GuideRuntimeDataKeys.ChapterPlans).ConfigureAwait(false);
 
             EnsureRequiredIds(chapters, c => c.Id, "章节规划", c => c.Name);
             EnsureRequiredCategoryIds(chapters, c => c.Category, c => c.CategoryId, "章节规划", c => c.Name);
@@ -196,12 +197,12 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             var packageWarnings = new List<PackageWarning>();
 
-            var blueprintsTask = LoadAllAsync<Models.Generate.ChapterBlueprint.BlueprintData>("Generate/Elements/Blueprint");
-            var chapterPlansTask = LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>("Generate/Elements/Chapter");
-            var charactersTask = LoadAllAsync<CharacterRulesData>("Design/Elements/CharacterRules");
-            var locationRulesTask = LoadAllAsync<LocationRulesData>("Design/Elements/LocationRules");
-            var factionRulesTask = LoadAllAsync<Models.Design.Factions.FactionRulesData>("Design/Elements/FactionRules");
-            var plotRulesTask = LoadAllAsync<PlotRulesData>("Design/Elements/PlotRules");
+            var blueprintsTask = LoadAllAsync<Models.Generate.ChapterBlueprint.BlueprintData>(GuideRuntimeDataKeys.Blueprints);
+            var chapterPlansTask = LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>(GuideRuntimeDataKeys.ChapterPlans);
+            var charactersTask = LoadAllAsync<CharacterRulesData>(GuideRuntimeDataKeys.Characters);
+            var locationRulesTask = LoadAllAsync<LocationRulesData>(GuideRuntimeDataKeys.Locations);
+            var factionRulesTask = LoadAllAsync<Models.Design.Factions.FactionRulesData>(GuideRuntimeDataKeys.Factions);
+            var plotRulesTask = LoadAllAsync<PlotRulesData>(GuideRuntimeDataKeys.PlotRules);
             await Task.WhenAll(blueprintsTask, chapterPlansTask, charactersTask, locationRulesTask, factionRulesTask, plotRulesTask).ConfigureAwait(false);
 
             var blueprints = await blueprintsTask.ConfigureAwait(false);
@@ -495,9 +496,9 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new ContentGuide { Module = "ContentGuide" };
 
-            var plotRulesTask = LoadAllAsync<PlotRulesData>("Design/Elements/PlotRules");
-            var charactersTask = LoadAllAsync<CharacterRulesData>("Design/Elements/CharacterRules");
-            var chaptersTask = LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>("Generate/Elements/Chapter");
+            var plotRulesTask = LoadAllAsync<PlotRulesData>(GuideRuntimeDataKeys.PlotRules);
+            var charactersTask = LoadAllAsync<CharacterRulesData>(GuideRuntimeDataKeys.Characters);
+            var chaptersTask = LoadAllAsync<Models.Generate.ChapterPlanning.ChapterData>(GuideRuntimeDataKeys.ChapterPlans);
             await Task.WhenAll(plotRulesTask, charactersTask, chaptersTask).ConfigureAwait(false);
             var plotRules = await plotRulesTask.ConfigureAwait(false);
             var characters = await charactersTask.ConfigureAwait(false);

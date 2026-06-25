@@ -22,6 +22,14 @@ public interface IKnowledgeService
     /// </summary>
     Task<List<KnowledgeResponse>> ListKnowledgeAsync(string projectId, CancellationToken ct = default);
 
+    Task<List<KnowledgeDirectoryResponse>> ListKnowledgeDirectoriesAsync(CancellationToken ct = default);
+
+    Task<KnowledgeDirectoryResponse> CreateKnowledgeDirectoryAsync(CreateKnowledgeDirectoryRequest request, CancellationToken ct = default);
+
+    Task<KnowledgeDirectoryResponse> UpdateKnowledgeDirectoryAsync(string key, UpdateKnowledgeDirectoryRequest request, CancellationToken ct = default);
+
+    Task DeleteKnowledgeDirectoryAsync(string key, CancellationToken ct = default);
+
     /// <summary>
     /// Gets a knowledge entry by ID.
     /// </summary>
@@ -50,5 +58,6 @@ public interface IKnowledgeService
         string projectId,
         string? sessionId = null,
         string? runId = null,
+        string? idempotencyKey = null,
         CancellationToken ct = default);
 }

@@ -1,5 +1,6 @@
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
+using System.Globalization;
 
 namespace TM.Web.NovelAgentWeb.Services.VectorStore;
 
@@ -12,6 +13,16 @@ public class QdrantVectorStore : IVectorStore
     private readonly ILogger<QdrantVectorStore> _logger;
     private readonly int _vectorDimension;
     private readonly int _batchSize;
+    private static readonly HashSet<string> CorePayloadKeys = new(StringComparer.Ordinal)
+    {
+        "user_id",
+        "project_id",
+        "source_type",
+        "source_id",
+        "chapter_id",
+        "chunk_index",
+        "content"
+    };
 
     public QdrantVectorStore(
         QdrantClient client,
@@ -71,21 +82,22 @@ public class QdrantVectorStore : IVectorStore
                 if (v.Vector.Length != _vectorDimension)
                     throw new ArgumentException($"Vector {v.Id} dim {v.Vector.Length} != {_vectorDimension}");
 
-                return new PointStruct
+                var point = new PointStruct
                 {
                     Id = new PointId { Uuid = v.Id },
-                    Vectors = CreateUnnamedVector(v.Vector),
-                    Payload =
-                    {
-                        ["user_id"] = v.UserId,
-                        ["project_id"] = v.ProjectId,
-                        ["source_type"] = v.SourceType,
-                        ["source_id"] = v.SourceId,
-                        ["chapter_id"] = v.ChapterId ?? "",
-                        ["chunk_index"] = v.ChunkIndex ?? 0,
-                        ["content"] = v.Content ?? "",
-                    }
+                    Vectors = CreateUnnamedVector(v.Vector)
                 };
+
+                AddMetadataPayload(point.Payload, v.Metadata);
+                point.Payload["user_id"] = v.UserId;
+                point.Payload["project_id"] = v.ProjectId;
+                point.Payload["source_type"] = v.SourceType;
+                point.Payload["source_id"] = v.SourceId;
+                point.Payload["chapter_id"] = v.ChapterId ?? "";
+                point.Payload["chunk_index"] = v.ChunkIndex ?? 0;
+                point.Payload["content"] = v.Content ?? "";
+
+                return point;
             }).ToList();
 
             await _client.UpsertAsync(collectionName, points, cancellationToken: ct);
@@ -111,16 +123,9 @@ public class QdrantVectorStore : IVectorStore
             throw new ArgumentException($"Query dim {queryVector.Length} != {_vectorDimension}");
 
         var collectionName = GetCollectionName(userId);
-        var conditions = new List<Condition>
-        {
-            new() { Field = new FieldCondition { Key = "user_id", Match = new Match { Keyword = userId } } }
-        };
-
-        if (filters != null)
-        {
-            foreach (var f in filters)
-                conditions.Add(CreateFilterCondition(f.Key, f.Value));
-        }
+        var conditions = BuildScopedFilterValues(userId, filters)
+            .Select(f => CreateFilterCondition(f.Key, f.Value))
+            .ToList();
 
         var results = await _client.SearchAsync(
             collectionName: collectionName,
@@ -141,6 +146,7 @@ public class QdrantVectorStore : IVectorStore
             ChapterId = GetPayloadString(r.Payload, "chapter_id"),
             ChunkIndex = GetPayloadInt(r.Payload, "chunk_index"),
             Content = GetPayloadString(r.Payload, "content"),
+            Metadata = GetPayloadMetadata(r.Payload),
         }).ToList();
     }
 
@@ -172,8 +178,33 @@ public class QdrantVectorStore : IVectorStore
         var collectionName = GetCollectionName(userId);
         if (!await UserCollectionExistsAsync(userId, ct)) return;
 
-        var conditions = filters.Select(f => CreateFilterCondition(f.Key, f.Value)).ToList();
+        var conditions = BuildScopedFilterValues(userId, filters)
+            .Select(f => CreateFilterCondition(f.Key, f.Value))
+            .ToList();
         await _client.DeleteAsync(collectionName, new Filter { Must = { conditions } }, cancellationToken: ct);
+    }
+
+    internal static IReadOnlyList<KeyValuePair<string, object>> BuildScopedFilterValues(
+        string userId,
+        Dictionary<string, object>? filters)
+    {
+        var values = new List<KeyValuePair<string, object>>
+        {
+            new("user_id", userId)
+        };
+
+        if (filters == null)
+            return values;
+
+        foreach (var (key, value) in filters)
+        {
+            if (string.Equals(key, "user_id", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            values.Add(new KeyValuePair<string, object>(key, value));
+        }
+
+        return values;
     }
 
     private static Condition CreateFilterCondition(string key, object value) => value switch
@@ -189,4 +220,62 @@ public class QdrantVectorStore : IVectorStore
 
     private static int? GetPayloadInt(Google.Protobuf.Collections.MapField<string, Value> payload, string key)
         => payload.TryGetValue(key, out var v) ? (int)v.IntegerValue : null;
+
+    private static void AddMetadataPayload(
+        Google.Protobuf.Collections.MapField<string, Value> payload,
+        Dictionary<string, object>? metadata)
+    {
+        if (metadata == null || metadata.Count == 0)
+            return;
+
+        foreach (var (key, value) in metadata)
+        {
+            if (string.IsNullOrWhiteSpace(key) || CorePayloadKeys.Contains(key) || value == null)
+                continue;
+
+            payload[key] = ToPayloadValue(value);
+        }
+    }
+
+    private static Dictionary<string, object>? GetPayloadMetadata(
+        Google.Protobuf.Collections.MapField<string, Value> payload)
+    {
+        var metadata = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var (key, value) in payload)
+        {
+            if (CorePayloadKeys.Contains(key))
+                continue;
+
+            var converted = FromPayloadValue(value);
+            if (converted != null)
+                metadata[key] = converted;
+        }
+
+        return metadata.Count == 0 ? null : metadata;
+    }
+
+    private static Value ToPayloadValue(object value) => value switch
+    {
+        string s => new Value { StringValue = s },
+        bool b => new Value { BoolValue = b },
+        int i => new Value { IntegerValue = i },
+        long l => new Value { IntegerValue = l },
+        short s => new Value { IntegerValue = s },
+        byte b => new Value { IntegerValue = b },
+        float f => new Value { DoubleValue = f },
+        double d => new Value { DoubleValue = d },
+        decimal m => new Value { DoubleValue = (double)m },
+        DateTime dt => new Value { StringValue = dt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) },
+        DateTimeOffset dto => new Value { StringValue = dto.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) },
+        _ => new Value { StringValue = value.ToString() ?? string.Empty }
+    };
+
+    private static object? FromPayloadValue(Value value) => value.KindCase switch
+    {
+        Value.KindOneofCase.StringValue => value.StringValue,
+        Value.KindOneofCase.IntegerValue => value.IntegerValue,
+        Value.KindOneofCase.DoubleValue => value.DoubleValue,
+        Value.KindOneofCase.BoolValue => value.BoolValue,
+        _ => null
+    };
 }

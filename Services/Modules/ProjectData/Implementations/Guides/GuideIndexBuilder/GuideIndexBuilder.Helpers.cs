@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Design.Characters;
@@ -165,86 +163,21 @@ namespace TM.Services.Modules.ProjectData.Implementations
             return reverseIndex;
         }
 
-        private async Task<List<T>> LoadAllAsync<T>(string relativePath)
+        private async Task<List<T>> LoadAllAsync<T>(string dataKey)
         {
-            var cacheKey = $"{typeof(T).FullName}|{relativePath}";
+            var cacheKey = $"{typeof(T).FullName}|{dataKey}";
             if (_loadCache.TryGetValue(cacheKey, out var cached))
                 return (List<T>)cached;
 
-            var modulePath = GetModulePathFromRelativePath(relativePath);
-            if (!string.IsNullOrEmpty(modulePath) && _isModuleEnabled != null && !_isModuleEnabled(modulePath))
-            {
-                var empty = new List<T>();
-                _loadCache[cacheKey] = empty;
-                return empty;
-            }
-
-            var basePath = Path.Combine(StoragePathHelper.GetStorageRoot(), "Modules", relativePath);
-            var items = new List<T>();
-
-            if (!Directory.Exists(basePath))
-            {
-                _loadCache[cacheKey] = items;
-                return items;
-            }
-
-            foreach (var file in Directory.GetFiles(basePath, "*.json", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    var _fn = Path.GetFileName(file);
-                    if (string.Equals(_fn, "categories.json", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(_fn, "built_in_categories.json", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    var json = await File.ReadAllTextAsync(file).ConfigureAwait(false);
-
-                    using var doc = JsonDocument.Parse(json);
-                    if (doc.RootElement.ValueKind != JsonValueKind.Array)
-                    {
-                        continue;
-                    }
-
-                    var list = JsonSerializer.Deserialize<List<T>>(json, JsonOptions);
-                    if (list != null)
-                    {
-                        var filtered = new List<T>();
-                        foreach (var item in list)
-                        {
-                            if (item == null)
-                                continue;
-
-                            if (item is TM.Framework.Common.Models.IEnableable enableable && !enableable.IsEnabled)
-                                continue;
-
-                            filtered.Add(item);
-                        }
-
-                        items.AddRange(filtered);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    TM.App.Log($"[GuideIndexBuilder] 读取文件失败 [{file}]: {ex.Message}");
-                }
-            }
+            var items = _runtimeDataSource == null
+                ? new List<T>()
+                : (await _runtimeDataSource.LoadItemsAsync<T>(dataKey).ConfigureAwait(false))
+                    .Where(item => item != null)
+                    .Where(item => item is not TM.Framework.Common.Models.IEnableable enableable || enableable.IsEnabled)
+                    .ToList();
 
             _loadCache[cacheKey] = items;
             return items;
-        }
-
-        private static string GetModulePathFromRelativePath(string relativePath)
-        {
-            if (string.IsNullOrEmpty(relativePath))
-                return string.Empty;
-
-            var parts = relativePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2)
-                return string.Empty;
-
-            return $"{parts[0]}/{parts[1]}";
         }
 
         #endregion

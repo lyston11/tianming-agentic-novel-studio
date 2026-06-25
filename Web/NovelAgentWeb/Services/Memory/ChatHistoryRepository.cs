@@ -73,6 +73,65 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
         }
     }
 
+    public async Task<bool> ReplaceLastAssistantTurnAsync(
+        string userId,
+        string? projectId,
+        string sessionId,
+        string expectedContent,
+        string replacementContent,
+        CancellationToken ct = default)
+    {
+        var normalizedProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId;
+        var expected = expectedContent.Trim();
+        var replacement = replacementContent.Trim();
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(replacement))
+            return false;
+
+        var sessionLock = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await sessionLock.WaitAsync(ct);
+        try
+        {
+            var turn = await _context.AgentChatTurns
+                .Where(t =>
+                    t.UserId == userId &&
+                    t.SessionId == sessionId &&
+                    t.Role == "assistant" &&
+                    (t.ProjectId == normalizedProjectId ||
+                     (normalizedProjectId != null && t.ProjectId == null)))
+                .OrderByDescending(t => t.TurnIndex)
+                .FirstOrDefaultAsync(ct)
+                .ConfigureAwait(false);
+            if (turn == null || !string.Equals(turn.Content, expected, StringComparison.Ordinal))
+                return false;
+
+            turn.Content = replacement;
+            turn.TokenCount = EstimateTokenCount(replacement);
+
+            var affectedUserTurn = Math.Max(1, turn.TurnIndex / 2);
+            var staleSummaries = await _context.AgentChatSummaries
+                .Where(s =>
+                    s.UserId == userId &&
+                    s.SessionId == sessionId &&
+                    (s.ProjectId == normalizedProjectId ||
+                     (normalizedProjectId != null && s.ProjectId == null)) &&
+                    s.EndTurn >= affectedUserTurn)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            if (staleSummaries.Count > 0)
+                _context.AgentChatSummaries.RemoveRange(staleSummaries);
+
+            await _context.SaveChangesAsync(ct).ConfigureAwait(false);
+            await WriteHotWindowAsync(userId, normalizedProjectId, sessionId, ct).ConfigureAwait(false);
+            await InvalidateSummaryCacheAsync(userId, normalizedProjectId, sessionId, ct).ConfigureAwait(false);
+            await BumpChatVersionAsync(userId, normalizedProjectId, sessionId, ct).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            sessionLock.Release();
+        }
+    }
+
     public async Task SaveSummaryAsync(
         string userId,
         string? projectId,
@@ -379,7 +438,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
             .OrderByDescending(t => t.TurnIndex)
             .Take(HotWindowSize)
             .OrderBy(t => t.TurnIndex)
-            .Select(t => new ChatHistoryTurnDto(t.Role, t.Content, t.CreatedAt))
+            .Select(t => new ChatHistoryTurnDto(t.Role, t.Content, t.CreatedAt, t.Id, t.TurnIndex))
             .ToListAsync(ct);
 
         return turns;

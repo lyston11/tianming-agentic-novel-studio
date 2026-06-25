@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
 namespace TM.Services.Modules.ProjectData.Implementations
@@ -26,7 +27,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 var charSet = new HashSet<string>(characterIds ?? new List<string>());
                 var otherSet = new HashSet<string>(otherEntityIds ?? new List<string>());
 
-                var candidates = await ServiceLocator.Get<PlotPointsIndexService>().SearchRecentAsync(
+                var recallService = ServiceLocator.TryGet<IPlotPointRecallService>();
+                if (recallService == null)
+                    return result;
+
+                var candidates = await recallService.SearchRecentAsync(
                     currentChapterId, charSet, otherSet, lookbackVolumes: 0).ConfigureAwait(false);
 
                 if (candidates.Count == 0)

@@ -1,38 +1,42 @@
 using Microsoft.EntityFrameworkCore;
-using TM.Services.Framework.AI.Embedding;
+using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.Chapters;
 using TM.Web.NovelAgentWeb.Services.Content;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Chapters;
 
 /// <summary>
-/// Implementation of chapter CRUD operations with synchronization across
-/// SQLite content documents and Qdrant vectors.
+/// Implementation of chapter CRUD operations backed by database truth records
+/// and asynchronous production outbox indexing.
 /// </summary>
 public class ChapterService : IChapterService
 {
     private readonly NovelAgentDbContext _context;
-    private readonly IVectorStore _vectorStore;
-    private readonly IMicroEmbeddingService _embeddingService;
     private readonly ILogger<ChapterService> _logger;
     private readonly IContentDocumentService _contentDocuments;
-    private const int ChunkSize = 500; // Characters per chunk for embedding
+    private readonly IProductionTruthStore _truthStore;
+    private readonly IProductionWorkflowBridge _productionWorkflowBridge;
+    private readonly IProductionChainProjectionService _productionChainProjection;
 
     public ChapterService(
         NovelAgentDbContext context,
-        IVectorStore vectorStore,
-        IMicroEmbeddingService embeddingService,
         ILogger<ChapterService> logger,
-        IContentDocumentService contentDocuments)
+        IContentDocumentService contentDocuments,
+        IProductionTruthStore truthStore,
+        IProductionWorkflowBridge productionWorkflowBridge,
+        IProductionChainProjectionService productionChainProjection)
     {
         _context = context;
-        _vectorStore = vectorStore;
-        _embeddingService = embeddingService;
         _logger = logger;
         _contentDocuments = contentDocuments;
+        _truthStore = truthStore;
+        _productionWorkflowBridge = productionWorkflowBridge;
+        _productionChainProjection = productionChainProjection;
     }
 
     public async Task<ChapterResponse> CreateChapterAsync(
@@ -55,6 +59,8 @@ public class ChapterService : IChapterService
             throw new UnauthorizedAccessException("You do not have permission to create chapters in this project");
         }
 
+        var idempotencyKey = EmptyToNull(request.IdempotencyKey);
+
         // Verify volume ownership if provided
         if (!string.IsNullOrEmpty(request.VolumeId))
         {
@@ -65,6 +71,17 @@ public class ChapterService : IChapterService
             {
                 throw new KeyNotFoundException($"Volume with ID {request.VolumeId} not found in project {request.ProjectId}");
             }
+        }
+
+        if (idempotencyKey != null)
+        {
+            var existing = await FindChapterByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return await MapChapterWithContentAsync(userId, existing, cancellationToken).ConfigureAwait(false);
         }
 
         // Check for duplicate chapter number in project
@@ -91,6 +108,7 @@ public class ChapterService : IChapterService
                 ChapterNumber = request.ChapterNumber,
                 Status = request.Status,
                 WordCount = CountWords(request.Content),
+                IdempotencyKey = idempotencyKey,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -98,20 +116,33 @@ public class ChapterService : IChapterService
             _context.Chapters.Add(chapter);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 2. Persist content in SQLite content documents
-            await SaveChapterContentDocumentAsync(userId, chapter, request.Content, cancellationToken);
-
-            // 3. Generate and store embeddings in Qdrant
-            await GenerateAndStoreEmbeddingsAsync(chapter, request.Content, userId, cancellationToken);
+            // 2. Persist content in database truth records and queue async indexing
+            var document = await SaveChapterContentDocumentAsync(userId, chapter, request.Content, cancellationToken);
+            await CreateChapterVersionAndIndexOutboxAsync(userId, chapter, document, null, cancellationToken);
 
             // Commit transaction
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation("Created chapter {ChapterId} in project {ProjectId} with {VectorCount} vectors",
-                chapter.Id, request.ProjectId, GetChunkCount(request.Content));
+            _logger.LogInformation("Created chapter {ChapterId} in project {ProjectId} and queued indexing",
+                chapter.Id, request.ProjectId);
 
             // Return response with content
             return MapToResponse(chapter, request.Content);
+        }
+        catch (DbUpdateException ex) when (idempotencyKey != null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _context.ChangeTracker.Clear();
+            var existing = await FindChapterByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return await MapChapterWithContentAsync(userId, existing, cancellationToken).ConfigureAwait(false);
+
+            _logger.LogError(ex, "Failed to create chapter in project {ProjectId}", request.ProjectId);
+            throw;
         }
         catch (Exception ex)
         {
@@ -189,20 +220,11 @@ public class ChapterService : IChapterService
                 newContent = request.Content;
                 chapter.WordCount = CountWords(newContent);
 
-                await SaveChapterContentDocumentAsync(userId, chapter, newContent, cancellationToken);
+                var document = await SaveChapterContentDocumentAsync(userId, chapter, newContent, cancellationToken);
+                await CreateChapterVersionAndIndexOutboxAsync(userId, chapter, document, null, cancellationToken);
             }
 
             await _context.SaveChangesAsync(cancellationToken);
-
-            // Regenerate embeddings if content changed
-            if (contentChanged && newContent != null)
-            {
-                // Delete old vectors
-                await DeleteChapterVectorsAsync(userId, chapter.Id, chapter.ProjectId, cancellationToken);
-
-                // Generate and store new embeddings
-                await GenerateAndStoreEmbeddingsAsync(chapter, newContent, userId, cancellationToken);
-            }
 
             // Commit transaction
             await transaction.CommitAsync(cancellationToken);
@@ -246,7 +268,176 @@ public class ChapterService : IChapterService
 
         var content = await _contentDocuments.GetTextAsync(userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body", cancellationToken);
 
-        return MapToResponse(chapter, content);
+        var productionChains = await LoadChapterProductionChainsAsync(
+                chapter.ProjectId,
+                chapter.Id,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var productionEvidence = await LoadChapterProductionEvidenceAsync(
+                chapter.ProjectId,
+                chapter.Id,
+                productionChains,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapToResponse(chapter, content, productionChains, productionEvidence);
+    }
+
+    public async Task<List<ChapterVersionResponse>> GetChapterVersionsAsync(
+        string chapterId,
+        string userId,
+        bool isAdmin,
+        CancellationToken cancellationToken = default)
+    {
+        var chapter = await _context.Chapters
+            .Include(c => c.Project)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+        if (chapter == null)
+        {
+            throw new KeyNotFoundException($"Chapter with ID {chapterId} not found");
+        }
+
+        if (!isAdmin && chapter.Project.UserId != userId)
+        {
+            throw new UnauthorizedAccessException("You do not have permission to access this chapter");
+        }
+
+        var versions = await _context.ChapterVersions
+            .AsNoTracking()
+            .Where(version => version.ChapterId == chapterId)
+            .OrderByDescending(version => version.VersionNumber)
+            .ThenByDescending(version => version.CreatedAt)
+            .ToListAsync(cancellationToken);
+        if (versions.Count == 0)
+            return new List<ChapterVersionResponse>();
+
+        var packageIds = versions
+            .Select(version => version.PackageId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var packages = packageIds.Count == 0
+            ? new Dictionary<string, TianmingPackage>(StringComparer.OrdinalIgnoreCase)
+            : await _context.TianmingPackages
+                .AsNoTracking()
+                .Where(package => package.ProjectId == chapter.ProjectId && packageIds.Contains(package.Id))
+                .ToDictionaryAsync(package => package.Id, StringComparer.OrdinalIgnoreCase, cancellationToken);
+
+        var documentIds = versions
+            .Select(version => version.ContentDocumentId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var chunks = await _context.ContentChunks
+            .AsNoTracking()
+            .Where(chunk => documentIds.Contains(chunk.DocumentId))
+            .OrderBy(chunk => chunk.DocumentId)
+            .ThenBy(chunk => chunk.ChunkIndex)
+            .Select(chunk => new { chunk.DocumentId, chunk.ChunkText })
+            .ToListAsync(cancellationToken);
+        var contentByDocumentId = chunks
+            .GroupBy(chunk => chunk.DocumentId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => string.Join(string.Empty, group.Select(chunk => chunk.ChunkText)),
+                StringComparer.OrdinalIgnoreCase);
+
+        return versions.Select(version =>
+        {
+            packages.TryGetValue(version.PackageId ?? string.Empty, out var package);
+            contentByDocumentId.TryGetValue(version.ContentDocumentId, out var content);
+
+            return new ChapterVersionResponse
+            {
+                Id = version.Id,
+                ChapterId = version.ChapterId,
+                ContentDocumentId = version.ContentDocumentId,
+                VersionNumber = version.VersionNumber,
+                Title = version.Title,
+                WordCount = version.WordCount,
+                Status = version.Status,
+                RuntimeRunId = version.RuntimeRunId,
+                PackageId = version.PackageId,
+                KernelVersion = package?.KernelVersion,
+                PromptVersion = package?.PromptVersion,
+                GateReportJson = version.GateReportJson,
+                AgentReviewJson = version.AgentReviewJson,
+                RebuiltFromPackageIds = ParseTopLevelStringArray(package?.KnowledgeSnapshotJson, "rebuiltFromPackageIds"),
+                IsCurrent = string.Equals(chapter.CurrentDocumentId, version.ContentDocumentId, StringComparison.OrdinalIgnoreCase),
+                ContentPreview = TrimText(content ?? string.Empty, 320),
+                CreatedAt = version.CreatedAt
+            };
+        }).ToList();
+    }
+
+    public async Task<ChapterVersionCompareResponse> CompareChapterVersionsAsync(
+        string chapterId,
+        string leftVersionId,
+        string rightVersionId,
+        string userId,
+        bool isAdmin,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(leftVersionId) || string.IsNullOrWhiteSpace(rightVersionId))
+        {
+            throw new ArgumentException("Both leftVersionId and rightVersionId are required");
+        }
+
+        var versions = await GetChapterVersionsAsync(
+                chapterId,
+                userId,
+                isAdmin,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var left = versions.FirstOrDefault(version =>
+            string.Equals(version.Id, leftVersionId, StringComparison.OrdinalIgnoreCase));
+        var right = versions.FirstOrDefault(version =>
+            string.Equals(version.Id, rightVersionId, StringComparison.OrdinalIgnoreCase));
+        if (left == null)
+        {
+            throw new KeyNotFoundException($"Chapter version with ID {leftVersionId} not found");
+        }
+
+        if (right == null)
+        {
+            throw new KeyNotFoundException($"Chapter version with ID {rightVersionId} not found");
+        }
+
+        var contentByDocumentId = await LoadContentByDocumentIdAsync(
+                new[] { left.ContentDocumentId, right.ContentDocumentId },
+                cancellationToken)
+            .ConfigureAwait(false);
+        contentByDocumentId.TryGetValue(left.ContentDocumentId, out var leftContent);
+        contentByDocumentId.TryGetValue(right.ContentDocumentId, out var rightContent);
+        var blocks = BuildParagraphDiff(leftContent ?? string.Empty, rightContent ?? string.Empty);
+        var changedBlocks = blocks.Count(block => block.Kind != "unchanged");
+        var packageIds = new[] { left.PackageId, right.PackageId }
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var packages = packageIds.Count == 0
+            ? new Dictionary<string, TianmingPackage>(StringComparer.OrdinalIgnoreCase)
+            : await _context.TianmingPackages
+                .AsNoTracking()
+                .Where(package => packageIds.Contains(package.Id))
+                .ToDictionaryAsync(package => package.Id, StringComparer.OrdinalIgnoreCase, cancellationToken)
+                .ConfigureAwait(false);
+        packages.TryGetValue(left.PackageId ?? string.Empty, out var leftPackage);
+        packages.TryGetValue(right.PackageId ?? string.Empty, out var rightPackage);
+
+        return new ChapterVersionCompareResponse
+        {
+            ChapterId = chapterId,
+            Left = left,
+            Right = right,
+            WordCountDelta = right.WordCount - left.WordCount,
+            Summary = $"v{left.VersionNumber} -> v{right.VersionNumber}：{changedBlocks} 处段落差异，字数变化 {right.WordCount - left.WordCount}。",
+            DiffBlocks = blocks,
+            ProductionAlignment = BuildProductionAlignment(left, right, leftPackage, rightPackage)
+        };
     }
 
     public async Task DeleteChapterAsync(
@@ -282,8 +473,8 @@ public class ChapterService : IChapterService
             // 2. Delete content document
             await _contentDocuments.DeleteBySourceAsync(userId, chapter.ProjectId, "chapter", chapter.Id, "chapter_body", cancellationToken);
 
-            // 3. Delete vectors from Qdrant
-            await DeleteChapterVectorsAsync(userId, chapter.Id, chapter.ProjectId, cancellationToken);
+            // 3. Queue async vector cleanup
+            await EnqueueChapterVectorDeletionAsync(userId, chapter.ProjectId, chapter.Id, cancellationToken);
 
             // Commit transaction
             await transaction.CommitAsync(cancellationToken);
@@ -331,62 +522,7 @@ public class ChapterService : IChapterService
 
     // Private helper methods
 
-    private async Task GenerateAndStoreEmbeddingsAsync(
-        Chapter chapter,
-        string content,
-        string userId,
-        CancellationToken cancellationToken)
-    {
-        // Ensure Qdrant collection exists
-        var collectionExists = await _vectorStore.CollectionExistsAsync(userId, cancellationToken);
-        if (!collectionExists)
-        {
-            await _vectorStore.InitializeUserCollectionAsync(userId, cancellationToken);
-        }
-
-        // Split content into chunks for embedding
-        var chunks = ChunkContent(content);
-        if (chunks.Count == 0)
-        {
-            _logger.LogWarning("No chunks generated for chapter {ChapterId}", chapter.Id);
-            return;
-        }
-
-        // Generate embeddings for all chunks
-        var embeddings = await _embeddingService.EncodeBatchAsync(chunks, EmbeddingMode.Passage, cancellationToken);
-
-        // Create vector data for Qdrant
-        var vectors = new List<VectorData>();
-        for (int i = 0; i < chunks.Count; i++)
-        {
-            vectors.Add(new VectorData
-            {
-                Id = $"{chapter.Id}_chunk_{i}",
-                Vector = embeddings[i],
-                UserId = userId,
-                ProjectId = chapter.ProjectId,
-                SourceType = "chapter",
-                SourceId = chapter.Id,
-                ChapterId = chapter.Id,
-                ChunkIndex = i,
-                Content = chunks[i],
-                Metadata = new Dictionary<string, object>
-                {
-                    ["chapter_number"] = chapter.ChapterNumber,
-                    ["chapter_title"] = chapter.Title,
-                    ["chunk_count"] = chunks.Count
-                }
-            });
-        }
-
-        // Store vectors in Qdrant
-        await _vectorStore.UpsertVectorsAsync(userId, vectors, cancellationToken);
-
-        _logger.LogInformation("Generated and stored {VectorCount} embeddings for chapter {ChapterId}",
-            vectors.Count, chapter.Id);
-    }
-
-    private async Task SaveChapterContentDocumentAsync(
+    private async Task<ContentDocument> SaveChapterContentDocumentAsync(
         string userId,
         Chapter chapter,
         string content,
@@ -403,64 +539,484 @@ public class ChapterService : IChapterService
             cancellationToken);
         chapter.CurrentDocumentId = document.Id;
         await _context.SaveChangesAsync(cancellationToken);
+        return document;
     }
 
-    private async Task DeleteChapterVectorsAsync(
+    private async Task CreateChapterVersionAndIndexOutboxAsync(
         string userId,
-        string chapterId,
-        string projectId,
+        Chapter chapter,
+        ContentDocument document,
+        string? runtimeRunId,
         CancellationToken cancellationToken)
     {
+        var version = await _truthStore.CreateChapterVersionAsync(
+            new CreateChapterVersionRequest(
+                UserId: userId,
+                ProjectId: chapter.ProjectId,
+                ChapterId: chapter.Id,
+                ContentDocumentId: document.Id,
+                Title: chapter.Title,
+                WordCount: chapter.WordCount,
+                Status: chapter.Status,
+                RuntimeRunId: runtimeRunId,
+                PackageId: null,
+                GateReportJson: null,
+                AgentReviewJson: null),
+            cancellationToken);
+
+        await _truthStore.EnqueueOutboxAsync(
+            new EnqueueOutboxEventRequest(
+                UserId: userId,
+                ProjectId: chapter.ProjectId,
+                RuntimeRunId: runtimeRunId,
+                EventType: "index_chapter_content",
+                AggregateType: "chapter_version",
+                AggregateId: version.Id,
+                PayloadJson: "{}"),
+            cancellationToken);
+    }
+
+    private async Task EnqueueChapterVectorDeletionAsync(
+        string userId,
+        string projectId,
+        string chapterId,
+        CancellationToken cancellationToken)
+    {
+        await _truthStore.EnqueueOutboxAsync(
+            new EnqueueOutboxEventRequest(
+                UserId: userId,
+                ProjectId: projectId,
+                RuntimeRunId: null,
+                EventType: "delete_chapter_content",
+                AggregateType: "chapter",
+                AggregateId: chapterId,
+                PayloadJson: "{}"),
+            cancellationToken);
+    }
+
+    private async Task<Chapter?> FindChapterByIdempotencyKeyAsync(
+        string projectId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _context.Chapters
+            .AsNoTracking()
+            .FirstOrDefaultAsync(chapter =>
+                    chapter.ProjectId == projectId &&
+                    chapter.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<ChapterResponse> MapChapterWithContentAsync(
+        string userId,
+        Chapter chapter,
+        CancellationToken cancellationToken)
+    {
+        var content = await _contentDocuments.GetTextAsync(
+                userId,
+                chapter.ProjectId,
+                "chapter",
+                chapter.Id,
+                "chapter_body",
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapToResponse(chapter, content);
+    }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static List<string> ParseTopLevelStringArray(string? json, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(propertyName))
+            return new List<string>();
+
         try
         {
-            // Use the new DeleteVectorsByFilterAsync method
-            var filters = new Dictionary<string, object>
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.Array)
             {
-                ["chapter_id"] = chapterId
-            };
+                return new List<string>();
+            }
 
-            await _vectorStore.DeleteVectorsByFilterAsync(userId, filters, cancellationToken);
-
-            _logger.LogInformation("Deleted vectors for chapter {ChapterId} from project {ProjectId}",
-                chapterId, projectId);
+            return property
+                .EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(24)
+                .ToList();
         }
-        catch (Exception ex)
+        catch (JsonException)
         {
-            _logger.LogError(ex, "Failed to delete vectors for chapter {ChapterId}", chapterId);
-            // Don't throw - we want to continue with other cleanup operations
+            return new List<string>();
         }
     }
 
-    private List<string> ChunkContent(string content)
+    private static ChapterVersionProductionAlignment BuildProductionAlignment(
+        ChapterVersionResponse left,
+        ChapterVersionResponse right,
+        TianmingPackage? leftPackage,
+        TianmingPackage? rightPackage)
     {
-        var chunks = new List<string>();
-        if (string.IsNullOrWhiteSpace(content))
+        var packageJson = rightPackage?.KnowledgeSnapshotJson;
+        return new ChapterVersionProductionAlignment
         {
-            return chunks;
+            LeftPackageId = left.PackageId ?? string.Empty,
+            RightPackageId = right.PackageId ?? string.Empty,
+            RebuiltFromPackageIds = right.RebuiltFromPackageIds.Count > 0
+                ? right.RebuiltFromPackageIds
+                : ParseTopLevelStringArray(packageJson, "rebuiltFromPackageIds"),
+            AcceptedCreativeIntents = ParseCreativeIntentAlignment(packageJson),
+            SourceRevisionPlans = ParseRevisionPlanAlignment(packageJson),
+            AgentReviewDecision = ParseAgentReviewDecision(right.AgentReviewJson),
+            AgentReviewChecks = ParseAgentReviewCheckAlignment(right.AgentReviewJson)
+        };
+    }
+
+    private static List<ChapterVersionCreativeIntentAlignment> ParseCreativeIntentAlignment(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<ChapterVersionCreativeIntentAlignment>();
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("acceptedCreativeIntents", out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return new List<ChapterVersionCreativeIntentAlignment>();
+            }
+
+            return property.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new ChapterVersionCreativeIntentAlignment
+                {
+                    IntentId = GetJsonString(item, "intentId"),
+                    NormalizedIntent = GetJsonString(item, "normalizedIntent"),
+                    TargetScope = GetJsonString(item, "targetScope"),
+                    TargetChapterId = GetJsonString(item, "targetChapterId"),
+                    ImpactLevel = GetJsonString(item, "impactLevel"),
+                    Source = GetJsonString(item, "source"),
+                    Status = FirstNonEmpty(GetJsonString(item, "status"), "accepted")
+                })
+                .Where(item => !string.IsNullOrWhiteSpace(item.IntentId) ||
+                               !string.IsNullOrWhiteSpace(item.NormalizedIntent))
+                .Take(24)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<ChapterVersionCreativeIntentAlignment>();
+        }
+    }
+
+    private static List<ChapterVersionRevisionPlanAlignment> ParseRevisionPlanAlignment(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<ChapterVersionRevisionPlanAlignment>();
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("sourceRevisionPlans", out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return new List<ChapterVersionRevisionPlanAlignment>();
+            }
+
+            return property.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new ChapterVersionRevisionPlanAlignment
+                {
+                    RevisionPlanId = GetJsonString(item, "revisionPlanId"),
+                    PlanType = GetJsonString(item, "planType"),
+                    TargetScope = GetJsonString(item, "targetScope"),
+                    TargetChapterId = GetJsonString(item, "targetChapterId"),
+                    Status = GetJsonString(item, "status"),
+                    AffectedChapterIds = ParseJsonStringArray(GetJsonString(item, "affectedChapterIdsJson")),
+                    InvalidatedPackageIds = ParseJsonStringArray(GetJsonString(item, "invalidatedPackageIdsJson")),
+                    RiskLevel = GetJsonString(item, "riskLevel"),
+                    Recommendation = GetJsonString(item, "recommendation")
+                })
+                .Where(item => !string.IsNullOrWhiteSpace(item.RevisionPlanId) ||
+                               !string.IsNullOrWhiteSpace(item.Recommendation))
+                .Take(24)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<ChapterVersionRevisionPlanAlignment>();
+        }
+    }
+
+    private static string ParseAgentReviewDecision(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return string.Empty;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? GetJsonString(document.RootElement, "decision")
+                : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static List<ChapterVersionAgentReviewCheckAlignment> ParseAgentReviewCheckAlignment(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<ChapterVersionAgentReviewCheckAlignment>();
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("checks", out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return new List<ChapterVersionAgentReviewCheckAlignment>();
+            }
+
+            return property.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new ChapterVersionAgentReviewCheckAlignment
+                {
+                    Key = GetJsonString(item, "key"),
+                    Name = GetJsonString(item, "name"),
+                    Status = FirstNonEmpty(GetJsonString(item, "status"), GetJsonString(item, "result")),
+                    Message = GetJsonString(item, "message"),
+                    Evidence = GetJsonStringArray(item, "evidence")
+                })
+                .Where(item => !string.IsNullOrWhiteSpace(item.Key) ||
+                               !string.IsNullOrWhiteSpace(item.Name))
+                .Take(24)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<ChapterVersionAgentReviewCheckAlignment>();
+        }
+    }
+
+    private static string GetJsonString(JsonElement element, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName) ||
+            element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var property))
+        {
+            return string.Empty;
         }
 
-        // Split content into chunks of approximately ChunkSize characters
-        for (int i = 0; i < content.Length; i += ChunkSize)
+        return property.ValueKind switch
         {
-            var chunkLength = Math.Min(ChunkSize, content.Length - i);
-            var chunk = content.Substring(i, chunkLength).Trim();
+            JsonValueKind.String => property.GetString() ?? string.Empty,
+            JsonValueKind.Number => property.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => string.Empty
+        };
+    }
 
-            if (!string.IsNullOrWhiteSpace(chunk))
+    private static List<string> GetJsonStringArray(JsonElement element, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName) ||
+            element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.Array)
+        {
+            return new List<string>();
+        }
+
+        return property.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .ToList();
+    }
+
+    private static List<string> ParseJsonStringArray(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return new List<string>();
+
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return new List<string>();
+
+            return document.RootElement.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(24)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<string>();
+        }
+    }
+
+    private static string FirstNonEmpty(params string[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+
+    private async Task<Dictionary<string, string>> LoadContentByDocumentIdAsync(
+        IReadOnlyCollection<string> documentIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = documentIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var chunks = await _context.ContentChunks
+            .AsNoTracking()
+            .Where(chunk => ids.Contains(chunk.DocumentId))
+            .OrderBy(chunk => chunk.DocumentId)
+            .ThenBy(chunk => chunk.ChunkIndex)
+            .Select(chunk => new { chunk.DocumentId, chunk.ChunkText })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return chunks
+            .GroupBy(chunk => chunk.DocumentId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => string.Join(string.Empty, group.Select(chunk => chunk.ChunkText)),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static List<ChapterVersionDiffBlock> BuildParagraphDiff(string leftContent, string rightContent)
+    {
+        var left = SplitParagraphs(leftContent);
+        var right = SplitParagraphs(rightContent);
+        var lcs = BuildLcsTable(left, right);
+        var blocks = new List<ChapterVersionDiffBlock>();
+        var i = 0;
+        var j = 0;
+        while (i < left.Count && j < right.Count)
+        {
+            if (string.Equals(left[i], right[j], StringComparison.Ordinal))
             {
-                chunks.Add(chunk);
+                blocks.Add(new ChapterVersionDiffBlock
+                {
+                    Kind = "unchanged",
+                    LeftText = left[i],
+                    RightText = right[j]
+                });
+                i++;
+                j++;
+                continue;
+            }
+
+            if (lcs[i + 1, j] >= lcs[i, j + 1])
+            {
+                if (j < right.Count && lcs[i + 1, j] == lcs[i, j + 1])
+                {
+                    blocks.Add(new ChapterVersionDiffBlock
+                    {
+                        Kind = "changed",
+                        LeftText = left[i],
+                        RightText = right[j]
+                    });
+                    i++;
+                    j++;
+                }
+                else
+                {
+                    blocks.Add(new ChapterVersionDiffBlock
+                    {
+                        Kind = "removed",
+                        LeftText = left[i]
+                    });
+                    i++;
+                }
+            }
+            else
+            {
+                blocks.Add(new ChapterVersionDiffBlock
+                {
+                    Kind = "added",
+                    RightText = right[j]
+                });
+                j++;
             }
         }
 
-        return chunks;
+        while (i < left.Count)
+        {
+            blocks.Add(new ChapterVersionDiffBlock
+            {
+                Kind = "removed",
+                LeftText = left[i]
+            });
+            i++;
+        }
+
+        while (j < right.Count)
+        {
+            blocks.Add(new ChapterVersionDiffBlock
+            {
+                Kind = "added",
+                RightText = right[j]
+            });
+            j++;
+        }
+
+        return blocks;
     }
 
-    private int GetChunkCount(string content)
+    private static int[,] BuildLcsTable(IReadOnlyList<string> left, IReadOnlyList<string> right)
     {
-        if (string.IsNullOrWhiteSpace(content))
+        var table = new int[left.Count + 1, right.Count + 1];
+        for (var i = left.Count - 1; i >= 0; i--)
         {
-            return 0;
+            for (var j = right.Count - 1; j >= 0; j--)
+            {
+                table[i, j] = string.Equals(left[i], right[j], StringComparison.Ordinal)
+                    ? table[i + 1, j + 1] + 1
+                    : Math.Max(table[i + 1, j], table[i, j + 1]);
+            }
         }
-        return (int)Math.Ceiling((double)content.Length / ChunkSize);
+
+        return table;
+    }
+
+    private static List<string> SplitParagraphs(string content) =>
+        content
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+
+    private static string TrimText(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLength)
+            return normalized;
+
+        return normalized[..maxLength] + "...";
     }
 
     private int CountWords(string content)
@@ -495,7 +1051,143 @@ public class ChapterService : IChapterService
         return count;
     }
 
-    private ChapterResponse MapToResponse(Chapter chapter, string? content)
+    private async Task<IReadOnlyList<WorkflowProductionChain>> LoadChapterProductionChainsAsync(
+        string projectId,
+        string chapterId,
+        CancellationToken cancellationToken)
+    {
+        var productionEvents = await _productionWorkflowBridge
+            .LoadProjectEventsAsync(projectId, limit: 240, cancellationToken)
+            .ConfigureAwait(false);
+        if (productionEvents.Count == 0)
+            return Array.Empty<WorkflowProductionChain>();
+
+        return _productionChainProjection
+            .BuildWorkflowChains(productionEvents)
+            .Where(chain => string.Equals(chain.ChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private async Task<ChapterProductionEvidenceResponse> LoadChapterProductionEvidenceAsync(
+        string projectId,
+        string chapterId,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        CancellationToken cancellationToken)
+    {
+        var revisionPlanIds = productionChains
+            .SelectMany(chain => chain.RevisionPlanIds)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var factSnapshotIds = productionChains
+            .Select(chain => chain.FactSnapshotId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var outboxIds = productionChains
+            .SelectMany(chain => chain.Steps)
+            .Select(step => step.OutboxEventId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var chapterVersionIds = productionChains
+            .Select(chain => chain.ChapterVersionId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var revisionPlans = await _context.RevisionPlans
+            .AsNoTracking()
+            .Where(plan => plan.ProjectId == projectId)
+            .OrderByDescending(plan => plan.UpdatedAt)
+            .Take(80)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var revisionPlanEvidence = revisionPlans
+            .Where(plan =>
+                revisionPlanIds.Contains(plan.Id) ||
+                string.Equals(plan.TargetChapterId, chapterId, StringComparison.OrdinalIgnoreCase) ||
+                ParseJsonStringArray(plan.AffectedChapterIdsJson).Contains(chapterId, StringComparer.OrdinalIgnoreCase))
+            .OrderByDescending(plan => plan.UpdatedAt)
+            .Take(12)
+            .Select(plan => new ChapterRevisionPlanEvidenceResponse
+            {
+                Id = plan.Id,
+                Source = plan.Source,
+                PlanType = plan.PlanType,
+                TargetScope = plan.TargetScope,
+                TargetChapterId = plan.TargetChapterId ?? string.Empty,
+                Status = plan.Status,
+                RiskLevel = plan.RiskLevel,
+                Recommendation = plan.Recommendation,
+                AffectedChapterIds = ParseJsonStringArray(plan.AffectedChapterIdsJson),
+                InvalidatedPackageIds = ParseJsonStringArray(plan.InvalidatedPackageIdsJson),
+                UpdatedAt = plan.UpdatedAt
+            })
+            .ToList();
+
+        var factSnapshots = await _context.ProjectFactSnapshots
+            .AsNoTracking()
+            .Where(snapshot => snapshot.ProjectId == projectId)
+            .Where(snapshot =>
+                snapshot.ChapterId == chapterId ||
+                factSnapshotIds.Contains(snapshot.Id) ||
+                chapterVersionIds.Contains(snapshot.ChapterVersionId ?? string.Empty))
+            .OrderByDescending(snapshot => snapshot.VersionNumber)
+            .ThenByDescending(snapshot => snapshot.CreatedAt)
+            .Take(12)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var latestFactSnapshot = factSnapshots
+            .Select(snapshot => new ChapterFactSnapshotEvidenceResponse
+            {
+                Id = snapshot.Id,
+                ChapterVersionId = snapshot.ChapterVersionId ?? string.Empty,
+                VersionNumber = snapshot.VersionNumber,
+                Source = snapshot.Source,
+                SnapshotPreview = TrimText(snapshot.SnapshotJson, 260),
+                CreatedAt = snapshot.CreatedAt
+            })
+            .FirstOrDefault();
+
+        var outboxEvents = await _context.OutboxEvents
+            .AsNoTracking()
+            .Where(outbox => outbox.ProjectId == projectId)
+            .Where(outbox =>
+                outboxIds.Contains(outbox.Id) ||
+                outbox.AggregateId == chapterId ||
+                chapterVersionIds.Contains(outbox.AggregateId))
+            .OrderByDescending(outbox => outbox.UpdatedAt)
+            .Take(12)
+            .Select(outbox => new ChapterOutboxEvidenceResponse
+            {
+                Id = outbox.Id,
+                EventType = outbox.EventType,
+                AggregateType = outbox.AggregateType,
+                AggregateId = outbox.AggregateId,
+                Status = outbox.Status,
+                Attempts = outbox.Attempts,
+                LastError = outbox.LastError ?? string.Empty,
+                NextAttemptAt = outbox.NextAttemptAt,
+                CompletedAt = outbox.CompletedAt,
+                UpdatedAt = outbox.UpdatedAt
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ChapterProductionEvidenceResponse
+        {
+            RevisionPlans = revisionPlanEvidence,
+            LatestFactSnapshot = latestFactSnapshot,
+            OutboxEvents = outboxEvents
+        };
+    }
+
+    private ChapterResponse MapToResponse(
+        Chapter chapter,
+        string? content,
+        IReadOnlyList<WorkflowProductionChain>? productionChains = null,
+        ChapterProductionEvidenceResponse? productionEvidence = null)
     {
         return new ChapterResponse
         {
@@ -507,6 +1199,8 @@ public class ChapterService : IChapterService
             Status = chapter.Status,
             WordCount = chapter.WordCount,
             Content = content,
+            ProductionChains = productionChains ?? Array.Empty<WorkflowProductionChain>(),
+            ProductionEvidence = productionEvidence ?? new ChapterProductionEvidenceResponse(),
             CreatedAt = chapter.CreatedAt,
             UpdatedAt = chapter.UpdatedAt
         };

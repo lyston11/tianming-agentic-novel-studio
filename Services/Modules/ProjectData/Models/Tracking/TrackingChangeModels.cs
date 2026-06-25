@@ -108,8 +108,6 @@ namespace TM.Services.Modules.ProjectData.Models.Tracking
 
     public class ChapterChanges
     {
-        public const string ChangesSeparator = "---CHANGES---";
-
         public const string ChangesXmlOpen = "<chapter_changes>";
 
         public const string ChangesXmlClose = "</chapter_changes>";

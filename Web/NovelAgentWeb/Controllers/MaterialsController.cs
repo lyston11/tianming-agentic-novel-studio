@@ -28,17 +28,21 @@ public class MaterialsController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+
             var material = await _materialService.UploadMaterialAsync(request, ct);
             return Ok(material);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upload material");
-            return StatusCode(500, new { error = "Failed to upload material" });
+            return StatusCode(500, ApiErrors.Internal("Failed to upload material"));
         }
     }
 
@@ -49,17 +53,21 @@ public class MaterialsController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+
             var material = await _materialService.CreateMaterialAsync(request, ct);
             return Ok(material);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create material");
-            return StatusCode(500, new { error = "Failed to create material" });
+            return StatusCode(500, ApiErrors.Internal("Failed to create material"));
         }
     }
 
@@ -76,7 +84,7 @@ public class MaterialsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list materials for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to list materials" });
+            return StatusCode(500, ApiErrors.Internal("Failed to list materials"));
         }
     }
 
@@ -90,12 +98,12 @@ public class MaterialsController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get material {MaterialId}", id);
-            return StatusCode(500, new { error = "Failed to get material" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get material"));
         }
     }
 
@@ -109,16 +117,16 @@ public class MaterialsController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiErrors.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get material content {MaterialId}", id);
-            return StatusCode(500, new { error = "Failed to get material content" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get material content"));
         }
     }
 
@@ -135,12 +143,12 @@ public class MaterialsController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update material {MaterialId}", id);
-            return StatusCode(500, new { error = "Failed to update material" });
+            return StatusCode(500, ApiErrors.Internal("Failed to update material"));
         }
     }
 
@@ -154,12 +162,12 @@ public class MaterialsController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete material {MaterialId}", id);
-            return StatusCode(500, new { error = "Failed to delete material" });
+            return StatusCode(500, ApiErrors.Internal("Failed to delete material"));
         }
     }
 }

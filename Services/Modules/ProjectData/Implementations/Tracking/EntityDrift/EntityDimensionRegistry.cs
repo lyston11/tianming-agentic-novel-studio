@@ -16,12 +16,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
         public static EntityDimensionDescriptor? GetByCode(string code)
             => _all.FirstOrDefault(d => string.Equals(d.DimensionCode, code, StringComparison.OrdinalIgnoreCase));
 
-        public static IReadOnlyList<EntityDimensionDescriptor> AutoPatchDimensions
-            => _all.Where(d => d.Strategy == DriftStrategy.AutoPatch).ToList();
-
-        public static IReadOnlyList<EntityDimensionDescriptor> WarnOnlyDimensions
-            => _all.Where(d => d.Strategy == DriftStrategy.WarnOnly).ToList();
-
         private static List<EntityDimensionDescriptor> BuildAll()
         {
             return new List<EntityDimensionDescriptor>
@@ -132,7 +126,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "character",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.AutoPatch,
                 ChangeFieldName = "CharacterStateChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<CharacterStateGuide, CharacterStateEntry>(
                     gm, baseFile, recent, g => g.Characters, e => e.Name, e => e.DriftWarnings),
@@ -151,18 +144,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     }
                     AppendBoundedWarning(entry.DriftWarnings, warnMsg, maxWarn);
                     return fileName;
-                },
-                AutoPatchAction = (changes, id, name, reason) =>
-                {
-                    changes.CharacterStateChanges ??= new();
-                    if (changes.CharacterStateChanges.Any(c => string.Equals(c.CharacterId, id, StringComparison.OrdinalIgnoreCase)))
-                        return;
-                    changes.CharacterStateChanges.Add(new CharacterStateChange
-                    {
-                        CharacterId = id,
-                        KeyEvent = $"[自动补录] {reason}",
-                        Importance = "normal"
-                    });
                 }
             };
         }
@@ -176,7 +157,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "faction",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.AutoPatch,
                 ChangeFieldName = "FactionStateChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<FactionStateGuide, FactionStateEntry>(
                     gm, baseFile, recent, g => g.Factions, e => e.Name, e => e.DriftWarnings),
@@ -195,18 +175,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     }
                     AppendBoundedWarning(entry.DriftWarnings, warnMsg, maxWarn);
                     return fileName;
-                },
-                AutoPatchAction = (changes, id, name, reason) =>
-                {
-                    changes.FactionStateChanges ??= new();
-                    if (changes.FactionStateChanges.Any(c => string.Equals(c.FactionId, id, StringComparison.OrdinalIgnoreCase)))
-                        return;
-                    changes.FactionStateChanges.Add(new FactionStateChange
-                    {
-                        FactionId = id,
-                        Event = $"[自动补录] {reason}",
-                        Importance = "normal"
-                    });
                 }
             };
         }
@@ -220,7 +188,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "location",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.AutoPatch,
                 ChangeFieldName = "LocationStateChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<LocationStateGuide, LocationStateEntry>(
                     gm, baseFile, recent, g => g.Locations, e => e.Name, e => e.DriftWarnings),
@@ -239,20 +206,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     }
                     AppendBoundedWarning(entry.DriftWarnings, warnMsg, maxWarn);
                     return fileName;
-                },
-                AutoPatchAction = (changes, id, name, reason) =>
-                {
-                    changes.LocationStateChanges ??= new();
-                    if (changes.LocationStateChanges.Any(c => string.Equals(c.LocationId, id, StringComparison.OrdinalIgnoreCase)))
-                        return;
-                    changes.LocationStateChanges.Add(new LocationStateChange
-                    {
-                        LocationId = id,
-                        LocationName = name,
-                        NewStatus = "active",
-                        Event = $"[自动补录] {reason}",
-                        Importance = "normal"
-                    });
                 }
             };
         }
@@ -266,7 +219,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "conflict",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "ConflictProgress",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<ConflictProgressGuide, ConflictProgressEntry>(
                     gm, baseFile, recent, g => g.Conflicts, e => e.Name, e => e.DriftWarnings),
@@ -298,7 +250,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "item",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "ItemTransfers",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<ItemStateGuide, ItemStateEntry>(
                     gm, baseFile, recent, g => g.Items, e => e.Name, e => e.DriftWarnings),
@@ -330,7 +281,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "foreshadowing",
                 GuideFileName = fileName,
                 IsVolumeScoped = false,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "ForeshadowingActions",
                 LoadRecentEntitiesAsync = (gm, _) => LoadSingleFileAsync<ForeshadowingStatusGuide, ForeshadowingStatusEntry>(
                     gm, fileName, g => g.Foreshadowings, e => e.Name, e => e.DriftWarnings),
@@ -361,7 +311,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "secret",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "SecretRevealChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<SecretRevealGuide, SecretRevealEntry>(
                     gm, baseFile, recent, g => g.Secrets, e => e.Name, e => e.DriftWarnings),
@@ -393,7 +342,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "pledge",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "PledgeConstraintChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<PledgeConstraintGuide, PledgeEntry>(
                     gm, baseFile, recent, g => g.Pledges, e => e.Name, e => e.DriftWarnings),
@@ -425,7 +373,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 DimensionCode = "deadline",
                 GuideFileName = baseFile,
                 IsVolumeScoped = true,
-                Strategy = DriftStrategy.WarnOnly,
                 ChangeFieldName = "DeadlineConstraintChanges",
                 LoadRecentEntitiesAsync = (gm, recent) => LoadVolumeScopedAsync<DeadlineConstraintGuide, DeadlineEntry>(
                     gm, baseFile, recent, g => g.Deadlines, e => e.Name, e => e.DriftWarnings),

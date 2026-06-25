@@ -16,6 +16,7 @@ using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -294,25 +295,26 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         var env = scope.ServiceProvider.GetRequiredService<IWebHostEnvironment>();
         var settingsManager = scope.ServiceProvider.GetRequiredService<UserSettingsManager>();
 
-        // Get optional services for CreativeKnowledgeBaseService
-        var vectorStore = scope.ServiceProvider.GetService<IVectorStore>();
-        var embeddingService = scope.ServiceProvider.GetService<IMicroEmbeddingService>();
-        var currentUserService = scope.ServiceProvider.GetService<ICurrentUserService>();
-        var memoryRepository = scope.ServiceProvider.GetService<IAgentMemoryRepository>();
+        var vectorStore = scope.ServiceProvider.GetRequiredService<IVectorStore>();
+        var embeddingService = scope.ServiceProvider.GetRequiredService<IMicroEmbeddingService>();
+        var currentUserService = scope.ServiceProvider.GetRequiredService<ICurrentUserService>();
+        var memoryRepository = scope.ServiceProvider.GetRequiredService<IAgentMemoryRepository>();
         var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
+        var productionRuntimeBuilder = scope.ServiceProvider.GetRequiredService<IWorkspaceProductionRuntimeBuilder>();
 
         // Create Workspace instance (no project binding)
         var workspace = new NovelAgentWorkspace(
             env,
             config,
             settingsManager,
+            productionRuntimeBuilder,
+            scopeFactory,
             userId,
             projectId,
             vectorStore,
             embeddingService,
             currentUserService,
-            memoryRepository,
-            scopeFactory);
+            memoryRepository);
 
         // Track load time
         var loadTimeMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
@@ -322,7 +324,7 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
         return workspace;
     }
 
-    private async Task EvictOldestIdleWorkspaceAsync()
+    private Task EvictOldestIdleWorkspaceAsync()
     {
         var idleTimeout = TimeSpan.FromMinutes(_options.IdleTimeoutMinutes);
 
@@ -339,6 +341,8 @@ public sealed class WorkspaceFactory : IWorkspaceFactory, IDisposable
                 Interlocked.Increment(ref _evictionCount);
             }
         }
+
+        return Task.CompletedTask;
     }
 
     private Task EvictIdleWorkspacesAsync()

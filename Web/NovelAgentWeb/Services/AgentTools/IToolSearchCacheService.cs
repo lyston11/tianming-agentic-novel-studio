@@ -7,12 +7,14 @@ public interface IToolSearchCacheService
     Task<ToolSearchCacheLookup> GetAsync(
         AgentSession session,
         string phase,
+        string toolCatalogSignature,
         CancellationToken ct = default);
 
     Task SaveAsync(
         AgentSession session,
         string phase,
         IReadOnlyList<ToolSchema> tools,
+        string toolCatalogSignature,
         CancellationToken ct = default);
 }
 

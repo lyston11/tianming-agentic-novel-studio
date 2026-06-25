@@ -11,22 +11,22 @@ public interface IAgentMemoryRepository
     /// <summary>
     /// Get project memory for a user's project.
     /// </summary>
-    Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default);
+    Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null);
 
     /// <summary>
     /// Get session memory for a user's project session.
     /// </summary>
-    Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default);
+    Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default, string? runId = null);
 
     /// <summary>
     /// Get author memory for a user (cross-project).
     /// </summary>
-    Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default);
+    Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default, string? runId = null, string? sessionId = null);
 
     /// <summary>
     /// Get execution memory for a user's project.
     /// </summary>
-    Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default);
+    Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null);
 
     // ===== 原子更新单个字段 =====
 
@@ -65,7 +65,24 @@ public interface IAgentMemoryRepository
     /// <param name="sessionId">Session ID</param>
     /// <param name="updates">Dictionary of session memoryType → value</param>
     Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default);
+
+    /// <summary>
+    /// Record an auditable promotion from one memory scope into another.
+    /// </summary>
+    Task RecordMemoryPromotionAsync(MemoryPromotionRecord record, CancellationToken ct = default);
 }
+
+public sealed record MemoryPromotionRecord(
+    string UserId,
+    string? ProjectId,
+    string? SessionId,
+    string? RunId,
+    string SourceScope,
+    string TargetScope,
+    string SourceMemoryKey,
+    string TargetMemoryKey,
+    string PromotionReason,
+    string PayloadJson);
 
 /// <summary>
 /// Session-level memory (tied to a specific project session).
@@ -88,7 +105,7 @@ public class ProjectMemory
     public string? LongTermGoal { get; set; }
     public string? ReaderPromise { get; set; }
     public List<string> Constraints { get; set; } = new();
-    public List<string> UnresolvedThreads { get; set; } = new();
+    // UnresolvedThreads removed - Agent should query StoryBible.ForeshadowLedger directly
     public List<string> ReferencedKnowledgeIds { get; set; } = new();
     public List<string> ImportedKnowledgeIds { get; set; } = new();
     public List<KnowledgeInventoryItem> KnowledgeInventory { get; set; } = new();
@@ -106,6 +123,12 @@ public class KnowledgeInventoryItem
     public string ProjectUsageStatus { get; set; } = "imported";
     public int ProjectUsageCount { get; set; }
     public DateTime? ProjectLastUsedAt { get; set; }
+    public string Role { get; set; } = "Reference";
+    public string Scope { get; set; } = "ProjectWide";
+    public int Priority { get; set; } = 50;
+    public string ConstraintLevel { get; set; } = "Reference";
+    public string PackagePolicy { get; set; } = "RelevantOnly";
+    public string BoundVersion { get; set; } = string.Empty;
 }
 
 /// <summary>

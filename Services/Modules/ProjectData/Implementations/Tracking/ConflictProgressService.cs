@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
@@ -12,12 +11,14 @@ namespace TM.Services.Modules.ProjectData.Implementations
     public class ConflictProgressService
     {
         private readonly GuideManager _guideManager;
+        private readonly IDesignElementLookupService _elementLookup;
 
         #region 构造函数
 
-        public ConflictProgressService(GuideManager guideManager)
+        public ConflictProgressService(GuideManager guideManager, IDesignElementLookupService elementLookup)
         {
             _guideManager = guideManager;
+            _elementLookup = elementLookup;
         }
 
         #endregion
@@ -132,30 +133,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        private static async Task<string?> TryResolveConflictDisplayNameAsync(string conflictId)
+        private async Task<string?> TryResolveConflictDisplayNameAsync(string conflictId)
         {
             try
             {
-                var elementsPath = Path.Combine(
-                    StoragePathHelper.GetProjectConfigPath(), "Design", "elements.json");
-                if (!File.Exists(elementsPath)) return null;
-
-                var json = await File.ReadAllTextAsync(elementsPath).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("data", out var data)) return null;
-                if (!data.TryGetProperty("plotrules", out var plotModule)) return null;
-                if (!plotModule.TryGetProperty("plot_rules", out var plotRules)) return null;
-
-                foreach (var item in plotRules.EnumerateArray())
-                {
-                    var id = item.TryGetProperty("Id", out var idProp) ? idProp.GetString() : null;
-                    if (string.Equals(id, conflictId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var name = item.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
-                        return string.IsNullOrWhiteSpace(name) ? null : name;
-                    }
-                }
+                return await _elementLookup.ResolveConflictNameAsync(conflictId).ConfigureAwait(false);
             }
             catch (Exception ex) { TM.App.Log($"[ConflictProgress] 读取冲突名失败: {ex.Message}"); }
             return null;

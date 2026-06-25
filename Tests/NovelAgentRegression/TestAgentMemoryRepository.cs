@@ -10,16 +10,16 @@ internal sealed class TestAgentMemoryRepository : IAgentMemoryRepository
     public ExecutionMemory ExecutionMemory { get; } = new();
     public Dictionary<string, object> Updates { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
+    public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
         => Task.FromResult(ProjectMemory);
 
-    public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+    public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default, string? runId = null)
         => Task.FromResult(SessionMemory);
 
-    public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
+    public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
         => Task.FromResult(AuthorMemory);
 
-    public Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default)
+    public Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
         => Task.FromResult(ExecutionMemory);
 
     public Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
@@ -48,4 +48,7 @@ internal sealed class TestAgentMemoryRepository : IAgentMemoryRepository
             Updates[key] = value;
         return Task.CompletedTask;
     }
+
+    public Task RecordMemoryPromotionAsync(MemoryPromotionRecord record, CancellationToken ct = default)
+        => Task.CompletedTask;
 }

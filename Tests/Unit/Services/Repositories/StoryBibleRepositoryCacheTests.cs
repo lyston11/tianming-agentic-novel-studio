@@ -31,10 +31,10 @@ public sealed class StoryBibleRepositoryCacheTests
         _currentUser.Setup(s => s.GetUserId()).Returns(UserId);
         _memory.Setup(c => c.GetOrSetAsync(
                 It.IsAny<string>(),
-                It.IsAny<Func<Task<StoryBible>>>(),
+                It.IsAny<Func<Task<StoryBible?>>>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((string _, Func<Task<StoryBible>> factory, TimeSpan _, CancellationToken _) => factory());
+            .Returns((string _, Func<Task<StoryBible?>> factory, TimeSpan _, CancellationToken _) => factory());
     }
 
     [Fact]

@@ -9,6 +9,7 @@ namespace TM.Framework.Common.Helpers
 
         private static readonly Regex VolChRegex = new(@"vol(\d+)_ch(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex VCRegex = new(@"v(\d+)_c(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ChapterSlugRegex = new(@"(?:^|[-_])chapter[-_]?(\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex NumNumRegex = new(@"(\d+)_(\d+)", RegexOptions.Compiled);
         private static readonly Regex VolOnlyRegex = new(@"vol(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex ChOnlyRegex = new(@"ch(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -104,6 +105,12 @@ namespace TM.Framework.Common.Helpers
             if (match.Success)
             {
                 return (int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value));
+            }
+
+            match = ChapterSlugRegex.Match(chapterId);
+            if (match.Success)
+            {
+                return (1, int.Parse(match.Groups[1].Value));
             }
 
             match = NumNumRegex.Match(chapterId);
@@ -245,6 +252,10 @@ namespace TM.Framework.Common.Helpers
         {
             if (string.IsNullOrEmpty(text))
                 return 0;
+
+            var parsed = ParseChapterId(text);
+            if (parsed.HasValue)
+                return parsed.Value.chapterNumber;
 
             var match = ChOnlyRegex.Match(text);
             if (match.Success)

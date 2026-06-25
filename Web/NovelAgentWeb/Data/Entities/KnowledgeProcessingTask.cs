@@ -5,6 +5,7 @@ public class KnowledgeProcessingTask
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
     public string? ProjectId { get; set; }
+    public string? IdempotencyKey { get; set; }
     public string FileName { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string Status { get; set; } = "pending";

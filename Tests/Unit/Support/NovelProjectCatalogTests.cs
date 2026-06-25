@@ -5,11 +5,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
-using TM.Framework.Common.Helpers.Storage;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Content;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
 
@@ -37,7 +37,17 @@ public sealed class NovelProjectCatalogTests
     }
 
     [Fact]
-    public async Task ActivateAndWithProject_DoNotMutateGlobalProjectName()
+    public void Constructor_RequiresDatabaseScopeFactory()
+    {
+        using var fixture = CatalogFixture.Create("project-1");
+
+        var exception = Assert.Throws<ArgumentNullException>(() => new NovelProjectCatalog(fixture.Workspace, null!));
+
+        Assert.Equal("scopeFactory", exception.ParamName);
+    }
+
+    [Fact]
+    public async Task ActivateAndWithProject_RunAgainstDatabaseTruthOnly()
     {
         using var fixture = CatalogFixture.Create("project-1");
         await using (var db = fixture.CreateDbContext())
@@ -64,7 +74,6 @@ public sealed class NovelProjectCatalogTests
             await db.SaveChangesAsync();
         }
 
-        var baselineProjectName = StoragePathHelper.CurrentProjectName;
         var catalog = fixture.CreateCatalog();
         var project = await catalog.FindAsync("project-2", CancellationToken.None);
         Assert.NotNull(project);
@@ -72,11 +81,10 @@ public sealed class NovelProjectCatalogTests
         await catalog.ActivateAsync(project.Id, CancellationToken.None);
         var result = await catalog.WithProjectAsync(
             project,
-            () => Task.FromResult(StoragePathHelper.CurrentProjectName),
+            () => Task.FromResult(project.Id),
             CancellationToken.None);
 
-        Assert.Equal(baselineProjectName, result);
-        Assert.Equal(baselineProjectName, StoragePathHelper.CurrentProjectName);
+        Assert.Equal("project-2", result);
     }
 
     private sealed class CatalogFixture : IDisposable
@@ -136,17 +144,16 @@ public sealed class NovelProjectCatalogTests
                     ["NovelAgent:ProjectName"] = "AgenticNovelStudio"
                 })
                 .Build();
-            var settings = new UserSettingsManager(
-                root,
-                "AgenticNovelStudio",
-                provider.GetRequiredService<IServiceScopeFactory>());
+            var settings = UserSettingsTestFactory.CreateDbBacked();
             var workspace = new NovelAgentWorkspace(
                 new TestWebHostEnvironment(root),
                 configuration,
                 settings,
+                new WorkspaceProductionRuntimeBuilder(),
+                provider.GetRequiredService<IServiceScopeFactory>(),
                 "user-1",
-                workspaceProjectId,
-                scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
+                workspaceProjectId
+                );
 
             return new CatalogFixture(root, provider, workspace);
         }

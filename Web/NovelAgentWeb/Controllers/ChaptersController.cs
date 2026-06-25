@@ -1,14 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.Chapters;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Chapters;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
 
 /// <summary>
-/// API controller for chapter CRUD operations backed by SQLite content documents
-/// and Qdrant vectors.
+/// API controller for chapter CRUD operations backed by database content documents
+/// and asynchronous production outbox indexing.
 /// All endpoints require JWT authentication.
 /// </summary>
 [ApiController]
@@ -19,19 +21,22 @@ public class ChaptersController : ControllerBase
     private readonly IChapterService _chapterService;
     private readonly ICurrentUserService _currentUserService;
     private readonly ILogger<ChaptersController> _logger;
+    private readonly IChapterVersionRollbackService? _rollbackService;
 
     public ChaptersController(
         IChapterService chapterService,
         ICurrentUserService currentUserService,
-        ILogger<ChaptersController> logger)
+        ILogger<ChaptersController> logger,
+        IChapterVersionRollbackService? rollbackService = null)
     {
         _chapterService = chapterService;
         _currentUserService = currentUserService;
         _logger = logger;
+        _rollbackService = rollbackService;
     }
 
     /// <summary>
-    /// Create a new chapter with atomic synchronization across database content and Qdrant.
+    /// Create a new chapter in the database and enqueue asynchronous indexing.
     /// </summary>
     /// <param name="request">Chapter creation request</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -50,6 +55,9 @@ public class ChaptersController : ControllerBase
         {
             var userId = _currentUserService.GetUserId();
             var isAdmin = _currentUserService.IsAdmin();
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
 
             var chapter = await _chapterService.CreateChapterAsync(
                 request,
@@ -67,27 +75,26 @@ public class ChaptersController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiErrors.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create chapter in project {ProjectId}", request.ProjectId);
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "An error occurred while creating the chapter" });
+                ApiErrors.Internal("An error occurred while creating the chapter"));
         }
     }
 
     /// <summary>
-    /// Update an existing chapter with atomic synchronization.
-    /// If content is updated, embeddings are regenerated.
+    /// Update an existing chapter and enqueue any required index refresh.
     /// </summary>
     /// <param name="id">Chapter ID</param>
     /// <param name="request">Chapter update request</param>
@@ -122,9 +129,9 @@ public class ChaptersController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
@@ -132,7 +139,7 @@ public class ChaptersController : ControllerBase
         {
             _logger.LogError(ex, "Failed to update chapter {ChapterId}", id);
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "An error occurred while updating the chapter" });
+                ApiErrors.Internal("An error occurred while updating the chapter"));
         }
     }
 
@@ -166,9 +173,9 @@ public class ChaptersController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
@@ -176,13 +183,183 @@ public class ChaptersController : ControllerBase
         {
             _logger.LogError(ex, "Failed to get chapter {ChapterId}", id);
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "An error occurred while retrieving the chapter" });
+                ApiErrors.Internal("An error occurred while retrieving the chapter"));
         }
     }
 
     /// <summary>
-    /// Delete a chapter with atomic synchronization.
-    /// Removes metadata, SQLite content document, and vectors from Qdrant.
+    /// Get all persisted versions for a chapter.
+    /// </summary>
+    /// <param name="id">Chapter ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Chapter versions with production lineage</returns>
+    [HttpGet("{id}/versions")]
+    [ProducesResponseType(typeof(List<ChapterVersionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetChapterVersions(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var isAdmin = _currentUserService.IsAdmin();
+
+            var versions = await _chapterService.GetChapterVersionsAsync(
+                id,
+                userId,
+                isAdmin,
+                cancellationToken);
+
+            return Ok(versions);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiErrors.NotFound(ex.Message));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get chapter versions for {ChapterId}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiErrors.Internal("An error occurred while retrieving chapter versions"));
+        }
+    }
+
+    /// <summary>
+    /// Compare two persisted versions for a chapter.
+    /// </summary>
+    /// <param name="id">Chapter ID</param>
+    /// <param name="leftVersionId">Baseline version ID</param>
+    /// <param name="rightVersionId">Target version ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Paragraph-level version diff with production lineage</returns>
+    [HttpGet("{id}/versions/compare")]
+    [ProducesResponseType(typeof(ChapterVersionCompareResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CompareChapterVersions(
+        string id,
+        [FromQuery] string leftVersionId,
+        [FromQuery] string rightVersionId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var userId = _currentUserService.GetUserId();
+            var isAdmin = _currentUserService.IsAdmin();
+
+            var comparison = await _chapterService.CompareChapterVersionsAsync(
+                id,
+                leftVersionId,
+                rightVersionId,
+                userId,
+                isAdmin,
+                cancellationToken);
+
+            return Ok(comparison);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiErrors.BadRequest(ex.Message));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiErrors.NotFound(ex.Message));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to compare chapter versions for {ChapterId}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiErrors.Internal("An error occurred while comparing chapter versions"));
+        }
+    }
+
+    /// <summary>
+    /// Roll back a committed chapter to a previous persisted version.
+    /// </summary>
+    /// <param name="id">Chapter ID</param>
+    /// <param name="versionId">Target chapter version ID</param>
+    /// <param name="request">Rollback reason</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Rollback result with invalidated package IDs</returns>
+    [HttpPost("{id}/versions/{versionId}/rollback")]
+    [ProducesResponseType(typeof(RollbackChapterVersionResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RollbackChapterVersion(
+        string id,
+        string versionId,
+        [FromBody] RollbackChapterVersionApiRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (_rollbackService == null)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    ApiErrors.Internal("Chapter version rollback service is not configured"));
+            }
+
+            var userId = _currentUserService.GetUserId();
+            var isAdmin = _currentUserService.IsAdmin();
+            var chapter = await _chapterService.GetChapterByIdAsync(
+                id,
+                userId,
+                isAdmin,
+                cancellationToken);
+
+            var result = await _rollbackService.RollbackAsync(
+                new RollbackChapterVersionRequest(
+                    UserId: userId,
+                    ProjectId: chapter.ProjectId,
+                    ChapterId: id,
+                    TargetVersionId: versionId,
+                    RuntimeRunId: $"library-rollback:{versionId}",
+                    Reason: request?.Reason,
+                    IdempotencyKey: Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                        ? idempotencyKey.ToString()
+                        : string.Empty),
+                cancellationToken);
+
+            if (!result.Success)
+            {
+                return BadRequest(ApiErrors.BadRequest(result.Message));
+            }
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiErrors.NotFound(ex.Message));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to roll back chapter {ChapterId} to version {VersionId}", id, versionId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiErrors.Internal("An error occurred while rolling back chapter version"));
+        }
+    }
+
+    /// <summary>
+    /// Delete a chapter and enqueue asynchronous index cleanup.
     /// Foreign key references (foreshadows) are automatically set to NULL.
     /// </summary>
     /// <param name="id">Chapter ID</param>
@@ -214,9 +391,9 @@ public class ChaptersController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
@@ -224,7 +401,7 @@ public class ChaptersController : ControllerBase
         {
             _logger.LogError(ex, "Failed to delete chapter {ChapterId}", id);
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "An error occurred while deleting the chapter" });
+                ApiErrors.Internal("An error occurred while deleting the chapter"));
         }
     }
 
@@ -258,9 +435,9 @@ public class ChaptersController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
@@ -268,7 +445,7 @@ public class ChaptersController : ControllerBase
         {
             _logger.LogError(ex, "Failed to get chapters for project {ProjectId}", projectId);
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "An error occurred while retrieving chapters" });
+                ApiErrors.Internal("An error occurred while retrieving chapters"));
         }
     }
 }

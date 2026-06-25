@@ -7,6 +7,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
@@ -15,7 +16,7 @@ namespace TM.Web.NovelAgentWeb.Services.Knowledge;
 /// Service for processing knowledge files and extracting knowledge entries.
 /// Supports both short files (single-pass analysis) and long files (chunked processing).
 /// </summary>
-public class KnowledgeProcessingService : IKnowledgeProcessingService
+public partial class KnowledgeProcessingService : IKnowledgeProcessingService
 {
     private const int ShortFileTokenThreshold = 6000;
     private const int ChunkSize = 4000;
@@ -30,6 +31,9 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly IAgentMemoryEventService? _memoryEvents;
     private readonly IContentDocumentService _contentDocuments;
     private readonly IAgentMemoryRepository? _memoryRepository;
+    private readonly IProjectKnowledgeUsageService? _projectKnowledgeUsage;
+    private readonly IOutputArtifactRecorder? _outputArtifacts;
+    private readonly IKnowledgeClassificationService? _classificationService;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
@@ -40,7 +44,10 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         ILogger<KnowledgeProcessingService> logger,
         IContentDocumentService contentDocuments,
         IAgentMemoryEventService? memoryEvents = null,
-        IAgentMemoryRepository? memoryRepository = null)
+        IAgentMemoryRepository? memoryRepository = null,
+        IProjectKnowledgeUsageService? projectKnowledgeUsage = null,
+        IOutputArtifactRecorder? outputArtifacts = null,
+        IKnowledgeClassificationService? classificationService = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
@@ -51,48 +58,95 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         _memoryEvents = memoryEvents;
         _contentDocuments = contentDocuments;
         _memoryRepository = memoryRepository;
+        _projectKnowledgeUsage = projectKnowledgeUsage;
+        _outputArtifacts = outputArtifacts;
+        _classificationService = classificationService;
     }
 
     /// <summary>
     /// Processes a knowledge file by task ID.
     /// Automatically chooses single-pass or chunked strategy based on file size.
     /// </summary>
-    public async Task<string> ProcessFileAsync(string taskId, CancellationToken ct = default)
+    public async Task<string> ProcessPendingFileAsync(
+        string taskId,
+        string userId,
+        CancellationToken ct = default,
+        KnowledgeProcessingProgressContext? progress = null)
+    {
+        if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(userId))
+            throw new KeyNotFoundException("错误：找不到指定的处理任务");
+
+        var task = await _db.KnowledgeProcessingTasks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == taskId && t.UserId == userId, ct)
+            .ConfigureAwait(false);
+        if (task == null)
+            throw new KeyNotFoundException("错误：找不到指定的处理任务");
+
+        if (task.Status != "pending")
+            throw new InvalidOperationException($"错误：任务状态为 {task.Status}，无法处理");
+
+        return await ProcessFileAsync(taskId, ct, progress).ConfigureAwait(false);
+    }
+
+    public async Task<string> ProcessFileAsync(
+        string taskId,
+        CancellationToken ct = default,
+        KnowledgeProcessingProgressContext? progress = null)
     {
         var task = await _db.KnowledgeProcessingTasks.FindAsync(new object[] { taskId }, ct);
         if (task == null) throw new InvalidOperationException("Task not found");
 
         task.Status = "processing";
         task.StartedAt = DateTime.UtcNow;
+        task.Progress = Math.Max(task.Progress, 5);
         await _db.SaveChangesAsync(ct);
+        await ReportProgressAsync(progress, "read_upload", "已读取知识处理任务，正在读取上传文档。", task.Progress, new { taskId, task.FileName }, ct);
 
         try
         {
             var content = await _contentDocuments.GetTextAsync(task.UserId, task.ProjectId, "knowledge_upload", task.Id, "upload_raw", ct);
             var tokenCount = EstimateTokenCount(content);
+            task.Progress = Math.Max(task.Progress, 10);
+            await _db.SaveChangesAsync(ct);
+            await ReportProgressAsync(progress, "estimate_strategy", "已读取上传文档，正在估算长度并选择处理策略。", task.Progress, new { taskId, tokenCount }, ct);
 
             List<ExtractedKnowledgeEntryDto> entries;
 
             if (tokenCount < ShortFileTokenThreshold)
             {
                 task.Strategy = "single_pass";
+                task.Progress = Math.Max(task.Progress, 20);
                 await _db.SaveChangesAsync(ct);
+                await ReportProgressAsync(progress, "llm_extract", "正在调用模型抽取知识条目。", task.Progress, new { taskId, strategy = task.Strategy }, ct);
                 entries = await ProcessShortFileAsync(content, ct);
             }
             else
             {
                 task.Strategy = "chunked";
+                task.Progress = Math.Max(task.Progress, 15);
                 await _db.SaveChangesAsync(ct);
-                entries = await ProcessLongFileAsync(content, task, ct);
+                await ReportProgressAsync(progress, "chunking", "文档较长，正在分块抽取知识条目。", task.Progress, new { taskId, strategy = task.Strategy }, ct);
+                entries = await ProcessLongFileAsync(content, task, ct, progress);
             }
 
-            await SaveExtractedEntriesAsync(task, entries, ct);
+            EnsureEntriesFound(entries);
+            task.Progress = Math.Max(task.Progress, 85);
+            await _db.SaveChangesAsync(ct);
+            await ReportProgressAsync(progress, "save_entries", $"已抽取 {entries.Count} 条知识，正在写入知识库并绑定到项目。", task.Progress, new { taskId, entryCount = entries.Count }, ct);
+            var createdIds = await SaveExtractedEntriesAsync(task, entries, ct);
 
             task.Status = "completed";
             task.Progress = 100;
             task.ExtractedEntriesCount = entries.Count;
             task.CompletedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
+
+            // Trigger auto-classification for newly created knowledge entries
+            await TriggerAutoClassificationAsync(task, createdIds, ct);
+
+            await RecordProcessingOutputArtifactAsync(task, createdIds, progress, ct);
+            await ReportProgressAsync(progress, "completed", $"知识处理完成，已提取并绑定 {entries.Count} 条知识。", 100, new { taskId, knowledgeIds = createdIds }, ct);
 
             return $"成功提取 {entries.Count} 条知识条目";
         }
@@ -101,6 +155,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
             task.Status = "failed";
             task.ErrorMessage = ex.Message;
             await _db.SaveChangesAsync(ct);
+            await ReportProgressAsync(progress, "failed", $"知识处理失败：{ex.Message}", task.Progress, new { taskId, error = ex.Message }, ct);
             await RecordProcessingFailureMemoryAsync(task, ex, ct);
             throw;
         }
@@ -136,6 +191,50 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 "Failed to record knowledge processing failure memory for task {TaskId}",
                 task.Id);
         }
+    }
+
+    private async Task RecordProcessingOutputArtifactAsync(
+        Data.Entities.KnowledgeProcessingTask task,
+        IReadOnlyList<string> knowledgeIds,
+        KnowledgeProcessingProgressContext? progress,
+        CancellationToken ct)
+    {
+        if (_outputArtifacts == null)
+            return;
+
+        var projectId = task.ProjectId ?? throw new InvalidOperationException("Knowledge processing task is missing ProjectId.");
+        await _outputArtifacts.RecordAsync(
+                new OutputArtifactRecordRequest(
+                    RuntimeRunId: FirstNonEmpty(progress?.RuntimeRunId, $"knowledge-processing:{task.Id}"),
+                    UserId: task.UserId,
+                    ProjectId: projectId,
+                    ChapterId: null,
+                    PackageId: null,
+                    ToolName: "KnowledgeProcessing",
+                    Stage: "knowledge_processing_completed",
+                    Status: "completed",
+                    ArtifactType: "knowledge_processing_result",
+                    ArtifactId: task.Id,
+                    OutputKind: "ProcessArtifact",
+                    Summary: $"知识文件 {task.FileName} 已完成解析，提取 {task.ExtractedEntriesCount} 条知识。",
+                    UserVisibleWhere: new[] { "知识库", "创作工作流" },
+                    VisibleInWorkflow: true,
+                    VisibleInLibrary: false,
+                    SourceEventType: "knowledge_processed",
+                    SourceEventId: task.Id,
+                    Data: new
+                    {
+                        taskId = task.Id,
+                        task.FileName,
+                        task.Strategy,
+                        extractedEntriesCount = task.ExtractedEntriesCount,
+                        knowledgeIds,
+                        projectId,
+                        sessionId = progress?.SessionId,
+                        runtimeRunId = progress?.RuntimeRunId
+                    }),
+                ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -175,12 +274,15 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 2. **套路警告**(TropePattern): 常见俗套桥段、老梗、容易引起反感的模式
 3. **反套路策略**(AntiTropeStrategy): 避免套路的技巧、创新手法
 4. **风格示例**(StyleExample): 值得学习的叙述风格、对话技巧、节奏控制
+5. **硬事实**(HardFact): 角色姓名/身份、关键道具、地点、组织、能力边界、世界规则、禁物、卷章结构约束、不可改写事实。硬事实用于后续章节连续性，必须保留原文中的专名和约束，不能泛化成写作原则。
+
+如果文本包含角色姓名、关键道具、反派组织、能力代价、地点规则或“不得改写”的设定契约，必须至少提取1条HardFact。HardFact内容要直接写明事实主体、状态、边界和承接要求。
 
 **输出格式**（JSON数组）：
 [
   {{
     ""title"": ""简短标题（10字内)"",
-    ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample"",
+    ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample|HardFact"",
     ""content"": ""详细说明（50-200字）"",
     ""tags"": [""标签1"", ""标签2""],
     ""weight"": 5,
@@ -325,33 +427,83 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     {
         try
         {
-            // Clean up markdown code fences
-            var cleaned = jsonResponse.Trim();
-            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
-            {
-                cleaned = cleaned.Substring(7);
-            }
-            if (cleaned.StartsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(3);
-            }
-            if (cleaned.EndsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(0, cleaned.Length - 3);
-            }
-            cleaned = cleaned.Trim();
+            var cleaned = ExtractJsonPayload(jsonResponse);
+            using var doc = JsonDocument.Parse(cleaned);
+            var root = doc.RootElement;
 
-            // Parse JSON array
-            var entries = JsonSerializer.Deserialize<List<ExtractedKnowledgeEntryDto>>(
-                cleaned,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                return JsonSerializer.Deserialize<List<ExtractedKnowledgeEntryDto>>(
+                    root.GetRawText(),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<ExtractedKnowledgeEntryDto>();
+            }
 
-            return entries ?? new List<ExtractedKnowledgeEntryDto>();
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("entries", out var entriesElement) &&
+                entriesElement.ValueKind == JsonValueKind.Array)
+            {
+                return JsonSerializer.Deserialize<List<ExtractedKnowledgeEntryDto>>(
+                    entriesElement.GetRawText(),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<ExtractedKnowledgeEntryDto>();
+            }
+
+            throw new InvalidOperationException("LLM 知识抽取响应不包含 JSON 数组或 entries 数组。");
         }
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse LLM JSON response: {Response}", jsonResponse);
-            return new List<ExtractedKnowledgeEntryDto>();
+            throw new InvalidOperationException("无法解析 LLM 知识抽取 JSON。", ex);
+        }
+    }
+
+    private static void EnsureEntriesFound(IReadOnlyCollection<ExtractedKnowledgeEntryDto> entries)
+    {
+        if (entries.Count == 0)
+            throw new InvalidOperationException("LLM 没有返回任何知识条目，知识处理已中止。");
+    }
+
+    private static string ExtractJsonPayload(string jsonResponse)
+    {
+        var cleaned = StripMarkdownCodeFence(jsonResponse);
+        if (IsJson(cleaned)) return cleaned;
+
+        try
+        {
+            var value = ModelJsonObjectExtractor.ExtractFirstValue(
+                cleaned,
+                "LLM 知识抽取没有返回内容。",
+                "LLM 知识抽取响应不包含 JSON object 或 array。");
+            if (IsJson(value)) return value;
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        return cleaned;
+    }
+
+    private static string StripMarkdownCodeFence(string value)
+    {
+        var cleaned = value.Trim();
+        if (cleaned.StartsWith("```json", StringComparison.OrdinalIgnoreCase) && cleaned.Length > 7)
+            cleaned = cleaned[7..];
+        if (cleaned.StartsWith("```", StringComparison.Ordinal) && cleaned.Length > 3)
+            cleaned = cleaned[3..];
+        if (cleaned.EndsWith("```", StringComparison.Ordinal) && cleaned.Length > 3)
+            cleaned = cleaned[..^3];
+        return cleaned.Trim();
+    }
+
+    private static bool IsJson(string value)
+    {
+        try
+        {
+            using var _ = JsonDocument.Parse(value);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
@@ -409,11 +561,13 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     private async Task<List<ExtractedKnowledgeEntryDto>> ProcessLongFileAsync(
         string content,
         Data.Entities.KnowledgeProcessingTask task,
-        CancellationToken ct)
+        CancellationToken ct,
+        KnowledgeProcessingProgressContext? progress = null)
     {
         var chunks = ChunkText(content, ChunkSize, ChunkOverlap);
         task.TotalChunks = chunks.Count;
         await _db.SaveChangesAsync(ct);
+        await ReportProgressAsync(progress, "chunking", $"已拆分为 {chunks.Count} 个分块，正在逐块抽取。", task.Progress, new { task.Id, chunks = chunks.Count }, ct);
 
         var allEntries = new List<ExtractedKnowledgeEntryDto>();
         string previousSummary = "";
@@ -430,8 +584,10 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
             task.ProcessedChunks = i + 1;
             task.Progress = (int)((i + 1) * 80.0 / chunks.Count);
             await _db.SaveChangesAsync(ct);
+            await ReportProgressAsync(progress, "llm_extract_chunk", $"已完成第 {i + 1}/{chunks.Count} 个分块抽取。", task.Progress, new { task.Id, processedChunks = task.ProcessedChunks, task.TotalChunks }, ct);
         }
 
+        await ReportProgressAsync(progress, "aggregate_entries", "分块抽取完成，正在聚合去重知识条目。", Math.Max(task.Progress, 82), new { task.Id, rawEntryCount = allEntries.Count }, ct);
         var aggregated = await AggregateEntriesAsync(allEntries, ct);
         task.Progress = 100;
         await _db.SaveChangesAsync(ct);
@@ -475,12 +631,21 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 {contextPart}
 提取本块中的写作知识条目，并生成本块摘要（100字内）用于下一块上下文。
 
+**提取要求**：
+- GenrePrinciple: 特定题材的写作规则、读者期待、禁忌
+- TropePattern: 常见俗套桥段、老梗、容易引起反感的模式
+- AntiTropeStrategy: 避免套路的技巧、创新手法
+- StyleExample: 值得学习的叙述风格、对话技巧、节奏控制
+- HardFact: 角色姓名/身份、关键道具、地点、组织、能力边界、世界规则、禁物、卷章结构约束、不可改写事实。硬事实用于后续章节连续性，必须保留原文中的专名和约束，不能泛化成写作原则。
+
+如果当前块包含角色姓名、关键道具、反派组织、能力代价、地点规则或“不得改写”的设定契约，必须至少提取1条HardFact。
+
 **输出格式**（JSON对象）：
 {{
   ""entries"": [
     {{
       ""title"": ""简短标题"",
-      ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample"",
+      ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample|HardFact"",
       ""content"": ""详细说明"",
       ""tags"": [""标签1""],
       ""weight"": 5,
@@ -501,21 +666,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     {
         try
         {
-            var cleaned = jsonResponse.Trim();
-            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
-            {
-                cleaned = cleaned.Substring(7);
-            }
-            if (cleaned.StartsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(3);
-            }
-            if (cleaned.EndsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(0, cleaned.Length - 3);
-            }
-            cleaned = cleaned.Trim();
-
+            var cleaned = ExtractJsonPayload(jsonResponse);
             var result = JsonSerializer.Deserialize<ChunkedAnalysisResultDto>(
                 cleaned,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -525,7 +676,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse chunked result: {Response}", jsonResponse);
-            return new ChunkedAnalysisResultDto();
+            throw new InvalidOperationException("无法解析 LLM 分块知识抽取 JSON。", ex);
         }
     }
 
@@ -547,6 +698,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         final.AddRange(result.Deduplicated);
         final.AddRange(result.Aggregated);
 
+        EnsureEntriesFound(final);
         return final;
     }
 
@@ -571,13 +723,14 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
 1. 识别重复或相似条目，合并去重
 2. 提取跨块的共性主题、技巧模式
 3. 生成全文级别的高阶知识条目（如整体风格特征、叙事结构规律）
+4. 保留所有HardFact硬事实，不要把不同角色、道具、地点、组织或能力边界合并成泛化原则；只有同一事实的重复表达才可以合并。
 
 **输出格式**：
 {{
   ""deduplicated"": [
     {{
       ""title"": ""..."",
-      ""category"": ""..."",
+      ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample|HardFact"",
       ""content"": ""..."",
       ""tags"": [...],
       ""weight"": 5
@@ -586,7 +739,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
   ""aggregated"": [
     {{
       ""title"": ""全文级知识标题"",
-      ""category"": ""..."",
+      ""category"": ""GenrePrinciple|TropePattern|AntiTropeStrategy|StyleExample|HardFact"",
       ""content"": ""跨块归纳的高阶规律"",
       ""tags"": [...],
       ""weight"": 8
@@ -605,21 +758,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     {
         try
         {
-            var cleaned = jsonResponse.Trim();
-            if (cleaned.StartsWith("```json") && cleaned.Length > 7)
-            {
-                cleaned = cleaned.Substring(7);
-            }
-            if (cleaned.StartsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(3);
-            }
-            if (cleaned.EndsWith("```") && cleaned.Length > 3)
-            {
-                cleaned = cleaned.Substring(0, cleaned.Length - 3);
-            }
-            cleaned = cleaned.Trim();
-
+            var cleaned = ExtractJsonPayload(jsonResponse);
             var result = JsonSerializer.Deserialize<AggregatedAnalysisResultDto>(
                 cleaned,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -629,7 +768,7 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse aggregated result: {Response}", jsonResponse);
-            return new AggregatedAnalysisResultDto();
+            throw new InvalidOperationException("无法解析 LLM 聚合知识抽取 JSON。", ex);
         }
     }
 
@@ -637,17 +776,18 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
     /// Saves extracted knowledge entries to the database and vector store.
     /// Each entry is saved with source tracking information for traceability.
     /// </summary>
-    private async Task SaveExtractedEntriesAsync(
+    private async Task<IReadOnlyList<string>> SaveExtractedEntriesAsync(
         Data.Entities.KnowledgeProcessingTask task,
         List<ExtractedKnowledgeEntryDto> entries,
         CancellationToken ct)
     {
+        var projectId = task.ProjectId ?? throw new InvalidOperationException("Knowledge processing task is missing ProjectId.");
         var createdIds = new List<string>();
         foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
         {
             var created = await _knowledgeService.CreateExtractedKnowledgeAsync(new CreateExtractedKnowledgeRequest
             {
-                ProjectId = task.ProjectId,
+                ProjectId = projectId,
                 EntryType = entry.Category,
                 Title = entry.Title,
                 Content = entry.Content,
@@ -658,6 +798,17 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 ExtractionContext = entry.OriginalText
             }, ct);
             createdIds.Add(created.Id);
+            if (_projectKnowledgeUsage != null)
+            {
+                await _projectKnowledgeUsage.MarkImportedAsync(
+                        task.UserId,
+                        projectId,
+                        created.Id,
+                        sessionId: null,
+                        source: $"knowledge_upload:{task.Id}",
+                        ct)
+                    .ConfigureAwait(false);
+            }
         }
 
         if (_memoryEvents != null && createdIds.Count > 0)
@@ -674,6 +825,27 @@ public class KnowledgeProcessingService : IKnowledgeProcessingService
                 new { taskId = task.Id, knowledgeIds = createdIds },
                 ct);
         }
+
+        return createdIds;
     }
 
+    private static async Task ReportProgressAsync(
+        KnowledgeProcessingProgressContext? progress,
+        string stage,
+        string message,
+        int value,
+        object? data,
+        CancellationToken ct)
+    {
+        if (progress == null)
+            return;
+
+        await progress.PublishAsync(
+                new KnowledgeProcessingProgressEvent(stage, message, Math.Clamp(value, 0, 100), data),
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.First(value => !string.IsNullOrWhiteSpace(value))!.Trim();
 }

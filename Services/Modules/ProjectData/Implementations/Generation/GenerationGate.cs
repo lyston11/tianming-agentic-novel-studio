@@ -65,21 +65,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         #region 常量
 
-        public const string ChangesSeparator = ChapterChanges.ChangesSeparator;
-
         public const string ChangesXmlOpen = ChapterChanges.ChangesXmlOpen;
         public const string ChangesXmlClose = ChapterChanges.ChangesXmlClose;
 
         internal static readonly Regex ChangesXmlBlockRegex = new(
             @"<\s*(chapter_changes|changes)\s*>([\s\S]*?)</\s*\1\s*>",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        internal static readonly Regex ChangesXmlOpenRegex = new(
-            @"<\s*(chapter_changes|changes)\s*>",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        internal static readonly Regex ChangesSeparatorLineRegex = new(
-            @"(?m)^\s*[-\u2010\u2011\u2012\u2013\u2014\u2212]{3}\s*CHANGES\s*[-\u2010\u2011\u2012\u2013\u2014\u2212]{3}\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex BracketAliasRegex = new(@"[\(（\[【](.+?)[\)）\]】]", RegexOptions.Compiled);
@@ -91,10 +81,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             AllowTrailingCommas = true,
             Converters = { new CharacterStateChangeConverter() }
         };
-
-        internal static readonly Regex MdChangesHeaderRegex = new(
-            @"(?m)^(?:---\s*\n+\s*)?#{1,3}\s*(?:CHANGES|变更记录|变更摘要|状态变更|关键词)\s*\n",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static IReadOnlyList<string> ChangesSignatureFields => ChapterChanges.TopLevelFieldNames;
 

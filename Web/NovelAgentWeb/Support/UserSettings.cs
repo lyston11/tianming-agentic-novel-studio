@@ -23,8 +23,8 @@ public sealed class UserSettings
 
     // Agent Configuration
     public string AgentDefaultRisk { get; set; } = "Medium";
-    public bool AgentAutoContinue { get; set; } = true;
-    public int AgentMaxAutoSteps { get; set; } = 12;
+    public bool AgentLoopAutoProceed { get; set; } = true;
+    public int AgentLoopMaxSteps { get; set; } = 12;
 
     // Generation Configuration
     public string DefaultGenre { get; set; } = "玄幻";
@@ -35,7 +35,6 @@ public sealed class UserSettings
     // UI Preferences
     public string Theme { get; set; } = "dark";
     public string Language { get; set; } = "zh-CN";
-    public bool ShowStepDetails { get; set; } = true;
 
     // Presets
     public List<LlmPreset> Presets { get; set; } = new()
@@ -61,22 +60,22 @@ public sealed class LlmPreset
 
 public sealed class UserSettingsManager
 {
-    private readonly IServiceScopeFactory? _scopeFactory;
-    private readonly IHttpContextAccessor? _httpContextAccessor;
-    private readonly IBackgroundUserContext? _backgroundUserContext;
-    private UserSettings? _fallbackSettings;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IBackgroundUserContext _backgroundUserContext;
+    private readonly ILlmApiKeyProtector _apiKeyProtector;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public UserSettingsManager(
-        string storageRoot,
-        string projectName,
-        IServiceScopeFactory? scopeFactory = null,
-        IHttpContextAccessor? httpContextAccessor = null,
-        IBackgroundUserContext? backgroundUserContext = null)
+        IServiceScopeFactory scopeFactory,
+        IHttpContextAccessor httpContextAccessor,
+        IBackgroundUserContext backgroundUserContext,
+        ILlmApiKeyProtector apiKeyProtector)
     {
-        _scopeFactory = scopeFactory;
-        _httpContextAccessor = httpContextAccessor;
-        _backgroundUserContext = backgroundUserContext;
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+        _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
+        _backgroundUserContext = backgroundUserContext ?? throw new ArgumentNullException(nameof(backgroundUserContext));
+        _apiKeyProtector = apiKeyProtector ?? throw new ArgumentNullException(nameof(apiKeyProtector));
     }
 
     public async Task<UserSettings> LoadAsync(CancellationToken ct = default)
@@ -87,16 +86,7 @@ public sealed class UserSettingsManager
             return databaseSettings;
         }
 
-        if (_fallbackSettings != null) return _fallbackSettings;
-        await _lock.WaitAsync(ct);
-        try
-        {
-            if (_fallbackSettings != null) return _fallbackSettings;
-            _fallbackSettings = new UserSettings();
-            Normalize(_fallbackSettings);
-            return _fallbackSettings;
-        }
-        finally { _lock.Release(); }
+        throw new InvalidOperationException("Database-backed user settings were not found for the current user.");
     }
 
     public async Task<UserSettings> SaveAsync(UserSettings settings, CancellationToken ct = default)
@@ -107,12 +97,10 @@ public sealed class UserSettingsManager
             Normalize(settings);
             if (await TrySaveDatabaseSettingsAsync(settings, ct).ConfigureAwait(false))
             {
-                _fallbackSettings = null;
                 return settings;
             }
 
-            _fallbackSettings = settings;
-            return settings;
+            throw new InvalidOperationException("Database-backed user settings could not be saved for the current user.");
         }
         finally { _lock.Release(); }
     }
@@ -120,14 +108,12 @@ public sealed class UserSettingsManager
     public Task<UserSettings> ResetAsync(CancellationToken ct = default) =>
         SaveAsync(new UserSettings(), ct);
 
-    public void InvalidateCache() => _fallbackSettings = null;
-
     private async Task<UserSettings?> TryLoadDatabaseSettingsAsync(CancellationToken ct)
     {
         var userId = TryGetCurrentUserId();
-        if (string.IsNullOrWhiteSpace(userId) || _scopeFactory == null)
+        if (string.IsNullOrWhiteSpace(userId))
         {
-            return null;
+            throw new InvalidOperationException("Database-backed user settings require an authenticated user and IServiceScopeFactory.");
         }
 
         using var scope = _scopeFactory.CreateScope();
@@ -139,13 +125,13 @@ public sealed class UserSettingsManager
 
         if (entity == null)
         {
-            return null;
+            throw new InvalidOperationException("Database-backed user settings were not found for the current user.");
         }
 
         var settings = new UserSettings
         {
             LlmProvider = entity.LlmProvider ?? string.Empty,
-            LlmApiKey = entity.LlmApiKeyEncrypted ?? string.Empty,
+            LlmApiKey = _apiKeyProtector.Unprotect(entity.LlmApiKeyEncrypted),
             LlmBaseUrl = entity.LlmBaseUrl ?? string.Empty,
             LlmModel = entity.LlmModel ?? string.Empty,
             LlmTemperature = entity.LlmTemperature,
@@ -153,8 +139,8 @@ public sealed class UserSettingsManager
             EmbeddingProvider = entity.EmbeddingProvider,
             EmbeddingModel = entity.EmbeddingModel,
             AgentDefaultRisk = entity.AgentDefaultRisk,
-            AgentAutoContinue = entity.AgentAutoContinue,
-            AgentMaxAutoSteps = entity.AgentMaxAutoSteps,
+            AgentLoopAutoProceed = entity.AgentLoopAutoProceed,
+            AgentLoopMaxSteps = entity.AgentLoopMaxSteps,
             DefaultGenre = entity.DefaultGenre,
             DefaultChapterWordCount = entity.DefaultChapterWordCount,
             Theme = entity.Theme,
@@ -168,9 +154,9 @@ public sealed class UserSettingsManager
     private async Task<bool> TrySaveDatabaseSettingsAsync(UserSettings settings, CancellationToken ct)
     {
         var userId = TryGetCurrentUserId();
-        if (string.IsNullOrWhiteSpace(userId) || _scopeFactory == null)
+        if (string.IsNullOrWhiteSpace(userId))
         {
-            return false;
+            throw new InvalidOperationException("Database-backed user settings require an authenticated user and IServiceScopeFactory.");
         }
 
         using var scope = _scopeFactory.CreateScope();
@@ -189,7 +175,7 @@ public sealed class UserSettingsManager
         }
 
         entity.LlmProvider = settings.LlmProvider;
-        entity.LlmApiKeyEncrypted = settings.LlmApiKey;
+        entity.LlmApiKeyEncrypted = _apiKeyProtector.Protect(settings.LlmApiKey);
         entity.LlmBaseUrl = settings.LlmBaseUrl;
         entity.LlmModel = settings.LlmModel;
         entity.LlmTemperature = (float)settings.LlmTemperature;
@@ -197,8 +183,8 @@ public sealed class UserSettingsManager
         entity.EmbeddingProvider = settings.EmbeddingProvider;
         entity.EmbeddingModel = settings.EmbeddingModel;
         entity.AgentDefaultRisk = settings.AgentDefaultRisk;
-        entity.AgentAutoContinue = settings.AgentAutoContinue;
-        entity.AgentMaxAutoSteps = settings.AgentMaxAutoSteps;
+        entity.AgentLoopAutoProceed = settings.AgentLoopAutoProceed;
+        entity.AgentLoopMaxSteps = settings.AgentLoopMaxSteps;
         entity.DefaultGenre = settings.DefaultGenre;
         entity.DefaultChapterWordCount = settings.DefaultChapterWordCount;
         entity.Theme = settings.Theme;
@@ -210,10 +196,10 @@ public sealed class UserSettingsManager
 
     private string? TryGetCurrentUserId()
     {
-        if (_backgroundUserContext?.Current is { } background)
+        if (_backgroundUserContext.Current is { } background)
             return background.UserId;
 
-        var user = _httpContextAccessor?.HttpContext?.User;
+        var user = _httpContextAccessor.HttpContext?.User;
         if (user?.Identity?.IsAuthenticated != true)
         {
             return null;
@@ -240,7 +226,7 @@ public sealed class UserSettingsManager
         settings.AgentDefaultRisk = Clean(settings.AgentDefaultRisk, defaults.AgentDefaultRisk);
         if (!new[] { "Low", "Medium", "High", "Critical" }.Contains(settings.AgentDefaultRisk, StringComparer.OrdinalIgnoreCase))
             settings.AgentDefaultRisk = defaults.AgentDefaultRisk;
-        settings.AgentMaxAutoSteps = Math.Clamp(settings.AgentMaxAutoSteps <= 0 ? defaults.AgentMaxAutoSteps : settings.AgentMaxAutoSteps, 1, 100);
+        settings.AgentLoopMaxSteps = Math.Clamp(settings.AgentLoopMaxSteps <= 0 ? defaults.AgentLoopMaxSteps : settings.AgentLoopMaxSteps, 1, 100);
 
         settings.DefaultGenre = Clean(settings.DefaultGenre, defaults.DefaultGenre);
         settings.DefaultSubGenre = Clean(settings.DefaultSubGenre);

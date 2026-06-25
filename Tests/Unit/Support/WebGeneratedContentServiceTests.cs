@@ -1,12 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
 
@@ -22,6 +21,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseInMemoryDatabase(dbName));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -50,15 +50,13 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore: null,
-            embeddingService: null);
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "章节正文");
 
         await using var verifyScope = provider.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "chapter-001");
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
         Assert.False(string.IsNullOrWhiteSpace(chapter.CurrentDocumentId));
         Assert.True(await verifyDb.ContentDocuments.AnyAsync(d =>
             d.Id == chapter.CurrentDocumentId &&
@@ -69,13 +67,14 @@ public class WebGeneratedContentServiceTests
     }
 
     [Fact]
-    public async Task SaveChapterAsync_MarksChapterContentVectorPointsCompleted()
+    public async Task SaveChapterAsync_LeavesChapterContentVectorPointsPendingForOutboxIndexing()
     {
         var dbName = Guid.NewGuid().ToString("N");
         var services = new ServiceCollection();
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseInMemoryDatabase(dbName));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -101,26 +100,73 @@ public class WebGeneratedContentServiceTests
             await db.SaveChangesAsync();
         }
 
-        var vectorStore = new RecordingVectorStore();
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore,
-            new FixedEmbeddingService());
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "章节正文 用于 向量化");
 
         await using var verifyScope = provider.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "chapter-001");
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
         var point = await verifyDb.ContentVectorPoints.SingleAsync(p => p.DocumentId == chapter.CurrentDocumentId);
-        var vector = Assert.Single(vectorStore.Upserted);
-        Assert.Equal("completed", point.IndexStatus);
-        Assert.Equal(vector.Id, point.QdrantPointId);
-        Assert.True(Guid.TryParse(point.QdrantPointId, out _));
-        Assert.Equal(nameof(FixedEmbeddingService), point.VectorModel);
-        Assert.NotNull(point.IndexedAt);
+        Assert.Equal("pending", point.IndexStatus);
+        Assert.Equal("pending", point.VectorModel);
+        Assert.Null(point.IndexedAt);
+        Assert.StartsWith("content_", point.QdrantPointId, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeleteChapterAsync_EnqueuesChapterContentVectorCleanup()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-001", "章节正文");
+        var deleted = await service.DeleteChapterAsync("chapter-001");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var deleteEvent = await verifyDb.OutboxEvents.SingleAsync(e => e.EventType == "delete_chapter_content");
+        Assert.True(deleted);
+        Assert.Equal("chapter", deleteEvent.AggregateType);
+        Assert.Equal("project-1-chapter-001", deleteEvent.AggregateId);
+        Assert.Equal("project-1", deleteEvent.ProjectId);
+        Assert.Equal("pending", deleteEvent.Status);
     }
 
     [Fact]
@@ -131,6 +177,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseInMemoryDatabase(dbName));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -171,9 +218,7 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore: null,
-            embeddingService: null);
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "章节正文");
 
@@ -195,6 +240,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseSqlite(connection));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -236,9 +282,7 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore: null,
-            embeddingService: null);
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "章节正文");
 
@@ -260,6 +304,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseSqlite(connection));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -291,15 +336,13 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore: null,
-            embeddingService: null);
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "章节正文");
 
         await using var verifyScope = provider.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "chapter-001");
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
         var project = await verifyDb.NovelProjects.SingleAsync(p => p.Id == "project-1");
         Assert.Equal("committed", chapter.Status);
         Assert.Equal("Writing", project.Status);
@@ -315,6 +358,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseSqlite(connection));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -364,17 +408,14 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-new",
-            vectorStore: null,
-            embeddingService: null);
+            "project-new");
 
         await service.SaveChapterAsync("chapter-001", "第一章：潮汐骨塔\n林澈拧紧雾灯铜环。");
 
         await using var verifyScope = provider.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var newChapter = await verifyDb.Chapters.SingleAsync(c => c.ProjectId == "project-new");
-        Assert.NotEqual("chapter-001", newChapter.Id);
-        Assert.Contains("project-new", newChapter.Id);
+        Assert.Equal("project-new-chapter-001", newChapter.Id);
         Assert.Equal(1, newChapter.ChapterNumber);
         Assert.Equal("第一章：潮汐骨塔", newChapter.Title);
         Assert.Equal("committed", newChapter.Status);
@@ -388,6 +429,7 @@ public class WebGeneratedContentServiceTests
         services.AddDbContext<NovelAgentDbContext>(options =>
             options.UseInMemoryDatabase(dbName));
         services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
         services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
         await using var provider = services.BuildServiceProvider();
 
@@ -429,15 +471,13 @@ public class WebGeneratedContentServiceTests
         var service = new WebGeneratedContentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ICurrentUserService>(),
-            "project-1",
-            vectorStore: null,
-            embeddingService: null);
+            "project-1");
 
         await service.SaveChapterAsync("chapter-001", "第一章：维修站的黑雨\n陈默拧紧旧扳手。");
 
         await using var verifyScope = provider.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-        var chapter = await verifyDb.Chapters.Include(c => c.Volume).SingleAsync(c => c.Id == "chapter-001");
+        var chapter = await verifyDb.Chapters.Include(c => c.Volume).SingleAsync(c => c.Id == "project-1-chapter-001");
         var volume = await verifyDb.Volumes.SingleAsync(v => v.ProjectId == "project-1" && v.VolumeNumber == 1);
         var arc = await verifyDb.VolumeArcs.SingleAsync(a => a.Id == "arc-1");
 
@@ -445,6 +485,346 @@ public class WebGeneratedContentServiceTests
         Assert.Equal(volume.Id, chapter.VolumeId);
         Assert.Equal("第一卷：黑雨觉醒", volume.Title);
         Assert.Equal(1, arc.CurrentChapters);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_StripsMarkdownDecorationFromReadableTitle()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-001", "# **第一章：邮徽觉醒**\n沈砚握住银蓝邮徽。");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
+
+        Assert.Equal("第一章：邮徽觉醒", chapter.Title);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_PreservesExistingVolumeTitleWhenNoVolumeArcExists()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            db.Volumes.Add(new Volume
+            {
+                Id = "volume-1",
+                ProjectId = "project-1",
+                VolumeNumber = 1,
+                Title = "第一卷：黑雨旧邮路"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-001", "第一章：维修站的黑雨\n沈砚拧紧旧扳手。");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
+        var volume = await verifyDb.Volumes.SingleAsync(v => v.Id == "volume-1");
+
+        Assert.Equal("volume-1", chapter.VolumeId);
+        Assert.Equal("第一卷：黑雨旧邮路", volume.Title);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_ReusesExistingProjectChapterWhenCalledWithLogicalChapterId()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            db.Chapters.Add(new Chapter
+            {
+                Id = "project-1-chapter-007",
+                ProjectId = "project-1",
+                Title = "第七章：旧标题",
+                ChapterNumber = 7,
+                Status = "draft",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-007", "第七章：旧货场的“缝”与追猎的阴影\n沈砚进入旧货场。");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.ProjectId == "project-1");
+        Assert.Equal("project-1-chapter-007", chapter.Id);
+        Assert.Equal(7, chapter.ChapterNumber);
+        Assert.Equal("第七章：旧货场的“缝”与追猎的阴影", chapter.Title);
+        Assert.Equal("committed", chapter.Status);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_PreservesFullReadableHeadingSubtitle()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-007", "第七章：旧货场的“缝”与追猎的阴影\n沈砚进入旧货场。");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-007");
+        var document = await verifyDb.ContentDocuments.SingleAsync(d => d.Id == chapter.CurrentDocumentId);
+        Assert.Equal("第七章：旧货场的“缝”与追猎的阴影", chapter.Title);
+        Assert.Equal(chapter.Title, document.Title);
+        Assert.Equal(chapter.Id, document.SourceId);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_UsesExplicitTitleWhenCommittedBodyHasNoHeading()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync(
+            "chapter-006",
+            "沈砚沿着锈蚀管汇向主管道深处走去。",
+            "第六章：主管道深处的残响");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-006");
+        var document = await verifyDb.ContentDocuments.SingleAsync(d => d.Id == chapter.CurrentDocumentId);
+        var version = await verifyDb.ChapterVersions.SingleAsync(v => v.ChapterId == chapter.Id);
+
+        Assert.Equal("第六章：主管道深处的残响", chapter.Title);
+        Assert.Equal(chapter.Title, document.Title);
+        Assert.Equal(chapter.Title, version.Title);
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_CreatesChapterVersionsAndOutboxEvents()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseSqlite(connection));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            db.Users.Add(new User
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "测试项目",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await service.SaveChapterAsync("chapter-001", "第一章：黑雨来临\n陈默第一次看见蓝磷骨光。");
+        await service.SaveChapterAsync("chapter-001", "第一章：黑雨来临\n陈默重新确认蓝磷骨光来自旧邮徽。");
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        var chapter = await verifyDb.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
+        var versions = await verifyDb.ChapterVersions
+            .Where(v => v.ChapterId == chapter.Id)
+            .OrderBy(v => v.VersionNumber)
+            .ToListAsync();
+        var outboxEvents = await verifyDb.OutboxEvents
+            .Where(e => e.ProjectId == "project-1" && e.AggregateType == "chapter_version")
+            .OrderBy(e => e.CreatedAt)
+            .ToListAsync();
+
+        Assert.Equal(2, versions.Count);
+        Assert.Equal(new[] { 1, 2 }, versions.Select(v => v.VersionNumber).ToArray());
+        Assert.Equal("committed", versions[0].Status);
+        Assert.Equal("第一章：黑雨来临", versions[1].Title);
+        Assert.Equal(chapter.CurrentDocumentId, versions[1].ContentDocumentId);
+        Assert.Equal(2, outboxEvents.Count);
+        Assert.All(outboxEvents, evt =>
+        {
+            Assert.Equal("index_chapter_content", evt.EventType);
+            Assert.Equal("pending", evt.Status);
+        });
+        Assert.Equal(versions.Select(v => v.Id).ToArray(), outboxEvents.Select(e => e.AggregateId).ToArray());
     }
 
     private sealed class FixedCurrentUserService : ICurrentUserService
@@ -465,35 +845,4 @@ public class WebGeneratedContentServiceTests
         public string? TryGetUserId() => _userId;
     }
 
-    private sealed class FixedEmbeddingService : IMicroEmbeddingService
-    {
-        public int Dimension => 3;
-
-        public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
-            Task.FromResult(new[] { 0.1f, 0.2f, 0.3f });
-
-        public Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
-            Task.FromResult(texts.Select(_ => new[] { 0.1f, 0.2f, 0.3f }).ToArray());
-
-        public bool IsModelReady() => true;
-        public void ReleaseSession() { }
-    }
-
-    private sealed class RecordingVectorStore : IVectorStore
-    {
-        public List<VectorData> Upserted { get; } = new();
-
-        public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
-        public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
-        public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) => Task.FromResult<CollectionInfo?>(null);
-        public Task<List<SearchResult>> SearchSimilarAsync(string userId, float[] queryVector, int topK = 10, Dictionary<string, object>? filters = null, CancellationToken ct = default) => Task.FromResult(new List<SearchResult>());
-        public Task DeleteVectorsByFilterAsync(string userId, Dictionary<string, object> filters, CancellationToken ct = default) => Task.CompletedTask;
-
-        public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default)
-        {
-            Upserted.AddRange(vectors);
-            return Task.CompletedTask;
-        }
-    }
 }

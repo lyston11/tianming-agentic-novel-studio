@@ -93,10 +93,10 @@ public class WebStoryBibleDocumentStoreTests
         var memory = new Mock<IMemoryCacheService>();
         memory.Setup(x => x.GetOrSetAsync(
                 It.IsAny<string>(),
-                It.IsAny<Func<Task<StoryBibleDocument>>>(),
+                It.IsAny<Func<Task<StoryBibleDocument?>>>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((string _, Func<Task<StoryBibleDocument>> factory, TimeSpan _, CancellationToken _) => factory());
+            .Returns((string _, Func<Task<StoryBibleDocument?>> factory, TimeSpan _, CancellationToken _) => factory());
         return memory.Object;
     }
 }

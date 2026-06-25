@@ -17,22 +17,22 @@ public sealed class PhaseContextBuilder
         _memoryService = memoryService;
     }
 
-    public async Task<int> EstimateTokensForPhaseAsync(
+    public Task<int> EstimateTokensForPhaseAsync(
         ConversationPhase phase,
         SessionContext session,
         CancellationToken ct)
     {
-        return phase switch
+        return Task.FromResult(phase switch
         {
             ConversationPhase.Conversation => 500,   // Checkpoint only
             ConversationPhase.Planning => 2500,      // Checkpoint + summary + RAG(5)
             ConversationPhase.Creation => 12000,     // Full context package
             ConversationPhase.Review => 7000,        // Checkpoint + draft + reports
             _ => 500,
-        };
+        });
     }
 
-    public async Task<Dictionary<string, object>> PrepareConversationContextAsync(
+    public Task<Dictionary<string, object>> PrepareConversationContextAsync(
         SessionContext session,
         AgentMissionState mission,
         CancellationToken ct)
@@ -56,10 +56,10 @@ public sealed class PhaseContextBuilder
             };
         }
 
-        return context;
+        return Task.FromResult(context);
     }
 
-    public async Task<Dictionary<string, object>> PreparePlanningContextAsync(
+    public Task<Dictionary<string, object>> PreparePlanningContextAsync(
         SessionContext session,
         AgentMissionState mission,
         StoryBibleDocument bible,
@@ -91,10 +91,10 @@ public sealed class PhaseContextBuilder
             };
         }
 
-        return context;
+        return Task.FromResult(context);
     }
 
-    public async Task<Dictionary<string, object>> PrepareCreationContextAsync(
+    public Task<Dictionary<string, object>> PrepareCreationContextAsync(
         SessionContext session,
         AgentMissionState mission,
         StoryBibleDocument bible,
@@ -133,10 +133,10 @@ public sealed class PhaseContextBuilder
             context["recent_observations"] = session.RecentObservations.TakeLast(5).ToList();
         }
 
-        return context;
+        return Task.FromResult(context);
     }
 
-    public async Task<Dictionary<string, object>> PrepareReviewContextAsync(
+    public Task<Dictionary<string, object>> PrepareReviewContextAsync(
         SessionContext session,
         AgentMissionState mission,
         StoryBibleDocument bible,
@@ -178,6 +178,6 @@ public sealed class PhaseContextBuilder
             context["recent_observations"] = session.RecentObservations.TakeLast(3).ToList();
         }
 
-        return context;
+        return Task.FromResult(context);
     }
 }

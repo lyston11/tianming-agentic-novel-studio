@@ -34,6 +34,94 @@ public class KnowledgeController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet("directories")]
+    public async Task<IActionResult> ListDirectories(CancellationToken ct)
+    {
+        try
+        {
+            var directories = await _knowledgeService.ListKnowledgeDirectoriesAsync(ct);
+            return Ok(directories);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list knowledge directories");
+            return StatusCode(500, ApiErrors.Internal("Failed to list knowledge directories"));
+        }
+    }
+
+    [HttpPost("directories")]
+    public async Task<IActionResult> CreateDirectory(
+        [FromBody] CreateKnowledgeDirectoryRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+            var directory = await _knowledgeService.CreateKnowledgeDirectoryAsync(request, ct);
+            return Ok(directory);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiErrors.BadRequest(ex.Message, code: "KNOWLEDGE_DIRECTORY_CONFLICT", recommendedAction: "请换一个目录名称后重试。"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create knowledge directory");
+            return StatusCode(500, ApiErrors.Internal("Failed to create knowledge directory"));
+        }
+    }
+
+    [HttpPatch("directories/{key}")]
+    public async Task<IActionResult> UpdateDirectory(
+        string key,
+        [FromBody] UpdateKnowledgeDirectoryRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var directory = await _knowledgeService.UpdateKnowledgeDirectoryAsync(key, request, ct);
+            return Ok(directory);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiErrors.NotFound(ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiErrors.BadRequest(ex.Message, code: "KNOWLEDGE_DIRECTORY_CONFLICT", recommendedAction: "请调整目录后重试。"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update knowledge directory {DirectoryKey}", key);
+            return StatusCode(500, ApiErrors.Internal("Failed to update knowledge directory"));
+        }
+    }
+
+    [HttpDelete("directories/{key}")]
+    public async Task<IActionResult> DeleteDirectory(string key, CancellationToken ct)
+    {
+        try
+        {
+            await _knowledgeService.DeleteKnowledgeDirectoryAsync(key, ct);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiErrors.NotFound(ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiErrors.BadRequest(ex.Message, code: "KNOWLEDGE_DIRECTORY_CONFLICT", recommendedAction: "请先处理目录下条目后重试。"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete knowledge directory {DirectoryKey}", key);
+            return StatusCode(500, ApiErrors.Internal("Failed to delete knowledge directory"));
+        }
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateKnowledge(
         [FromBody] CreateKnowledgeRequest request,
@@ -41,38 +129,41 @@ public class KnowledgeController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
             var knowledge = await _knowledgeService.CreateKnowledgeAsync(request, ct);
             return Ok(knowledge);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create knowledge entry");
-            return StatusCode(500, new { error = "Failed to create knowledge entry" });
+            return StatusCode(500, ApiErrors.Internal("Failed to create knowledge entry"));
         }
     }
 
     [HttpGet]
     public async Task<IActionResult> ListKnowledge(
-        [FromQuery] string projectId,
+        [FromQuery] string? projectId,
         CancellationToken ct)
     {
         try
         {
-            var knowledge = await _knowledgeService.ListKnowledgeAsync(projectId, ct);
+            var knowledge = await _knowledgeService.ListKnowledgeAsync(projectId ?? string.Empty, ct);
             return Ok(knowledge);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list knowledge for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to list knowledge" });
+            return StatusCode(500, ApiErrors.Internal("Failed to list knowledge"));
         }
     }
 
@@ -86,16 +177,16 @@ public class KnowledgeController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get knowledge {KnowledgeId}", id);
-            return StatusCode(500, new { error = "Failed to get knowledge" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get knowledge"));
         }
     }
 
@@ -112,16 +203,16 @@ public class KnowledgeController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update knowledge {KnowledgeId}", id);
-            return StatusCode(500, new { error = "Failed to update knowledge" });
+            return StatusCode(500, ApiErrors.Internal("Failed to update knowledge"));
         }
     }
 
@@ -135,16 +226,16 @@ public class KnowledgeController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete knowledge {KnowledgeId}", id);
-            return StatusCode(500, new { error = "Failed to delete knowledge" });
+            return StatusCode(500, ApiErrors.Internal("Failed to delete knowledge"));
         }
     }
 
@@ -160,12 +251,12 @@ public class KnowledgeController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search knowledge in project {ProjectId}", request.ProjectId);
-            return StatusCode(500, new { error = "Failed to search knowledge" });
+            return StatusCode(500, ApiErrors.Internal("Failed to search knowledge"));
         }
     }
 
@@ -176,25 +267,34 @@ public class KnowledgeController : ControllerBase
         CancellationToken ct)
     {
         if (request == null || string.IsNullOrWhiteSpace(request.ProjectId))
-            return BadRequest(new { error = "ProjectId is required" });
+            return BadRequest(ApiErrors.BadRequest("ProjectId is required"));
 
         try
         {
-            await _knowledgeService.IncrementUsageAsync(id, request.ProjectId, request.SessionId, request.RunId, ct);
+            var idempotencyKey = HttpContext?.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKeyHeader) == true
+                ? idempotencyKeyHeader.ToString()
+                : request.IdempotencyKey ?? string.Empty;
+            await _knowledgeService.IncrementUsageAsync(
+                id,
+                request.ProjectId,
+                request.SessionId,
+                request.RunId,
+                idempotencyKey,
+                ct);
             return NoContent();
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return Forbid();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to increment usage for knowledge {KnowledgeId}", id);
-            return StatusCode(500, new { error = "Failed to increment usage" });
+            return StatusCode(500, ApiErrors.Internal("Failed to increment usage"));
         }
     }
 
@@ -207,9 +307,9 @@ public class KnowledgeController : ControllerBase
         try
         {
             if (file == null || file.Length == 0)
-                return BadRequest(new { error = "No file provided" });
+                return BadRequest(ApiErrors.BadRequest("No file provided"));
             if (string.IsNullOrWhiteSpace(projectId))
-                return BadRequest(new { error = "projectId is required" });
+                return BadRequest(ApiErrors.BadRequest("projectId is required"));
 
             var userId = _currentUserService.GetUserId();
             var normalizedProjectId = projectId.Trim();
@@ -217,7 +317,22 @@ public class KnowledgeController : ControllerBase
                 .AsNoTracking()
                 .AnyAsync(p => p.Id == normalizedProjectId && p.UserId == userId);
             if (!projectExists)
-                return NotFound(new { error = "Project not found" });
+                return NotFound(ApiErrors.NotFound("Project not found"));
+
+            var idempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKeyHeader)
+                ? idempotencyKeyHeader.ToString().Trim()
+                : string.Empty;
+            if (!string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                var existingTask = await _db.KnowledgeProcessingTasks
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(task =>
+                        task.UserId == userId &&
+                        task.ProjectId == normalizedProjectId &&
+                        task.IdempotencyKey == idempotencyKey);
+                if (existingTask != null)
+                    return Ok(ToUploadResponse(existingTask));
+            }
 
             var fileName = Path.GetFileName(file.FileName);
             var text = await ReadFormFileTextAsync(file);
@@ -227,6 +342,7 @@ public class KnowledgeController : ControllerBase
                 Id = Guid.NewGuid().ToString(),
                 UserId = userId,
                 ProjectId = normalizedProjectId,
+                IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey,
                 FileName = title ?? fileName,
                 FileSize = file.Length,
                 Status = "pending",
@@ -252,23 +368,16 @@ public class KnowledgeController : ControllerBase
             _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
                 task.FileName, task.FileSize, userId, task.Id);
 
-            return Ok(new
-            {
-                taskId = task.Id,
-                fileName = task.FileName,
-                fileSize = task.FileSize,
-                status = task.Status,
-                message = "文件已上传，等待处理"
-            });
+            return Ok(ToUploadResponse(task));
         }
         catch (UnauthorizedAccessException)
         {
-            return Unauthorized(new { error = "User not authenticated" });
+            return Unauthorized(ApiErrors.Create("UNAUTHENTICATED", "User not authenticated", "authorization", recoverable: true, recommendedAction: "请重新登录后再试。"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upload file");
-            return StatusCode(500, new { error = "Failed to upload file" });
+            return StatusCode(500, ApiErrors.Internal("Failed to upload file"));
         }
     }
 
@@ -283,7 +392,7 @@ public class KnowledgeController : ControllerBase
                 .FirstOrDefaultAsync();
 
             if (task == null)
-                return NotFound(new { error = "Task not found" });
+                return NotFound(ApiErrors.NotFound("Task not found"));
 
             return Ok(new KnowledgeProcessingTaskDto
             {
@@ -304,12 +413,12 @@ public class KnowledgeController : ControllerBase
         }
         catch (UnauthorizedAccessException)
         {
-            return Unauthorized(new { error = "User not authenticated" });
+            return Unauthorized(ApiErrors.Create("UNAUTHENTICATED", "User not authenticated", "authorization", recoverable: true, recommendedAction: "请重新登录后再试。"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get task status for {TaskId}", taskId);
-            return StatusCode(500, new { error = "Failed to get task status" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get task status"));
         }
     }
 
@@ -321,4 +430,13 @@ public class KnowledgeController : ControllerBase
             throw new InvalidOperationException("Uploaded knowledge content is empty.");
         return text;
     }
+
+    private static object ToUploadResponse(Data.Entities.KnowledgeProcessingTask task) => new
+    {
+        taskId = task.Id,
+        fileName = task.FileName,
+        fileSize = task.FileSize,
+        status = task.Status,
+        message = "文件已上传，等待处理"
+    };
 }

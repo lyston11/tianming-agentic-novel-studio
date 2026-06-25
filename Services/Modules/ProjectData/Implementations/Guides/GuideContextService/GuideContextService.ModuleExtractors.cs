@@ -16,7 +16,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         public async Task<OutlineTaskContext?> BuildOutlineContextAsync(string volumeId)
         {
-            var guide = await LoadGuideAsync<OutlineGuide>("outline_guide.json").ConfigureAwait(false);
+            var guide = await LoadGuideAsync<OutlineGuide>(GuideRuntimeDataKeys.OutlineGuide).ConfigureAwait(false);
             var volumeGuide = guide.Volumes.GetValueOrDefault(volumeId);
 
             if (volumeGuide == null) return null;
@@ -103,7 +103,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         public async Task<PlanningTaskContext?> BuildPlanningContextAsync(string volumeId)
         {
-            var guide = await LoadGuideAsync<PlanningGuide>("planning_guide.json").ConfigureAwait(false);
+            var guide = await LoadGuideAsync<PlanningGuide>(GuideRuntimeDataKeys.PlanningGuide).ConfigureAwait(false);
             var volumeGuide = guide.Volumes.GetValueOrDefault(volumeId);
 
             if (volumeGuide == null) return null;
@@ -137,7 +137,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
         public async Task<BlueprintTaskContext?> BuildBlueprintContextAsync(string chapterId)
         {
-            var guide = await LoadGuideAsync<BlueprintGuide>("blueprint_guide.json").ConfigureAwait(false);
+            var guide = await LoadGuideAsync<BlueprintGuide>(GuideRuntimeDataKeys.BlueprintGuide).ConfigureAwait(false);
             var chapterGuide = guide.Chapters.GetValueOrDefault(chapterId);
 
             if (chapterGuide == null) return null;
@@ -242,7 +242,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             var factSnapshotTask = ExtractFactSnapshotAsync(chapterId, chapterGuide.ContextIds);
             var milestonesTask = _milestoneStore.GetPreviousMilestonesAsync(currentVol);
             var archivesTask = currentVol > 1
-                ? ServiceLocator.Get<VolumeFactArchiveStore>().GetPreviousArchivesAsync(currentVol)
+                ? ServiceLocator.Get<IVolumeFactArchiveService>().GetPreviousArchivesAsync(currentVol)
                 : Task.FromResult(new List<VolumeFactArchive>());
 
             var storeSummaries = await storeSummariesTask.ConfigureAwait(false);
@@ -293,8 +293,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
             context.StateDivergenceWarnings.AddRange(await trackingTask.ConfigureAwait(false));
             context.StateDivergenceWarnings.AddRange(await volumeEndTask.ConfigureAwait(false));
 
-            await PopulateFirstDescriptionSnippetsAsync(context, cfg).ConfigureAwait(false);
-
             return context;
         }
 
@@ -311,7 +309,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             var factSnapshotPOTask = ExtractFactSnapshotAsync(chapterId, chapterGuide.ContextIds);
             var milestonesPOTask = _milestoneStore.GetPreviousMilestonesAsync(currentVolPO);
             var archivesPOTask = currentVolPO > 1
-                ? ServiceLocator.Get<VolumeFactArchiveStore>().GetPreviousArchivesAsync(currentVolPO)
+                ? ServiceLocator.Get<IVolumeFactArchiveService>().GetPreviousArchivesAsync(currentVolPO)
                 : Task.FromResult(new List<VolumeFactArchive>());
 
             await Task.WhenAll(taskLayerPOTask, storeSummariesPOTask, factSnapshotPOTask, milestonesPOTask, archivesPOTask).ConfigureAwait(false);
@@ -350,48 +348,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             context.StateDivergenceWarnings.AddRange(await trackingPOTask.ConfigureAwait(false));
             context.StateDivergenceWarnings.AddRange(await volumeEndPOTask.ConfigureAwait(false));
 
-            await PopulateFirstDescriptionSnippetsAsync(context, cfg).ConfigureAwait(false);
-
             return context;
-        }
-
-        private async Task PopulateFirstDescriptionSnippetsAsync(ContentTaskContext context, LayeredContextConfigSnapshot cfg)
-        {
-            if (!cfg.SemanticRecallEnabled) return;
-            if (context?.Characters == null || context.Characters.Count == 0) return;
-
-            try
-            {
-                var firstIdx = ServiceLocator.Get<IEntityFirstChapterIndex>();
-                await firstIdx.LoadAsync().ConfigureAwait(false);
-                if (firstIdx.Count == 0) return;
-
-                var chunkSearch = ServiceLocator.Get<IContentChunkSearchService>();
-                int window = Math.Max(1, cfg.FirstDescriptionWindowSize);
-                var snippets = new List<FirstDescriptionSnippet>(context.Characters.Count);
-
-                foreach (var c in context.Characters)
-                {
-                    if (string.IsNullOrEmpty(c?.Id)) continue;
-                    var entry = await firstIdx.GetAsync(c.Id).ConfigureAwait(false);
-                    if (entry == null) continue;
-                    if (string.Equals(entry.ChapterId, context.ChapterId, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    var hits = await chunkSearch.SearchByChapterPositionAsync(entry.ChapterId, entry.ChunkPosition, window).ConfigureAwait(false);
-                    if (hits.Count == 0) continue;
-                    var content = string.Join("\n", hits.Select(h => h.Content));
-                    if (string.IsNullOrWhiteSpace(content)) continue;
-                    snippets.Add(new FirstDescriptionSnippet(c.Id, c.Name ?? string.Empty, entry.ChapterId, content));
-                }
-
-                context.FirstDescriptionSnippets = snippets;
-                if (snippets.Count > 0)
-                    TM.App.Log($"[GuideContextService] 注入首次描写: {snippets.Count} 条");
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[GuideContextService] 首次描写注入失败（非致命）: {ex.Message}");
-            }
         }
 
         private async Task<ContentTaskContext> LoadTaskLayerAsync(

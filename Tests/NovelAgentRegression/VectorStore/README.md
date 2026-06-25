@@ -131,9 +131,6 @@ VectorData {
 
 ## Known Issues
 
-### Build Warnings
-The test project has existing ambiguous reference warnings in `ProjectDataStubs.cs` and other files (CS0104 errors). These are pre-existing issues in the test infrastructure and do not affect the Qdrant integration tests.
-
 ### Test Execution
 If Docker is not running, Testcontainers will fail with a connection error. Ensure Docker Desktop (or Docker daemon) is running before executing tests.
 

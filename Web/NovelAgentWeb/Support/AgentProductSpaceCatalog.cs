@@ -41,10 +41,10 @@ public static class AgentProductSpaceCatalog
                 Id = "memory_system",
                 Name = "记忆系统",
                 Purpose = "贯通聊天上下文、会话目标、项目长期约束、作者偏好和工具执行经验。",
-                Contains = new List<string> { "chat_memory", "session_memory", "project_memory", "author_memory", "execution_memory", "agent_memory_events" },
-                ProcessArtifacts = new List<string> { "本轮观察", "短期偏好", "失败模式", "修复经验" },
+                Contains = new List<string> { "chat_memory", "session_memory", "project_memory", "author_memory", "execution_memory", "agent_memory_events", "agent_memory_reads", "agent_memory_promotions" },
+                ProcessArtifacts = new List<string> { "本轮观察", "记忆读取审计", "短期偏好", "记忆提升记录", "失败模式", "修复经验" },
                 FinalArtifacts = new List<string> { "作者长期偏好", "项目长期约束", "会话待办和开放问题" },
-                Capabilities = new List<string> { "读取近期对话", "沉淀会话目标", "沉淀项目约束", "沉淀作者偏好", "沉淀执行经验" }
+                Capabilities = new List<string> { "读取近期对话", "审计记忆读取", "沉淀会话目标", "沉淀项目约束", "沉淀作者偏好", "沉淀执行经验", "追踪记忆提升" }
             },
             new()
             {
@@ -72,7 +72,7 @@ public static class AgentProductSpaceCatalog
                 Id = "session_memory",
                 Scope = "single agent session",
                 ReadsFrom = new List<string> { "agent_memories session.*" },
-                WritesTo = new List<string> { "agent_memories session.*" },
+                WritesTo = new List<string> { "agent_memories session.*", "agent_memory_reads", "agent_memory_promotions" },
                 Notes = "记录当前目标、开放问题、短期偏好和最近观察；无项目阶段也有效。"
             },
             new()
@@ -80,7 +80,7 @@ public static class AgentProductSpaceCatalog
                 Id = "project_memory",
                 Scope = "single novel project",
                 ReadsFrom = new List<string> { "agent_memories project.*", "story_bible" },
-                WritesTo = new List<string> { "agent_memories project.*" },
+                WritesTo = new List<string> { "agent_memories project.*", "agent_memory_reads" },
                 Notes = "只在会话明确绑定项目后写入，避免聊天阶段串项目。"
             },
             new()
@@ -88,7 +88,7 @@ public static class AgentProductSpaceCatalog
                 Id = "author_memory",
                 Scope = "cross-project user profile",
                 ReadsFrom = new List<string> { "agent_memories author.*" },
-                WritesTo = new List<string> { "agent_memories author.*" },
+                WritesTo = new List<string> { "agent_memories author.*", "agent_memory_reads" },
                 Notes = "沉淀用户长期风格偏好、确认容忍度、题材习惯；无项目阶段也有效。"
             },
             new()
@@ -96,7 +96,7 @@ public static class AgentProductSpaceCatalog
                 Id = "execution_memory",
                 Scope = "project or projectless runtime experience",
                 ReadsFrom = new List<string> { "agent_memories execution.*", "agent_tool_executions" },
-                WritesTo = new List<string> { "agent_memories execution.*", "agent_memory_events" },
+                WritesTo = new List<string> { "agent_memories execution.*", "agent_memory_events", "agent_memory_reads" },
                 Notes = "沉淀工具失败模式、阻塞原因和修复经验；无项目阶段写入 projectless 执行记忆。"
             }
         },
@@ -147,6 +147,7 @@ public sealed class AgentWorkspaceState
     public List<AgentWorkspaceProjectState> VisibleProjects { get; set; } = new();
     public AgentWorkspaceKnowledgeState KnowledgeBase { get; set; } = new();
     public AgentWorkspaceWorkflowState Workflow { get; set; } = new();
+    public AgentWorkspaceMemoryState Memory { get; set; } = new();
     public List<string> Notes { get; set; } = new();
 
     public static AgentWorkspaceState Hint(AgentSession session) => new()
@@ -166,6 +167,7 @@ public sealed class AgentWorkspaceState
             StyleDislikeCount = session.WorkingMemory.AuthorMemory?.StyleDislikes.Count ?? 0,
             GenreHabitCount = session.WorkingMemory.AuthorMemory?.GenreHabits.Count ?? 0
         },
+        Memory = new AgentWorkspaceMemoryState(),
         Notes = new List<string>
         {
             "这是轻量提示，不是数据库全量状态；需要真实状态时，从完整工具目录中选择具备相应读能力的工具。"
@@ -210,6 +212,9 @@ public sealed class AgentWorkspaceKnowledgeState
     public int TotalCount { get; set; }
     public List<AgentWorkspaceKnowledgeTypeCount> CountsByType { get; set; } = new();
     public List<AgentWorkspaceKnowledgeItem> RecentItems { get; set; } = new();
+    public List<AgentWorkspaceKnowledgeUsageState> RecentlyUsedBindings { get; set; } = new();
+    public List<AgentWorkspaceKnowledgeConstraintEvidenceState> RecentConstraintEvidence { get; set; } = new();
+    public List<AgentWorkspaceKnowledgeConflictReportState> RecentConflictReports { get; set; } = new();
 }
 
 public sealed class AgentWorkspaceKnowledgeTypeCount
@@ -228,11 +233,99 @@ public sealed class AgentWorkspaceKnowledgeItem
     public DateTime CreatedAt { get; set; }
 }
 
+public sealed class AgentWorkspaceKnowledgeUsageState
+{
+    public string KnowledgeId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string EntryType { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
+    public string ProjectUsageStatus { get; set; } = string.Empty;
+    public int ProjectUsageCount { get; set; }
+    public string Role { get; set; } = string.Empty;
+    public string Scope { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string ConstraintLevel { get; set; } = string.Empty;
+    public string PackagePolicy { get; set; } = string.Empty;
+    public List<string> UsedByChapters { get; set; } = new();
+    public DateTime? LastUsedAt { get; set; }
+}
+
+public sealed class AgentWorkspaceKnowledgeConstraintEvidenceState
+{
+    public string KnowledgeId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string EntryType { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
+    public string ChapterId { get; set; } = string.Empty;
+    public string ConstraintLevel { get; set; } = string.Empty;
+    public string PackagePolicy { get; set; } = string.Empty;
+    public string GateStatus { get; set; } = string.Empty;
+    public string EvidenceStatus { get; set; } = string.Empty;
+    public string FactSnapshotId { get; set; } = string.Empty;
+    public int FactSnapshotVersion { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class AgentWorkspaceKnowledgeConflictReportState
+{
+    public string ConflictId { get; set; } = string.Empty;
+    public string KnowledgeId { get; set; } = string.Empty;
+    public List<string> ConflictingKnowledgeIds { get; set; } = new();
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectTitle { get; set; } = string.Empty;
+    public string ConflictType { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
+    public string ImpactScope { get; set; } = string.Empty;
+    public string Explanation { get; set; } = string.Empty;
+    public string RecommendedAction { get; set; } = string.Empty;
+    public bool RequiresUserDecision { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string ResolutionNote { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+}
+
 public sealed class AgentWorkspaceWorkflowState
 {
     public int ActiveRunCount { get; set; }
     public int RecentRunCount { get; set; }
     public List<AgentWorkspaceRunState> RecentRuns { get; set; } = new();
+}
+
+public sealed class AgentWorkspaceMemoryState
+{
+    public List<AgentWorkspaceMemoryReadState> RecentReads { get; set; } = new();
+    public List<AgentWorkspaceMemoryPromotionState> RecentPromotions { get; set; } = new();
+}
+
+public sealed class AgentWorkspaceMemoryReadState
+{
+    public string Id { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string SessionId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string MemoryScope { get; set; } = string.Empty;
+    public List<string> MemoryKeys { get; set; } = new();
+    public string SourceType { get; set; } = string.Empty;
+    public string Consumer { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class AgentWorkspaceMemoryPromotionState
+{
+    public string Id { get; set; } = string.Empty;
+    public string ProjectId { get; set; } = string.Empty;
+    public string SessionId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string SourceScope { get; set; } = string.Empty;
+    public string TargetScope { get; set; } = string.Empty;
+    public string SourceMemoryKey { get; set; } = string.Empty;
+    public string TargetMemoryKey { get; set; } = string.Empty;
+    public string PromotionReason { get; set; } = string.Empty;
+    public string PayloadJson { get; set; } = "{}";
+    public DateTime CreatedAt { get; set; }
 }
 
 public sealed class AgentWorkspaceRunState

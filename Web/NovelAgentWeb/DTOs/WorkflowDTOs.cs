@@ -7,6 +7,9 @@ namespace TM.Web.NovelAgentWeb.DTOs;
 /// </summary>
 public class CreateVolumeArcRequest
 {
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
+
     [Required]
     public string ProjectId { get; set; } = null!;
 

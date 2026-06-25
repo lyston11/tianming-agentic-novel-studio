@@ -1,31 +1,26 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Framework.AI.Embedding;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 
 namespace TM.Services.Framework.AI.NovelAgent.Services
 {
     public sealed class CreativeKnowledgeBaseService
     {
-        private const string StorageSubPath = "Framework/AI/NovelAgent";
-        private const string KnowledgeFileName = "creative_knowledge_base.json";
         private const int MaxHits = 16;
 
-        private readonly SemaphoreSlim _ioLock = new(1, 1);
-        private CreativeKnowledgeBaseDocument? _cache;
         private readonly IVectorStore? _vectorStore;
         private readonly IMicroEmbeddingService? _embeddingService;
         private readonly ICurrentUserService? _currentUserService;
         private readonly IAgentMemoryRepository? _memoryRepository;
         private readonly string? _projectId;
+        private readonly IReadOnlyList<CreativeKnowledgeEntry> _builtInEntries;
 
         public CreativeKnowledgeBaseService(
             IVectorStore? vectorStore = null,
@@ -39,49 +34,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             _currentUserService = currentUserService;
             _memoryRepository = memoryRepository;
             _projectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId.Trim();
-
-            try
-            {
-                StoragePathHelper.CurrentProjectChanged += (_, _) =>
-                {
-                    _cache = null;
-                };
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[CreativeKnowledgeBaseService] 订阅项目切换事件失败: {ex.Message}");
-            }
-        }
-
-        public string GetStoragePath()
-        {
-            return "sqlite-qdrant://creative-knowledge-base";
-        }
-
-        public async Task<CreativeKnowledgeBaseDocument> LoadAsync(CancellationToken ct = default)
-        {
-            if (_cache != null) return Clone(_cache);
-
-            await _ioLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                if (_cache != null) return Clone(_cache);
-
-                _cache = BuildSeedDocument();
-                Normalize(_cache);
-                EnsureSeedEntries(_cache);
-                return Clone(_cache);
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[CreativeKnowledgeBaseService] 加载创意知识库失败: {ex.Message}");
-                _cache = BuildSeedDocument();
-                return Clone(_cache);
-            }
-            finally
-            {
-                _ioLock.Release();
-            }
+            _builtInEntries = BuildSeedEntries()
+                .Select(Clone)
+                .ToList();
         }
 
         public async Task<CreativeKnowledgeRetrievalResult> RetrieveAsync(
@@ -93,44 +48,34 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         {
             var normalizedQuery = BuildQuery(query, constitution, usedPlotPatterns);
 
-            // Fall back to token matching if vector services are not available
             if (_vectorStore == null || _embeddingService == null || _currentUserService == null)
             {
-                return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
-                    .ConfigureAwait(false);
+                return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
             }
 
             try
             {
-                // Get current user context
                 var userId = _currentUserService.GetUserId();
                 var projectId = _projectId;
 
                 if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(projectId))
                 {
-                    return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
-                        .ConfigureAwait(false);
+                    return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
                 }
 
-                // Generate query vector
                 var queryVector = await _embeddingService.EncodeAsync(normalizedQuery, EmbeddingMode.Query, ct)
                     .ConfigureAwait(false);
-
-                // Search Qdrant with filter for knowledge entries
-                var filters = new Dictionary<string, object>
-                {
-                    { "project_id", projectId },
-                    { "source_type", "knowledge" }
-                };
-
                 var searchResults = await _vectorStore.SearchSimilarAsync(
                     userId,
                     queryVector,
-                    topK * 2, // Get more candidates for reranking
-                    filters,
+                    topK * 2,
+                    new Dictionary<string, object>
+                    {
+                        { "project_id", projectId },
+                        { "source_type", "knowledge" }
+                    },
                     ct).ConfigureAwait(false);
 
-                // Load memories for boosting (if available)
                 ProjectMemory? projectMemory = null;
                 AuthorMemory? authorMemory = null;
 
@@ -149,11 +94,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                     }
                 }
 
-                // Load knowledge document to get full entries
-                var document = await LoadAsync(ct).ConfigureAwait(false);
-                var entryMap = document.Entries.ToDictionary(e => e.Id, e => e, StringComparer.OrdinalIgnoreCase);
-
-                // Rerank and score
+                var entryMap = _builtInEntries.ToDictionary(e => e.Id, e => e, StringComparer.OrdinalIgnoreCase);
                 var scoredResults = searchResults
                     .Where(r => !string.IsNullOrWhiteSpace(r.SourceId) && entryMap.ContainsKey(r.SourceId))
                     .Select(r => new
@@ -165,79 +106,55 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                     .OrderByDescending(x => x.Score)
                     .ToList();
 
-                // Filter used tropes if we have project memory
-                var usedPatterns = (usedPlotPatterns ?? Array.Empty<string>())
-                    .Where(p => !string.IsNullOrWhiteSpace(p))
-                    .Select(p => p.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                var filteredResults = scoredResults
+                var usedPatterns = NormalizeUsedPatterns(usedPlotPatterns);
+                var hits = scoredResults
                     .Where(x => x.Entry.Category != CreativeKnowledgeCategory.TropePattern ||
-                               !usedPatterns.Any(p => HasTokenOverlap(x.Entry.Content, p)))
+                                !usedPatterns.Any(p => HasTokenOverlap(x.Entry.Content, p)))
                     .Take(Math.Clamp(topK, 1, MaxHits))
-                    .ToList();
-
-                // Build result
-                var hits = filteredResults
                     .Select(x => BuildVectorResult(x.Entry, x.Score, x.Result))
                     .ToList();
 
-                var result = new CreativeKnowledgeRetrievalResult
-                {
-                    Success = true,
-                    Query = normalizedQuery,
-                    Message = hits.Count == 0
-                        ? "创意知识库暂无命中，已返回空结果。"
-                        : $"创意知识库命中 {hits.Count} 条（向量检索）。"
-                };
-
-                result.Hits.AddRange(hits);
-                result.GenrePrinciples.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.GenrePrinciple, 4));
-                result.TropeWarnings.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.TropePattern, 4));
-                result.AntiTropeStrategies.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.AntiTropeStrategy, 5));
-                result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.EmotionArc, 4));
-                result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.RelationshipDynamic, 4));
-                result.ProjectMemory.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.ProjectUsedPattern, 5));
-                return result;
+                return BuildResult(normalizedQuery, hits, hits.Count == 0
+                    ? "创意知识库暂无命中，已返回空结果。"
+                    : $"创意知识库命中 {hits.Count} 条（向量检索）。");
             }
             catch (Exception ex)
             {
-                TM.App.Log($"[CreativeKnowledgeBaseService] 向量检索失败，回退到文本匹配: {ex.Message}");
-                return await RetrieveWithTokenMatchingAsync(normalizedQuery, constitution, usedPlotPatterns, topK, ct)
-                    .ConfigureAwait(false);
+                TM.App.Log($"[CreativeKnowledgeBaseService] 向量检索失败，改用内核内置知识检索: {ex.Message}");
+                return BuildTokenMatchingResult(normalizedQuery, constitution, usedPlotPatterns, topK);
             }
         }
 
-        private async Task<CreativeKnowledgeRetrievalResult> RetrieveWithTokenMatchingAsync(
+        private CreativeKnowledgeRetrievalResult BuildTokenMatchingResult(
             string normalizedQuery,
             StoryCreativeConstitution? constitution,
             IEnumerable<string>? usedPlotPatterns,
-            int topK,
-            CancellationToken ct)
+            int topK)
         {
-            var document = await LoadAsync(ct).ConfigureAwait(false);
             var queryTokens = Tokenize(normalizedQuery);
-            var usedPatterns = (usedPlotPatterns ?? Array.Empty<string>())
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .Select(p => p.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var hits = document.Entries
+            var usedPatterns = NormalizeUsedPatterns(usedPlotPatterns);
+            var hits = _builtInEntries
                 .Select(entry => ScoreEntry(entry, queryTokens, constitution, usedPatterns))
                 .Where(hit => hit.Score > 0)
                 .OrderByDescending(hit => hit.Score)
                 .Take(Math.Clamp(topK, 1, MaxHits))
                 .ToList();
 
+            return BuildResult(normalizedQuery, hits, hits.Count == 0
+                ? "创意知识库暂无命中，已返回空结果。"
+                : $"创意知识库命中 {hits.Count} 条。");
+        }
+
+        private static CreativeKnowledgeRetrievalResult BuildResult(
+            string normalizedQuery,
+            List<CreativeKnowledgeHit> hits,
+            string message)
+        {
             var result = new CreativeKnowledgeRetrievalResult
             {
                 Success = true,
                 Query = normalizedQuery,
-                Message = hits.Count == 0
-                    ? "创意知识库暂无命中，已返回空结果。"
-                    : $"创意知识库命中 {hits.Count} 条。"
+                Message = message
             };
 
             result.Hits.AddRange(hits);
@@ -247,191 +164,16 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.EmotionArc, 4));
             result.EmotionRelationshipGuides.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.RelationshipDynamic, 4));
             result.ProjectMemory.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.ProjectUsedPattern, 5));
+            result.HardFacts.AddRange(ProjectContents(hits, CreativeKnowledgeCategory.HardFact, 8));
             return result;
         }
 
-        public async Task<CreativeKnowledgeMutationResult> AddEntryAsync(
-            CreativeKnowledgeEntry entry,
-            CancellationToken ct = default)
-        {
-            if (entry == null)
-            {
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = false,
-                    Message = "创意知识条目为空，无法写入。"
-                };
-            }
-
-            await _ioLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                var document = await LoadWithoutLockAsync(ct).ConfigureAwait(false);
-                NormalizeEntry(entry);
-                entry.Source = string.IsNullOrWhiteSpace(entry.Source) ? "User" : entry.Source;
-                document.Entries.RemoveAll(e => string.Equals(e.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
-                document.Entries.Insert(0, entry);
-                Touch(document);
-                await SaveWithoutLockAsync(document, ct).ConfigureAwait(false);
-
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = true,
-                    Message = "创意知识条目已写入。",
-                    Entry = Clone(entry),
-                    Document = Clone(document)
-                };
-            }
-            finally
-            {
-                _ioLock.Release();
-            }
-        }
-
-        public async Task<CreativeKnowledgeMutationResult> UpdateEntryAsync(
-            string entryId,
-            CreativeKnowledgeEntry patch,
-            CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(entryId))
-            {
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = false,
-                    Message = "知识条目 ID 为空，无法更新。"
-                };
-            }
-
-            await _ioLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                var document = await LoadWithoutLockAsync(ct).ConfigureAwait(false);
-                var entry = document.Entries.FirstOrDefault(e => string.Equals(e.Id, entryId, StringComparison.OrdinalIgnoreCase));
-                if (entry == null)
-                {
-                    return new CreativeKnowledgeMutationResult
-                    {
-                        Success = false,
-                        Message = "未找到要更新的知识条目。"
-                    };
-                }
-
-                entry.Category = patch.Category;
-                entry.Genre = patch.Genre;
-                entry.SubGenre = patch.SubGenre;
-                entry.Title = patch.Title;
-                entry.Content = patch.Content;
-                entry.Tags = patch.Tags;
-                entry.Weight = patch.Weight;
-                entry.Source = string.IsNullOrWhiteSpace(patch.Source) ? entry.Source : patch.Source;
-                NormalizeEntry(entry);
-                Touch(document);
-                await SaveWithoutLockAsync(document, ct).ConfigureAwait(false);
-
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = true,
-                    Message = "知识条目已更新。",
-                    Entry = Clone(entry),
-                    Document = Clone(document)
-                };
-            }
-            finally
-            {
-                _ioLock.Release();
-            }
-        }
-
-        public async Task<CreativeKnowledgeMutationResult> DeleteEntryAsync(
-            string entryId,
-            CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(entryId))
-            {
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = false,
-                    Message = "知识条目 ID 为空，无法删除。"
-                };
-            }
-
-            await _ioLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                var document = await LoadWithoutLockAsync(ct).ConfigureAwait(false);
-                var removed = document.Entries.RemoveAll(e => string.Equals(e.Id, entryId, StringComparison.OrdinalIgnoreCase));
-                if (removed == 0)
-                {
-                    return new CreativeKnowledgeMutationResult
-                    {
-                        Success = false,
-                        Message = "未找到要删除的知识条目。"
-                    };
-                }
-
-                Touch(document);
-                await SaveWithoutLockAsync(document, ct).ConfigureAwait(false);
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = true,
-                    Message = "知识条目已删除。",
-                    Document = Clone(document)
-                };
-            }
-            finally
-            {
-                _ioLock.Release();
-            }
-        }
-
-        public async Task<CreativeKnowledgeMutationResult> RecordUsedPatternAsync(
-            string chapterId,
-            string pattern,
-            string note = "",
-            CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(pattern))
-            {
-                return new CreativeKnowledgeMutationResult
-                {
-                    Success = false,
-                    Message = "已用桥段模式为空，无法记录。"
-                };
-            }
-
-            return await AddEntryAsync(new CreativeKnowledgeEntry
-            {
-                Category = CreativeKnowledgeCategory.ProjectUsedPattern,
-                Title = string.IsNullOrWhiteSpace(chapterId)
-                    ? pattern.Trim()
-                    : $"{chapterId.Trim()}：{pattern.Trim()}",
-                Content = string.IsNullOrWhiteSpace(note)
-                    ? pattern.Trim()
-                    : $"{pattern.Trim()}；{note.Trim()}",
-                Tags = new List<string> { "已用桥段", chapterId?.Trim() ?? string.Empty }
-                    .Where(t => !string.IsNullOrWhiteSpace(t))
-                    .ToList(),
-                Weight = 8,
-                Source = "ProjectMemory"
-            }, ct).ConfigureAwait(false);
-        }
-
-        private async Task<CreativeKnowledgeBaseDocument> LoadWithoutLockAsync(CancellationToken ct)
-        {
-            if (_cache != null) return _cache;
-
-            _cache = BuildSeedDocument();
-            Normalize(_cache);
-            EnsureSeedEntries(_cache);
-            return _cache;
-        }
-
-        private async Task SaveWithoutLockAsync(CreativeKnowledgeBaseDocument document, CancellationToken ct)
-        {
-            await Task.CompletedTask.ConfigureAwait(false);
-            Normalize(document);
-            _cache = Clone(document);
-        }
+        private static List<string> NormalizeUsedPatterns(IEnumerable<string>? usedPlotPatterns) =>
+            (usedPlotPatterns ?? Array.Empty<string>())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         private double CalculateScore(
             SearchResult vectorResult,
@@ -440,52 +182,36 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             ProjectMemory? projectMemory,
             AuthorMemory? authorMemory)
         {
-            var score = (double)vectorResult.Score; // Base vector similarity score
-            var reasons = new List<string> { $"向量相似度 {vectorResult.Score:F2}" };
+            var score = (double)vectorResult.Score;
 
-            // Boost: Project referenced knowledge (if field exists in future)
-            // Note: ReferencedKnowledgeIds field not yet available in ProjectMemory
-            // Will be enabled when Task 12-13 adds this field
-
-            // Boost: Author favorite knowledge (if field exists in future)
-            // Note: FavoriteKnowledgeIds field not yet available in AuthorMemory
-            // Will be enabled when Task 12-13 adds this field
-
-            // Boost: Genre match
             if (constitution != null)
             {
                 if (!string.IsNullOrWhiteSpace(constitution.Genre)
                     && Matches(entry, constitution.Genre))
                 {
                     score += 3.0;
-                    reasons.Add("匹配题材");
                 }
 
                 if (!string.IsNullOrWhiteSpace(constitution.SubGenre)
                     && Matches(entry, constitution.SubGenre))
                 {
                     score += 2.0;
-                    reasons.Add("匹配子类型");
                 }
 
                 if (entry.Category == CreativeKnowledgeCategory.ThemeDepth
                     && (constitution.GenreProfile?.DepthStrength ?? 0) >= 7)
                 {
                     score += 2.0;
-                    reasons.Add("匹配主题深度需求");
                 }
 
                 if (entry.Category is CreativeKnowledgeCategory.EmotionArc or CreativeKnowledgeCategory.RelationshipDynamic
                     && (constitution.GenreProfile?.EmotionStrength ?? 0) >= 7)
                 {
                     score += 2.0;
-                    reasons.Add("匹配情绪线需求");
                 }
             }
 
-            // Boost: Entry weight
             score += Math.Clamp(entry.Weight, 1, 10) * 0.3;
-
             return Math.Round(score, 2);
         }
 
@@ -598,29 +324,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             return string.Join("；", parts.Distinct(StringComparer.OrdinalIgnoreCase));
         }
 
-        private static CreativeKnowledgeBaseDocument BuildSeedDocument()
-        {
-            var document = new CreativeKnowledgeBaseDocument();
-            EnsureSeedEntries(document);
-            Touch(document);
-            return document;
-        }
-
-        private static void EnsureSeedEntries(CreativeKnowledgeBaseDocument document)
-        {
-            var existingSeedIds = document.Entries
-                .Where(e => string.Equals(e.Source, "BuiltIn", StringComparison.OrdinalIgnoreCase))
-                .Select(e => e.Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var seed in BuildSeedEntries())
-            {
-                if (existingSeedIds.Contains(seed.Id))
-                    continue;
-                document.Entries.Add(seed);
-            }
-        }
-
         private static List<CreativeKnowledgeEntry> BuildSeedEntries()
         {
             return new List<CreativeKnowledgeEntry>
@@ -704,41 +407,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             };
         }
 
-        private static void Normalize(CreativeKnowledgeBaseDocument document)
-        {
-            document.SchemaVersion = Math.Max(1, document.SchemaVersion);
-            document.Entries ??= new List<CreativeKnowledgeEntry>();
-            if (document.CreatedAt == default) document.CreatedAt = DateTime.Now;
-            if (document.UpdatedAt == default) document.UpdatedAt = document.CreatedAt;
-            foreach (var entry in document.Entries)
-                NormalizeEntry(entry);
-        }
-
-        private static void NormalizeEntry(CreativeKnowledgeEntry entry)
-        {
-            if (string.IsNullOrWhiteSpace(entry.Id))
-                entry.Id = Guid.NewGuid().ToString("N");
-            entry.Genre = entry.Genre?.Trim() ?? string.Empty;
-            entry.SubGenre = entry.SubGenre?.Trim() ?? string.Empty;
-            entry.Title = entry.Title?.Trim() ?? string.Empty;
-            entry.Content = entry.Content?.Trim() ?? string.Empty;
-            entry.Source = entry.Source?.Trim() ?? string.Empty;
-            entry.Tags = entry.Tags?
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList() ?? new List<string>();
-            entry.Weight = Math.Clamp(entry.Weight, 1, 10);
-            if (entry.CreatedAt == default) entry.CreatedAt = DateTime.Now;
-            entry.UpdatedAt = DateTime.Now;
-        }
-
-        private static void Touch(CreativeKnowledgeBaseDocument document)
-        {
-            Normalize(document);
-            document.UpdatedAt = DateTime.Now;
-        }
-
         private static List<string> Tokenize(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return new List<string>();
@@ -768,17 +436,22 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             return hitCount >= Math.Max(1, Math.Min(3, tokens.Count / 2));
         }
 
-        private static CreativeKnowledgeBaseDocument Clone(CreativeKnowledgeBaseDocument document)
-        {
-            var json = JsonSerializer.Serialize(document, JsonHelper.CnDefault);
-            return JsonSerializer.Deserialize<CreativeKnowledgeBaseDocument>(json, JsonHelper.CnDefault)
-                   ?? new CreativeKnowledgeBaseDocument();
-        }
-
         private static CreativeKnowledgeEntry Clone(CreativeKnowledgeEntry entry)
         {
-            var json = JsonSerializer.Serialize(entry, JsonHelper.CnDefault);
-            return JsonSerializer.Deserialize<CreativeKnowledgeEntry>(json, JsonHelper.CnDefault) ?? entry;
+            return new CreativeKnowledgeEntry
+            {
+                Id = entry.Id,
+                Category = entry.Category,
+                Genre = entry.Genre,
+                SubGenre = entry.SubGenre,
+                Title = entry.Title,
+                Content = entry.Content,
+                Tags = entry.Tags.ToList(),
+                Weight = entry.Weight,
+                Source = entry.Source,
+                CreatedAt = entry.CreatedAt,
+                UpdatedAt = entry.UpdatedAt
+            };
         }
     }
 }

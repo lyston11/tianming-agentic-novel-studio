@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { hasValidAuthSession } from '../../services/authStorage';
 import { useAuthStore } from '../../stores/authStore';
 import { useProjectStore } from '../../stores/useProjectStore';
 import { projectService, toNovelProjectInfo } from '../../services/projectService';
@@ -16,13 +17,15 @@ const navItems = [
 export default function Rail() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const ensureProjectSelected = useProjectStore((s) => s.ensureProjectSelected);
+  const { user, token, isAuthenticated: storedIsAuthenticated, clearAuth } = useAuthStore();
+  const isAuthenticated = hasValidAuthSession({ user, token, isAuthenticated: storedIsAuthenticated });
   const { data: projects, isLoading, isError } = useQuery({
     queryKey: ['projects'],
     queryFn: () => projectService.listProjects(),
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000,
   });
   const currentProject = projects?.find((p) => p.id === currentProjectId);
-  const { user, clearAuth } = useAuthStore();
   const navigate = useNavigate();
 
   useEffect(() => {

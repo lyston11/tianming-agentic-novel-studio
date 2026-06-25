@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 
@@ -36,7 +37,7 @@ public sealed class WorkspaceController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get workspace");
-            return StatusCode(500, new { error = "Failed to get workspace" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get workspace"));
         }
     }
 }

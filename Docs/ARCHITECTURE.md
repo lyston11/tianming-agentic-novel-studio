@@ -235,9 +235,10 @@ App_Data/
 - `POST /api/knowledge/upload` - Upload a knowledge source file
 - `GET /api/knowledge/tasks/{taskId}` - Check processing task status
 
-Current local retrieval uses `Embedding:Provider=stub` with
-`semanticQuality=degraded` in `/health`. Qdrant/SQLite integration is wired, but
-model-grade semantic ranking requires a real embedding provider.
+Current local retrieval uses the in-repository BGE embedding runtime by default.
+Redis, Qdrant, SQLite, and the outbox vectorization pipeline are part of the
+normal production path; deterministic stub embeddings are not a supported
+compatibility mode.
 
 #### Novel Agent
 - `POST /api/agent/chat` - Send a chat/agent message

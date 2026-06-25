@@ -74,6 +74,8 @@
 }
 
 .desk {
+  --page-topbar-height: 38px;
+  --page-content-gap: 12px;
   padding: 20px 28px 28px;
   min-height: 100vh;
   display: flex;
@@ -82,22 +84,59 @@
 }
 
 .topbar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  min-height: var(--page-topbar-height);
+  margin-bottom: var(--page-content-gap);
   flex-shrink: 0;
 }
 
 .topbar h1 {
   margin: 0;
+  min-width: 0;
   font-size: 20px;
   font-weight: 700;
+  line-height: 28px;
   color: var(--paper);
 }
 
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-leading,
+.topbar-actions {
+  flex: 0 0 auto;
+  min-height: var(--page-topbar-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-leading {
+  justify-content: flex-start;
+}
+
+.topbar-actions {
+  justify-content: flex-end;
+}
+
+.topbar-spacer {
+  width: 1px;
+  height: var(--page-topbar-height);
+  flex: 0 0 auto;
+}
+
+.topbar-center {
+  position: absolute;
+  left: 50%;
+  width: min(760px, calc(100% - 320px));
+  max-width: calc(100% - 320px);
+  min-width: 0;
+  transform: translateX(-50%);
+  color: var(--paper);
+  pointer-events: none;
+  text-align: center;
+}
 
 /* Command Band */
 .command-band {

@@ -11,7 +11,8 @@ public sealed record AgentToolExecutionStart(
     string Phase,
     string Risk,
     AgentToolCall Call,
-    AgentToolSideEffectSpec? SideEffects = null);
+    AgentToolSideEffectSpec? SideEffects = null,
+    AgentToolSemanticSpec? SemanticContract = null);
 
 public sealed class AgentToolExecutionSnapshot
 {
@@ -32,6 +33,13 @@ public interface IAgentToolExecutionLedger
     Task<AgentToolExecution> StartAsync(AgentToolExecutionStart start, CancellationToken ct = default);
     Task RebindProjectAsync(string executionId, string projectId, CancellationToken ct = default);
     Task CompleteAsync(string executionId, AgentToolExecutionResult result, CancellationToken ct = default);
+    Task<int> FailRunningForSessionAsync(
+        string userId,
+        string sessionId,
+        string? projectId,
+        string reason,
+        CancellationToken ct = default);
+    Task<int> FailAllRunningAsync(string reason, CancellationToken ct = default);
     Task<IReadOnlyList<AgentToolExecutionSnapshot>> GetRecentAsync(
         string userId,
         string sessionId,

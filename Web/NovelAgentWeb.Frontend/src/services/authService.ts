@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import { AUTH_STORAGE_KEY } from './authStorage';
 
 export interface AuthUser {
   id: string;
@@ -23,9 +24,6 @@ export interface LoginRequest {
   password: string;
 }
 
-// Use the same key as Zustand persist for consistency
-const TOKEN_KEY = 'auth-storage';
-
 export const authService = {
   async register(data: RegisterRequest): Promise<AuthResponse> {
     return api<AuthResponse>('/auth/register', {
@@ -42,22 +40,7 @@ export const authService = {
   },
 
   logout(): void {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(AUTH_STORAGE_KEY);
   },
 
-  getStoredToken(): string | null {
-    try {
-      const stored = localStorage.getItem(TOKEN_KEY);
-      if (!stored) return null;
-      const parsed = JSON.parse(stored);
-      return parsed?.state?.token || null;
-    } catch {
-      return null;
-    }
-  },
-
-  setStoredToken(_token: string): void {
-    // Token is already persisted by Zustand, this is a no-op
-    // but kept for API compatibility
-  },
 };

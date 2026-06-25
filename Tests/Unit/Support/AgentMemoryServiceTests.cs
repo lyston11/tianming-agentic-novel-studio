@@ -120,6 +120,52 @@ public class AgentMemoryServiceTests
     }
 
     [Fact]
+    public async Task PersistAsync_RecordsPromotionWhenSessionPreferenceSedimentsIntoProjectConstraint()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1",
+            RuntimeRunId = "runtime-run-1"
+        };
+        session.WorkingMemory.SessionMemory.ShortTermPreferences.AddRange(new[]
+        {
+            "章节要打怪升级",
+            "章节要打怪升级"
+        });
+
+        await service.PersistAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument(), new AgentReflection
+        {
+            MissionPatch = new AgentMissionPatch
+            {
+                MemoryUpdate = new AgentMemoryUpdate
+                {
+                    SessionMemory = new SessionMemoryUpdate
+                    {
+                        ExtractedPreferences = new List<string> { "章节要打怪升级" }
+                    }
+                }
+            }
+        });
+
+        var promotion = Assert.Single(repository.MemoryPromotions);
+        Assert.Equal("user-1", promotion.UserId);
+        Assert.Equal("project-1", promotion.ProjectId);
+        Assert.Equal("session-1", promotion.SessionId);
+        Assert.Equal("runtime-run-1", promotion.RunId);
+        Assert.Equal("session", promotion.SourceScope);
+        Assert.Equal("project", promotion.TargetScope);
+        Assert.Equal("session.short_term_preferences", promotion.SourceMemoryKey);
+        Assert.Equal("project.constraints", promotion.TargetMemoryKey);
+        Assert.Equal("preference_sedimentation_threshold", promotion.PromotionReason);
+        using var payload = System.Text.Json.JsonDocument.Parse(promotion.PayloadJson);
+        Assert.Equal("章节要打怪升级", payload.RootElement.GetProperty("preference").GetString());
+        Assert.Equal(3, payload.RootElement.GetProperty("threshold").GetInt32());
+    }
+
+    [Fact]
     public async Task PersistAsync_WithNoMemoryUpdate_PersistsRuleBasedExecutionAndAuthorChanges()
     {
         var repository = new RecordingMemoryRepository();
@@ -447,6 +493,45 @@ public class AgentMemoryServiceTests
     }
 
     [Fact]
+    public async Task HydrateAsync_PassesRuntimeRunIdToAllMemoryReads()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1",
+            RuntimeRunId = "runtime-run-1"
+        };
+
+        await service.HydrateAsync(session, new NovelProjectInfo { Id = "project-1" }, new StoryBibleDocument());
+
+        Assert.Equal("runtime-run-1", repository.LastSessionReadRunId);
+        Assert.Equal("runtime-run-1", repository.LastProjectReadRunId);
+        Assert.Equal("runtime-run-1", repository.LastAuthorReadRunId);
+        Assert.Equal("runtime-run-1", repository.LastExecutionReadRunId);
+    }
+
+    [Fact]
+    public async Task HydrateProjectlessAsync_PassesRuntimeRunIdToSessionAuthorAndExecutionReads()
+    {
+        var repository = new RecordingMemoryRepository();
+        var service = new AgentMemoryService(repository, NullLogger<AgentMemoryService>.Instance);
+        var session = new AgentSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1",
+            RuntimeRunId = "runtime-run-1"
+        };
+
+        await service.HydrateProjectlessAsync(session);
+
+        Assert.Equal("runtime-run-1", repository.LastSessionReadRunId);
+        Assert.Equal("runtime-run-1", repository.LastAuthorReadRunId);
+        Assert.Equal("runtime-run-1", repository.LastExecutionReadRunId);
+    }
+
+    [Fact]
     public async Task HydrateProjectlessAsync_RestoresSessionAuthorAndExecutionMemory()
     {
         var repository = new RecordingMemoryRepository
@@ -560,22 +645,39 @@ public class AgentMemoryServiceTests
         public Dictionary<string, object> ProjectUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> AuthorUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, object> ProjectlessExecutionUnionUpdates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<MemoryPromotionRecord> MemoryPromotions { get; } = new();
         public int UpdateMemoryCallCount { get; private set; }
+        public string LastProjectReadRunId { get; private set; } = string.Empty;
+        public string LastSessionReadRunId { get; private set; } = string.Empty;
+        public string LastAuthorReadRunId { get; private set; } = string.Empty;
+        public string LastExecutionReadRunId { get; private set; } = string.Empty;
         public string LastSessionUserId { get; private set; } = string.Empty;
         public string LastSessionProjectId { get; private set; } = string.Empty;
         public string LastSessionId { get; private set; } = string.Empty;
 
-        public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
-            => Task.FromResult(ProjectMemory);
+        public Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
+        {
+            LastProjectReadRunId = runId ?? string.Empty;
+            return Task.FromResult(ProjectMemory);
+        }
 
-        public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
-            => Task.FromResult(SessionMemory);
+        public Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default, string? runId = null)
+        {
+            LastSessionReadRunId = runId ?? string.Empty;
+            return Task.FromResult(SessionMemory);
+        }
 
-        public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
-            => Task.FromResult(AuthorMemory);
+        public Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
+        {
+            LastAuthorReadRunId = runId ?? string.Empty;
+            return Task.FromResult(AuthorMemory);
+        }
 
-        public Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default)
-            => Task.FromResult(ExecutionMemory);
+        public Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
+        {
+            LastExecutionReadRunId = runId ?? string.Empty;
+            return Task.FromResult(ExecutionMemory);
+        }
 
         public Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
         {
@@ -611,6 +713,12 @@ public class AgentMemoryServiceTests
             LastSessionId = sessionId;
             foreach (var (key, value) in updates)
                 SessionUpdates[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task RecordMemoryPromotionAsync(MemoryPromotionRecord record, CancellationToken ct = default)
+        {
+            MemoryPromotions.Add(record);
             return Task.CompletedTask;
         }
     }

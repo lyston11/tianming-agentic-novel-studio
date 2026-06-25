@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Design.Characters;
 using TM.Services.Modules.ProjectData.Models.Design.Location;
@@ -18,7 +19,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new CharacterStateGuide { Module = "CharacterStateGuide" };
 
-            var profiles = await LoadAllAsync<CharacterRulesData>("Design/Elements/CharacterRules").ConfigureAwait(false);
+            var profiles = await LoadAllAsync<CharacterRulesData>(GuideRuntimeDataKeys.Characters).ConfigureAwait(false);
 
             EnsureRequiredIds(profiles, p => p.Id, "角色规则", p => p.Name);
             EnsureRequiredCategoryIds(profiles, p => p.Category, p => p.CategoryId, "角色规则", p => p.Name);
@@ -53,7 +54,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new ConflictProgressGuide { Module = "ConflictProgressGuide" };
 
-            var plotRules = await LoadAllAsync<PlotRulesData>("Design/Elements/PlotRules").ConfigureAwait(false);
+            var plotRules = await LoadAllAsync<PlotRulesData>(GuideRuntimeDataKeys.PlotRules).ConfigureAwait(false);
 
             EnsureRequiredIds(plotRules, p => p.Id, "剧情规则", p => p.Name);
             EnsureRequiredCategoryIds(plotRules, p => p.Category, p => p.CategoryId, "剧情规则", p => p.Name);
@@ -94,7 +95,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new ForeshadowingStatusGuide { Module = "ForeshadowingStatusGuide" };
 
-            var plotRules = await LoadAllAsync<PlotRulesData>("Design/Elements/PlotRules").ConfigureAwait(false);
+            var plotRules = await LoadAllAsync<PlotRulesData>(GuideRuntimeDataKeys.PlotRules).ConfigureAwait(false);
 
             EnsureRequiredIds(plotRules, p => p.Id, "剧情规则", p => p.Name);
             EnsureRequiredCategoryIds(plotRules, p => p.Category, p => p.CategoryId, "剧情规则", p => p.Name);
@@ -139,7 +140,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new LocationStateGuide { Module = "LocationStateGuide" };
 
-            var locations = await LoadAllAsync<LocationRulesData>("Design/Elements/LocationRules").ConfigureAwait(false);
+            var locations = await LoadAllAsync<LocationRulesData>(GuideRuntimeDataKeys.Locations).ConfigureAwait(false);
             EnsureRequiredIds(locations, l => l.Id, "地点", l => l.Name);
 
             foreach (var loc in locations)
@@ -159,7 +160,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var guide = new FactionStateGuide { Module = "FactionStateGuide" };
 
-            var factions = await LoadAllAsync<FactionRulesData>("Design/Elements/FactionRules").ConfigureAwait(false);
+            var factions = await LoadAllAsync<FactionRulesData>(GuideRuntimeDataKeys.Factions).ConfigureAwait(false);
             EnsureRequiredIds(factions, f => f.Id, "势力", f => f.Name);
 
             foreach (var faction in factions)

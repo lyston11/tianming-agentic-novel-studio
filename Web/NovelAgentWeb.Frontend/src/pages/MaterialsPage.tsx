@@ -8,11 +8,9 @@ import {
   createMaterialFromText,
 } from '../api';
 import type { MaterialResponse } from '../api/types';
-import { useMaterialStore } from '../stores/useMaterialStore';
 import { useAppStore } from '../stores/useAppStore';
 import { useProjectStore } from '../stores/useProjectStore';
 import Topbar from '../components/layout/Topbar';
-import AnalysisProgress from '../components/materials/AnalysisProgress';
 import KnowledgeBaseBrowser from '../components/materials/KnowledgeBaseBrowser';
 import '../styles/materials.css';
 
@@ -30,8 +28,6 @@ export default function MaterialsPage() {
   const [editCategory, setEditCategory] = useState('');
   const [editTags, setEditTags] = useState('');
   const [lastKnowledgeTask, setLastKnowledgeTask] = useState<{ taskId: string; fileName: string } | null>(null);
-
-  const { isAnalyzing, analysisStages, currentStage } = useMaterialStore();
 
   const { data: materialsData } = useQuery({
     queryKey: ['materials', currentProjectId],
@@ -139,7 +135,7 @@ export default function MaterialsPage() {
       <div className="materials-page">
         <main className="materials-knowledge">
           <KnowledgeBaseBrowser
-            projectId={currentProjectId || ''}
+            projectId={currentProjectId || undefined}
             actions={(
               <button className="ink-button" onClick={() => setIngestOpen(true)}>
                 导入素材
@@ -231,13 +227,6 @@ export default function MaterialsPage() {
                 </button>
               </div>
 
-              {isAnalyzing && (
-                <AnalysisProgress
-                  stages={analysisStages}
-                  currentStage={currentStage}
-                  isAnalyzing={isAnalyzing}
-                />
-              )}
             </div>
 
             <div className="material-list-section">

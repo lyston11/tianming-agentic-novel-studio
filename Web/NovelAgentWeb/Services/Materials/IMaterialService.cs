@@ -22,6 +22,8 @@ public interface IMaterialService
     /// </summary>
     Task<List<MaterialResponse>> ListMaterialsAsync(string projectId, CancellationToken ct = default);
 
+    Task<int> CountProjectMaterialsAsync(string userId, string projectId, CancellationToken ct = default);
+
     /// <summary>
     /// Gets material metadata by ID.
     /// </summary>

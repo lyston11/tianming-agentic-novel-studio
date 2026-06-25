@@ -83,7 +83,7 @@ public sealed class PhaseContextBuilderTests
         {
             SessionId = "s1",
             ActiveProjectId = "p1",
-            RecentObservations = new List<object> { "obs1", "obs2", "obs3", "obs4", "obs5", "obs6", "obs7" }
+            RecentObservations = CreateObservations("obs1", "obs2", "obs3", "obs4", "obs5", "obs6", "obs7")
         };
         var mission = new AgentMissionState
         {
@@ -95,11 +95,11 @@ public sealed class PhaseContextBuilderTests
         var context = await builder.PrepareCreationContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.True(context.ContainsKey("recent_observations"));
-        var observations = context["recent_observations"] as List<object>;
+        var observations = context["recent_observations"] as List<AgentRuntimeObservation>;
         Assert.NotNull(observations);
         Assert.Equal(5, observations.Count);
-        Assert.Equal("obs3", observations[0]); // Last 5: obs3, obs4, obs5, obs6, obs7
-        Assert.Equal("obs7", observations[4]);
+        Assert.Equal("obs3", observations[0].Message); // Last 5: obs3, obs4, obs5, obs6, obs7
+        Assert.Equal("obs7", observations[4].Message);
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class PhaseContextBuilderTests
         {
             SessionId = "s1",
             ActiveProjectId = "p1",
-            RecentObservations = new List<object> { "obs1", "obs2", "obs3", "obs4", "obs5" }
+            RecentObservations = CreateObservations("obs1", "obs2", "obs3", "obs4", "obs5")
         };
         var mission = new AgentMissionState
         {
@@ -192,11 +192,11 @@ public sealed class PhaseContextBuilderTests
         var context = await builder.PrepareReviewContextAsync(session, mission, bible, null, CancellationToken.None);
 
         Assert.True(context.ContainsKey("recent_observations"));
-        var observations = context["recent_observations"] as List<object>;
+        var observations = context["recent_observations"] as List<AgentRuntimeObservation>;
         Assert.NotNull(observations);
         Assert.Equal(3, observations.Count);
-        Assert.Equal("obs3", observations[0]); // Last 3: obs3, obs4, obs5
-        Assert.Equal("obs5", observations[2]);
+        Assert.Equal("obs3", observations[0].Message); // Last 3: obs3, obs4, obs5
+        Assert.Equal("obs5", observations[2].Message);
     }
 
     [Fact]
@@ -254,4 +254,12 @@ public sealed class PhaseContextBuilderTests
 
         Assert.True(context.ContainsKey("draft_artifact"));
     }
+
+    private static List<AgentRuntimeObservation> CreateObservations(params string[] messages) =>
+        messages.Select(message => new AgentRuntimeObservation
+        {
+            ObservationType = "test",
+            Message = message,
+            Success = true
+        }).ToList();
 }

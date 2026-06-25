@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Framework.Common.Helpers;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Framework.AI.NovelAgent.Services;
+using TM.Services.Modules.ProjectData.Implementations;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
@@ -23,7 +24,7 @@ public sealed class WebStoryBibleDocumentStore : IStoryBibleDocumentStore
 
     public WebStoryBibleDocumentStore(IServiceScopeFactory scopeFactory, string userId, string projectId)
     {
-        _scopeFactory = scopeFactory;
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _userId = userId;
         _projectId = projectId;
     }
@@ -259,6 +260,9 @@ public sealed class WebStoryBibleDocumentStore : IStoryBibleDocumentStore
             memory.Set(cacheKey, entity, MemoryCacheDuration);
             await redis.SetAsync(cacheKey, entity, RedisCacheDuration, ct).ConfigureAwait(false);
         }
+
+        if (source.Any(run => run.Intent == NovelAgentIntent.PlanChapter))
+            GuideContextService.RaiseCacheInvalidated();
     }
 
     private static int ResolveVolumeNumber(VolumeArcPlan plan, int fallback)

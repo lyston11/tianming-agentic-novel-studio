@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.Auth;
 using TM.Web.NovelAgentWeb.Services.Auth;
 
@@ -43,12 +44,12 @@ public class AuthController : ControllerBase
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning("Registration failed for {Username}: {Message}", request.Username, ex.Message);
-            return BadRequest(new { message = ex.Message });
+            return BadRequest(ApiErrors.BadRequest(ex.Message, code: "REGISTRATION_REJECTED"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during registration for {Username}", request.Username);
-            return StatusCode(500, new { message = "An error occurred during registration" });
+            return StatusCode(500, ApiErrors.Internal("An error occurred during registration"));
         }
     }
 
@@ -70,12 +71,12 @@ public class AuthController : ControllerBase
         catch (UnauthorizedAccessException ex)
         {
             _logger.LogWarning("Login failed for {EmailOrUsername}: {Message}", request.EmailOrUsername, ex.Message);
-            return Unauthorized(new { message = ex.Message });
+            return Unauthorized(ApiErrors.Create("LOGIN_FAILED", ex.Message, "authorization", recoverable: true, recommendedAction: "请检查账号密码后重试。"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during login for {EmailOrUsername}", request.EmailOrUsername);
-            return StatusCode(500, new { message = "An error occurred during login" });
+            return StatusCode(500, ApiErrors.Internal("An error occurred during login"));
         }
     }
 
@@ -90,7 +91,7 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error validating token");
-            return StatusCode(500, new { message = "An error occurred during token validation" });
+            return StatusCode(500, ApiErrors.Internal("An error occurred during token validation"));
         }
     }
 

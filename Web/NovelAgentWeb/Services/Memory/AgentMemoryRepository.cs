@@ -2,11 +2,10 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Services.Memory;
 
@@ -15,9 +14,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
     private readonly NovelAgentDbContext _context;
     private readonly IDistributedCacheService _redisCache;
     private readonly IMemoryCacheService _memoryCache;
-    private readonly IVectorStore _vectorStore;
-    private readonly IMicroEmbeddingService _embedding;
     private readonly ILogger<AgentMemoryRepository> _logger;
+    private readonly IProductionTruthStore _truthStore;
     private readonly IAgentMemoryVersionService? _versions;
 
     private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
@@ -43,25 +41,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         NovelAgentDbContext context,
         IDistributedCacheService redisCache,
         IMemoryCacheService memoryCache,
-        IVectorStore vectorStore,
-        IMicroEmbeddingService embedding,
         ILogger<AgentMemoryRepository> logger,
+        IProductionTruthStore truthStore,
         IAgentMemoryVersionService? versions = null)
     {
         _context = context;
         _redisCache = redisCache;
         _memoryCache = memoryCache;
-        _vectorStore = vectorStore;
-        _embedding = embedding;
         _logger = logger;
+        _truthStore = truthStore;
         _versions = versions;
     }
 
-    public async Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default)
+    public async Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
     {
         var cacheKey = $"memory:project:{userId}:{projectId}";
 
-        return await _memoryCache.GetOrSetAsync(
+        var cachedProjectMemory = await _memoryCache.GetOrSetAsync(
             cacheKey,
             async () =>
             {
@@ -82,7 +78,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                     LongTermGoal = GetField<string>(rows, "project.long_term_goal"),
                     ReaderPromise = GetField<string>(rows, "project.reader_promise"),
                     Constraints = GetField<List<string>>(rows, "project.constraints") ?? new(),
-                    UnresolvedThreads = GetField<List<string>>(rows, "project.unresolved_threads") ?? new(),
+                    // UnresolvedThreads removed
                     ReferencedKnowledgeIds = GetField<List<string>>(rows, "project.referenced_knowledge_ids") ?? new(),
                     ImportedKnowledgeIds = GetField<List<string>>(rows, "project.imported_knowledge_ids") ?? new(),
                     KnowledgeInventory = GetField<List<KnowledgeInventoryItem>>(rows, "project.knowledge_inventory") ?? new(),
@@ -96,13 +92,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             },
             MemoryCacheDuration,
             ct);
+        await RecordMemoryReadAsync(
+            userId,
+            projectId,
+            sessionId,
+            runId,
+            "project",
+            ProjectMemoryKeys,
+            nameof(GetProjectMemoryAsync),
+            ct);
+        return cachedProjectMemory ?? new ProjectMemory();
     }
 
-    public async Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default)
+    public async Task<SessionMemory> GetSessionMemoryAsync(string userId, string projectId, string sessionId, CancellationToken ct = default, string? runId = null)
     {
         var cacheKey = BuildSessionCacheKey(userId, sessionId);
 
-        return await _memoryCache.GetOrSetAsync(
+        var cachedSessionMemory = await _memoryCache.GetOrSetAsync(
             cacheKey,
             async () =>
             {
@@ -139,13 +145,23 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             },
             MemoryCacheDuration,
             ct);
+        await RecordMemoryReadAsync(
+            userId,
+            projectId,
+            sessionId,
+            runId,
+            "session",
+            SessionMemoryKeys,
+            nameof(GetSessionMemoryAsync),
+            ct);
+        return cachedSessionMemory ?? new SessionMemory();
     }
 
-    public async Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default)
+    public async Task<AuthorMemory> GetAuthorMemoryAsync(string userId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
     {
         var cacheKey = $"memory:author:{userId}";
 
-        return await _memoryCache.GetOrSetAsync(
+        var cachedAuthorMemory = await _memoryCache.GetOrSetAsync(
             cacheKey,
             async () =>
             {
@@ -178,15 +194,25 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             },
             MemoryCacheDuration,
             ct);
+        await RecordMemoryReadAsync(
+            userId,
+            null,
+            sessionId,
+            runId,
+            "author",
+            AuthorMemoryKeys,
+            nameof(GetAuthorMemoryAsync),
+            ct);
+        return cachedAuthorMemory ?? new AuthorMemory();
     }
 
-    public async Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default)
+    public async Task<ExecutionMemory> GetExecutionMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
     {
         var storeProjectId = AgentMemoryScopes.ToStoreProjectId(projectId);
         var cacheProjectId = AgentMemoryScopes.ToExecutionCacheProjectId(projectId);
         var cacheKey = $"memory:execution:{userId}:{cacheProjectId}";
 
-        return await _memoryCache.GetOrSetAsync(
+        var cachedExecutionMemory = await _memoryCache.GetOrSetAsync(
             cacheKey,
             async () =>
             {
@@ -217,6 +243,16 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             },
             MemoryCacheDuration,
             ct);
+        await RecordMemoryReadAsync(
+            userId,
+            storeProjectId,
+            sessionId,
+            runId,
+            "execution",
+            ExecutionMemoryKeys,
+            nameof(GetExecutionMemoryAsync),
+            ct);
+        return cachedExecutionMemory ?? new ExecutionMemory();
     }
 
     public async Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
@@ -262,7 +298,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
         _logger.LogDebug("Updated memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
 
-        await VectorizeProjectMemoryFieldsAsync(
+        await EnqueueProjectMemoryIndexOutboxAsync(
             userId,
             projectId,
             new Dictionary<string, object> { [memoryType] = value },
@@ -332,7 +368,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
                 "batch_update",
                 updates,
                 ct);
-            await VectorizeProjectMemoryFieldsAsync(userId, projectId, updates, ct);
+            await EnqueueProjectMemoryIndexOutboxAsync(userId, projectId, updates, ct);
 
             _logger.LogDebug("Batch updated {Count} memory fields for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
         }
@@ -566,6 +602,27 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
+    public async Task RecordMemoryPromotionAsync(MemoryPromotionRecord record, CancellationToken ct = default)
+    {
+        _context.AgentMemoryPromotions.Add(new AgentMemoryPromotion
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = record.UserId,
+            ProjectId = record.ProjectId,
+            SessionId = record.SessionId,
+            RunId = record.RunId,
+            SourceScope = record.SourceScope,
+            TargetScope = record.TargetScope,
+            SourceMemoryKey = record.SourceMemoryKey,
+            TargetMemoryKey = record.TargetMemoryKey,
+            PromotionReason = record.PromotionReason,
+            PayloadJson = string.IsNullOrWhiteSpace(record.PayloadJson) ? "{}" : record.PayloadJson,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync(ct);
+    }
+
     private static T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
     {
         var row = rows.FirstOrDefault(r => r.MemoryType == memoryType);
@@ -680,7 +737,34 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
     }
 
-    private async Task VectorizeProjectMemoryFieldsAsync(
+    private async Task RecordMemoryReadAsync(
+        string userId,
+        string? projectId,
+        string? sessionId,
+        string? runId,
+        string memoryScope,
+        IReadOnlyList<string> memoryKeys,
+        string consumer,
+        CancellationToken ct)
+    {
+        _context.AgentMemoryReads.Add(new AgentMemoryRead
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = userId,
+            ProjectId = AgentMemoryScopes.ToStoreProjectId(projectId),
+            SessionId = sessionId,
+            RunId = string.IsNullOrWhiteSpace(runId) ? null : runId.Trim(),
+            MemoryScope = memoryScope,
+            MemoryKeysJson = JsonSerializer.Serialize(memoryKeys),
+            SourceType = "memory_repository",
+            Consumer = consumer,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task EnqueueProjectMemoryIndexOutboxAsync(
         string userId,
         string? projectId,
         IReadOnlyDictionary<string, object> updates,
@@ -691,62 +775,43 @@ public class AgentMemoryRepository : IAgentMemoryRepository
             return;
         }
 
-        var vectors = new List<VectorData>();
-        foreach (var (memoryType, value) in updates)
-        {
-            if (!IsVectorizedProjectMemoryType(memoryType) ||
-                value is not string text ||
-                string.IsNullOrWhiteSpace(text))
-            {
-                continue;
-            }
+        var memoryTypes = updates
+            .Where(update =>
+                IsVectorizedProjectMemoryType(update.Key) &&
+                update.Value is string text &&
+                !string.IsNullOrWhiteSpace(text))
+            .Select(update => update.Key)
+            .ToList();
 
-            try
-            {
-                var vectorTask = _embedding.EncodeAsync(text, EmbeddingMode.Passage, ct);
-                if (vectorTask == null)
-                {
-                    continue;
-                }
-
-                var vector = await vectorTask;
-                vectors.Add(new VectorData
-                {
-                    Id = $"memory_{userId}_{projectId}_{memoryType}",
-                    Vector = vector,
-                    UserId = userId,
-                    ProjectId = projectId,
-                    SourceType = "memory",
-                    SourceId = memoryType,
-                    Content = text,
-                    Metadata = new Dictionary<string, object> { { "memory_type", memoryType } }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to vectorize memory field {MemoryType} for user {UserId}, project {ProjectId}", memoryType, userId, projectId);
-            }
-        }
-
-        if (vectors.Count == 0)
+        if (memoryTypes.Count == 0)
         {
             return;
         }
 
-        try
-        {
-            var upsertTask = _vectorStore.UpsertVectorsAsync(userId, vectors, ct);
-            if (upsertTask != null)
-            {
-                await upsertTask;
-            }
+        var rows = await _context.AgentMemories
+            .AsNoTracking()
+            .Where(memory =>
+                memory.UserId == userId &&
+                memory.ProjectId == projectId &&
+                memory.SessionId == null &&
+                memoryTypes.Contains(memory.MemoryType))
+            .ToListAsync(ct);
 
-            _logger.LogDebug("Vectorized {Count} project memory fields for user {UserId}, project {ProjectId}", vectors.Count, userId, projectId);
-        }
-        catch (Exception ex)
+        foreach (var row in rows)
         {
-            _logger.LogError(ex, "Failed to upsert project memory vectors for user {UserId}, project {ProjectId}", userId, projectId);
+            await _truthStore.EnqueueOutboxAsync(
+                new EnqueueOutboxEventRequest(
+                    UserId: userId,
+                    ProjectId: projectId,
+                    RuntimeRunId: null,
+                    EventType: "index_memory_content",
+                    AggregateType: "memory",
+                    AggregateId: row.Id,
+                    PayloadJson: "{}"),
+                ct);
         }
+
+        _logger.LogDebug("Queued {Count} project memory fields for vector indexing for user {UserId}, project {ProjectId}", rows.Count, userId, projectId);
     }
 
     private static bool IsVectorizedProjectMemoryType(string memoryType) =>
@@ -754,6 +819,46 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     private static string BuildSessionCacheKey(string userId, string sessionId) =>
         $"memory:session:{userId}:{sessionId}";
+
+    private static readonly string[] ProjectMemoryKeys =
+    {
+        "project.long_term_goal",
+        "project.reader_promise",
+        "project.constraints",
+        "project.unresolved_threads",
+        "project.referenced_knowledge_ids",
+        "project.imported_knowledge_ids",
+        "project.knowledge_inventory",
+        "project.used_trope_patterns"
+    };
+
+    private static readonly string[] SessionMemoryKeys =
+    {
+        "session.current_goal",
+        "session.open_questions",
+        "session.short_term_preferences",
+        "session.recent_observations",
+        "session.pending_tool_name",
+        "session.last_intent"
+    };
+
+    private static readonly string[] AuthorMemoryKeys =
+    {
+        "author.display_name",
+        "author.style_likes",
+        "author.style_dislikes",
+        "author.confirmation_tolerance",
+        "author.genre_habits",
+        "author.favorite_knowledge_ids"
+    };
+
+    private static readonly string[] ExecutionMemoryKeys =
+    {
+        "execution.tool_failures",
+        "execution.repeated_blockers",
+        "execution.successful_repairs",
+        "execution.knowledge_processing_failures"
+    };
 
     private static string GetMemoryScope(string memoryType)
     {

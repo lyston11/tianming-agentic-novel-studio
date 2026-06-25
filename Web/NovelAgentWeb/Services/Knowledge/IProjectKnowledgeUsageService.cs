@@ -12,12 +12,13 @@ public interface IProjectKnowledgeUsageService
         string source,
         CancellationToken ct = default);
 
-    Task MarkReferencedAsync(
+    Task<bool> MarkReferencedAsync(
         string userId,
         string projectId,
         string knowledgeId,
         string? sessionId,
         string? runId,
+        string? idempotencyKey = null,
         CancellationToken ct = default);
 
     Task<IReadOnlyList<ProjectKnowledgeUsage>> ListForProjectAsync(

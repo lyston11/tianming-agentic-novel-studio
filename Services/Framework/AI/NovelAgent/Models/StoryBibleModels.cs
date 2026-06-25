@@ -120,9 +120,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
 
-        [JsonPropertyName("storagePath")]
-        public string StoragePath { get; set; } = string.Empty;
-
         [JsonPropertyName("document")]
         public StoryBibleDocument? Document { get; set; }
     }

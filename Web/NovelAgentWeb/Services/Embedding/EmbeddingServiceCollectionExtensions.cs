@@ -5,9 +5,9 @@ namespace TM.Web.NovelAgentWeb.Services.Embedding;
 
 public static class EmbeddingServiceCollectionExtensions
 {
-    private const string StubProvider = "stub";
-    private const string DefaultStubModel = "stub-hash-v1";
-    private const int StubDimension = 512;
+    private const string BgeProvider = "bge-small-zh";
+    private const string DefaultBgeModel = "bge-small-zh-v1.5";
+    private const int BgeDimension = 512;
 
     public static IServiceCollection AddNovelAgentEmbedding(
         this IServiceCollection services,
@@ -18,7 +18,7 @@ public static class EmbeddingServiceCollectionExtensions
         ValidateRuntimeStatus(status);
 
         services.AddSingleton(status);
-        services.AddSingleton<IMicroEmbeddingService, StubEmbeddingService>();
+        services.AddSingleton<IMicroEmbeddingService, BgeSmallZhEmbeddingService>();
         services.AddHostedService<EmbeddingModeReporter>();
         return services;
     }
@@ -29,24 +29,23 @@ public static class EmbeddingServiceCollectionExtensions
     {
         var provider = configuration["Embedding:Provider"];
         if (string.IsNullOrWhiteSpace(provider))
-            provider = StubProvider;
+            provider = BgeProvider;
 
-        provider = provider.Trim().ToLowerInvariant();
-        var requireRealEmbeddings = configuration.GetValue("Embedding:RequireRealEmbeddings", false);
+        provider = NormalizeProvider(provider);
+        var requireRealEmbeddings = true;
         var model = configuration["Embedding:Model"];
 
-        if (provider == StubProvider)
+        if (provider == BgeProvider)
         {
             return new EmbeddingRuntimeStatus
             {
-                Provider = StubProvider,
-                Model = string.IsNullOrWhiteSpace(model) ? DefaultStubModel : model.Trim(),
-                Dimension = StubDimension,
-                SemanticQuality = "degraded",
-                IsDegraded = true,
-                UsesDeterministicStub = true,
+                Provider = BgeProvider,
+                Model = string.IsNullOrWhiteSpace(model) ? DefaultBgeModel : model.Trim(),
+                Dimension = BgeDimension,
+                SemanticQuality = "model",
+                IsDegraded = false,
                 RealEmbeddingsRequired = requireRealEmbeddings,
-                Warning = "Semantic RAG is using deterministic hash vectors for local/test mode. Similarity scores are not model-quality embeddings."
+                Warning = string.Empty
             };
         }
 
@@ -57,24 +56,36 @@ public static class EmbeddingServiceCollectionExtensions
             Dimension = configuration.GetValue("Embedding:Dimension", 0),
             SemanticQuality = "unavailable",
             IsDegraded = true,
-            UsesDeterministicStub = false,
-            RealEmbeddingsRequired = requireRealEmbeddings || environment.IsProduction(),
+            RealEmbeddingsRequired = requireRealEmbeddings,
             Warning = $"Embedding provider '{provider}' is configured but no provider implementation is registered in this build."
         };
     }
 
     private static void ValidateRuntimeStatus(EmbeddingRuntimeStatus status)
     {
-        if (status.Provider == StubProvider && status.RealEmbeddingsRequired)
+        if (status.Provider == "stub")
         {
             throw new InvalidOperationException(
-                "Embedding:RequireRealEmbeddings=true cannot be used with Embedding:Provider=stub. Configure a real embedding provider before enabling production semantic RAG.");
+                "Embedding provider 'stub' is not supported: deterministic stub embeddings are not available in the production runtime.");
         }
 
-        if (status.Provider != StubProvider)
+        if (status.Provider != BgeProvider)
         {
             throw new InvalidOperationException(
-                $"Embedding provider '{status.Provider}' is not available in this build. Use Embedding:Provider=stub for degraded local/test mode or add a real provider implementation.");
+                $"Embedding provider '{status.Provider}' is not available in this build. Configure Embedding:Provider={BgeProvider}.");
         }
+
+        using var probe = new BgeSmallZhEmbeddingService();
+        if (!probe.IsModelReady())
+        {
+            throw new InvalidOperationException(
+                "BGE embedding model files are missing from the runtime output. Ensure bge-small-zh-v1.5 model.onnx and vocab.txt are copied to the application output.");
+        }
+    }
+
+    private static string NormalizeProvider(string provider)
+    {
+        var normalized = provider.Trim().ToLowerInvariant();
+        return normalized is "bge-small-zh-v1.5" or "bge" ? BgeProvider : normalized;
     }
 }

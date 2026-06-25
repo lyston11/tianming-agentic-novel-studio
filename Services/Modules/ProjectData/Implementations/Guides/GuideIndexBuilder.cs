@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using TM.Services.Modules.ProjectData.Interfaces;
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
     public partial class GuideIndexBuilder
     {
         private readonly Func<string, bool>? _isModuleEnabled;
+        private readonly IGuideRuntimeDataSource? _runtimeDataSource;
 
         private readonly Dictionary<string, object> _loadCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -66,9 +68,10 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
         }
 
-        public GuideIndexBuilder(Func<string, bool>? isModuleEnabled = null)
+        public GuideIndexBuilder(Func<string, bool>? isModuleEnabled = null, IGuideRuntimeDataSource? runtimeDataSource = null)
         {
             _isModuleEnabled = isModuleEnabled;
+            _runtimeDataSource = runtimeDataSource;
         }
 
     }

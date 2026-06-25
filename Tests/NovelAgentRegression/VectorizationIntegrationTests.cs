@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Qdrant.Client;
 using Testcontainers.Qdrant;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Content;
@@ -20,7 +21,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
 {
     private NovelAgentDbContext _db = null!;
     private QdrantClient _qdrantClient = null!;
-    private MaterialVectorizationService _service = null!;
+    private OutboxMaterialVectorIndexingService _service = null!;
     private QdrantContainer? _qdrantContainer;
     private ILoggerFactory _loggerFactory = null!;
     private string _testUserId = null!;
@@ -37,8 +38,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         await _db.Database.EnsureCreatedAsync();
 
         // Start Qdrant container
-        _qdrantContainer = new QdrantBuilder()
-            .WithImage("qdrant/qdrant:v1.8.0")
+        _qdrantContainer = new QdrantBuilder("qdrant/qdrant:v1.8.0")
             .Build();
 
         await _qdrantContainer.StartAsync();
@@ -55,10 +55,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
-        // Create stub embedding service
-        var mockEmbedding = new TM.Web.NovelAgentWeb.Services.Embedding.StubEmbeddingService(
-            _loggerFactory.CreateLogger<TM.Web.NovelAgentWeb.Services.Embedding.StubEmbeddingService>()
-        );
+        var mockEmbedding = new FixedEmbeddingService();
 
         // Create material chunker
         var chunker = new MaterialChunker();
@@ -86,15 +83,15 @@ public class VectorizationIntegrationTests : IAsyncLifetime
             configuration,
             _loggerFactory.CreateLogger<QdrantVectorStore>());
 
-        // Create vectorization service
-        _service = new MaterialVectorizationService(
+        // Create outbox material indexing executor
+        _service = new OutboxMaterialVectorIndexingService(
             _db,
             vectorStore,
             mockEmbedding,
             chunker,
             collectionManager,
             new ContentDocumentService(_db),
-            _loggerFactory.CreateLogger<MaterialVectorizationService>()
+            _loggerFactory.CreateLogger<OutboxMaterialVectorIndexingService>()
         );
 
         // Create test user and project
@@ -138,13 +135,13 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VectorizeMaterial_CreatesChunksInQdrant()
+    public async Task IndexMaterial_CreatesChunksInQdrant()
     {
         // Arrange
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Test material content with enough text to create chunks. " + string.Join(" ", Enumerable.Range(1, 1000).Select(i => $"word{i}")));
 
         // Act
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
 
         // Assert
         var updatedMaterial = await _db.Materials.FindAsync(material.Id);
@@ -159,14 +156,14 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VectorizeMaterial_WithContent_Success()
+    public async Task IndexMaterial_WithContent_Success()
     {
         // Arrange
         var content = "This is a test material with inline content. " + string.Join(" ", Enumerable.Range(1, 500).Select(i => $"word{i}"));
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, content);
 
         // Act
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
 
         // Assert
         var updatedMaterial = await _db.Materials.FindAsync(material.Id);
@@ -175,7 +172,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VectorizeMaterial_UpdatesVectorChunkCount()
+    public async Task IndexMaterial_UpdatesVectorChunkCount()
     {
         // Arrange
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Content with 100 words. " + string.Join(" ", Enumerable.Range(1, 100).Select(i => $"word{i}")));
@@ -183,7 +180,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         Assert.Equal(0, material.VectorChunkCount);
 
         // Act
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
 
         // Assert
         var updatedMaterial = await _db.Materials.FindAsync(material.Id);
@@ -192,7 +189,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VectorizeMaterial_NonExistentMaterial_ThrowsKeyNotFoundException()
+    public async Task IndexMaterial_NonExistentMaterial_ThrowsKeyNotFoundException()
     {
         // Arrange
         var nonExistentMaterialId = Guid.NewGuid().ToString();
@@ -200,12 +197,12 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         // Act & Assert
         await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
         {
-            await _service.VectorizeMaterialAsync(nonExistentMaterialId, _testUserId);
+            await _service.IndexMaterialAsync(nonExistentMaterialId, _testUserId);
         });
     }
 
     [Fact]
-    public async Task VectorizeMaterial_WrongUserId_ThrowsKeyNotFoundException()
+    public async Task IndexMaterial_WrongUserId_ThrowsKeyNotFoundException()
     {
         // Arrange
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Test content");
@@ -215,22 +212,22 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         // Act & Assert
         await Assert.ThrowsAsync<KeyNotFoundException>(async () =>
         {
-            await _service.VectorizeMaterialAsync(material.Id, wrongUserId);
+            await _service.IndexMaterialAsync(material.Id, wrongUserId);
         });
     }
 
     [Fact]
-    public async Task VectorizeMaterial_ReVectorization_ReplacesOldVectors()
+    public async Task IndexMaterial_ReplacesOldVectors()
     {
         // Arrange
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Initial content. " + string.Join(" ", Enumerable.Range(1, 500).Select(i => $"word{i}")));
 
         // Act - First vectorization
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
         var firstChunkCount = (await _db.Materials.FindAsync(material.Id))!.VectorChunkCount;
 
         // Act - Second vectorization (should replace)
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
         var secondChunkCount = (await _db.Materials.FindAsync(material.Id))!.VectorChunkCount;
 
         // Assert
@@ -244,41 +241,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task VectorizeAllMaterials_VectorizesMultipleMaterials()
-    {
-        // Arrange
-        var material1 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 1 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-        var material2 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 2 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-        var material3 = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Material 3 content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
-
-        // Act
-        var successCount = await _service.VectorizeAllMaterialsAsync(_testProjectId, _testUserId);
-
-        // Assert
-        Assert.Equal(3, successCount);
-
-        var materials = await _db.Materials
-            .Where(m => m.ProjectId == _testProjectId)
-            .ToListAsync();
-
-        Assert.All(materials, m => Assert.True(m.VectorChunkCount > 0));
-    }
-
-    [Fact]
-    public async Task VectorizeAllMaterials_EmptyProject_ReturnsZero()
-    {
-        // Arrange
-        var emptyProjectId = Guid.NewGuid().ToString();
-
-        // Act
-        var successCount = await _service.VectorizeAllMaterialsAsync(emptyProjectId, _testUserId);
-
-        // Assert
-        Assert.Equal(0, successCount);
-    }
-
-    [Fact]
-    public async Task VectorizeMaterial_CreatesCorrectPayloadInQdrant()
+    public async Task IndexMaterial_CreatesCorrectPayloadInQdrant()
     {
         // Arrange
         var material = await CreateTestMaterialAsync(_testUserId, _testProjectId, "Payload test content. " + string.Join(" ", Enumerable.Range(1, 300).Select(i => $"word{i}")));
@@ -286,7 +249,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         await _db.SaveChangesAsync();
 
         // Act
-        await _service.VectorizeMaterialAsync(material.Id, _testUserId);
+        await _service.IndexMaterialAsync(material.Id, _testUserId);
 
         // Assert - Query Qdrant to verify payload
         var collectionName = $"novel_agent_{_testUserId}";
@@ -335,5 +298,32 @@ public class VectorizationIntegrationTests : IAsyncLifetime
             material.Title,
             content);
         return material;
+    }
+
+    private sealed class FixedEmbeddingService : IMicroEmbeddingService
+    {
+        public int Dimension => 512;
+
+        public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default)
+        {
+            var vector = new float[Dimension];
+            var seed = string.IsNullOrWhiteSpace(text) ? 1 : Math.Abs(text.GetHashCode());
+            vector[seed % Dimension] = 1f;
+            return Task.FromResult(vector);
+        }
+
+        public async Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default)
+        {
+            var vectors = new float[texts.Count][];
+            for (var i = 0; i < texts.Count; i++)
+                vectors[i] = await EncodeAsync(texts[i], mode, ct).ConfigureAwait(false);
+            return vectors;
+        }
+
+        public bool IsModelReady() => true;
+
+        public void ReleaseSession()
+        {
+        }
     }
 }

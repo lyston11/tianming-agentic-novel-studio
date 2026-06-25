@@ -11,4 +11,9 @@
   --blue: #315f7d;
   --muted: #786b5c;
   --shadow: 0 24px 70px rgba(13, 9, 6, 0.26);
+  --scrollbar-size: 6px;
+  --scrollbar-thumb-min-size: 72px;
+  --scrollbar-thumb: rgba(244, 236, 217, 0.22);
+  --scrollbar-thumb-hover: rgba(244, 236, 217, 0.34);
+  --scrollbar-track: transparent;
 }

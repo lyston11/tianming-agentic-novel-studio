@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Services.Workspace.Models;
 
@@ -45,7 +46,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve workspace statistics");
-            return StatusCode(500, new { message = "Failed to retrieve statistics", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to retrieve statistics"));
         }
     }
 
@@ -83,7 +84,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve violations");
-            return StatusCode(500, new { message = "Failed to retrieve violations", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to retrieve violations"));
         }
     }
 
@@ -105,12 +106,9 @@ public class WorkspaceMonitoringController : ControllerBase
 
             if (!isActive)
             {
-                return NotFound(new
-                {
-                    message = "Workspace not found in cache",
-                    userId = userId,
-                    projectId = projectId
-                });
+                return NotFound(ApiErrors.NotFound(
+                    "Workspace not found in cache",
+                    artifactIds: new[] { userId, projectId }));
             }
 
             return Ok(new
@@ -124,57 +122,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve workspace detail for user {UserId}, project {ProjectId}", userId, projectId);
-            return StatusCode(500, new { message = "Failed to retrieve workspace detail", error = ex.Message });
-        }
-    }
-
-    /// <summary>
-    /// Invalidate a specific workspace, forcing it to be evicted from cache.
-    /// The workspace will be reloaded on next access.
-    /// </summary>
-    /// <param name="userId">User ID</param>
-    /// <param name="projectId">Project ID</param>
-    /// <returns>Result of invalidation operation</returns>
-    [HttpPost("{userId}/{projectId}/invalidate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public IActionResult InvalidateWorkspace(string userId, string projectId)
-    {
-        try
-        {
-            var isActive = _workspaceFactory.IsWorkspaceActive(userId, projectId);
-
-            if (!isActive)
-            {
-                return NotFound(new
-                {
-                    message = "Workspace not found in cache",
-                    userId = userId,
-                    projectId = projectId
-                });
-            }
-
-            // Note: The current IWorkspaceFactory interface doesn't expose an explicit invalidation method.
-            // This would typically call something like _workspaceFactory.Invalidate(userId, projectId).
-            // For now, we acknowledge the limitation and log it.
-            _logger.LogWarning(
-                "Invalidation requested for workspace {UserId}/{ProjectId} but explicit invalidation is not yet implemented",
-                userId,
-                projectId);
-
-            return Ok(new
-            {
-                message = "Workspace invalidation logged (explicit eviction not yet implemented)",
-                userId = userId,
-                projectId = projectId,
-                note = "Workspace will be evicted naturally based on LRU policy"
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to invalidate workspace for user {UserId}, project {ProjectId}", userId, projectId);
-            return StatusCode(500, new { message = "Failed to invalidate workspace", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to retrieve workspace detail"));
         }
     }
 
@@ -203,13 +151,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to check workspace factory health");
-            return StatusCode(500, new
-            {
-                isHealthy = false,
-                message = "Health check failed with exception",
-                error = ex.Message,
-                lastCheckTimestamp = DateTime.UtcNow
-            });
+            return StatusCode(500, ApiErrors.Internal("Health check failed with exception"));
         }
     }
 
@@ -232,12 +174,9 @@ public class WorkspaceMonitoringController : ControllerBase
 
             if (status == WorkspaceStatus.NotFound)
             {
-                return NotFound(new
-                {
-                    message = "Workspace not found in cache",
-                    userId = userId,
-                    projectId = projectId
-                });
+                return NotFound(ApiErrors.NotFound(
+                    "Workspace not found in cache",
+                    artifactIds: new[] { userId, projectId }));
             }
 
             _workspaceFactory.ForceRelease(userId, projectId);
@@ -258,7 +197,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to force release workspace for user {UserId}, project {ProjectId}", userId, projectId);
-            return StatusCode(500, new { message = "Failed to force release workspace", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to force release workspace"));
         }
     }
 
@@ -297,7 +236,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to reset violations for user {UserId}, project {ProjectId}", userId, projectId);
-            return StatusCode(500, new { message = "Failed to reset violations", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to reset violations"));
         }
     }
 
@@ -327,7 +266,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to clear cache");
-            return StatusCode(500, new { message = "Failed to clear cache", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to clear cache"));
         }
     }
 
@@ -357,7 +296,7 @@ public class WorkspaceMonitoringController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get workspace status for user {UserId}, project {ProjectId}", userId, projectId);
-            return StatusCode(500, new { message = "Failed to get workspace status", error = ex.Message });
+            return StatusCode(500, ApiErrors.Internal("Failed to get workspace status"));
         }
     }
 }

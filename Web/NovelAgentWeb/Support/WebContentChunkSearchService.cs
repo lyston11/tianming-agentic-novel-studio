@@ -26,7 +26,7 @@ public sealed class WebContentChunkSearchService : IContentChunkSearchService
         IVectorStore? vectorStore,
         IMicroEmbeddingService? embeddingService)
     {
-        _scopeFactory = scopeFactory;
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _userId = userId;
         _projectId = projectId;
         _vectorStore = vectorStore;
@@ -230,32 +230,5 @@ public sealed class WebContentChunkSearchService : IContentChunkSearchService
         }
 
         return string.Empty;
-    }
-}
-
-public sealed class UnavailableContentChunkSearchService : IContentChunkSearchService
-{
-    public Task<List<ContentChunkHit>> SearchAsync(string query, int topK = 5) =>
-        Task.FromResult(new List<ContentChunkHit>());
-
-    public Task<List<ContentChunkHit>> SearchByChapterAsync(string chapterId, int topK = 2) =>
-        Task.FromResult(new List<ContentChunkHit>());
-
-    public Task InvalidateChapterAsync(string chapterId) => Task.CompletedTask;
-
-    public Task<List<ContentChunkHit>> SearchByChapterPositionAsync(
-        string chapterId,
-        int startPosition,
-        int windowSize = 1,
-        CancellationToken ct = default) =>
-        Task.FromResult(new List<ContentChunkHit>());
-
-    public Task<IReadOnlyList<ContentChunkHit>> GetChunksAsync(
-        string chapterId,
-        CancellationToken ct = default) =>
-        Task.FromResult<IReadOnlyList<ContentChunkHit>>(Array.Empty<ContentChunkHit>());
-
-    public void InvalidateCache()
-    {
     }
 }

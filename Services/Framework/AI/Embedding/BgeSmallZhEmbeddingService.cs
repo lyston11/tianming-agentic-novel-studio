@@ -211,7 +211,7 @@ namespace TM.Services.Framework.AI.Embedding
 
                 TryReadDimensionFromConfig();
 
-                var sessionOptions = new SessionOptions
+                var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
                     LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,

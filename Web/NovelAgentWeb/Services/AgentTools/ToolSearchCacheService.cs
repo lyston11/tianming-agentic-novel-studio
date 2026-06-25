@@ -32,13 +32,10 @@ public class ToolSearchCacheService : IToolSearchCacheService
     public async Task<ToolSearchCacheLookup> GetAsync(
         AgentSession session,
         string phase,
+        string toolCatalogSignature,
         CancellationToken ct = default)
     {
-        var version = ToToolSearchVersion(await _versions.GetCombinedVersionAsync(
-            session.UserId,
-            NullIfEmpty(session.ActiveProjectId),
-            session.SessionId,
-            ct).ConfigureAwait(false));
+        var version = await BuildToolSearchVersionAsync(session, toolCatalogSignature, ct).ConfigureAwait(false);
 
         if (!string.Equals(session.ToolSearchCacheVersion, version, StringComparison.Ordinal))
             return ToolSearchCacheLookup.Miss;
@@ -75,13 +72,10 @@ public class ToolSearchCacheService : IToolSearchCacheService
         AgentSession session,
         string phase,
         IReadOnlyList<ToolSchema> tools,
+        string toolCatalogSignature,
         CancellationToken ct = default)
     {
-        var version = ToToolSearchVersion(await _versions.GetCombinedVersionAsync(
-            session.UserId,
-            NullIfEmpty(session.ActiveProjectId),
-            session.SessionId,
-            ct).ConfigureAwait(false));
+        var version = await BuildToolSearchVersionAsync(session, toolCatalogSignature, ct).ConfigureAwait(false);
         var normalizedPhase = NormalizeScope(phase);
         var now = DateTime.UtcNow;
         var snapshot = new ToolSearchCacheSnapshot
@@ -232,14 +226,39 @@ public class ToolSearchCacheService : IToolSearchCacheService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private static string ToToolSearchVersion(string combinedVersion)
+    private async Task<string> BuildToolSearchVersionAsync(
+        AgentSession session,
+        string toolCatalogSignature,
+        CancellationToken ct)
+    {
+        var normalizedSignature = NormalizeToolCatalogSignature(toolCatalogSignature);
+        var memoryVersion = await _versions.GetCombinedVersionAsync(
+            session.UserId,
+            NullIfEmpty(session.ActiveProjectId),
+            session.SessionId,
+            ct).ConfigureAwait(false);
+        return ToToolSearchVersion(memoryVersion, normalizedSignature);
+    }
+
+    private static string ToToolSearchVersion(string combinedVersion, string toolCatalogSignature)
     {
         var parts = combinedVersion
             .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(part => !IsToolExecutionVersionPart(part))
+            .Append($"tool_catalog={toolCatalogSignature}")
             .ToArray();
 
         return parts.Length == 0 ? "none=0" : string.Join("|", parts);
+    }
+
+    private static string NormalizeToolCatalogSignature(string toolCatalogSignature)
+    {
+        if (string.IsNullOrWhiteSpace(toolCatalogSignature))
+        {
+            throw new InvalidOperationException("Tool search cache requires a current tool catalog signature.");
+        }
+
+        return toolCatalogSignature.Trim();
     }
 
     private static bool IsToolExecutionVersionPart(string part)

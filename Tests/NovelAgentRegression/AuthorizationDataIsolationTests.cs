@@ -9,7 +9,6 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Extensions;
 using TM.Web.NovelAgentWeb.Models.Auth;
-using TM.Web.NovelAgentWeb.Services.Auth;
 using Xunit;
 
 namespace TM.Tests.NovelAgentRegression;
@@ -21,7 +20,6 @@ namespace TM.Tests.NovelAgentRegression;
 public class AuthorizationDataIsolationTests : IAsyncLifetime
 {
     private NovelAgentDbContext _dbContext = null!;
-    private ICurrentUserService _currentUserService = null!;
     private string _userAId = null!;
     private string _userBId = null!;
     private string _adminId = null!;

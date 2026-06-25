@@ -1,13 +1,28 @@
 using System.Text.Json;
-using TM.Framework.Common.Helpers.Storage;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Framework.AI.NovelAgent.Services;
 using TM.Services.Modules.ProjectData.Implementations;
-using TM.Services.Modules.ProjectData.Implementations.Indexing;
 using TM.Services.Modules.ProjectData.Interfaces;
+using TM.Services.Modules.ProjectData.Models.Design.Characters;
+using TM.Services.Modules.ProjectData.Models.Design.Factions;
+using TM.Services.Modules.ProjectData.Models.Design.Location;
+using TM.Services.Modules.ProjectData.Models.Design.Plot;
+using TM.Services.Modules.ProjectData.Models.Design.Templates;
+using TM.Services.Modules.ProjectData.Models.Design.Worldview;
+using TM.Services.Modules.ProjectData.Models.Generate.ChapterBlueprint;
+using TM.Services.Modules.ProjectData.Models.Generate.ChapterPlanning;
+using TM.Services.Modules.ProjectData.Models.Generate.StrategicOutline;
+using TM.Services.Modules.ProjectData.Models.Generate.VolumeDesign;
+using TM.Services.Modules.ProjectData.Models.Generated;
+using TM.Services.Modules.ProjectData.Models.Guides;
+using TM.Services.Modules.ProjectData.Models.Index;
 using TM.Services.Modules.ProjectData.Models.TaskContexts;
 using TM.Services.Modules.ProjectData.Models.Tracking;
+using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Tests.NovelAgentRegression;
 
@@ -21,7 +36,7 @@ internal static class Program
         ("Book concept designer keeps positive power fantasy direction with long exclusions", BookConceptDesignerKeepsPositivePowerFantasyDirectionWithLongExclusions),
         ("Book concept designer ignores forbidden phrases embedded in natural seed", BookConceptDesignerIgnoresForbiddenPhrasesEmbeddedInNaturalSeed),
         ("Story foundation commit uses structured candidate identity", StoryFoundationCommitUsesStructuredCandidateIdentityAsync),
-        ("Creative knowledge base seeds and project memory are retrievable", CreativeKnowledgeBaseRetrievesSeedsAndProjectMemoryAsync),
+        ("Creative knowledge base built-in guidance is retrievable", CreativeKnowledgeBaseRetrievesBuiltInGuidanceAsync),
         ("NovelAgentOrchestrator runs foundation and chapter planning loop", NovelAgentOrchestratorRunsFoundationAndChapterPlanningLoopAsync),
         ("NovelAgentOrchestrator enforces split chapter writing chain", NovelAgentOrchestratorEnforcesSplitChapterWritingChainAsync),
         ("StoryBible persists character ledger and canonical constitution", StoryBiblePersistsCoreAgentStateAsync),
@@ -40,7 +55,7 @@ internal static class Program
         ("Quality evaluation fixtures cover five reviewer dimensions", QualityEvaluationFixturesCoverFiveReviewerDimensionsAsync)
     };
 
-    public static async Task<int> Main()
+    public static async Task<int> RunStandaloneAsync()
     {
         var failed = 0;
         Console.WriteLine("NovelAgent regression suite");
@@ -72,17 +87,15 @@ internal static class Program
     private static Task GenreDirectionPlannerProtectsTypePromise()
     {
         var planner = new GenreDirectionPlanner();
-        var profile = planner.BuildProfile("玄幻", "学院流", "爽文推进 + 烧脑规则悬疑 + 情绪代价");
+        var profile = planner.BuildProfile("玄幻", "学院流");
 
-        Check.True(profile.PleasureStrength >= 9, "Satisfying xuanhuan/s爽 direction should strongly protect pleasure payoff.");
-        Check.True(profile.MysteryStrength >= 9, "Suspense direction should strongly protect mystery progression.");
-        Check.True(profile.EmotionStrength >= 8, "Emotion-cost direction should protect emotional consequence.");
-        Check.True(profile.WorldbuildingStrength >= 8, "Rule-suspense xuanhuan should protect worldbuilding pressure.");
-        Check.Contains("代价", profile.Strategy + string.Join("；", profile.RiskWarnings),
-            "Genre strategy should warn against cost-free payoff.");
-        Check.True(profile.RiskWarnings.Any(w => w.Contains("反派降智", StringComparison.OrdinalIgnoreCase)
-                                                || w.Contains("临时新设定", StringComparison.OrdinalIgnoreCase)),
-            "Genre profile should name common stale-plot risks.");
+        Check.Equal(6, profile.PleasureStrength, "Genre profile should stay neutral; Agent supplies explicit candidateDirections.");
+        Check.Equal(5, profile.MysteryStrength, "Genre profile should not infer suspense strength from raw labels.");
+        Check.Equal(5, profile.EmotionStrength, "Genre profile should not infer emotion strength from raw labels.");
+        Check.Equal(6, profile.WorldbuildingStrength, "Genre profile should not infer worldbuilding strength from raw labels.");
+        Check.Contains("保持清晰主线", profile.Strategy, "Default profile should give only generic planning guidance.");
+        Check.True(profile.RiskWarnings.Any(w => w.Contains("不改变故事状态", StringComparison.OrdinalIgnoreCase)),
+            "Genre profile should keep generic state-change risk guidance.");
 
         return Task.CompletedTask;
     }
@@ -95,8 +108,12 @@ internal static class Program
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、设定解谜、强情绪代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 师徒关系拉扯"
+            CandidateDirections =
+            {
+                "规则裂纹升级破局",
+                "学院试炼与债务代价",
+                "师徒关系拉扯推进主线"
+            }
         };
 
         var constitution = designer.BuildConstitution(request);
@@ -130,8 +147,12 @@ internal static class Program
         {
             UserSeed = "灵气复苏末日，主角猥琐发育，带系统金手指，核心就是一路打怪升级，突破境界，碾压敌人。",
             Genre = "末世打怪升级爽文",
-            TargetReader = "喜欢节奏明快、打怪升级、战力成长和爽点兑现的读者",
-            DesiredDirection = "这些都不要，就要一路打怪升级的；不要规则反噬型、不要真相递进型、不要关系代价型",
+            CandidateDirections =
+            {
+                "连续战斗升级变强",
+                "怪物晶核资源争夺",
+                "基地扩张与战力碾压"
+            },
             ForbiddenDirections = { "规则反噬型", "真相递进型", "关系代价型" }
         };
 
@@ -164,8 +185,6 @@ internal static class Program
             UserSeed = "末世玄幻爽文，男主从底层幸存者开始，系统吞噬怪物晶核升级，一路打怪升级、建基地、收伙伴。后宫流，升级系统，灵气复苏，征服类剧情，纯打怪升级变强流，碾压流。",
             Genre = "末世玄幻",
             SubGenre = "升级流爽文",
-            TargetReader = "喜欢爽文、升级流、后宫元素的男性读者",
-            DesiredDirection = "系统吞噬晶核升级为核心机制，男主从底层一路碾压变强，建基地收伙伴，每章都有爽点，但爽点需要有代价回流，避免无成本流水账。",
             CandidateDirections =
             {
                 "开篇绝境求生+首次觉醒系统的冲击力",
@@ -204,7 +223,6 @@ internal static class Program
         {
             UserSeed = "新写一本小说，书名《裂穹机兵：从冻土矿奴到天轨霸主》，类型是废土机甲打怪升级爽文。请直接开始执行，先建立故事地基，包含世界观、升级体系、主角、爽点循环、前三卷、首批角色。不要规则反噬、真相递进、关系代价候选。",
             Genre = "废土机甲打怪升级爽文",
-            DesiredDirection = "废土机甲打怪升级爽文，矿奴逆袭，战甲改装，怪物核心升级",
             CandidateDirections =
             {
                 "机甲融合与进化升级体系，主角机甲可吞噬怪物核心进化",
@@ -242,83 +260,65 @@ internal static class Program
 
     private static async Task StoryFoundationCommitUsesStructuredCandidateIdentityAsync()
     {
-        ResetStorage("StructuredCandidateIdentityIndex");
         var orchestrator = CreateOrchestrator(CreateChapterContext("chapter-identity-001"));
         var run = await orchestrator.PlanStoryFoundationAsync(new StoryFoundationRequest
         {
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、规则悬疑和强代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 关系代价"
+            CandidateDirections = { "规则裂纹升级流", "真相递进型", "关系代价型" }
         });
         var first = run.MacroCandidates[0];
         var byIndex = await orchestrator.CommitStoryFoundationAsync(
             run.RunId,
             overwrite: false,
             confirmed: true,
-            selectedMacroCandidateTitle: "规则反哺型",
             selectedMacroCandidateId: string.Empty,
             selectedMacroCandidateIndex: 1);
         Check.True(byIndex.Success,
             "A valid candidateIndex should commit even when the title was misspelled by the LLM.");
         Check.Equal(first.Title, byIndex.Document?.Constitution?.NoveltyPoint,
             "Index-based commit should apply the canonical selected candidate.");
-
-        ResetStorage("StructuredCandidateIdentityId");
         orchestrator = CreateOrchestrator(CreateChapterContext("chapter-identity-002"));
         run = await orchestrator.PlanStoryFoundationAsync(new StoryFoundationRequest
         {
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、规则悬疑和强代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 关系代价"
+            CandidateDirections = { "规则裂纹升级流", "真相递进型", "关系代价型" }
         });
         var second = run.MacroCandidates[1];
         var byId = await orchestrator.CommitStoryFoundationAsync(
             run.RunId,
             overwrite: false,
             confirmed: true,
-            selectedMacroCandidateTitle: "错别字标题",
             selectedMacroCandidateId: second.CandidateId,
             selectedMacroCandidateIndex: 0);
         Check.True(byId.Success,
             "A valid candidateId should commit even when the title is wrong.");
         Check.Equal(second.Title, byId.Document?.Constitution?.NoveltyPoint,
             "Id-based commit should apply the canonical selected candidate.");
-
-        ResetStorage("StructuredCandidateIdentityTitleOnlyFailure");
         orchestrator = CreateOrchestrator(CreateChapterContext("chapter-identity-003"));
         run = await orchestrator.PlanStoryFoundationAsync(new StoryFoundationRequest
         {
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、规则悬疑和强代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 关系代价"
+            CandidateDirections = { "规则裂纹升级流", "真相递进型", "关系代价型" }
         });
-        var titleOnlyMiss = await orchestrator.CommitStoryFoundationAsync(
+        var missingIdentity = await orchestrator.CommitStoryFoundationAsync(
             run.RunId,
             overwrite: false,
-            confirmed: true,
-            selectedMacroCandidateTitle: "规则反哺型");
-        Check.True(!titleOnlyMiss.Success,
-            "A misspelled title without candidateId/index should not silently commit the default constitution.");
-        Check.Contains("不在当前 run", titleOnlyMiss.Message,
-            "Title-only mismatch should explain that the candidate identity is invalid.");
+            confirmed: true);
+        Check.True(!missingIdentity.Success,
+            "A commit without candidateId/index should not silently commit the default constitution.");
+        Check.Contains("候选 ID", missingIdentity.Message,
+            "Missing candidate identity should explain that a stable ID or index is required.");
     }
 
-    private static async Task CreativeKnowledgeBaseRetrievesSeedsAndProjectMemoryAsync()
+    private static async Task CreativeKnowledgeBaseRetrievesBuiltInGuidanceAsync()
     {
-        ResetStorage("CreativeKnowledge");
         var service = new CreativeKnowledgeBaseService();
-        var document = await service.LoadAsync();
-
-        Check.True(document.Entries.Count >= 10, "Creative knowledge base should seed built-in genre, trope and relationship knowledge.");
-        Check.True(document.Entries.Any(e => e.Category == CreativeKnowledgeCategory.RelationshipDynamic),
-            "Creative knowledge base should include relationship-dynamic knowledge.");
-
         var constitution = new StoryCreativeConstitution
         {
             Genre = "玄幻",
@@ -333,7 +333,6 @@ internal static class Program
             }
         };
 
-        await service.RecordUsedPatternAsync("chapter-006", "关键人物刚好路过救场", "此前已使用过导师及时救场。");
         var result = await service.RetrieveAsync(
             "玄幻 爽文 规则反噬 关系变化 关键人物刚好路过救场 反套路 代价 信息差",
             constitution,
@@ -341,6 +340,9 @@ internal static class Program
             topK: 12);
 
         Check.True(result.Success, "Creative knowledge retrieval should succeed.");
+        Check.True(result.Hits.Count >= 6, "Creative knowledge retrieval should return built-in genre, trope and relationship guidance.");
+        Check.True(result.Hits.Any(h => h.Entry.Category == CreativeKnowledgeCategory.RelationshipDynamic),
+            "Creative knowledge retrieval should include relationship-dynamic guidance.");
         Check.True(result.GenrePrinciples.Any(p => p.Contains("代价", StringComparison.OrdinalIgnoreCase)),
             "Genre principles should retrieve cost-return guidance for xuanhuan/s爽.");
         Check.True(result.TropeWarnings.Any(p => p.Contains("救场", StringComparison.OrdinalIgnoreCase)),
@@ -348,21 +350,18 @@ internal static class Program
         Check.True(result.AntiTropeStrategies.Any(p => p.Contains("代价", StringComparison.OrdinalIgnoreCase)
                                                        || p.Contains("信息来源", StringComparison.OrdinalIgnoreCase)),
             "Anti-trope strategies should retrieve actionable variation strategies.");
-        Check.True(result.ProjectMemory.Any(p => p.Contains("chapter-006", StringComparison.OrdinalIgnoreCase)),
-            "Project memory should retrieve recorded used plot patterns.");
         Check.True(result.Hits.Any(h => h.Reason.Contains("命中项目已用桥段风险", StringComparison.OrdinalIgnoreCase)),
             "Used plot patterns should increase retrieval score with an explicit reason.");
     }
 
     private static async Task NovelAgentOrchestratorRunsFoundationAndChapterPlanningLoopAsync()
     {
-        ResetStorage("OrchestratorPlanningLoop");
         var orchestrator = CreateOrchestrator(new ContentTaskContext
         {
             ChapterId = "chapter-001",
             Title = "第一章 裂纹初响",
             Summary = "主角第一次听见规则裂纹。",
-            ChapterPlan = new ChapterPlanStub
+            ChapterPlan = new ChapterData
             {
                 ChapterTitle = "裂纹初响",
                 MainGoal = "让林昼发现规则债务的第一条线索",
@@ -407,8 +406,7 @@ internal static class Program
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、规则悬疑和强代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 关系代价"
+            CandidateDirections = { "规则裂纹升级流", "真相递进型", "关系代价型" }
         });
 
         Check.Equal(NovelAgentIntent.CreateStoryFoundation, foundationRun.Intent,
@@ -426,7 +424,8 @@ internal static class Program
             foundationRun.RunId,
             overwrite: false,
             confirmed: true,
-            selectedMacroCandidateTitle: selectedMacro.Title);
+            selectedMacroCandidateId: selectedMacro.CandidateId,
+            selectedMacroCandidateIndex: 0);
         Check.True(commit.Success, "Selected macro candidate should be committed to Story Bible.");
         Check.Equal(selectedMacro.Title, commit.Document?.Constitution?.NoveltyPoint,
             "Committed Story Bible should reflect the selected macro candidate.");
@@ -437,7 +436,16 @@ internal static class Program
         var chapterRun = await orchestrator.PlanChapterAsync(new ChapterCreativeRequest
         {
             ChapterId = "chapter-001",
-            UserGoal = "写出第一章：主角初次发现规则裂纹，但必须付出一个可追踪代价。"
+            UserGoal = "写出第一章：主角初次发现规则裂纹，但必须付出一个可追踪代价。",
+            CandidateDirections =
+            {
+                "规则裂纹初显",
+                "代价承诺",
+                "证据误导",
+                "人物关系代价",
+                "世界规则压力",
+                "旧细节伏笔"
+            }
         });
 
         Check.Equal(NovelAgentIntent.PlanChapter, chapterRun.Intent,
@@ -475,7 +483,6 @@ internal static class Program
 
     private static async Task NovelAgentOrchestratorEnforcesSplitChapterWritingChainAsync()
     {
-        ResetStorage("OrchestratorExecutionLoop");
         var orchestrator = CreateOrchestrator(CreateChapterContext("chapter-002"));
 
         var foundationRun = await orchestrator.PlanStoryFoundationAsync(new StoryFoundationRequest
@@ -483,20 +490,26 @@ internal static class Program
             UserSeed = "一个能听见世界规则裂纹的少年，被迫用成长偿还规则债务。",
             Genre = "玄幻",
             SubGenre = "学院流",
-            TargetReader = "喜欢升级、规则悬疑和强代价的长篇读者",
-            DesiredDirection = "爽文推进 + 规则悬疑 + 关系代价"
+            CandidateDirections = { "规则裂纹升级流", "真相递进型", "关系代价型" }
         });
         var foundationCommit = await orchestrator.CommitStoryFoundationAsync(
             foundationRun.RunId,
             overwrite: false,
             confirmed: true,
-            selectedMacroCandidateTitle: foundationRun.MacroCandidates.First().Title);
+            selectedMacroCandidateId: foundationRun.MacroCandidates.First().CandidateId,
+            selectedMacroCandidateIndex: 0);
         Check.True(foundationCommit.Success, "Execution loop needs a committed Story Bible first.");
 
         var chapterRun = await orchestrator.PlanChapterAsync(new ChapterCreativeRequest
         {
             ChapterId = "chapter-002",
-            UserGoal = "写第二章：让主角第一次主动利用规则裂纹，但留下关系代价。"
+            UserGoal = "写第二章：让主角第一次主动利用规则裂纹，但留下关系代价。",
+            CandidateDirections =
+            {
+                "规则裂纹主动利用",
+                "关系代价承接",
+                "世界规则压力升级"
+            }
         });
         var selection = await orchestrator.SelectChapterCandidateAsync(
             chapterRun.RunId,
@@ -506,41 +519,40 @@ internal static class Program
             confirmed: true);
         Check.True(selection.Success, "Execution loop requires a confirmed chapter candidate.");
 
-        var contextPackage = await orchestrator.BuildChapterContextPackageAsync(chapterRun.RunId);
+        var contextPackage = await orchestrator.BuildContextPackageStageAsync(chapterRun.RunId);
         Check.True(contextPackage.Success, "Split writing chain should build the chapter context package first.");
         Check.True(contextPackage.ContextPackage?.Status.StartsWith("context_ready", StringComparison.OrdinalIgnoreCase) == true,
             "Context package should be marked ready before draft generation.");
 
-        var unconfirmedDraft = await orchestrator.GenerateChapterWithChangesAsync(chapterRun.RunId, confirmed: false);
+        var unconfirmedDraft = await orchestrator.GenerateChapterDraftStageAsync(chapterRun.RunId, confirmed: false);
         Check.True(!unconfirmedDraft.Success && unconfirmedDraft.RequiresConfirmation && unconfirmedDraft.RiskLevel == NovelToolRiskLevel.High,
             "Draft generation should require high-risk confirmation.");
 
-        var draft = await orchestrator.GenerateChapterWithChangesAsync(chapterRun.RunId, confirmed: true);
-        Check.True(draft.Success, "Confirmed split draft generation should execute the GenerateChapterWithChanges step.");
+        var draft = await orchestrator.GenerateChapterDraftStageAsync(chapterRun.RunId, confirmed: true);
+        Check.True(draft.Success, "Confirmed split draft generation should execute the draft generation stage.");
         Check.True(draft.DraftArtifact != null, "Draft artifact should be attached to the run even when LLM settings block writing.");
-        Check.True(draft.Run?.Steps.Any(s => s.ToolName == "NovelAgent.GenerateChapterWithChanges"
+        Check.True(draft.Run?.Steps.Any(s => s.ToolName == NovelAgentProductionStages.StepToolName(NovelAgentProductionStages.DraftGeneration)
                                              && s.Status == NovelAgentStepStatus.Completed) == true,
-            "Split writing chain should mark GenerateChapterWithChanges completed.");
+            "Split writing chain should mark draft generation completed.");
         Check.True(draft.Run?.Steps.Any(s => s.ToolName == "Writer.GenerateChapter") != true,
             "Split writing chain must not use the removed Writer.GenerateChapter step.");
 
-        var gate = await orchestrator.ValidateChapterDraftAsync(chapterRun.RunId);
+        var gate = await orchestrator.ValidateDraftGateStageAsync(chapterRun.RunId);
         Check.True(!gate.Success, "Missing CHANGES or blocked draft should fail the hard GenerationGate.");
         Check.Equal("gate_failed", gate.GateReport?.Status ?? string.Empty,
             "GenerationGate should fail blocked or invalid drafts.");
-        Check.True(gate.Run?.Steps.Any(s => s.ToolName == "NovelAgent.ValidateChapterDraft"
+        Check.True(gate.Run?.Steps.Any(s => s.ToolName == NovelAgentProductionStages.StepToolName(NovelAgentProductionStages.GateValidation)
                                             && s.Status == NovelAgentStepStatus.Failed) == true,
-            "ValidateChapterDraft should record gate failure.");
+            "Gate validation should record failure.");
 
-        var commitBlocked = await orchestrator.CommitValidatedChapterAsync(chapterRun.RunId, confirmed: true);
+        var commitBlocked = await orchestrator.CommitChapterStageAsync(chapterRun.RunId, confirmed: true);
         Check.True(!commitBlocked.Success,
-            "CommitValidatedChapter must refuse chapters that did not pass GenerationGate.");
+            "Chapter commit must refuse chapters that did not pass GenerationGate.");
     }
 
     private static async Task StoryBiblePersistsCoreAgentStateAsync()
     {
-        ResetStorage("StoryBibleCoreState");
-        var service = new StoryBibleService();
+        var service = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
 
         var constitution = new StoryCreativeConstitution
         {
@@ -605,14 +617,11 @@ internal static class Program
         var persisted = reloaded.CharacterLedger.Single(e => e.CharacterName == "林昼");
         Check.Equal(10, persisted.Importance, "Character importance should be normalized to 1..10.");
         Check.Equal(10, persisted.Psychology.StressLevel, "Character stress level should be normalized to 1..10.");
-        Check.Contains("sqlite-redis://", service.GetStoragePath(),
-            "Story Bible runtime identity should point at the SQLite/Redis store, not a disk file.");
     }
 
     private static async Task CharacterLedgerImportsLowRiskReviewEntriesAsync()
     {
-        ResetStorage("CharacterLowRisk");
-        var storyBible = new StoryBibleService();
+        var storyBible = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
         var service = new CharacterLedgerService(storyBible);
         var run = new NovelAgentRun
         {
@@ -655,8 +664,7 @@ internal static class Program
 
     private static async Task CharacterLedgerRequiresConfirmationForHighRiskAsync()
     {
-        ResetStorage("CharacterHighRisk");
-        var storyBible = new StoryBibleService();
+        var storyBible = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
         var service = new CharacterLedgerService(storyBible);
         var proposed = new CharacterLedgerEntry
         {
@@ -885,14 +893,13 @@ internal static class Program
 
     private static async Task StoryStateSnapshotUsesVectorRecallAsync()
     {
-        ResetStorage("VectorRecallSnapshot");
 
         var guideContext = new FakeGuideContextService(new ContentTaskContext
         {
             Title = "第十八章 禁书楼钥匙",
             ChapterId = "chapter-018",
             PreviousChapterId = "chapter-017",
-            ChapterPlan = new ChapterPlanStub
+            ChapterPlan = new ChapterData
             {
                 ChapterTitle = "禁书楼钥匙",
                 MainGoal = "让林昼拿到禁书楼钥匙",
@@ -933,7 +940,7 @@ internal static class Program
             }
         });
 
-        var chunkSearch = new ContentChunkSearchService();
+        var chunkSearch = new InMemoryContentChunkSearchDouble();
         chunkSearch.AddChunk(
             "chapter-006",
             2,
@@ -943,13 +950,13 @@ internal static class Program
             1,
             "禁书楼的旧钥匙会记住持有者的恐惧，恐惧越深，开门时讨还越重。");
 
-        var chapterIndex = new ChapterEmbeddingIndex();
+        var chapterIndex = new InMemoryChapterVectorIndexDouble();
         chapterIndex.AddHit("chapter-006", 0.93f);
         chapterIndex.AddHit("chapter-009", 0.91f);
         chapterIndex.AddHit("chapter-018", 0.99f);
         chapterIndex.AddHit("chapter-017", 0.98f);
 
-        var chunkIndex = new FakeChunkEmbeddingIndex();
+        var chunkIndex = new InMemoryChunkVectorIndexDouble();
         chunkIndex.AddHit("chapter-006", 2, 0.96f);
         chunkIndex.AddHit("chapter-009", 1, 0.94f);
         chunkIndex.AddHit("chapter-018", 1, 0.99f);
@@ -957,7 +964,7 @@ internal static class Program
         var service = new StoryStateSnapshotService(
             guideContext,
             chunkSearch,
-            new StoryBibleService(),
+            new StoryBibleService(new InMemoryStoryBibleDocumentStore()),
             chapterIndex,
             chunkIndex,
             new FakeEmbeddingService());
@@ -1040,8 +1047,7 @@ internal static class Program
 
     private static async Task CommitVolumeArcCreatesForeshadowLedgerAsync()
     {
-        ResetStorage("VolumeArcForeshadow");
-        var service = new StoryBibleService();
+        var service = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
         var plan = new VolumeArcPlan
         {
             VolumeId = "V1",
@@ -1103,8 +1109,7 @@ internal static class Program
 
     private static async Task CanonLedgerHighRiskRequiresConfirmationAsync()
     {
-        ResetStorage("CanonRiskGate");
-        var service = new StoryBibleService();
+        var service = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
         var entry = new CanonLedgerEntry
         {
             Id = "canon-debt-rule",
@@ -1175,14 +1180,13 @@ internal static class Program
 
     private static async Task SampleNovelChapterFixtureFeedsRagPlanningAsync()
     {
-        ResetStorage("SampleChapterRag");
         var storyBible = await LoadSampleStoryBibleAsync();
         var chapterFixture = await LoadSampleChaptersAsync();
         Check.True(chapterFixture.Chapters.Count >= 3, "Sample chapter fixture should include multiple chapter samples.");
 
-        var chunkSearch = new ContentChunkSearchService();
-        var chapterIndex = new ChapterEmbeddingIndex();
-        var chunkIndex = new FakeChunkEmbeddingIndex();
+        var chunkSearch = new InMemoryContentChunkSearchDouble();
+        var chapterIndex = new InMemoryChapterVectorIndexDouble();
+        var chunkIndex = new InMemoryChunkVectorIndexDouble();
 
         foreach (var chapter in chapterFixture.Chapters)
         {
@@ -1200,7 +1204,7 @@ internal static class Program
             ChapterId = "chapter-013",
             Title = "第十三章 债痕回声",
             PreviousChapterId = "chapter-012",
-            ChapterPlan = new ChapterPlanStub
+            ChapterPlan = new ChapterData
             {
                 ChapterTitle = "债痕回声",
                 MainGoal = "让林昼再次利用世界规则推进目标，但这次必须换一种信息来源和代价形式。",
@@ -1244,7 +1248,7 @@ internal static class Program
         var snapshot = await new StoryStateSnapshotService(
             guideContext,
             chunkSearch,
-            new StoryBibleService(),
+            new StoryBibleService(new InMemoryStoryBibleDocumentStore()),
             chapterIndex,
             chunkIndex,
             new FakeEmbeddingService()).BuildForChapterAsync("chapter-013");
@@ -1280,11 +1284,6 @@ internal static class Program
             "Rule-backlash candidate scoring should name the RAG or used-pattern penalty.");
     }
 
-    private static void ResetStorage(string projectName)
-    {
-        StoragePathHelper.Reset(projectName);
-    }
-
     private static async Task<StoryBibleDocument> LoadSampleStoryBibleAsync()
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "NovelAgent", "rules-debt-academy.story_bible.json");
@@ -1308,25 +1307,37 @@ internal static class Program
 
     private static NovelAgentOrchestrator CreateOrchestrator(ContentTaskContext context)
     {
-        var storyBibleService = new StoryBibleService();
-        var storyStateSnapshotService = new StoryStateSnapshotService(
-            new FakeGuideContextService(context),
-            new ContentChunkSearchService(),
-            storyBibleService);
-        var reviewer = new ChapterPostGenerationReviewer();
-
-        return new NovelAgentOrchestrator(
-            new BookConceptDesigner(new GenreDirectionPlanner()),
-            new VolumeArcPlanner(),
-            new ChapterNoveltyPlanner(),
+        var storyBibleService = new StoryBibleService(new InMemoryStoryBibleDocumentStore());
+        var guideContextService = new FakeGuideContextService(context);
+        var contentChunkSearch = new InMemoryContentChunkSearchDouble();
+        var generatedContent = new FakeGeneratedContentService();
+        var scopeFactory = CreateRegressionScopeFactory();
+        IWorkspaceProductionRuntimeBuilder runtimeBuilder = new WorkspaceProductionRuntimeBuilder();
+        var runtime = runtimeBuilder.Build(new WorkspaceProductionRuntimeRequest(
+            "regression-user",
+            "regression-project",
             storyBibleService,
-            storyStateSnapshotService,
-            reviewer,
-            new NovelAgentRewriteLoopService(),
-            new CanonMaintenanceService(storyBibleService),
-            new ForeshadowLedgerService(storyBibleService),
-            new CharacterLedgerService(storyBibleService),
-            new CreativeKnowledgeBaseService());
+            new CreativeKnowledgeBaseService(),
+            RegressionUserSettingsFactory.CreateDbBacked("regression-user"),
+            VectorStore: null,
+            EmbeddingService: new FakeEmbeddingService(),
+            CurrentUserService: null,
+            MemoryRepository: null,
+            ScopeFactory: scopeFactory,
+            UnifiedValidationService: new FakeUnifiedValidationService(),
+            GuideContextService: guideContextService,
+            ContentChunkSearchService: contentChunkSearch,
+            GeneratedContentService: generatedContent));
+
+        return runtime.Orchestrator;
+    }
+
+    private static IServiceScopeFactory CreateRegressionScopeFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase($"NovelAgentRegression_{Guid.NewGuid():N}"));
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
     private static ContentTaskContext CreateChapterContext(string chapterId)
@@ -1338,7 +1349,7 @@ internal static class Program
             Summary = "主角继续追踪规则债务的来源。",
             PreviousChapterId = "chapter-001",
             PreviousChapterSummary = "主角初次听见规则裂纹。",
-            ChapterPlan = new ChapterPlanStub
+            ChapterPlan = new ChapterData
             {
                 ChapterTitle = "裂纹回声",
                 MainGoal = "让林昼主动利用规则裂纹推进调查",
@@ -1392,6 +1403,120 @@ internal static class Program
         {
             return Task.FromResult<ContentTaskContext?>(_context);
         }
+
+        public Task InitializeCacheAsync() => Task.CompletedTask;
+
+        public void ClearCache()
+        {
+        }
+
+        public Task<List<CharacterRulesData>> ExtractCharactersAsync(List<string>? ids) => Task.FromResult(new List<CharacterRulesData>());
+
+        public Task<List<CharacterRulesData>> GetAllCharactersAsync() => Task.FromResult(new List<CharacterRulesData>());
+
+        public Task<List<LocationRulesData>> ExtractLocationsAsync(List<string>? ids) => Task.FromResult(new List<LocationRulesData>());
+
+        public Task<List<LocationRulesData>> GetAllLocationsAsync() => Task.FromResult(new List<LocationRulesData>());
+
+        public Task<List<PlotRulesData>> ExtractPlotRulesAsync(List<string>? ids) => Task.FromResult(new List<PlotRulesData>());
+
+        public Task<List<PlotRulesData>> GetAllPlotRulesAsync() => Task.FromResult(new List<PlotRulesData>());
+
+        public Task<List<FactionRulesData>> ExtractFactionsAsync(List<string>? ids) => Task.FromResult(new List<FactionRulesData>());
+
+        public Task<List<FactionRulesData>> GetAllFactionsAsync() => Task.FromResult(new List<FactionRulesData>());
+
+        public Task<List<CreativeMaterialData>> ExtractTemplatesAsync(List<string>? ids) => Task.FromResult(new List<CreativeMaterialData>());
+
+        public Task<List<CreativeMaterialData>> GetAllTemplatesAsync() => Task.FromResult(new List<CreativeMaterialData>());
+
+        public Task<List<WorldRulesData>> ExtractWorldRulesAsync(List<string>? ids) => Task.FromResult(new List<WorldRulesData>());
+
+        public Task<List<WorldRulesData>> GetAllWorldRulesAsync() => Task.FromResult(new List<WorldRulesData>());
+
+        public Task<OutlineData> ExtractVolumeAsync(string volumeId) => Task.FromResult(new OutlineData());
+
+        public Task<ChapterData?> ExtractChapterPlanAsync(string chapterPlanId) => Task.FromResult<ChapterData?>(_context.ChapterPlan);
+
+        public Task<List<BlueprintData>> ExtractBlueprintsAsync(List<string>? blueprintIds) => Task.FromResult(new List<BlueprintData>());
+
+        public Task<VolumeDesignData?> ExtractVolumeDesignAsync(string volumeDesignId) => Task.FromResult<VolumeDesignData?>(null);
+
+        public Task<List<OutlineData>> ExtractPreviousOutlinesAsync(List<string> outlineIds) => Task.FromResult(new List<OutlineData>());
+
+        public Task<ContextIdValidationResult> ValidateContextIdsAsync(ContextIdCollection? contextIds) =>
+            Task.FromResult(new ContextIdValidationResult());
+
+        public Task<OutlineTaskContext?> BuildOutlineContextAsync(string volumeId) => Task.FromResult<OutlineTaskContext?>(null);
+
+        public Task<PlanningTaskContext?> BuildPlanningContextAsync(string volumeId) => Task.FromResult<PlanningTaskContext?>(null);
+
+        public Task<BlueprintTaskContext?> BuildBlueprintContextAsync(string chapterId) => Task.FromResult<BlueprintTaskContext?>(null);
+
+        public Task<string?> GetChapterTitleAsync(string chapterId) => Task.FromResult<string?>(_context.Title);
+
+        public Task<int> GetVolumeMaxChapterAsync(int volumeNumber) => Task.FromResult(0);
+
+        public Task<FactSnapshot> ExtractFactSnapshotForChapterAsync(string chapterId, ContextIdCollection contextIds) =>
+            Task.FromResult(_context.FactSnapshot ?? new FactSnapshot());
+
+        public Task<ContentGuide> GetContentGuideAsync() => Task.FromResult(new ContentGuide());
+
+        public void InvalidateContentGuideCache()
+        {
+        }
+
+        public Task<string> GetChapterSummaryAsync(string chapterId) => Task.FromResult(_context.Summary);
+
+        public Task<(List<IndexItem> Direct, List<IndexItem> Indirect)> GetRelatedEntitiesAsync(string focusId, string layer) =>
+            Task.FromResult((new List<IndexItem>(), new List<IndexItem>()));
+    }
+
+    private sealed class FakeGeneratedContentService : IGeneratedContentService
+    {
+        private readonly Dictionary<string, string> _chapters = new(StringComparer.OrdinalIgnoreCase);
+
+        public Task SaveChapterAsync(string chapterId, string content)
+        {
+            _chapters[chapterId] = content;
+            return Task.CompletedTask;
+        }
+
+        public Task<string?> GetChapterAsync(string chapterId)
+        {
+            _chapters.TryGetValue(chapterId, out var content);
+            return Task.FromResult<string?>(content);
+        }
+
+        public Task<bool> DeleteChapterAsync(string chapterId) =>
+            Task.FromResult(_chapters.Remove(chapterId));
+
+        public bool ChapterExists(string chapterId) => _chapters.ContainsKey(chapterId);
+
+        public Task<List<ChapterInfo>> GetGeneratedChaptersAsync() => Task.FromResult(new List<ChapterInfo>());
+
+        public Task<bool> VolumeExistsAsync(int volumeNumber) => Task.FromResult(false);
+
+        public Task<string> GenerateNextChapterIdFromSourceAsync(string sourceChapterId) =>
+            Task.FromResult(string.IsNullOrWhiteSpace(sourceChapterId) ? "chapter-001" : sourceChapterId);
+    }
+
+    private sealed class FakeUnifiedValidationService : IUnifiedValidationService
+    {
+        public Task<ChapterValidationResult> ValidateChapterAsync(string chapterId, CancellationToken ct = default) =>
+            Task.FromResult(new ChapterValidationResult
+            {
+                ChapterId = chapterId,
+                OverallResult = "通过"
+            });
+
+        public Task<VolumeValidationResult> ValidateVolumeAsync(int volumeNumber, CancellationToken ct = default) =>
+            Task.FromResult(new VolumeValidationResult
+            {
+                VolumeNumber = volumeNumber
+            });
+
+        public Task<bool> NeedsRepublishAsync() => Task.FromResult(false);
     }
 
     private sealed class FakeEmbeddingService : IMicroEmbeddingService

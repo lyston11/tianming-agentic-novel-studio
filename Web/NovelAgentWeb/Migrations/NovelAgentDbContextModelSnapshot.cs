@@ -109,6 +109,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("ProjectId")
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
@@ -458,6 +463,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<bool>("IsArchived")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
@@ -495,6 +505,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_agent_sessions_idempotency");
 
                     b.ToTable("agent_sessions", (string)null);
                 });
@@ -580,6 +594,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("side_effects_json");
+
+                    b.Property<string>("SemanticContractJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("semantic_contract_json");
 
                     b.Property<DateTime>("StartedAt")
                         .HasColumnType("TEXT")
@@ -691,6 +710,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("current_document_id");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("ProjectId")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -731,6 +755,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_chapters_project");
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_chapters_idempotency");
 
                     b.HasIndex("Status")
                         .HasDatabaseName("idx_chapters_status");
@@ -824,6 +852,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("Relationships")
                         .HasColumnType("TEXT")
                         .HasColumnName("relationships");
@@ -863,6 +896,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_characters_project");
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_characters_idempotency");
 
                     b.HasIndex("UserId");
 
@@ -995,6 +1032,148 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("SourceType", "SourceId", "Version");
 
                     b.ToTable("content_documents", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.CreativeIntent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ConflictStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("unknown")
+                        .HasColumnName("conflict_status");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<DateTime?>("DecidedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("decided_at");
+
+                    b.Property<string>("DecisionReason")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("decision_reason");
+
+                    b.Property<DateTime?>("ExecutedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("executed_at");
+
+                    b.Property<string>("ImpactLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("future_carry")
+                        .HasColumnName("impact_level");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("metadata_json");
+
+                    b.Property<string>("NormalizedIntent")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("normalized_intent");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RawContent")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("raw_content");
+
+                    b.Property<bool>("RequiresConfirmation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("requires_confirmation");
+
+                    b.Property<string>("RuntimeRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("chat")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("candidate")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TargetChapterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_chapter_id");
+
+                    b.Property<string>("TargetCharacterName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_character_name");
+
+                    b.Property<string>("TargetScope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("project")
+                        .HasColumnName("target_scope");
+
+                    b.Property<string>("TargetVolumeId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_volume_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_creative_intents_idempotency");
+
+                    b.HasIndex("ProjectId", "Status", "CreatedAt")
+                        .HasDatabaseName("idx_creative_intents_project_status_created");
+
+                    b.HasIndex("ProjectId", "TargetChapterId", "Status")
+                        .HasDatabaseName("idx_creative_intents_project_chapter_status");
+
+                    b.HasIndex("SessionId", "CreatedAt")
+                        .HasDatabaseName("idx_creative_intents_session_created");
+
+                    b.ToTable("creative_intents", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
@@ -1250,6 +1429,16 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("extraction_context");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<bool>("IsArchived")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_archived");
+
                     b.Property<string>("SourceProjectId")
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
@@ -1306,7 +1495,294 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("UserId")
                         .HasDatabaseName("idx_knowledge_base_user");
 
+                    b.HasIndex("UserId", "IsArchived")
+                        .HasDatabaseName("idx_knowledge_base_user_archived");
+
+                    b.HasIndex("UserId", "SourceProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_knowledge_base_idempotency");
+
                     b.ToTable("knowledge_base", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeClassification", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ClassificationJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("classification_json");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("REAL")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("ConstraintLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("constraint_level");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("KnowledgeId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("knowledge_id");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("model");
+
+                    b.Property<string>("PackagePolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("package_policy");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("priority");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("SourceRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_run_id");
+
+                    b.Property<string>("SourceSessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_session_id");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KnowledgeId");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "ProjectId", "KnowledgeId", "CreatedAt")
+                        .HasDatabaseName("idx_knowledge_classifications_project_knowledge");
+
+                    b.ToTable("knowledge_classifications", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeConflictReport", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ConflictType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("conflict_type");
+
+                    b.Property<string>("ConflictingKnowledgeIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("conflicting_knowledge_ids_json");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DetectionJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("detection_json");
+
+                    b.Property<string>("Explanation")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("explanation");
+
+                    b.Property<string>("ImpactScope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("impact_scope");
+
+                    b.Property<string>("KnowledgeId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("knowledge_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RecommendedAction")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("recommended_action");
+
+                    b.Property<bool>("RequiresUserDecision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("requires_user_decision");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<string>("ResolvedByRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resolved_by_run_id");
+
+                    b.Property<string>("ResolvedBySessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resolved_by_session_id");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resolution_note");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("severity");
+
+                    b.Property<string>("SourceRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_run_id");
+
+                    b.Property<string>("SourceSessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_session_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("open")
+                        .HasColumnName("status");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KnowledgeId");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "KnowledgeId")
+                        .HasDatabaseName("idx_knowledge_conflict_reports_knowledge");
+
+                    b.HasIndex("UserId", "ProjectId", "Status", "CreatedAt")
+                        .HasDatabaseName("idx_knowledge_conflict_reports_project_status");
+
+                    b.ToTable("knowledge_conflict_reports", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeDirectory", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("directory_key");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_knowledge_directories_idempotency");
+
+                    b.HasIndex("UserId", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("idx_knowledge_directories_user_key");
+
+                    b.ToTable("knowledge_directories", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask", b =>
@@ -1457,6 +1933,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_materials_project");
 
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_materials_idempotency");
+
                     b.HasIndex("RawDocumentId")
                         .HasDatabaseName("idx_materials_raw_document");
 
@@ -1489,6 +1969,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<string>("Genre")
                         .HasColumnType("TEXT")
                         .HasColumnName("genre");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1527,6 +2012,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("UserId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_novel_projects_idempotency");
+
                     b.ToTable("novel_projects", (string)null);
                 });
 
@@ -1555,10 +2044,48 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("note");
 
+                    b.Property<string>("BoundVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("bound_version");
+
+                    b.Property<string>("ConstraintLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Reference")
+                        .HasColumnName("constraint_level");
+
+                    b.Property<string>("PackagePolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("RelevantOnly")
+                        .HasColumnName("package_policy");
+
+                    b.Property<int>("Priority")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(50)
+                        .HasColumnName("priority");
+
                     b.Property<string>("ProjectId")
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Reference")
+                        .HasColumnName("role");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("ProjectWide")
+                        .HasColumnName("scope");
 
                     b.Property<string>("SourceRunId")
                         .HasColumnType("TEXT")
@@ -1578,6 +2105,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<int>("UsageCount")
                         .HasColumnType("INTEGER")
                         .HasColumnName("usage_count");
+
+                    b.Property<string>("UsedByChaptersJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("used_by_chapters_json");
 
                     b.Property<string>("UserId")
                         .IsRequired()
@@ -1631,6 +2162,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("ReaderPromise")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT")
@@ -1666,6 +2202,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId")
                         .IsUnique();
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_story_constitutions_idempotency");
 
                     b.HasIndex("UserId");
 
@@ -1743,11 +2283,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
-                    b.Property<bool>("AgentAutoContinue")
+                    b.Property<bool>("AgentLoopAutoProceed")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(true)
-                        .HasColumnName("agent_auto_continue");
+                        .HasColumnName("agent_loop_auto_proceed");
 
                     b.Property<string>("AgentDefaultRisk")
                         .IsRequired()
@@ -1756,11 +2296,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasDefaultValue("Medium")
                         .HasColumnName("agent_default_risk");
 
-                    b.Property<int>("AgentMaxAutoSteps")
+                    b.Property<int>("AgentLoopMaxSteps")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(12)
-                        .HasColumnName("agent_max_auto_steps");
+                        .HasColumnName("agent_loop_max_steps");
 
                     b.Property<int>("DefaultChapterWordCount")
                         .ValueGeneratedOnAdd()
@@ -1915,6 +2455,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasDefaultValue(0)
                         .HasColumnName("current_chapters");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("KeyEvents")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT")
@@ -1973,6 +2518,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_volume_arcs_idempotency");
 
                     b.HasIndex("ProjectId", "VolumeNumber")
                         .IsUnique();
@@ -2263,6 +2812,25 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.CreativeIntent", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "Document")
@@ -2338,6 +2906,71 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired();
 
                     b.Navigation("SourceProject");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeClassification", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase", "Knowledge")
+                        .WithMany()
+                        .HasForeignKey("KnowledgeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Knowledge");
+
+                    b.Navigation("Project");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeConflictReport", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase", "Knowledge")
+                        .WithMany()
+                        .HasForeignKey("KnowledgeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Knowledge");
+
+                    b.Navigation("Project");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeDirectory", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });

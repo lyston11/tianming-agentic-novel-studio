@@ -17,7 +17,7 @@ public sealed class WebChapterCatalogService : IChapterCatalogService
 
     public WebChapterCatalogService(IServiceScopeFactory scopeFactory, string userId, string projectId)
     {
-        _scopeFactory = scopeFactory;
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _userId = userId;
         _projectId = projectId;
     }

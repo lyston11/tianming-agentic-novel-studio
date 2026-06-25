@@ -88,8 +88,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("postGenerationReview")]
         public NovelAgentPostGenerationReview? PostGenerationReview { get; set; }
 
-        [JsonPropertyName("rewriteAttempts")]
-        public List<NovelAgentRewriteAttempt> RewriteAttempts { get; set; } = new();
+        [JsonPropertyName("continuityFacts")]
+        public ChapterContinuityFacts? ContinuityFacts { get; set; }
 
         [JsonPropertyName("steps")]
         public List<NovelAgentPlanStep> Steps { get; set; } = new();
@@ -144,33 +144,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
 
         [JsonPropertyName("runs")]
         public List<NovelAgentRun> Runs { get; set; } = new();
-    }
-
-    public sealed class NovelAgentAutoContinueResult
-    {
-        [JsonPropertyName("success")]
-        public bool Success { get; set; }
-
-        [JsonPropertyName("message")]
-        public string Message { get; set; } = string.Empty;
-
-        [JsonPropertyName("executedSteps")]
-        public List<string> ExecutedSteps { get; set; } = new();
-
-        [JsonPropertyName("stoppedAtToolName")]
-        public string StoppedAtToolName { get; set; } = string.Empty;
-
-        [JsonPropertyName("stoppedReason")]
-        public string StoppedReason { get; set; } = string.Empty;
-
-        [JsonPropertyName("requiresConfirmation")]
-        public bool RequiresConfirmation { get; set; }
-
-        [JsonPropertyName("riskLevel")]
-        public NovelToolRiskLevel RiskLevel { get; set; } = NovelToolRiskLevel.Low;
-
-        [JsonPropertyName("run")]
-        public NovelAgentRun? Run { get; set; }
     }
 
     public sealed class NovelAgentExecutionResult

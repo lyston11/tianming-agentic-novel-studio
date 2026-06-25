@@ -4,21 +4,6 @@ using System.Text.Json.Serialization;
 
 namespace TM.Services.Framework.AI.NovelAgent.Models
 {
-    public sealed class CreativeKnowledgeBaseDocument
-    {
-        [JsonPropertyName("schemaVersion")]
-        public int SchemaVersion { get; set; } = 1;
-
-        [JsonPropertyName("entries")]
-        public List<CreativeKnowledgeEntry> Entries { get; set; } = new();
-
-        [JsonPropertyName("createdAt")]
-        public DateTime CreatedAt { get; set; } = DateTime.Now;
-
-        [JsonPropertyName("updatedAt")]
-        public DateTime UpdatedAt { get; set; } = DateTime.Now;
-    }
-
     public sealed class CreativeKnowledgeEntry
     {
         [JsonPropertyName("id")]
@@ -83,6 +68,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
 
         [JsonPropertyName("projectMemory")]
         public List<string> ProjectMemory { get; set; } = new();
+
+        [JsonPropertyName("hardFacts")]
+        public List<string> HardFacts { get; set; } = new();
     }
 
     public sealed class CreativeKnowledgeHit
@@ -97,21 +85,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         public string Reason { get; set; } = string.Empty;
     }
 
-    public sealed class CreativeKnowledgeMutationResult
-    {
-        [JsonPropertyName("success")]
-        public bool Success { get; set; }
-
-        [JsonPropertyName("message")]
-        public string Message { get; set; } = string.Empty;
-
-        [JsonPropertyName("entry")]
-        public CreativeKnowledgeEntry? Entry { get; set; }
-
-        [JsonPropertyName("document")]
-        public CreativeKnowledgeBaseDocument? Document { get; set; }
-    }
-
     public enum CreativeKnowledgeCategory
     {
         GenrePrinciple = 0,
@@ -121,6 +94,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         ReaderPromise = 4,
         ThemeDepth = 5,
         EmotionArc = 6,
-        RelationshipDynamic = 7
+        RelationshipDynamic = 7,
+        HardFact = 8
     }
 }

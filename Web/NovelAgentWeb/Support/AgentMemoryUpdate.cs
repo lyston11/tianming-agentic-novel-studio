@@ -19,7 +19,7 @@ public class SessionMemoryUpdate
 public class ProjectMemoryUpdate
 {
     public List<string> NewConstraints { get; set; } = new();
-    public List<string> UnresolvedThreads { get; set; } = new();
+    // UnresolvedThreads removed - Agent should query StoryBible.ForeshadowLedger directly
 }
 
 public class AuthorMemoryUpdate

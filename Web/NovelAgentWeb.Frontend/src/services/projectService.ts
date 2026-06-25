@@ -42,6 +42,7 @@ export function toNovelProjectInfo(project: ProjectResponse): NovelProjectInfo {
     coreHook: project.coreHook ?? '',
     readerPromise: '',
     status: project.status,
+    coverImageUrl: project.coverImageUrl,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   };

@@ -1,16 +1,16 @@
 using Microsoft.EntityFrameworkCore;
-using TM.Services.Framework.AI.Embedding;
+using System.Text.Json;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Generated;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
-using TM.Web.NovelAgentWeb.Services.VectorStore;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
-public sealed class WebGeneratedContentService : IGeneratedContentService
+public sealed class WebGeneratedContentService : IGeneratedContentService, IGeneratedChapterMetadataWriter
 {
     private const string SourceType = "chapter";
     private const string DocumentRole = "chapter_body";
@@ -18,30 +18,27 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ICurrentUserService? _currentUserService;
     private readonly string _projectId;
-    private readonly IVectorStore? _vectorStore;
-    private readonly IMicroEmbeddingService? _embeddingService;
 
     public WebGeneratedContentService(
         IServiceScopeFactory scopeFactory,
         ICurrentUserService? currentUserService,
-        string projectId,
-        IVectorStore? vectorStore,
-        IMicroEmbeddingService? embeddingService)
+        string projectId)
     {
-        _scopeFactory = scopeFactory;
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _currentUserService = currentUserService;
         _projectId = projectId;
-        _vectorStore = vectorStore;
-        _embeddingService = embeddingService;
     }
 
-    public async Task SaveChapterAsync(string chapterId, string content)
+    public Task SaveChapterAsync(string chapterId, string content) =>
+        SaveChapterAsync(chapterId, content, title: null);
+
+    public async Task SaveChapterAsync(string chapterId, string content, string? title)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
         var (userId, project) = await ResolveUserAndProjectAsync(db, chapterId).ConfigureAwait(false);
-        var chapter = await ResolveChapterAsync(db, chapterId, project, content).ConfigureAwait(false);
+        var chapter = await ResolveChapterAsync(db, chapterId, project, content, title).ConfigureAwait(false);
 
         var document = await contentDocuments.SaveOrReplaceTextAsync(
             userId,
@@ -68,7 +65,7 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         await db.SaveChangesAsync().ConfigureAwait(false);
         await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
 
-        await UpsertChapterVectorsAsync(userId, chapter, content, db).ConfigureAwait(false);
+        await PersistProductionTruthAsync(scope.ServiceProvider, userId, project, chapter, document).ConfigureAwait(false);
     }
 
     public async Task<string?> GetChapterAsync(string chapterId)
@@ -77,12 +74,7 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
         var (userId, project) = await ResolveUserAndProjectAsync(db, chapterId).ConfigureAwait(false);
-        var chapter = await db.Chapters
-            .AsNoTracking()
-            .Where(c => c.Id == chapterId || c.Title == chapterId)
-            .Where(c => c.ProjectId == project.Id)
-            .OrderBy(c => c.ChapterNumber)
-            .FirstOrDefaultAsync()
+        var chapter = await FindChapterByLogicalIdAsync(db, project.Id, chapterId, tracking: false)
             .ConfigureAwait(false);
 
         if (chapter == null)
@@ -109,13 +101,24 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
+        var truthStore = scope.ServiceProvider.GetRequiredService<IProductionTruthStore>();
         var (userId, project) = await ResolveUserAndProjectAsync(db, chapterId).ConfigureAwait(false);
-        var chapter = await db.Chapters
-            .FirstOrDefaultAsync(c => (c.Id == chapterId || c.Title == chapterId) && c.ProjectId == project.Id)
+        var chapter = await FindChapterByLogicalIdAsync(db, project.Id, chapterId, tracking: true)
             .ConfigureAwait(false);
 
         if (chapter == null)
             return false;
+
+        await truthStore.EnqueueOutboxAsync(
+                new EnqueueOutboxEventRequest(
+                    UserId: userId,
+                    ProjectId: project.Id,
+                    RuntimeRunId: null,
+                    EventType: "delete_chapter_content",
+                    AggregateType: "chapter",
+                    AggregateId: chapter.Id,
+                    PayloadJson: "{}"))
+            .ConfigureAwait(false);
 
         db.Chapters.Remove(chapter);
         await contentDocuments.DeleteBySourceAsync(userId, project.Id, SourceType, chapter.Id, DocumentRole, CancellationToken.None)
@@ -129,7 +132,9 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var (_, project) = ResolveUserAndProjectAsync(db, chapterId).GetAwaiter().GetResult();
-        return db.Chapters.Any(c => (c.Id == chapterId || c.Title == chapterId) && c.ProjectId == project.Id);
+        return FindChapterByLogicalIdAsync(db, project.Id, chapterId, tracking: false)
+            .GetAwaiter()
+            .GetResult() != null;
     }
 
     public async Task<List<ChapterInfo>> GetGeneratedChaptersAsync()
@@ -169,9 +174,13 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
         var (_, project) = await ResolveUserAndProjectAsync(db, sourceChapterId).ConfigureAwait(false);
+        var requestedNumber = ResolveRequestedChapterNumber(sourceChapterId);
         var current = await db.Chapters
             .AsNoTracking()
-            .Where(c => c.ProjectId == project.Id && (c.Id == sourceChapterId || c.Title == sourceChapterId))
+            .Where(c => c.ProjectId == project.Id &&
+                        (c.Id == sourceChapterId ||
+                         c.Title == sourceChapterId ||
+                         (requestedNumber.HasValue && c.ChapterNumber == requestedNumber.Value)))
             .Select(c => c.ChapterNumber)
             .FirstOrDefaultAsync()
             .ConfigureAwait(false);
@@ -209,148 +218,66 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         throw new InvalidOperationException($"No project is available for chapter '{chapterId}'.");
     }
 
-    private async Task UpsertChapterVectorsAsync(
+    private static async Task PersistProductionTruthAsync(
+        IServiceProvider services,
         string userId,
+        NovelProject project,
         Chapter chapter,
-        string content,
-        NovelAgentDbContext db)
+        ContentDocument document)
     {
-        if (_vectorStore == null || _embeddingService == null || string.IsNullOrWhiteSpace(content))
-            return;
+        var truthStore = services.GetRequiredService<IProductionTruthStore>();
 
-        List<(ContentVectorPoint Point, string VectorId)> pointBindings = new();
-        try
-        {
-            if (!await _vectorStore.CollectionExistsAsync(userId).ConfigureAwait(false))
-                await _vectorStore.InitializeUserCollectionAsync(userId).ConfigureAwait(false);
-
-            await _vectorStore.DeleteVectorsByFilterAsync(
+        var version = await truthStore.CreateChapterVersionAsync(
+                new CreateChapterVersionRequest(
                     userId,
-                    new Dictionary<string, object>
-                    {
-                        ["project_id"] = chapter.ProjectId,
-                        ["source_type"] = SourceType,
-                        ["source_id"] = chapter.Id
-                    })
-                .ConfigureAwait(false);
+                    project.Id,
+                    chapter.Id,
+                    document.Id,
+                    chapter.Title,
+                    chapter.WordCount,
+                    chapter.Status,
+                    RuntimeRunId: null,
+                    PackageId: null,
+                    GateReportJson: null,
+                    AgentReviewJson: null))
+            .ConfigureAwait(false);
 
-            var chunkRows = string.IsNullOrWhiteSpace(chapter.CurrentDocumentId)
-                ? new List<ContentChunk>()
-                : await db.ContentChunks
-                    .AsNoTracking()
-                    .Where(c => c.DocumentId == chapter.CurrentDocumentId)
-                    .OrderBy(c => c.ChunkIndex)
-                    .ToListAsync()
-                    .ConfigureAwait(false);
-            var pointRows = string.IsNullOrWhiteSpace(chapter.CurrentDocumentId)
-                ? new Dictionary<string, ContentVectorPoint>()
-                : await db.ContentVectorPoints
-                    .Where(p => p.DocumentId == chapter.CurrentDocumentId && p.ChunkId != null)
-                    .ToDictionaryAsync(p => p.ChunkId!)
-                    .ConfigureAwait(false);
-            var chunks = chunkRows.Count > 0
-                ? chunkRows.Select(c => new ChapterVectorChunk(c.ChunkIndex, c.ChunkText, c.Id)).ToList()
-                : ChunkContent(content).Select((c, i) => new ChapterVectorChunk(i, c, null)).ToList();
-            if (chunks.Count == 0)
-                return;
-
-            var vectors = await _embeddingService.EncodeBatchAsync(chunks.Select(c => c.Content).ToList(), EmbeddingMode.Passage)
-                .ConfigureAwait(false);
-            var payloads = chunks
-                .Select((chunk, index) => new VectorData
-                {
-                    Id = ResolveChapterVectorId(chunk.ContentChunkId, pointRows, pointBindings),
-                    Vector = vectors[index],
-                    UserId = userId,
-                    ProjectId = chapter.ProjectId,
-                    SourceType = SourceType,
-                    SourceId = chapter.Id,
-                    ChapterId = chapter.Id,
-                    ChunkIndex = chunk.ChunkIndex,
-                    Content = chunk.Content,
-                    Metadata = new Dictionary<string, object>
-                    {
-                        ["chapter_number"] = chapter.ChapterNumber,
-                        ["chapter_title"] = chapter.Title,
-                        ["chunk_count"] = chunks.Count
-                    }
-                })
-                .ToList();
-
-            await _vectorStore.UpsertVectorsAsync(userId, payloads).ConfigureAwait(false);
-            MarkChapterVectorPointsCompleted(userId, pointBindings);
-            await db.SaveChangesAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
+        var payloadJson = JsonSerializer.Serialize(new
         {
-            await MarkChapterVectorPointsFailedAsync(db, pointBindings.Select(x => x.Point), ex.Message)
-                .ConfigureAwait(false);
-            TM.App.Log($"[WebGeneratedContentService] Qdrant chapter vector sync failed for {chapter.Id}: {ex.Message}");
-        }
+            userId,
+            projectId = project.Id,
+            chapterId = chapter.Id,
+            chapterVersionId = version.Id,
+            contentDocumentId = document.Id,
+            title = chapter.Title,
+            wordCount = chapter.WordCount
+        });
+
+        await truthStore.EnqueueOutboxAsync(
+                new EnqueueOutboxEventRequest(
+                    userId,
+                    project.Id,
+                    RuntimeRunId: null,
+                    EventType: "index_chapter_content",
+                    AggregateType: "chapter_version",
+                    AggregateId: version.Id,
+                    PayloadJson: payloadJson))
+            .ConfigureAwait(false);
     }
-
-    private string ResolveChapterVectorId(
-        string? contentChunkId,
-        IReadOnlyDictionary<string, ContentVectorPoint> pointRows,
-        List<(ContentVectorPoint Point, string VectorId)> pointBindings)
-    {
-        if (contentChunkId == null || !pointRows.TryGetValue(contentChunkId, out var point))
-            return Guid.NewGuid().ToString();
-
-        var vectorId = Guid.TryParse(point.QdrantPointId, out _)
-            ? point.QdrantPointId
-            : Guid.NewGuid().ToString();
-        pointBindings.Add((point, vectorId));
-        return vectorId;
-    }
-
-    private void MarkChapterVectorPointsCompleted(
-        string userId,
-        IReadOnlyList<(ContentVectorPoint Point, string VectorId)> bindings)
-    {
-        var indexedAt = DateTime.UtcNow;
-        foreach (var (point, vectorId) in bindings)
-        {
-            point.QdrantCollection = QdrantVectorStore.GetCollectionName(userId);
-            point.QdrantPointId = vectorId;
-            point.VectorModel = _embeddingService!.GetType().Name;
-            point.IndexStatus = "completed";
-            point.IndexedAt = indexedAt;
-            point.ErrorMessage = null;
-        }
-    }
-
-    private async Task MarkChapterVectorPointsFailedAsync(
-        NovelAgentDbContext db,
-        IEnumerable<ContentVectorPoint> points,
-        string errorMessage)
-    {
-        foreach (var point in points)
-        {
-            point.VectorModel = _embeddingService!.GetType().Name;
-            point.IndexStatus = "failed";
-            point.ErrorMessage = errorMessage;
-            point.IndexedAt = null;
-        }
-
-        await db.SaveChangesAsync().ConfigureAwait(false);
-    }
-
-    private sealed record ChapterVectorChunk(int ChunkIndex, string Content, string? ContentChunkId);
 
     private static async Task<Chapter> ResolveChapterAsync(
         NovelAgentDbContext db,
         string chapterId,
         NovelProject project,
-        string content)
+        string content,
+        string? explicitTitle = null)
     {
-        var chapter = await db.Chapters
-            .FirstOrDefaultAsync(c => (c.Id == chapterId || c.Title == chapterId) && c.ProjectId == project.Id)
+        var chapter = await FindChapterByLogicalIdAsync(db, project.Id, chapterId, tracking: true)
             .ConfigureAwait(false);
 
         if (chapter != null)
         {
-            var readableTitle = ResolveReadableChapterTitle(chapter.Title, content, chapter.ChapterNumber);
+            var readableTitle = ResolveReadableChapterTitle(chapter.Title, content, chapter.ChapterNumber, explicitTitle);
             if (!string.Equals(readableTitle, chapter.Title, StringComparison.Ordinal))
             {
                 chapter.Title = readableTitle;
@@ -375,7 +302,7 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         {
             Id = resolvedChapterId,
             ProjectId = project.Id,
-            Title = ResolveReadableChapterTitle(chapterId, content, nextNumber),
+            Title = ResolveReadableChapterTitle(chapterId, content, nextNumber, explicitTitle),
             ChapterNumber = nextNumber,
             WordCount = CountWords(content),
             Status = "draft",
@@ -400,22 +327,56 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
             return Guid.NewGuid().ToString();
 
         var normalized = requestedChapterId.Trim();
-        var idExists = await db.Chapters
-            .AsNoTracking()
-            .AnyAsync(c => c.Id == normalized)
-            .ConfigureAwait(false);
-        if (!idExists)
+        var projectScopedId = BuildProjectScopedChapterId(project.Id, normalized, chapterNumber);
+        if (string.Equals(normalized, projectScopedId, StringComparison.OrdinalIgnoreCase))
             return normalized;
 
-        var projectScopedId = $"{project.Id}-{normalized}";
-        var scopedExists = await db.Chapters
+        var projectScopedExists = await db.Chapters
             .AsNoTracking()
             .AnyAsync(c => c.Id == projectScopedId)
             .ConfigureAwait(false);
-        if (!scopedExists)
+        if (!projectScopedExists)
             return projectScopedId;
 
         return $"{project.Id}-chapter-{chapterNumber:000}-{Guid.NewGuid():N}";
+    }
+
+    private static async Task<Chapter?> FindChapterByLogicalIdAsync(
+        NovelAgentDbContext db,
+        string projectId,
+        string? chapterId,
+        bool tracking)
+    {
+        var requestedNumber = ResolveRequestedChapterNumber(chapterId);
+        var query = tracking ? db.Chapters.AsQueryable() : db.Chapters.AsNoTracking();
+        return await query
+            .Where(c => c.ProjectId == projectId)
+            .Where(c => c.Id == chapterId ||
+                        c.Title == chapterId ||
+                        (requestedNumber.HasValue && c.ChapterNumber == requestedNumber.Value))
+            .OrderBy(c => c.ChapterNumber)
+            .FirstOrDefaultAsync()
+            .ConfigureAwait(false);
+    }
+
+    private static string BuildProjectScopedChapterId(
+        string projectId,
+        string requestedChapterId,
+        int chapterNumber)
+    {
+        if (string.IsNullOrWhiteSpace(projectId))
+            return string.IsNullOrWhiteSpace(requestedChapterId)
+                ? $"chapter-{chapterNumber:000}"
+                : requestedChapterId.Trim();
+
+        var normalized = requestedChapterId.Trim();
+        if (normalized.StartsWith(projectId + "-", StringComparison.OrdinalIgnoreCase))
+            return normalized;
+
+        var logicalId = IsMachineChapterTitle(normalized) || ResolveRequestedChapterNumber(normalized).HasValue
+            ? $"chapter-{chapterNumber:000}"
+            : normalized;
+        return $"{projectId}-{logicalId}";
     }
 
     private static int? ResolveRequestedChapterNumber(string? chapterId)
@@ -437,9 +398,10 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
 
         var arc = await ResolveVolumeArcForChapterAsync(db, project, chapter.ChapterNumber).ConfigureAwait(false);
         var volumeNumber = arc?.VolumeNumber ?? 1;
-        var volumeTitle = string.IsNullOrWhiteSpace(arc?.VolumeTitle)
+        var arcTitle = arc?.VolumeTitle?.Trim();
+        var volumeTitle = string.IsNullOrWhiteSpace(arcTitle)
             ? $"第{volumeNumber}卷"
-            : arc!.VolumeTitle.Trim();
+            : arcTitle;
 
         var volume = await db.Volumes
             .FirstOrDefaultAsync(v => v.ProjectId == project.Id && v.VolumeNumber == volumeNumber)
@@ -458,7 +420,8 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         }
         else
         {
-            volume.Title = volumeTitle;
+            if (!string.IsNullOrWhiteSpace(arcTitle) || string.IsNullOrWhiteSpace(volume.Title))
+                volume.Title = volumeTitle;
             if (!string.IsNullOrWhiteSpace(arc?.VolumeTheme))
                 volume.Summary = arc.VolumeTheme;
         }
@@ -525,16 +488,48 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         await db.SaveChangesAsync().ConfigureAwait(false);
     }
 
-    private static string ResolveReadableChapterTitle(string? requestedTitle, string content, int chapterNumber)
+    private static string ResolveReadableChapterTitle(
+        string? requestedTitle,
+        string content,
+        int chapterNumber,
+        string? explicitTitle = null)
     {
         var heading = ExtractChapterHeading(content);
+        if (!string.IsNullOrWhiteSpace(heading) && LooksLikeNumberedChapterTitle(heading))
+            return CleanReadableChapterTitle(heading);
+
+        var cleanExplicitTitle = CleanReadableChapterTitle(explicitTitle ?? string.Empty);
+        if (!IsMachineChapterTitle(cleanExplicitTitle))
+            return EnsureChapterTitleHasNumber(cleanExplicitTitle, chapterNumber);
+
         if (!string.IsNullOrWhiteSpace(heading))
-            return heading;
+            return CleanReadableChapterTitle(heading);
 
         if (!IsMachineChapterTitle(requestedTitle))
-            return requestedTitle!.Trim();
+            return CleanReadableChapterTitle(requestedTitle!.Trim());
 
         return chapterNumber > 0 ? $"第 {chapterNumber} 章" : "未命名章节";
+    }
+
+    private static string EnsureChapterTitleHasNumber(string title, int chapterNumber)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return title;
+
+        if (LooksLikeNumberedChapterTitle(title))
+            return title;
+
+        return chapterNumber > 0 ? $"第 {chapterNumber} 章：{title}" : title;
+    }
+
+    private static bool LooksLikeNumberedChapterTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        var chapterStart = title.IndexOf('第');
+        var chapterEnd = title.IndexOf('章', chapterStart >= 0 ? chapterStart : 0);
+        return chapterStart >= 0 && chapterEnd > chapterStart;
     }
 
     private static bool IsMachineChapterTitle(string? title)
@@ -558,39 +553,68 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         var firstLine = (lineEnd >= 0 ? content[..lineEnd] : content).Trim();
         if (firstLine.StartsWith("#", StringComparison.Ordinal))
             firstLine = firstLine.TrimStart('#').Trim();
+        firstLine = CleanReadableChapterTitle(firstLine);
         if (firstLine.Length == 0)
             return string.Empty;
 
         var chapterStart = firstLine.IndexOf('第');
         var chapterEnd = firstLine.IndexOf('章', chapterStart >= 0 ? chapterStart : 0);
         if (chapterStart < 0 || chapterEnd <= chapterStart)
-            return firstLine.Length <= 24 ? firstLine : string.Empty;
+            return firstLine.Length <= 24 ? CleanReadableChapterTitle(firstLine) : string.Empty;
 
         var prefix = firstLine[chapterStart..(chapterEnd + 1)].Trim();
         var rest = firstLine[(chapterEnd + 1)..].TrimStart(' ', '\t', ':', '：', '-', '—');
         if (string.IsNullOrWhiteSpace(rest))
             return prefix;
 
-        var subtitle = TakeCompactSubtitle(rest);
+        var subtitle = NormalizeChapterSubtitle(rest);
         return string.IsNullOrWhiteSpace(subtitle) ? prefix : $"{prefix}：{subtitle}";
     }
 
-    private static string TakeCompactSubtitle(string text)
+    private static string CleanReadableChapterTitle(string title)
     {
-        var chars = new List<char>(capacity: 8);
+        if (string.IsNullOrWhiteSpace(title))
+            return string.Empty;
+
+        var cleaned = title.Trim();
+        cleaned = cleaned.Trim(' ', '\t', '#', '*', '_', '`', '~', '　');
+        while (cleaned.Length >= 2 &&
+               ((cleaned[0] == '*' && cleaned[^1] == '*') ||
+                (cleaned[0] == '_' && cleaned[^1] == '_') ||
+                (cleaned[0] == '`' && cleaned[^1] == '`')))
+        {
+            cleaned = cleaned[1..^1].Trim();
+        }
+
+        return cleaned.Trim(' ', '\t', '#', '*', '_', '`', '~', '　');
+    }
+
+    private static string NormalizeChapterSubtitle(string text)
+    {
+        const int maxSubtitleLength = 48;
+        var chars = new List<char>(capacity: Math.Min(maxSubtitleLength, Math.Max(text.Length, 1)));
+        var previousWasWhiteSpace = false;
         foreach (var c in text)
         {
-            if (char.IsWhiteSpace(c) || "，,。.!！?？；;：:、\"“”'‘’（）()【】[]".Contains(c))
+            if (c is '\r' or '\n')
                 break;
+            if (char.IsWhiteSpace(c))
+            {
+                if (chars.Count > 0 && !previousWasWhiteSpace)
+                {
+                    chars.Add(' ');
+                    previousWasWhiteSpace = true;
+                }
+                continue;
+            }
+
             chars.Add(c);
-            if (chars.Count >= 6)
+            previousWasWhiteSpace = false;
+            if (chars.Count >= maxSubtitleLength)
                 break;
         }
 
-        if (chars.Count >= 6 && chars[^1] == chars[0])
-            chars.RemoveAt(chars.Count - 1);
-
-        return new string(chars.ToArray()).Trim();
+        return CleanReadableChapterTitle(new string(chars.ToArray()).Trim(' ', '\t', '#', '-', '—'));
     }
 
     private static string ResolveProjectStatusAfterChapterCommit(string? currentStatus)
@@ -633,21 +657,4 @@ public sealed class WebGeneratedContentService : IGeneratedContentService
         return count;
     }
 
-    private static List<string> ChunkContent(string content)
-    {
-        const int chunkSize = 500;
-        var chunks = new List<string>();
-        if (string.IsNullOrWhiteSpace(content))
-            return chunks;
-
-        for (var i = 0; i < content.Length; i += chunkSize)
-        {
-            var length = Math.Min(chunkSize, content.Length - i);
-            var chunk = content.Substring(i, length).Trim();
-            if (!string.IsNullOrWhiteSpace(chunk))
-                chunks.Add(chunk);
-        }
-
-        return chunks;
-    }
 }

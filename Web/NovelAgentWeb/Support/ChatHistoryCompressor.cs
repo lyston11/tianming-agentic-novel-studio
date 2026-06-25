@@ -67,7 +67,6 @@ public class ChatHistoryCompressor
                     StartTurn = startTurn,
                     EndTurn = endTurn,
                     Content = BuildExtractiveSummary(startTurn, endTurn, blockMessages),
-                    KeyDecisions = ExtractKeyDecisions(blockMessages),
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -154,19 +153,6 @@ public class ChatHistoryCompressor
             .ToList();
         var decisionText = decisions.Count == 0 ? "暂无显式决策" : string.Join("；", decisions);
         return $"已压缩 {turnCount} 轮对话，覆盖轮次 {coveredRange}。关键决策：{decisionText}";
-    }
-
-    private static List<string> ExtractKeyDecisions(IEnumerable<AgentConversationTurn> messages)
-    {
-        var keywords = new[] { "决定", "确认", "必须", "不要", "需要", "采用", "使用" };
-        return messages
-            .Select(m => m.Content.Trim())
-            .Where(content => !string.IsNullOrWhiteSpace(content) &&
-                              keywords.Any(keyword => content.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
-            .Select(Truncate)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(8)
-            .ToList();
     }
 
     private static string Truncate(string value)

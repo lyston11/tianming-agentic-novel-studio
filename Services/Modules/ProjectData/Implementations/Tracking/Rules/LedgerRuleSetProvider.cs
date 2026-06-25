@@ -17,7 +17,6 @@ namespace TM.Services.Modules.ProjectData.Implementations.Tracking.Rules
 
         private string? _cachedGenre;
         private LedgerRuleSet? _cachedRuleSet;
-        private DateTime _cachedFileLastWrite;
 
         public async Task<LedgerRuleSet> GetRuleSetForGateAsync()
         {

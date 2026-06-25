@@ -16,6 +16,7 @@ public sealed class AgentSession
     public string Phase { get; set; } = "idle";
     public string ActiveProjectId { get; set; } = string.Empty;
     public string? ActiveRunId { get; set; }
+    public string RuntimeRunId { get; set; } = string.Empty;
     public bool IsArchived { get; set; }
     public List<string> RunHistory { get; set; } = new();
     public List<AgentConversationTurn> ChatHistory { get; set; } = new();
@@ -33,6 +34,8 @@ public sealed class AgentSession
 
 public sealed class AgentConversationTurn
 {
+    public string TurnId { get; set; } = string.Empty;
+    public int TurnIndex { get; set; }
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -153,6 +156,41 @@ public sealed class AgentSessionManager
     public async Task SendEventAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
         => await _events.SendAsync(sessionId, evt, ct).ConfigureAwait(false);
 
+    public async Task<bool> ReplaceLastAssistantTurnAsync(
+        AgentSession session,
+        string expectedContent,
+        string replacementContent,
+        CancellationToken ct = default)
+    {
+        var expected = expectedContent.Trim();
+        var replacement = replacementContent.Trim();
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(replacement))
+            return false;
+
+        var replaced = true;
+        if (_chatHistory != null)
+        {
+            var replaceTask = _chatHistory.ReplaceLastAssistantTurnAsync(
+                session.UserId,
+                string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+                session.SessionId,
+                expected,
+                replacement,
+                ct);
+            replaced = replaceTask != null && await replaceTask.ConfigureAwait(false);
+        }
+        if (!replaced)
+            return false;
+
+        var lastAssistantTurn = session.ChatHistory.LastOrDefault(t =>
+            string.Equals(t.Role, "assistant", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(t.Content, expected, StringComparison.Ordinal));
+        if (lastAssistantTurn != null)
+            lastAssistantTurn.Content = replacement;
+
+        return true;
+    }
+
     public ChannelReader<AgentSseEvent> GetEventReader(string sessionId) =>
         _events.GetReader(sessionId);
 
@@ -230,6 +268,8 @@ public sealed class AgentSessionManager
         session.ChatHistory = turns
             .Select(turn => new AgentConversationTurn
             {
+                TurnId = turn.TurnId,
+                TurnIndex = turn.TurnIndex,
                 Role = turn.Role,
                 Content = turn.Content,
                 CreatedAt = turn.CreatedAt
@@ -251,6 +291,7 @@ public sealed class AgentSessionManager
         public AgentToolCall? PendingToolCall { get; set; }
         public AgentPendingConfirmation? PendingConfirmation { get; set; }
         public AgentDecision? LastDecision { get; set; }
+        public List<AgentRuntimeInterruptObservation> RuntimeInterrupts { get; set; } = new();
         public MissionPointerData MissionPointer { get; set; } = new();
 
         public static RuntimeSessionStateData From(AgentWorkingMemory memory) => new()
@@ -258,6 +299,7 @@ public sealed class AgentSessionManager
             PendingToolCall = memory.PendingToolCall,
             PendingConfirmation = memory.PendingConfirmation,
             LastDecision = memory.LastDecision,
+            RuntimeInterrupts = memory.RuntimeInterrupts.TakeLast(16).ToList(),
             MissionPointer = MissionPointerData.From(memory.MissionPlan)
         };
 
@@ -268,6 +310,7 @@ public sealed class AgentSessionManager
                 PendingToolCall = PendingToolCall,
                 PendingConfirmation = PendingConfirmation,
                 LastDecision = LastDecision,
+                RuntimeInterrupts = RuntimeInterrupts.TakeLast(16).ToList(),
             };
             MissionPointer.ApplyTo(memory.MissionPlan);
             return memory;

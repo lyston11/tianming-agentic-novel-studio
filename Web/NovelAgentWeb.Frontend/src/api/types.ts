@@ -111,6 +111,8 @@ export type CreativeKnowledgeCategory =
   | 'GenrePrinciple'
   | 'TropePattern'
   | 'AntiTropeStrategy'
+  | 'StyleExample'
+  | 'HardFact'
   | 'ProjectUsedPattern'
   | 'ReaderPromise'
   | 'ThemeDepth'
@@ -180,7 +182,6 @@ export interface NovelAgentRun {
   gateReport?: GenerationGateReport | null;
   dependencyImpact?: DependencyImpactReport | null;
   postGenerationReview: NovelAgentPostGenerationReview | null;
-  rewriteAttempts: NovelAgentRewriteAttempt[];
   steps: NovelAgentPlanStep[];
   notes: string[];
   updatedAt: string;
@@ -461,17 +462,6 @@ export interface NovelAgentReviewCheck {
   suggestions: string[];
 }
 
-export interface NovelAgentRewriteAttempt {
-  attemptId: string;
-  chapterId: string;
-  success: boolean;
-  beforeQualityScore: number;
-  afterQualityScore: number;
-  repairHints: string;
-  repairResult: string;
-  reviewAfterRewrite: NovelAgentPostGenerationReview | null;
-}
-
 export interface CreativeKnowledgeEntry {
   id: string;
   category: CreativeKnowledgeCategory;
@@ -484,9 +474,18 @@ export interface CreativeKnowledgeEntry {
   source: string;
   usageCount?: number;
   createdAt?: string;
+  isArchived?: boolean;
+  sourceProjectId?: string | null;
+  sourceProjectTitle?: string | null;
+  sourceType?: string | null;
+  sourceUploadTaskId?: string | null;
+  chunkIndex?: number | null;
+  extractionContext?: string | null;
   projectUsageStatus?: string;
   projectUsageCount?: number;
   projectLastUsedAt?: string | null;
+  projectUsages?: KnowledgeProjectUsage[];
+  constraintEvidence?: KnowledgeConstraintEvidence[];
 }
 
 export interface CreativeKnowledgeMutationResult {
@@ -533,63 +532,59 @@ export interface StoryBibleRevision {
   sourceChapterId: string;
 }
 
-// ============================================================
-// API Request/Response DTOs
-// ============================================================
-
-export interface CommitStoryFoundationRequest {
-  overwrite?: boolean;
-  confirmed?: boolean;
-  selectedMacroCandidateTitle?: string;
+export interface CreateCreativeIntentRequest {
+  projectId: string;
+  sessionId?: string;
+  runId?: string;
+  rawContent: string;
+  normalizedIntent?: string;
+  source?: string;
+  targetScope?: string;
+  targetVolumeId?: string;
+  targetChapterId?: string;
+  targetCharacterName?: string;
+  impactLevel?: string;
+  requiresConfirmation?: boolean;
+  conflictStatus?: string;
+  metadataJson?: string;
 }
 
-export interface ConfirmRequest {
-  overwrite?: boolean;
-  confirmed?: boolean;
+export interface DecideCreativeIntentRequest {
+  projectId: string;
+  status: string;
+  decisionReason?: string;
+  conflictStatus?: string;
+  markExecuted?: boolean;
 }
 
-export interface ConfirmOnlyRequest {
-  confirmed?: boolean;
+export interface CreativeIntentItem {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  source: string;
+  rawContent: string;
+  normalizedIntent: string;
+  targetScope: string;
+  targetVolumeId: string;
+  targetChapterId: string;
+  targetCharacterName: string;
+  status: string;
+  impactLevel: string;
+  requiresConfirmation: boolean;
+  conflictStatus: string;
+  decisionReason: string;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string | null;
+  executedAt?: string | null;
 }
 
-export interface ContinueRunRequest {
-  maxAutoRisk?: string;
-  maxAutoSteps?: number;
-}
-
-export interface SelectChapterCandidateRequest {
-  candidateTitles?: string;
-  selectionMode?: string;
-  selectionRationale?: string;
-  confirmed?: boolean;
-}
-
-export interface EntryConfirmRequest {
-  entryIds?: string;
-  confirmed?: boolean;
-}
-
-export interface CreativeKnowledgeQueryRequest {
-  query?: string;
-}
-
-export interface UsedPatternRequest {
-  chapterId?: string;
-  pattern?: string;
-  note?: string;
-}
-
-export interface MaterialIngestRequest {
-  fileName?: string;
-  content?: string;
-  sourceType?: string;
-}
-
-export interface MaterialUpdateRequest {
-  fileName?: string;
-  summary?: string;
-  tags?: string;
-  content?: string;
+export interface CreativeIntentQueryResult {
+  projectId: string;
+  status: string;
+  targetChapterId: string;
+  items: CreativeIntentItem[];
 }
 
 // ============================================================
@@ -632,19 +627,72 @@ export interface KnowledgeResponse {
   id: string;
   usageProjectId: string | null;
   sourceProjectId: string | null;
+  sourceProjectTitle: string | null;
+  sourceType: string;
+  sourceUploadTaskId: string | null;
+  chunkIndex: number | null;
+  extractionContext: string | null;
   entryType: string;
   title: string;
   content: string;
+  tags: string[];
+  weight: number;
   usageCount: number;
   createdAt: string;
+  isArchived: boolean;
   vectorId: string | null;
   projectUsageStatus: string;
   projectUsageCount: number;
   projectLastUsedAt: string | null;
+  projectUsages: KnowledgeProjectUsage[];
+  constraintEvidence: KnowledgeConstraintEvidence[];
+}
+
+export interface KnowledgeDirectoryResponse {
+  key: string;
+  name: string;
+  description: string;
+  isSystem: boolean;
+  entryCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeProjectUsage {
+  projectId: string;
+  projectTitle: string;
+  status: string;
+  usageCount: number;
+  firstSeenAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface KnowledgeConstraintEvidence {
+  knowledgeId: string;
+  title: string;
+  entryType: string;
+  subject: string;
+  constraintLevel: string;
+  packagePolicy: string;
+  evidenceStatus: string;
+  gateStatus: string;
+  projectId: string;
+  projectTitle: string;
+  chapterId: string;
+  factSnapshotId: string;
+  factSnapshotVersion: number;
+  createdAt: string;
+  allowedTerms: string[];
+  forbiddenTerms: string[];
+  violations: string[];
 }
 
 export interface KnowledgeSearchResult {
   id: string;
+  sourceType: string;
+  sourceUploadTaskId?: string | null;
+  chunkIndex?: number | null;
+  extractionContext?: string | null;
   entryType: string;
   title: string;
   content: string;
@@ -762,6 +810,7 @@ export interface NovelProjectCreateRequest {
 export interface NovelProjectUpdateRequest {
   title?: string;
   status?: string;
+  coverImageUrl?: string;
 }
 
 export interface NovelProjectInfo {
@@ -772,6 +821,7 @@ export interface NovelProjectInfo {
   coreHook: string;
   readerPromise: string;
   status: string;
+  coverImageUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -785,8 +835,141 @@ export interface ChapterResponse {
   status: string;
   wordCount: number;
   content?: string | null;
+  productionChains: WorkflowProductionChain[];
+  productionEvidence: ChapterProductionEvidenceResponse;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ChapterProductionEvidenceResponse {
+  revisionPlans: ChapterRevisionPlanEvidenceResponse[];
+  latestFactSnapshot?: ChapterFactSnapshotEvidenceResponse | null;
+  outboxEvents: ChapterOutboxEvidenceResponse[];
+}
+
+export interface ChapterRevisionPlanEvidenceResponse {
+  id: string;
+  source: string;
+  planType: string;
+  targetScope: string;
+  targetChapterId: string;
+  targetChapterLogicalId: string;
+  targetChapterDisplayName: string;
+  status: string;
+  riskLevel: string;
+  recommendation: string;
+  affectedChapterIds: string[];
+  invalidatedPackageIds: string[];
+  updatedAt: string;
+}
+
+export interface ChapterFactSnapshotEvidenceResponse {
+  id: string;
+  chapterVersionId: string;
+  versionNumber: number;
+  source: string;
+  snapshotPreview: string;
+  createdAt: string;
+}
+
+export interface ChapterOutboxEvidenceResponse {
+  id: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  status: string;
+  attempts: number;
+  lastError: string;
+  nextAttemptAt?: string | null;
+  completedAt?: string | null;
+  updatedAt: string;
+}
+
+export interface ChapterVersionResponse {
+  id: string;
+  chapterId: string;
+  contentDocumentId: string;
+  versionNumber: number;
+  title: string;
+  wordCount: number;
+  status: string;
+  runtimeRunId?: string | null;
+  packageId?: string | null;
+  kernelVersion?: string | null;
+  promptVersion?: string | null;
+  gateReportJson?: string | null;
+  agentReviewJson?: string | null;
+  rebuiltFromPackageIds: string[];
+  isCurrent: boolean;
+  contentPreview: string;
+  createdAt: string;
+}
+
+export interface ChapterVersionDiffBlock {
+  kind: 'unchanged' | 'changed' | 'added' | 'removed' | string;
+  leftText: string;
+  rightText: string;
+}
+
+export interface ChapterVersionCreativeIntentAlignment {
+  intentId: string;
+  normalizedIntent: string;
+  targetScope: string;
+  targetChapterId: string;
+  impactLevel: string;
+  source: string;
+  status: string;
+}
+
+export interface ChapterVersionRevisionPlanAlignment {
+  revisionPlanId: string;
+  planType: string;
+  targetScope: string;
+  targetChapterId: string;
+  targetChapterLogicalId: string;
+  targetChapterDisplayName: string;
+  status: string;
+  affectedChapterIds: string[];
+  invalidatedPackageIds: string[];
+  riskLevel: string;
+  recommendation: string;
+}
+
+export interface ChapterVersionAgentReviewCheckAlignment {
+  key: string;
+  name: string;
+  status: string;
+  message: string;
+  evidence: string[];
+}
+
+export interface ChapterVersionProductionAlignment {
+  leftPackageId: string;
+  rightPackageId: string;
+  agentReviewDecision: string;
+  rebuiltFromPackageIds: string[];
+  acceptedCreativeIntents: ChapterVersionCreativeIntentAlignment[];
+  sourceRevisionPlans: ChapterVersionRevisionPlanAlignment[];
+  agentReviewChecks: ChapterVersionAgentReviewCheckAlignment[];
+}
+
+export interface ChapterVersionCompareResponse {
+  chapterId: string;
+  left: ChapterVersionResponse;
+  right: ChapterVersionResponse;
+  wordCountDelta: number;
+  summary: string;
+  diffBlocks: ChapterVersionDiffBlock[];
+  productionAlignment: ChapterVersionProductionAlignment;
+}
+
+export interface ChapterCreateRequest {
+  projectId: string;
+  volumeId?: string | null;
+  title: string;
+  chapterNumber: number;
+  content: string;
+  status?: 'draft' | 'published' | 'archived';
 }
 
 export interface NovelProjectDeleteResult {
@@ -817,6 +1000,7 @@ export interface NovelBookView {
   coreHook: string;
   readerPromise: string;
   status: string;
+  coverImageUrl?: string | null;
   isActive: boolean;
   volumeCount: number;
   generatedChapterCount: number;
@@ -839,6 +1023,67 @@ export interface NovelVolumeView {
   endChapterId: string;
   expectedChapterCount: number;
   chapters: NovelChapterView[];
+}
+
+export interface WorkflowChapterProductionSummary {
+  chainId: string;
+  status: string;
+  summary: string;
+  runtimeRunId: string;
+  packageId: string;
+  updatedAt: string;
+  chapterVersionId: string;
+  chapterVersionNumber: number;
+  factSnapshotId: string;
+  factSnapshotVersion: number;
+  endingState: string;
+  gateStatus: string;
+  agentReviewResult: string;
+  agentReviewAction: string;
+  chapterChangeCount: number;
+  revisionPlanCount: number;
+  rebuildCount: number;
+  revisionPlanIds: string[];
+  revisionPlans: WorkflowChapterRevisionPlanSummary[];
+  rebuildPackageIds: string[];
+  creativeIntents: WorkflowChapterCreativeIntentSummary[];
+  traceItems: WorkflowChapterProductionTraceItem[];
+  hasCanonicalEvidence: boolean;
+}
+
+export interface WorkflowChapterRevisionPlanSummary {
+  revisionPlanId: string;
+  source: string;
+  planType: string;
+  targetScope: string;
+  targetChapterId: string;
+  targetChapterLogicalId: string;
+  targetChapterDisplayName: string;
+  status: string;
+  riskLevel: string;
+  recommendation: string;
+  affectedChapterIds: string[];
+  invalidatedPackageIds: string[];
+}
+
+export interface WorkflowChapterCreativeIntentSummary {
+  intentId: string;
+  normalizedIntent: string;
+  targetScope: string;
+  targetChapterId: string;
+  impactLevel: string;
+  source: string;
+  status: string;
+}
+
+export interface WorkflowChapterProductionTraceItem {
+  key: string;
+  label: string;
+  status: string;
+  artifactType: string;
+  artifactId: string;
+  description: string;
+  relatedArtifactIds: string[];
 }
 
 export interface NovelChapterView {
@@ -886,13 +1131,14 @@ export interface NovelChapterView {
   draftArtifactId: string;
   gateReportId: string;
   qualityReportId: string;
+  productionSummary?: WorkflowChapterProductionSummary | null;
 }
 
 export interface ProjectWorkflowDocument {
   project: NovelBookView | null;
   library: NovelLibraryDocument;
   sessions: WorkflowSessionSummary[];
-  runs: NovelAgentRun[];
+  runs: WorkflowRunSummary[];
   schedulerTasks: AgentScheduledTask[];
   missionPlans: AgentMissionPlan[];
   chapterArtifacts: WorkflowChapterArtifactSummary[];
@@ -907,8 +1153,37 @@ export interface ProjectWorkflowDocument {
   activeSessionId: string;
   activeRunId: string;
   updatedAt: string;
+  creativeIntents: WorkflowCreativeIntentEvidence[];
   productionStages: WorkflowProductionStage[];
+  productionChains: WorkflowProductionChain[];
   artifactTimeline: WorkflowArtifactTimelineItem[];
+}
+
+export interface WorkflowRunSummary {
+  runId: string;
+  userGoal: string;
+  intent: string;
+  status: string;
+  targetChapterId: string;
+  createdAt: string;
+  updatedAt: string;
+  selectedCandidateTitle: string;
+  draftStatus: string;
+  gateStatus: string;
+  reviewStatus: string;
+  qualityScore: number;
+  notes: string[];
+  steps: WorkflowRunStepSummary[];
+}
+
+export interface WorkflowRunStepSummary {
+  id: string;
+  name: string;
+  purpose: string;
+  toolName: string;
+  status: string;
+  riskLevel: string;
+  requiresConfirmation: boolean;
 }
 
 export interface WorkflowSessionSummary {
@@ -960,6 +1235,326 @@ export interface WorkflowProductionStage {
   primaryRunId: string;
   emptyReason: string;
   nextIntentHint: string;
+  productionEvents: WorkflowProductionEventSummary[];
+  toolExecutions: WorkflowToolExecutionSummary[];
+}
+
+export interface WorkflowToolExecutionSummary {
+  id: string;
+  runId: string;
+  toolName: string;
+  phase: string;
+  status: string;
+  risk: string;
+  resultMessage: string;
+  errorMessage: string;
+  startedAt: string;
+  completedAt: string;
+  semanticContract: WorkflowToolSemanticContractSummary;
+  failure?: WorkflowToolFailureSummary | null;
+}
+
+export interface WorkflowToolSemanticContractSummary {
+  displayName: string;
+  domainSurface: string;
+  outputKind: string;
+  inputArtifacts: string[];
+  outputArtifacts: string[];
+  idempotencyPolicy: string;
+  rollbackPolicy: string;
+  userVisibleWhere: string;
+  resultSemantics: string;
+}
+
+export interface WorkflowToolFailureSummary {
+  code: string;
+  failedStage: string;
+  reason: string;
+  recoverable: boolean;
+  recommendedAction: string;
+  inputArtifacts: WorkflowToolInputArtifactSummary[];
+}
+
+export interface WorkflowToolInputArtifactSummary {
+  artifactName: string;
+  status: string;
+  artifactId: string;
+  message: string;
+  blocksExecution: boolean;
+  recommendedActions: string[];
+}
+
+export interface WorkflowProductionChain {
+  id: string;
+  chapterId: string;
+  chapterLogicalId: string;
+  chapterDisplayName: string;
+  runtimeRunId: string;
+  packageId: string;
+  status: string;
+  summary: string;
+  updatedAt: string;
+  chapterVersionId: string;
+  chapterVersionNumber: number;
+  factSnapshotId: string;
+  factSnapshotVersion: number;
+  revisionPlanIds: string[];
+  rebuildLinks: WorkflowPackageRebuildLinkEvidence[];
+  steps: WorkflowProductionChainStep[];
+  evidence?: WorkflowProductionChainEvidence | null;
+}
+
+export interface WorkflowProductionChainEvidence {
+  gate?: WorkflowGateEvidence | null;
+  factSnapshot?: WorkflowFactSnapshotEvidence | null;
+  agentReview?: WorkflowAgentReviewSummaryEvidence | null;
+  chapterChangeCount: number;
+  chapterChangeArtifactIds: string[];
+}
+
+export interface WorkflowProductionChainStep {
+  key: string;
+  label: string;
+  status: string;
+  eventId: string;
+  eventType: string;
+  stage: string;
+  artifactType: string;
+  artifactId: string;
+  message: string;
+  createdAt: string;
+  outboxEventId: string;
+}
+
+export interface WorkflowProductionEventSummary {
+  id: string;
+  runtimeRunId: string;
+  chapterId: string;
+  packageId: string;
+  eventType: string;
+  stage: string;
+  status: string;
+  message: string;
+  artifactType: string;
+  artifactId: string;
+  dataJson: string;
+  createdAt: string;
+  evidence?: WorkflowProductionEvidenceSummary | null;
+  failure?: WorkflowProductionFailureSummary | null;
+}
+
+export interface WorkflowProductionFailureSummary {
+  code: string;
+  stage: string;
+  message: string;
+  recoverable: boolean;
+  recommendedAction: string;
+  artifactIds: string[];
+  requiresUserDecision: boolean;
+}
+
+export interface WorkflowProductionEvidenceSummary {
+  packageKind: string;
+  packageStatus: string;
+  promptVersion: string;
+  kernelVersion: string;
+  knowledgeFactCount: number;
+  knowledgeBindingCount: number;
+  knowledgeBindings: WorkflowKnowledgeBindingEvidence[];
+  ragQueryCount: number;
+  factSnapshotVersion: number;
+  factSnapshotSource: string;
+  factSnapshotId: string;
+  chapterVersionNumber: number;
+  chapterVersionId: string;
+  chapterVersionStatus: string;
+  chapterVersionWordCount: number;
+  acceptedCreativeIntentCount: number;
+  creativeIntents: WorkflowCreativeIntentEvidence[];
+  agentReviewChecks: WorkflowAgentReviewCheckEvidence[];
+  knowledgeConstraintEvidence: WorkflowKnowledgeConstraintEvidence[];
+  sourceRevisionPlans: WorkflowRevisionPlanEvidence[];
+  rebuiltFromPackageIds: string[];
+  rollback?: WorkflowRollbackEvidence | null;
+  gate?: WorkflowGateEvidence | null;
+  factSnapshot?: WorkflowFactSnapshotEvidence | null;
+  agentReview?: WorkflowAgentReviewSummaryEvidence | null;
+  knowledgeBindingSummary?: WorkflowKnowledgeBindingSummaryEvidence | null;
+  memoryReads: WorkflowMemoryReadEvidence[];
+  memoryPromotions: WorkflowMemoryPromotionEvidence[];
+  rebuildLinks: WorkflowPackageRebuildLinkEvidence[];
+  outbox?: WorkflowOutboxEvidence | null;
+}
+
+export interface WorkflowGateEvidence {
+  status: string;
+  protocolPassed: boolean;
+  factSnapshotPassed: boolean;
+  blueprintPassed: boolean;
+  ragPassed: boolean;
+  changesDetected: boolean;
+  issues: string[];
+  repairHints: string[];
+}
+
+export interface WorkflowFactSnapshotEvidence {
+  protagonistName: string;
+  protagonistIdentity: string;
+  protagonistStatus: string;
+  currentLocation: string;
+  systemState: string;
+  equipmentState: string;
+  keyEvents: string[];
+  endingState: string;
+  nextChapterMustCarry: string[];
+}
+
+export interface WorkflowAgentReviewSummaryEvidence {
+  decision: string;
+  overallResult: string;
+  problems: string[];
+  suggestions: string[];
+  meetsAcceptedCreativeIntents?: boolean | null;
+  continuityRisk: string;
+  chapterPacing: string;
+  recommendedAction: string;
+}
+
+export interface WorkflowMemoryReadEvidence {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  memoryScope: string;
+  memoryKeys: string[];
+  sourceType: string;
+  consumer: string;
+  createdAt: string;
+}
+
+export interface WorkflowMemoryPromotionEvidence {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  sourceScope: string;
+  targetScope: string;
+  sourceMemoryKey: string;
+  targetMemoryKey: string;
+  promotionReason: string;
+  createdAt: string;
+}
+
+export interface WorkflowPackageRebuildLinkEvidence {
+  oldPackageId: string;
+  oldPackageStatus: string;
+  newPackageId: string;
+  newPackageStatus: string;
+  newPackageKind: string;
+  chapterId: string;
+  runtimeRunId: string;
+}
+
+export interface WorkflowOutboxEvidence {
+  outboxEventId: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  status: string;
+  attempts: number;
+  lastError: string;
+}
+
+export interface WorkflowRollbackEvidence {
+  targetVersionId: string;
+  targetVersionNumber: number;
+  currentDocumentId: string;
+  invalidatedPackageIds: string[];
+  reason: string;
+}
+
+export interface WorkflowRevisionPlanEvidence {
+  revisionPlanId: string;
+  planType: string;
+  targetScope: string;
+  targetChapterId: string;
+  targetChapterLogicalId: string;
+  targetChapterDisplayName: string;
+  status: string;
+  affectedChapterIds: string[];
+  invalidatedPackageIds: string[];
+  riskLevel: string;
+  recommendation: string;
+}
+
+export interface WorkflowKnowledgeBindingEvidence {
+  knowledgeId: string;
+  title: string;
+  entryType: string;
+  projectUsageStatus: string;
+  weight: number;
+  role: string;
+  constraintLevel: string;
+  packagePolicy: string;
+  classificationId: string;
+  classificationRule: string;
+  shouldEnterGate: boolean;
+  shouldEnterBlueprint: boolean;
+  shouldEnterFactSnapshot: boolean;
+  classificationConfidence: number;
+}
+
+export interface WorkflowKnowledgeBindingSummaryEvidence {
+  bindingCount: number;
+  shouldEnterGateCount: number;
+  shouldEnterBlueprintCount: number;
+  shouldEnterFactSnapshotCount: number;
+  hardConstraintCount: number;
+  referenceCount: number;
+  classifiedCount: number;
+  pendingClassificationCount: number;
+  importedCount: number;
+  referencedCount: number;
+}
+
+export interface WorkflowCreativeIntentEvidence {
+  intentId: string;
+  normalizedIntent: string;
+  targetScope: string;
+  targetChapterId: string;
+  impactLevel: string;
+  source: string;
+  status: string;
+}
+
+export interface WorkflowAgentReviewCheckEvidence {
+  key: string;
+  name: string;
+  status: string;
+  message: string;
+  evidence: string[];
+}
+
+export interface WorkflowKnowledgeConstraintEvidence {
+  knowledgeId: string;
+  title: string;
+  entryType: string;
+  subject: string;
+  constraintLevel: string;
+  packagePolicy: string;
+  evidenceStatus: string;
+  gateStatus: string;
+  chapterId: string;
+  factSnapshotId: string;
+  factSnapshotVersion: number;
+  allowedTerms: string[];
+  forbiddenTerms: string[];
+  violations: string[];
+  classificationId: string;
+  classificationRule: string;
+  shouldEnterGate: boolean;
+  shouldEnterBlueprint: boolean;
+  shouldEnterFactSnapshot: boolean;
 }
 
 export interface WorkflowArtifactTimelineItem {
@@ -978,56 +1573,6 @@ export interface WorkflowArtifactTimelineItem {
   isFinal: boolean;
   isUserVisible: boolean;
   source: string;
-}
-
-export interface MaterialReference {
-  id: string;
-  fileName: string;
-  sourceType: string;
-  summary: string;
-  tags: string[];
-  workflowReferences: string[];
-  characterCount: number;
-  createdAt: string;
-  isAnalyzed: boolean;
-  analysisResults: MaterialAnalysisStageResult[];
-  knowledgeEntriesCreated: number;
-}
-
-// ============================================================
-// Material Analysis DTOs
-// ============================================================
-
-export interface MaterialAnalysisProgress {
-  stage: string;
-  stageLabel: string;
-  stageIndex: number;
-  totalStages: number;
-  status: 'running' | 'completed' | 'failed' | 'done';
-  message: string;
-  entries: CreativeKnowledgeEntry[];
-}
-
-export interface MaterialAnalysisResult {
-  success: boolean;
-  materialId: string;
-  fileName: string;
-  totalEntriesCreated: number;
-  stages: MaterialAnalysisStageResult[];
-  material: MaterialReference | null;
-}
-
-export interface MaterialAnalysisStageResult {
-  stage: string;
-  stageLabel: string;
-  entriesCreated: number;
-  entryTitles: string[];
-}
-
-export interface MaterialAnalysisRequest {
-  fileName?: string;
-  content?: string;
-  sourceType?: string;
 }
 
 export interface WorkspaceInfo {
@@ -1116,6 +1661,7 @@ export interface CharacterMaintenanceResult {
 export interface AgentChatRequest {
   message?: string;
   sessionId?: string;
+  clientMessageId?: string;
 }
 
 export interface AgentChatResponse {
@@ -1130,6 +1676,7 @@ export interface AgentChatResponse {
   runtimeTrace?: AgentRuntimeStep[] | null;
   missionPlan?: AgentMissionPlan | null;
   pendingConfirmation?: AgentPendingConfirmation | null;
+  memoryAudit?: AgentMemoryAuditSummary | null;
   activeProjectId?: string;
 }
 
@@ -1176,6 +1723,36 @@ export interface AgentWorkingMemorySnapshot {
   mission?: AgentMissionStateSnapshot;
   missionPlan?: AgentMissionPlan;
   pendingConfirmation?: AgentPendingConfirmation | null;
+}
+
+export interface AgentMemoryAuditSummary {
+  reads: AgentMemoryReadAuditSummary[];
+  promotions: AgentMemoryPromotionAuditSummary[];
+}
+
+export interface AgentMemoryReadAuditSummary {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  memoryScope: string;
+  memoryKeys: string[];
+  sourceType: string;
+  consumer: string;
+  createdAt: string;
+}
+
+export interface AgentMemoryPromotionAuditSummary {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  runId: string;
+  sourceScope: string;
+  targetScope: string;
+  sourceMemoryKey: string;
+  targetMemoryKey: string;
+  promotionReason: string;
+  createdAt: string;
 }
 
 export interface AgentToolCall {
@@ -1567,27 +2144,50 @@ export interface AgentMissionStateSnapshot {
 }
 
 export interface AgentConversationTurnView {
+  turnId?: string;
+  turnIndex?: number;
   role: string;
   content: string;
   createdAt: string;
 }
 
 export interface AgentSseEvent {
+  eventId?: string;
   type: string;
   sessionId: string;
   runId?: string;
+  sourceMessageId?: string;
   stepId?: string;
+  stage?: string;
+  status?: string;
+  artifactType?: string;
+  artifactId?: string;
+  displaySurface?: string;
+  displayPolicy?: string;
   message: string;
   data?: unknown;
   timestamp: string;
 }
 
 export interface AgentRuntimeEventView {
+  eventId: string;
   type: string;
   runId?: string | null;
+  sourceMessageId?: string | null;
+  sessionId?: string;
+  userId?: string;
+  projectId?: string | null;
+  stage?: string;
+  status?: string;
+  artifactType?: string;
+  artifactId?: string;
+  displaySurface?: string;
+  displayPolicy?: string;
   message: string;
   data?: unknown;
-  timestamp: string;
+  dataJson?: string;
+  timestamp?: string;
+  createdAt?: string;
 }
 
 export interface AgentSessionInfo {
@@ -1636,6 +2236,38 @@ export interface AgentSessionUpdateRequest {
   isArchived?: boolean;
 }
 
+export interface RuntimeRunDto {
+  runId: string;
+  userId: string;
+  sessionId: string;
+  projectId?: string | null;
+  status: string;
+  mode: string;
+  currentPhase: string;
+  currentStep: number;
+  activeTool: string;
+  lastMessage: string;
+  sourceMessageId: string;
+  idempotencyKey: string;
+  budgetJson: string;
+  resultJson: string;
+  errorMessage: string;
+  failureJson: string;
+  cancelRequested: boolean;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RuntimeActiveRunDto {
+  hasActiveRun: boolean;
+  status: string;
+  run?: RuntimeRunDto | null;
+  heartbeatAt?: string | null;
+  fromDistributedCache: boolean;
+}
+
 // ============================================================
 // User Settings
 // ============================================================
@@ -1645,6 +2277,21 @@ export interface LlmPreset {
   provider: string;
   baseUrl: string;
   model: string;
+}
+
+export interface LlmConnectionHealth {
+  status: string;
+  isConfigured: boolean;
+  isReachable: boolean;
+  isAuthenticated: boolean;
+  requiresUserAction: boolean;
+  statusCode?: number | null;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  failureStage: string;
+  message: string;
+  recommendedAction: string;
 }
 
 export interface UserSettings {
@@ -1664,8 +2311,8 @@ export interface UserSettings {
 
   // Agent
   agentDefaultRisk: string;
-  agentAutoContinue: boolean;
-  agentMaxAutoSteps: number;
+  agentLoopAutoProceed: boolean;
+  agentLoopMaxSteps: number;
 
   // Generation defaults
   defaultGenre: string;
@@ -1676,7 +2323,6 @@ export interface UserSettings {
   // UI
   theme: string;
   language: string;
-  showStepDetails: boolean;
 
   // Presets
   presets: LlmPreset[];

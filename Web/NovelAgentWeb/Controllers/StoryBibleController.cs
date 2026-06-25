@@ -33,12 +33,12 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get story bible for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to get story bible" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get story bible"));
         }
     }
 
@@ -51,17 +51,21 @@ public class StoryBibleController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+
             var constitution = await _storyBibleService.CreateConstitutionAsync(request, ct);
             return Ok(constitution);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create story constitution");
-            return StatusCode(500, new { error = "Failed to create story constitution" });
+            return StatusCode(500, ApiErrors.Internal("Failed to create story constitution"));
         }
     }
 
@@ -74,17 +78,17 @@ public class StoryBibleController : ControllerBase
         {
             var constitution = await _storyBibleService.GetConstitutionByProjectAsync(projectId, ct);
             if (constitution == null)
-                return NotFound(new { error = "Story constitution not found" });
+                return NotFound(ApiErrors.NotFound("Story constitution not found"));
             return Ok(constitution);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get story constitution for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to get story constitution" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get story constitution"));
         }
     }
 
@@ -101,7 +105,7 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -110,7 +114,7 @@ public class StoryBibleController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update story constitution {ConstitutionId}", id);
-            return StatusCode(500, new { error = "Failed to update story constitution" });
+            return StatusCode(500, ApiErrors.Internal("Failed to update story constitution"));
         }
     }
 
@@ -124,7 +128,7 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -133,7 +137,7 @@ public class StoryBibleController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete story constitution {ConstitutionId}", id);
-            return StatusCode(500, new { error = "Failed to delete story constitution" });
+            return StatusCode(500, ApiErrors.Internal("Failed to delete story constitution"));
         }
     }
 
@@ -146,17 +150,21 @@ public class StoryBibleController : ControllerBase
     {
         try
         {
+            request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+                ? idempotencyKey.ToString()
+                : string.Empty;
+
             var character = await _storyBibleService.CreateCharacterAsync(request, ct);
             return Ok(character);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create character");
-            return StatusCode(500, new { error = "Failed to create character" });
+            return StatusCode(500, ApiErrors.Internal("Failed to create character"));
         }
     }
 
@@ -172,12 +180,12 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list characters for project {ProjectId}", projectId);
-            return StatusCode(500, new { error = "Failed to list characters" });
+            return StatusCode(500, ApiErrors.Internal("Failed to list characters"));
         }
     }
 
@@ -191,7 +199,7 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -200,7 +208,7 @@ public class StoryBibleController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get character {CharacterId}", id);
-            return StatusCode(500, new { error = "Failed to get character" });
+            return StatusCode(500, ApiErrors.Internal("Failed to get character"));
         }
     }
 
@@ -217,7 +225,7 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -226,7 +234,7 @@ public class StoryBibleController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update character {CharacterId}", id);
-            return StatusCode(500, new { error = "Failed to update character" });
+            return StatusCode(500, ApiErrors.Internal("Failed to update character"));
         }
     }
 
@@ -240,7 +248,7 @@ public class StoryBibleController : ControllerBase
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException)
         {
@@ -249,7 +257,7 @@ public class StoryBibleController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete character {CharacterId}", id);
-            return StatusCode(500, new { error = "Failed to delete character" });
+            return StatusCode(500, ApiErrors.Internal("Failed to delete character"));
         }
     }
 }

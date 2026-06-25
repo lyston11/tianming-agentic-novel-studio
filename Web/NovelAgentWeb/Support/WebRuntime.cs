@@ -1,14 +1,11 @@
 using System.Collections.Concurrent;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using TM.Framework.Common.Helpers.Storage;
 using TM.Framework.Common.Services;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Services;
-using TM.Services.Modules.ProjectData.Implementations;
-using TM.Services.Modules.ProjectData.Implementations.Guides;
-using TM.Services.Modules.ProjectData.Implementations.Tracking.Rules;
 using TM.Services.Modules.ProjectData.Interfaces;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -124,131 +121,6 @@ namespace TM.Framework.Common.Helpers.Numerics
     }
 }
 
-namespace TM.Framework.Common.Helpers.Storage
-{
-    public static class StoragePathHelper
-    {
-        // AsyncLocal for per-request workspace isolation
-        private static readonly AsyncLocal<string?> _asyncStorageRoot = new();
-        private static readonly AsyncLocal<string?> _asyncProjectName = new();
-
-        // Fallback static values (for non-request contexts like startup)
-        private static string _fallbackProjectName = "AgenticNovelStudio";
-        private static string _fallbackStorageRoot = Path.Combine(AppContext.BaseDirectory, "App_Data");
-
-        public static event Action<string, string>? CurrentProjectChanged;
-
-        public static string WebStorageRoot
-        {
-            get => _asyncStorageRoot.Value ?? _fallbackStorageRoot;
-            set
-            {
-                _fallbackStorageRoot = value;
-                Directory.CreateDirectory(value);
-            }
-        }
-
-        public static string CurrentProjectName
-        {
-            get => _asyncProjectName.Value ?? _fallbackProjectName;
-            set
-            {
-                var trimmed = value?.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed) || string.Equals(CurrentProjectName, trimmed, StringComparison.Ordinal))
-                    return;
-
-                var old = CurrentProjectName;
-                if (_asyncProjectName.Value != null)
-                    _asyncProjectName.Value = trimmed;
-                else
-                    _fallbackProjectName = trimmed;
-                CurrentProjectChanged?.Invoke(old, trimmed);
-            }
-        }
-
-        public static void Configure(string storageRoot, string projectName)
-        {
-            _fallbackStorageRoot = storageRoot;
-            Directory.CreateDirectory(storageRoot);
-            CurrentProjectName = projectName;
-        }
-
-        /// <summary>
-        /// Set per-request storage context (called by AgentRuntime after acquiring workspace).
-        /// </summary>
-        internal static void SetRequestContext(string storageRoot, string projectName)
-        {
-            _asyncStorageRoot.Value = storageRoot;
-            _asyncProjectName.Value = projectName;
-            Directory.CreateDirectory(storageRoot);
-        }
-
-        /// <summary>
-        /// Clear per-request storage context (called by AgentRuntime in finally block).
-        /// </summary>
-        internal static void ClearRequestContext()
-        {
-            _asyncStorageRoot.Value = null;
-            _asyncProjectName.Value = null;
-        }
-
-        public static string GetStorageRoot()
-        {
-            Directory.CreateDirectory(WebStorageRoot);
-            return WebStorageRoot;
-        }
-
-        public static string GetCurrentProjectPath()
-        {
-            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
-        }
-
-        public static string GetProjectConfigPath() =>
-            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
-
-        public static string GetProjectConfigPath(string subPath) =>
-            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
-
-        public static string GetProjectHistoryPath() =>
-            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
-
-        public static string GetProjectValidationPath() =>
-            throw new NotSupportedException(ProjectBusinessFilesystemDisabledMessage);
-
-        public static string GetServicesStoragePath(string subPath) =>
-            EnsureDirectory(Path.Combine(WebStorageRoot, "Services", NormalizeSubPath(subPath)));
-
-        public static string GetModulesStoragePath(string modulePath) =>
-            EnsureDirectory(Path.Combine(WebStorageRoot, "Modules", NormalizeSubPath(modulePath)));
-
-        public static void EnsureDirectoryExists(string path)
-        {
-            if (!string.IsNullOrWhiteSpace(path)) Directory.CreateDirectory(path);
-        }
-
-        public static void NotifyModuleDataIsEnabledChanged(string dirPath, bool enabled)
-        {
-            TM.App.Log($"[StoragePathHelper] module enabled changed: {dirPath} => {enabled}");
-        }
-
-        private const string ProjectBusinessFilesystemDisabledMessage =
-            "Project business data is stored in SQLite, Redis, and Qdrant. Web runtime project filesystem paths are disabled.";
-
-        private static string EnsureDirectory(string path)
-        {
-            Directory.CreateDirectory(path);
-            return path;
-        }
-
-        private static string NormalizeSubPath(string subPath)
-        {
-            return string.IsNullOrWhiteSpace(subPath)
-                ? string.Empty
-                : subPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-        }
-    }
-}
-
 namespace TM.Framework.Common.Services
 {
     public static class ServiceLocator
@@ -256,33 +128,31 @@ namespace TM.Framework.Common.Services
         // AsyncLocal for per-request service isolation
         private static readonly AsyncLocal<ConcurrentDictionary<Type, object>?> _asyncServices = new();
 
-        // Fallback static dictionary (for non-request contexts)
-        private static readonly ConcurrentDictionary<Type, object> _fallbackServices = new();
+        private static ConcurrentDictionary<Type, object> RequiredServices =>
+            _asyncServices.Value
+            ?? throw new InvalidOperationException("Web ServiceLocator 只能在 workspace request context 内使用。");
 
-        private static ConcurrentDictionary<Type, object> Services =>
-            _asyncServices.Value ?? _fallbackServices;
+        public static bool IsInitialized => _asyncServices.Value is { IsEmpty: false };
 
-        public static bool IsInitialized => !Services.IsEmpty;
+        public static void Clear() => _asyncServices.Value?.Clear();
 
-        public static void Clear() => Services.Clear();
+        public static void Register<T>(T instance) where T : class => RequiredServices[typeof(T)] = instance;
 
-        public static void Register<T>(T instance) where T : class => Services[typeof(T)] = instance;
-
-        public static void Register(Type type, object instance) => Services[type] = instance;
+        public static void Register(Type type, object instance) => RequiredServices[type] = instance;
 
         public static T Get<T>() where T : class
         {
-            if (Services.TryGetValue(typeof(T), out var service))
+            if (RequiredServices.TryGetValue(typeof(T), out var service))
                 return (T)service;
 
             throw new InvalidOperationException($"Web ServiceLocator 未注册服务：{typeof(T).FullName}");
         }
 
         public static T? TryGet<T>() where T : class =>
-            Services.TryGetValue(typeof(T), out var service) ? (T)service : null;
+            _asyncServices.Value is { } services && services.TryGetValue(typeof(T), out var service) ? (T)service : null;
 
         public static object? GetOrDefault(Type type) =>
-            Services.TryGetValue(type, out var service) ? service : null;
+            _asyncServices.Value is { } services && services.TryGetValue(type, out var service) ? service : null;
 
         /// <summary>
         /// Create a new per-request service container (called by AgentRuntime after acquiring workspace).
@@ -321,32 +191,6 @@ namespace System.Threading.Tasks
 
 namespace TM.Web.NovelAgentWeb.Support
 {
-    public sealed class WebEmbeddingService : IMicroEmbeddingService
-    {
-        public int Dimension => 64;
-
-        public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default)
-        {
-            var vector = new float[Dimension];
-            foreach (var ch in text ?? string.Empty)
-                vector[ch % Dimension] += 1f;
-            TM.Framework.Common.Helpers.Numerics.VectorMath.L2NormalizeInPlace(vector);
-            return Task.FromResult(vector);
-        }
-
-        public async Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default)
-        {
-            var result = new float[texts.Count][];
-            for (var i = 0; i < texts.Count; i++)
-                result[i] = await EncodeAsync(texts[i], mode, ct).ConfigureAwait(false);
-            return result;
-        }
-
-        public bool IsModelReady() => true;
-
-        public void ReleaseSession() { }
-    }
-
     public sealed class NovelAgentWorkspace
     {
         public string UserId { get; internal set; } = "default";
@@ -357,6 +201,7 @@ namespace TM.Web.NovelAgentWeb.Support
         public StoryBibleService StoryBibleService { get; }
         public CreativeKnowledgeBaseService CreativeKnowledgeBaseService { get; }
         public NovelAgentOrchestrator Orchestrator { get; }
+        internal IServiceScopeFactory ScopeFactory { get; }
 
         // Per-workspace service registrations (populated in constructor, applied per-request)
         private readonly List<(Type type, object instance)> _serviceRegistrations = new();
@@ -365,14 +210,18 @@ namespace TM.Web.NovelAgentWeb.Support
             IWebHostEnvironment environment,
             IConfiguration configuration,
             UserSettingsManager settingsManager,
+            IWorkspaceProductionRuntimeBuilder productionRuntimeBuilder,
+            IServiceScopeFactory scopeFactory,
             string userId = "default",
             string projectId = "",
             IVectorStore? vectorStore = null,
             IMicroEmbeddingService? embeddingService = null,
             ICurrentUserService? currentUserService = null,
             IAgentMemoryRepository? memoryRepository = null,
-            IServiceScopeFactory? scopeFactory = null)
+            IUnifiedValidationService? unifiedValidationService = null)
         {
+            ArgumentNullException.ThrowIfNull(scopeFactory);
+            ScopeFactory = scopeFactory;
             UserId = string.IsNullOrWhiteSpace(userId) ? "default" : userId;
             ProjectId = projectId ?? string.Empty;
             ProjectName = configuration["NovelAgent:ProjectName"] ?? "AgenticNovelStudio";
@@ -386,14 +235,7 @@ namespace TM.Web.NovelAgentWeb.Support
 
             Directory.CreateDirectory(StorageRoot);
 
-            // Do NOT call StoragePathHelper.Configure() here — global state mutation.
-            // Context is set per-request via SetRequestContext().
-
-            StoryBibleService = scopeFactory != null
-                ? new StoryBibleService(
-                    new WebStoryBibleDocumentStore(scopeFactory, UserId, ProjectId),
-                    $"sqlite-redis://story-bible/{UserId}/{ProjectId}")
-                : new StoryBibleService();
+            StoryBibleService = new StoryBibleService(new WebStoryBibleDocumentStore(scopeFactory, UserId, ProjectId));
             CreativeKnowledgeBaseService = new CreativeKnowledgeBaseService(
                 vectorStore,
                 embeddingService,
@@ -401,142 +243,33 @@ namespace TM.Web.NovelAgentWeb.Support
                 memoryRepository,
                 ProjectId);
 
-            var guideManager = new GuideManager();
-            var summaryStore = new ChapterSummaryStore();
-            var milestoneStore = new ChapterMilestoneStore();
-            var factSnapshotExtractor = new FactSnapshotExtractor(guideManager);
-            var guideContextService = new GuideContextService(factSnapshotExtractor, summaryStore, milestoneStore);
-            IContentChunkSearchService contentChunkSearch = scopeFactory != null
-                ? new WebContentChunkSearchService(scopeFactory, UserId, ProjectId, vectorStore, embeddingService)
-                : new UnavailableContentChunkSearchService();
-            var webEmbeddingService = new WebEmbeddingService();
-            var generationGate = new GenerationGate(
-                new LedgerConsistencyChecker(),
-                new LedgerRuleSetProvider(),
-                new EntityOmissionDetector(guideManager));
-            IChapterCatalogService? chapterCatalog = scopeFactory != null
-                ? new WebChapterCatalogService(scopeFactory, UserId, ProjectId)
-                : null;
-            IGeneratedContentService generatedContentService = scopeFactory != null
-                ? new WebGeneratedContentService(scopeFactory, currentUserService, ProjectId, vectorStore, embeddingService)
-                : new UnavailableGeneratedContentService();
-            var versionTracking = new WebVersionTrackingService();
-
-            RegisterProjectDataServices(
-                guideManager,
-                summaryStore,
-                milestoneStore,
-                factSnapshotExtractor,
-                guideContextService,
-                contentChunkSearch,
-                webEmbeddingService,
-                generationGate,
-                chapterCatalog,
-                generatedContentService,
-                versionTracking);
-
-            var storyStateSnapshotService = new StoryStateSnapshotService(
-                guideContextService,
-                contentChunkSearch,
+            var generatedContentService = new WebGeneratedContentService(scopeFactory, currentUserService, ProjectId);
+            var validationService = unifiedValidationService
+                ?? new ProductionUnifiedValidationService(scopeFactory, generatedContentService, UserId, ProjectId);
+            var productionRuntime = productionRuntimeBuilder.Build(new WorkspaceProductionRuntimeRequest(
+                UserId,
+                ProjectId,
                 StoryBibleService,
-                chapterEmbeddingIndex: null,
-                chunkEmbeddingIndex: null,
-                embeddingService: webEmbeddingService);
-
-            var hardcoreEngine = new HardcoreWritingEngine(
-                storyStateSnapshotService,
-                guideContextService,
-                generationGate,
-                generatedContentService,
-                contentChunkSearch,
-                chapterEmbeddingIndex: null,
-                chunkEmbeddingIndex: null,
-                embeddingService: webEmbeddingService,
-                versionTrackingService: versionTracking,
-                settingsManager: settingsManager);
-
-            Orchestrator = new NovelAgentOrchestrator(
-                new BookConceptDesigner(new GenreDirectionPlanner()),
-                new VolumeArcPlanner(),
-                new ChapterNoveltyPlanner(),
-                StoryBibleService,
-                storyStateSnapshotService,
-                new ChapterPostGenerationReviewer(
-                    generatedContentService,
-                    new WebUnifiedValidationService(),
-                    StoryBibleService,
-                    storyStateSnapshotService),
-                new NovelAgentRewriteLoopService(),
-                new CanonMaintenanceService(StoryBibleService),
-                new ForeshadowLedgerService(StoryBibleService),
-                new CharacterLedgerService(StoryBibleService),
                 CreativeKnowledgeBaseService,
-                hardcoreEngine);
-        }
-
-        private void RegisterProjectDataServices(
-            GuideManager guideManager,
-            ChapterSummaryStore summaryStore,
-            ChapterMilestoneStore milestoneStore,
-            FactSnapshotExtractor factSnapshotExtractor,
-            GuideContextService guideContextService,
-            IContentChunkSearchService contentChunkSearch,
-            IMicroEmbeddingService embeddingService,
-            GenerationGate generationGate,
-            IChapterCatalogService? chapterCatalog,
-            IGeneratedContentService generatedContentService,
-            WebVersionTrackingService versionTracking)
-        {
-            // Register on the workspace's own list (applied per-request via SetRequestContext)
-            Register(guideManager);
-            Register(summaryStore);
-            Register(milestoneStore);
-            Register(new VolumeFactArchiveStore());
-            // Register(new ChapterKeyEventStore()); // Removed: class no longer exists
-            // Register(new ChapterChangesWalStore()); // Removed: class no longer exists
-            Register(factSnapshotExtractor);
-            Register<IGuideContextService>(guideContextService);
-            Register(guideContextService);
-            Register<IContentChunkSearchService>(contentChunkSearch);
-            Register(embeddingService);
-            Register(generationGate);
-            if (chapterCatalog != null)
-                Register<IChapterCatalogService>(chapterCatalog);
-            Register(generatedContentService);
-            Register(new KeywordChapterIndexService());
-            Register(versionTracking);
-            Register(new CharacterStateService(guideManager));
-            Register(new ConflictProgressService(guideManager));
-            Register(new ForeshadowingStatusService(guideManager));
-            Register(new LocationStateService(guideManager));
-            Register(new FactionStateService(guideManager));
-            Register(new TimelineService(guideManager));
-            Register(new ItemStateService(guideManager));
-            Register(new SecretRevealService(guideManager));
-            Register(new PledgeConstraintService(guideManager));
-            Register(new DeadlineConstraintService(guideManager));
-            Register(new RelationStrengthService());
-            Register(new PlotPointsIndexService());
-            Register(new LedgerTrimService(guideManager));
-        }
-
-        private void Register<T>(T instance) where T : class
-        {
-            _serviceRegistrations.Add((typeof(T), instance));
-        }
-
-        private void Register(Type type, object instance)
-        {
-            _serviceRegistrations.Add((type, instance));
+                settingsManager,
+                vectorStore,
+                embeddingService,
+                currentUserService,
+                memoryRepository,
+                scopeFactory,
+                validationService,
+                GeneratedContentService: generatedContentService));
+            Orchestrator = productionRuntime.Orchestrator;
+            _serviceRegistrations.AddRange(
+                productionRuntime.ServiceRegistrations.Select(item => (item.Type, item.Instance)));
         }
 
         /// <summary>
-        /// Set per-request context: StoragePathHelper + ServiceLocator for this workspace.
+        /// Set per-request service context for this workspace.
         /// Called by AgentRuntime after acquiring workspace.
         /// </summary>
         internal void SetRequestContext()
         {
-            StoragePathHelper.SetRequestContext(StorageRoot, ProjectName);
             ServiceLocator.SetRequestContext();
             foreach (var (type, instance) in _serviceRegistrations)
                 ServiceLocator.Register(type, instance);
@@ -547,23 +280,8 @@ namespace TM.Web.NovelAgentWeb.Support
         /// </summary>
         internal void ClearRequestContext()
         {
-            StoragePathHelper.ClearRequestContext();
             ServiceLocator.ClearRequestContext();
         }
     }
 
-    public sealed class WebVersionTrackingService
-    {
-        private readonly Dictionary<string, int> _versions = new(StringComparer.OrdinalIgnoreCase);
-
-        public int IncrementModuleVersion(string moduleName)
-        {
-            if (!_versions.ContainsKey(moduleName)) _versions[moduleName] = 0;
-            _versions[moduleName]++;
-            return _versions[moduleName];
-        }
-
-        public IReadOnlyList<string> GetDownstreamModules(string moduleName) =>
-            TM.Services.Modules.VersionTracking.DependencyConfig.GetDownstreamModules(moduleName);
-    }
 }

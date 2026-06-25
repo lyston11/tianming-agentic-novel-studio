@@ -1,16 +1,23 @@
 using System.Net;
 using System.Text;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Moq.Protected;
 using Xunit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace Tests.Unit.Services.Knowledge;
@@ -21,7 +28,10 @@ namespace Tests.Unit.Services.Knowledge;
 /// </summary>
 public class KnowledgeProcessingServiceTests : IDisposable
 {
+    private static readonly InMemoryDatabaseRoot DatabaseRoot = new();
+
     private readonly NovelAgentDbContext _db;
+    private readonly ServiceProvider _settingsProvider;
     private readonly Mock<IKnowledgeService> _mockKnowledgeService;
     private readonly Mock<IMicroEmbeddingService> _mockEmbedding;
     private readonly UserSettingsManager _settingsManager;
@@ -32,12 +42,24 @@ public class KnowledgeProcessingServiceTests : IDisposable
     public KnowledgeProcessingServiceTests()
     {
         // Setup in-memory database
+        var databaseName = Guid.NewGuid().ToString();
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(databaseName: databaseName, DatabaseRoot)
             .Options;
         _db = new NovelAgentDbContext(options);
 
-        _settingsManager = new UserSettingsManager(string.Empty, "test-project", null, null);
+        var settingsServices = new ServiceCollection();
+        settingsServices.AddSingleton<ILlmApiKeyProtector>(
+            new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider()));
+        settingsServices.AddDbContext<NovelAgentDbContext>(db =>
+            db.UseInMemoryDatabase(databaseName: databaseName, DatabaseRoot));
+        _settingsProvider = settingsServices.BuildServiceProvider();
+
+        _settingsManager = new UserSettingsManager(
+            _settingsProvider.GetRequiredService<IServiceScopeFactory>(),
+            new HttpContextAccessor(),
+            new FixedBackgroundUserContext("user-1"),
+            _settingsProvider.GetRequiredService<ILlmApiKeyProtector>());
         _settingsManager.SaveAsync(new UserSettings
         {
             LlmProvider = "openai",
@@ -68,8 +90,29 @@ public class KnowledgeProcessingServiceTests : IDisposable
     public void Dispose()
     {
         _db.Dispose();
+        _settingsProvider.Dispose();
 
         GC.SuppressFinalize(this);
+    }
+
+    private sealed class FixedBackgroundUserContext : IBackgroundUserContext
+    {
+        public FixedBackgroundUserContext(string userId)
+        {
+            Current = new BackgroundUserSnapshot(userId, "author", "author@example.com", "author");
+        }
+
+        public BackgroundUserSnapshot? Current { get; }
+
+        public IDisposable Push(string userId, string username = "background-agent", string email = "", string role = "author") =>
+            new NoopDisposable();
+
+        private sealed class NoopDisposable : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
     }
 
     /// <summary>
@@ -205,22 +248,159 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Equal("原文片段", entries[0].OriginalText);
     }
 
+    [Fact]
+    public void ParseEntriesFromJson_HandlesEntriesWrapperObject()
+    {
+        var wrappedJson = @"{
+  ""entries"": [
+    {
+      ""title"": ""硬事实"",
+      ""category"": ""HardFact"",
+      ""content"": ""沈砚是主角，银蓝邮徽只能辨认被篡改的邮路。"",
+      ""tags"": [""沈砚"", ""银蓝邮徽""],
+      ""weight"": 9,
+      ""originalText"": ""沈砚是雾潮城第七码头的低阶星渊邮差""
+    }
+  ]
+}";
+        var method = typeof(KnowledgeProcessingService)
+            .GetMethod("ParseEntriesFromJson", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var entries = (List<ExtractedKnowledgeEntryDto>)method!.Invoke(_service, new object[] { wrappedJson })!;
+
+        Assert.Single(entries);
+        Assert.Equal("HardFact", entries[0].Category);
+        Assert.Contains("沈砚", entries[0].Content);
+    }
+
+    [Fact]
+    public void ParseEntriesFromJson_ExtractsFirstCompletePayloadWhenModelAddsNotes()
+    {
+        var wrappedJson = @"```json
+{
+  ""entries"": [
+    {
+      ""title"": ""邮徽硬事实"",
+      ""category"": ""HardFact"",
+      ""content"": ""银蓝邮徽只能辨认旧邮路，不能攻击或升级。"",
+      ""tags"": [""银蓝邮徽"", ""旧邮路""],
+      ""weight"": 10,
+      ""originalText"": ""银蓝邮徽只能辨认旧邮路""
+    }
+  ]
+}
+```
+
+备注：{""ignored"": [""不要解析这里""]}";
+        var method = typeof(KnowledgeProcessingService)
+            .GetMethod("ParseEntriesFromJson", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var entries = (List<ExtractedKnowledgeEntryDto>)method!.Invoke(_service, new object[] { wrappedJson })!;
+
+        Assert.Single(entries);
+        Assert.Equal("邮徽硬事实", entries[0].Title);
+        Assert.Equal("HardFact", entries[0].Category);
+        Assert.Contains("不能攻击", entries[0].Content);
+    }
+
+    [Fact]
+    public void ParseChunkedResult_ExtractsFirstCompletePayloadWhenModelAddsNotes()
+    {
+        var chunkedJson = @"```json
+{
+  ""entries"": [
+    {
+      ""title"": ""分块硬事实"",
+      ""category"": ""HardFact"",
+      ""content"": ""沈砚在第一章获得银蓝邮徽。"",
+      ""tags"": [""沈砚""],
+      ""weight"": 9
+    }
+  ],
+  ""summary"": ""沈砚获得银蓝邮徽。""
+}
+```
+
+附言：{""ignored"": true}";
+        var method = typeof(KnowledgeProcessingService)
+            .GetMethod("ParseChunkedResult", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var result = (ChunkedAnalysisResultDto)method!.Invoke(_service, new object[] { chunkedJson })!;
+
+        Assert.Single(result.Entries);
+        Assert.Equal("分块硬事实", result.Entries[0].Title);
+        Assert.Contains("银蓝邮徽", result.Summary);
+    }
+
+    [Fact]
+    public void ParseAggregatedResult_ExtractsFirstCompletePayloadWhenModelAddsNotes()
+    {
+        var aggregatedJson = @"```json
+{
+  ""deduplicated"": [
+    {
+      ""title"": ""去重硬事实"",
+      ""category"": ""HardFact"",
+      ""content"": ""旧邮路开启必须付出真实记忆。"",
+      ""tags"": [""旧邮路""],
+      ""weight"": 10
+    }
+  ],
+  ""aggregated"": [
+    {
+      ""title"": ""题材规律"",
+      ""category"": ""GenrePrinciple"",
+      ""content"": ""每次胜利都要留下可追踪代价。"",
+      ""tags"": [""代价""],
+      ""weight"": 8
+    }
+  ]
+}
+```
+
+补充：{""ignored"": [""尾部对象""]}";
+        var method = typeof(KnowledgeProcessingService)
+            .GetMethod("ParseAggregatedResult", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var result = (AggregatedAnalysisResultDto)method!.Invoke(_service, new object[] { aggregatedJson })!;
+
+        Assert.Single(result.Deduplicated);
+        Assert.Single(result.Aggregated);
+        Assert.Equal("去重硬事实", result.Deduplicated[0].Title);
+        Assert.Equal("题材规律", result.Aggregated[0].Title);
+    }
+
     /// <summary>
     /// Test JSON parsing returns empty list on invalid JSON.
     /// </summary>
     [Fact]
-    public void ParseEntriesFromJson_ReturnsEmptyOnInvalidJson()
+    public void ParseEntriesFromJson_ThrowsOnInvalidJson()
     {
         // Arrange
         var invalidJson = "This is not valid JSON {[}";
         var method = typeof(KnowledgeProcessingService)
             .GetMethod("ParseEntriesFromJson", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
-        // Act
-        var entries = (List<ExtractedKnowledgeEntryDto>)method!.Invoke(_service, new object[] { invalidJson })!;
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            method!.Invoke(_service, new object[] { invalidJson }));
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
+    }
 
-        // Assert
-        Assert.Empty(entries);
+    [Fact]
+    public void BuildShortFilePrompt_RequiresHardFactEntriesForContinuityCriticalFacts()
+    {
+        var source = "主角沈砚拥有银蓝邮徽，女主陆知微会纸上复原，第九枚空邮票是禁物。";
+        var method = typeof(KnowledgeProcessingService)
+            .GetMethod("BuildShortFilePrompt", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var prompt = (string)method!.Invoke(_service, new object[] { source })!;
+
+        Assert.Contains("硬事实", prompt);
+        Assert.Contains("角色姓名", prompt);
+        Assert.Contains("关键道具", prompt);
+        Assert.Contains("HardFact", prompt);
+        Assert.Contains("沈砚", prompt);
+        Assert.Contains("银蓝邮徽", prompt);
     }
 
     /// <summary>
@@ -343,6 +523,166 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Equal("completed", updatedTask!.Status);
         Assert.Equal("single_pass", updatedTask.Strategy);
         Assert.Equal(1, updatedTask.ExtractedEntriesCount);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_BindsExtractedKnowledgeToCurrentProject()
+    {
+        var task = await CreateTaskWithUploadContentAsync(new string('测', 2000));
+        var usage = new Mock<IProjectKnowledgeUsageService>();
+        var service = new KnowledgeProcessingService(
+            _db,
+            _mockKnowledgeService.Object,
+            _mockEmbedding.Object,
+            _settingsManager,
+            _mockHttpClientFactory.Object,
+            _mockLogger.Object,
+            new ContentDocumentService(_db),
+            projectKnowledgeUsage: usage.Object);
+
+        SetupSingleEntryLlmResponse();
+        _mockKnowledgeService
+            .Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse
+            {
+                Id = "knowledge-bound-1",
+                UsageProjectId = task.ProjectId,
+                EntryType = "HardFact",
+                Title = "邮徽边界",
+                Content = "银蓝邮徽不能攻击。",
+                CreatedAt = DateTime.UtcNow
+            });
+
+        await service.ProcessFileAsync(task.Id);
+
+        usage.Verify(x => x.MarkImportedAsync(
+                task.UserId,
+                task.ProjectId!,
+                "knowledge-bound-1",
+                null,
+                $"knowledge_upload:{task.Id}",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_RecordsKnowledgeProcessingOutputArtifact()
+    {
+        var task = await CreateTaskWithUploadContentAsync(new string('测', 2000));
+        var truthStore = new ProductionTruthStore(_db);
+        var outputArtifacts = new OutputArtifactRecorder(new ProductionEventWriter(truthStore));
+        var service = new KnowledgeProcessingService(
+            _db,
+            _mockKnowledgeService.Object,
+            _mockEmbedding.Object,
+            _settingsManager,
+            _mockHttpClientFactory.Object,
+            _mockLogger.Object,
+            new ContentDocumentService(_db),
+            outputArtifacts: outputArtifacts);
+
+        SetupSingleEntryLlmResponse();
+        _mockKnowledgeService
+            .Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse
+            {
+                Id = "knowledge-output-1",
+                UsageProjectId = task.ProjectId,
+                EntryType = "HardFact",
+                Title = "邮徽边界",
+                Content = "银蓝邮徽不能攻击。",
+                CreatedAt = DateTime.UtcNow
+            });
+
+        await service.ProcessFileAsync(task.Id);
+
+        var evt = await _db.ProductionEvents.SingleAsync(e =>
+            e.EventType == OutputArtifactRecorder.EventType &&
+            e.ArtifactType == "knowledge_processing_result" &&
+            e.ArtifactId == task.Id);
+        Assert.Equal(task.UserId, evt.UserId);
+        Assert.Equal(task.ProjectId, evt.ProjectId);
+        Assert.Equal("knowledge_processing_completed", evt.Stage);
+        Assert.Equal("completed", evt.Status);
+        Assert.Contains("uploaded.txt", evt.Message);
+        Assert.Contains("knowledge-output-1", evt.DataJson);
+        Assert.Contains("\"visibleInWorkflow\":true", evt.DataJson);
+        Assert.Contains("\"知识库\"", evt.DataJson);
+        Assert.Contains("\"创作工作流\"", evt.DataJson);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_WithProgressContext_PublishesReadableStages()
+    {
+        var task = await CreateTaskWithUploadContentAsync(new string('测', 2000));
+        var events = new List<KnowledgeProcessingProgressEvent>();
+        var progress = new KnowledgeProcessingProgressContext(
+            "runtime-run-1",
+            task.UserId,
+            "session-1",
+            task.ProjectId,
+            (evt, _) =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        SetupSingleEntryLlmResponse();
+        _mockKnowledgeService
+            .Setup(x => x.CreateExtractedKnowledgeAsync(It.IsAny<CreateExtractedKnowledgeRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KnowledgeResponse
+            {
+                Id = "knowledge-progress-1",
+                UsageProjectId = task.ProjectId,
+                EntryType = "GenrePrinciple",
+                Title = "测试",
+                Content = "测试内容",
+                CreatedAt = DateTime.UtcNow
+            });
+
+        await _service.ProcessFileAsync(task.Id, progress: progress);
+
+        Assert.Contains(events, e => e.Stage == "read_upload");
+        Assert.Contains(events, e => e.Stage == "llm_extract");
+        Assert.Contains(events, e => e.Stage == "save_entries");
+        Assert.Contains(events, e => e.Stage == "completed" && e.Progress == 100);
+    }
+
+    [Fact]
+    public async Task ProcessFileAsync_EmptyExtractionFailsTaskInsteadOfCompletingZeroEntries()
+    {
+        var task = await CreateTaskWithUploadContentAsync("主角沈砚拥有银蓝邮徽，第九枚空邮票不能被焚毁。");
+
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(@"{
+                ""choices"": [{
+                    ""message"": {
+                        ""content"": ""[]""
+                    }
+                }]
+            }", Encoding.UTF8, "application/json")
+        };
+
+        var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
+        mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(mockResponse);
+
+        _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient(mockHttpMessageHandler.Object));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.ProcessFileAsync(task.Id));
+
+        Assert.Contains("没有返回任何知识条目", ex.Message);
+        var updatedTask = await _db.KnowledgeProcessingTasks.FindAsync(task.Id);
+        Assert.Equal("failed", updatedTask!.Status);
+        Assert.Equal(0, updatedTask.ExtractedEntriesCount);
+        Assert.Contains("没有返回任何知识条目", updatedTask.ErrorMessage);
     }
 
     /// <summary>
@@ -574,6 +914,30 @@ public class KnowledgeProcessingServiceTests : IDisposable
             Times.Once);
     }
 
+    [Fact]
+    public async Task ProcessPendingFileAsync_RejectsTaskOwnedByAnotherUser()
+    {
+        var task = await CreateTaskWithUploadContentAsync("知识库测试内容");
+
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _service.ProcessPendingFileAsync(task.Id, "other-user"));
+
+        Assert.Contains("找不到指定的处理任务", ex.Message);
+    }
+
+    [Fact]
+    public async Task ProcessPendingFileAsync_RejectsTaskThatIsNotPending()
+    {
+        var task = await CreateTaskWithUploadContentAsync("知识库测试内容");
+        task.Status = "completed";
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.ProcessPendingFileAsync(task.Id, task.UserId));
+
+        Assert.Contains("任务状态为 completed", ex.Message);
+    }
+
     private static bool HasKnowledgeProcessingFailure(
         Dictionary<string, IReadOnlyList<string>> updates,
         string taskId)
@@ -581,6 +945,32 @@ public class KnowledgeProcessingServiceTests : IDisposable
         return updates.TryGetValue("execution.knowledge_processing_failures", out var failures) &&
                failures.Any(f => f.Contains(taskId, StringComparison.Ordinal) &&
                                  f.Contains("LLM settings are not configured", StringComparison.Ordinal));
+    }
+
+    private void SetupSingleEntryLlmResponse()
+    {
+        var mockResponse = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(@"{
+                ""choices"": [{
+                    ""message"": {
+                        ""content"": ""[{\""title\"":\""测试条目\"",\""category\"":\""GenrePrinciple\"",\""content\"":\""测试内容\"",\""tags\"":[\""测试\""],\""weight\"":5}]""
+                    }
+                }]
+            }", Encoding.UTF8, "application/json")
+        };
+
+        var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
+        mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(mockResponse);
+
+        _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient(mockHttpMessageHandler.Object));
     }
 
     private async Task<TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask> CreateTaskWithUploadContentAsync(string content)

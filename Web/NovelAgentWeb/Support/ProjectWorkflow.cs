@@ -1,5 +1,7 @@
+using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -83,7 +85,7 @@ public static class ProjectWorkflow
             library.ActiveBook,
             library,
             sessions.Select(ToSessionSummary).ToList(),
-            bible.AgentRuns.OrderByDescending(run => run.UpdatedAt).ToList(),
+            bible.AgentRuns.OrderByDescending(run => run.UpdatedAt).Select(ToRunSummary).ToList(),
             tasks,
             missionPlans,
             allArtifacts,
@@ -98,8 +100,13 @@ public static class ProjectWorkflow
             activeSession?.SessionId ?? string.Empty,
             activeSession?.ActiveRunId ?? tasks.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t.RunId))?.RunId ?? string.Empty,
             DateTime.UtcNow.ToString("O"),
+            Array.Empty<WorkflowCreativeIntentEvidence>(),
             productionStages,
-            artifactTimeline);
+            Array.Empty<WorkflowProductionChain>(),
+            artifactTimeline)
+        {
+            RawRuns = bible.AgentRuns.OrderByDescending(run => run.UpdatedAt).ToList()
+        };
     }
 
     private static WorkflowSessionSummary ToSessionSummary(AgentSession session) => new(
@@ -111,11 +118,35 @@ public static class ProjectWorkflow
         session.WorkingMemory.MissionPlan,
         null);
 
+    private static WorkflowRunSummary ToRunSummary(NovelAgentRun run) => new(
+        run.RunId,
+        run.UserGoal,
+        run.Intent.ToString(),
+        run.Status.ToString(),
+        run.TargetChapterId,
+        run.CreatedAt.ToString("O"),
+        run.UpdatedAt.ToString("O"),
+        FirstNonEmpty(run.ChapterBrief?.SelectedCandidateTitle, run.ChapterBrief?.RecommendedCandidateTitle, run.TargetChapterId),
+        run.DraftArtifact?.Status ?? string.Empty,
+        run.GateReport?.Status ?? string.Empty,
+        run.PostGenerationReview?.OverallResult ?? string.Empty,
+        run.PostGenerationReview?.QualityScore ?? 0,
+        run.Notes.ToList(),
+        run.Steps.Select(step => new WorkflowRunStepSummary(
+            step.Id,
+            step.Name,
+            step.Purpose,
+            step.ToolName,
+            step.Status.ToString(),
+            step.RiskLevel.ToString(),
+            step.RequiresConfirmation)).ToList());
+
     public static IReadOnlyList<WorkflowArtifactTimelineItem> BuildArtifactTimeline(
         NovelLibraryDocument library,
         StoryBibleDocument bible,
         IEnumerable<WorkflowChapterArtifactSummary> artifacts,
-        IEnumerable<AgentScheduledTask> tasks)
+        IEnumerable<AgentScheduledTask> tasks,
+        IEnumerable<WorkflowProductionEventSummary>? productionEvents = null)
     {
         var items = new List<WorkflowArtifactTimelineItem>();
 
@@ -150,6 +181,40 @@ public static class ProjectWorkflow
                 isFinal: string.Equals(artifact.DraftStatus, "committed", StringComparison.OrdinalIgnoreCase),
                 isUserVisible: true,
                 "ProjectWorkflow.ChapterArtifacts"));
+        }
+
+        foreach (var evt in (productionEvents ?? Array.Empty<WorkflowProductionEventSummary>())
+                     .Where(IsOutputArtifactEvent)
+                     .OrderByDescending(evt => ParseDate(evt.CreatedAt)))
+        {
+            var metadata = ParseOutputArtifactMetadata(evt.DataJson);
+            var visibleInWorkflow = metadata.VisibleInWorkflow || metadata.UserVisibleWhere.Contains("创作工作流", StringComparer.Ordinal);
+            var visibleInLibrary = metadata.VisibleInLibrary || metadata.UserVisibleWhere.Contains("小说书城", StringComparer.Ordinal);
+            var surface = visibleInLibrary
+                ? "小说书城"
+                : visibleInWorkflow
+                    ? "创作工作流"
+                    : FirstNonEmpty(metadata.UserVisibleWhere.FirstOrDefault(), "创作工作流");
+            var isFinal = visibleInLibrary ||
+                          string.Equals(metadata.OutputKind, "FinalArtifact", StringComparison.OrdinalIgnoreCase);
+            var sourceEvent = FirstNonEmpty(metadata.SourceEventType, evt.EventType);
+
+            items.Add(TimelineItem(
+                $"output-artifact:{FirstNonEmpty(evt.ArtifactId, evt.Id)}",
+                FirstNonEmpty(evt.ArtifactType, "output_artifact"),
+                isFinal ? "最终产物" : "过程产物",
+                surface,
+                evt.Status,
+                FirstNonEmpty(evt.ArtifactType, evt.Message, "工具产物"),
+                FirstNonEmpty(metadata.Summary, evt.Message),
+                evt.DataJson,
+                string.Empty,
+                evt.ChapterId,
+                evt.RuntimeRunId,
+                ParseDate(evt.CreatedAt),
+                isFinal,
+                visibleInWorkflow || visibleInLibrary || metadata.UserVisibleWhere.Count > 0,
+                $"OutputArtifactRecorder:{sourceEvent}"));
         }
 
         foreach (var volume in library.Volumes)
@@ -225,6 +290,68 @@ public static class ProjectWorkflow
             .ToList();
     }
 
+    private static bool IsOutputArtifactEvent(WorkflowProductionEventSummary evt) =>
+        string.Equals(evt.EventType, OutputArtifactRecorder.EventType, StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(evt.ArtifactId);
+
+    private static OutputArtifactTimelineMetadata ParseOutputArtifactMetadata(string dataJson)
+    {
+        if (string.IsNullOrWhiteSpace(dataJson))
+            return new OutputArtifactTimelineMetadata();
+
+        try
+        {
+            using var document = JsonDocument.Parse(dataJson);
+            var root = document.RootElement;
+            return new OutputArtifactTimelineMetadata
+            {
+                OutputKind = GetJsonString(root, "outputKind"),
+                Summary = GetJsonString(root, "summary"),
+                SourceEventType = GetJsonString(root, "sourceEventType"),
+                VisibleInWorkflow = GetJsonBool(root, "visibleInWorkflow"),
+                VisibleInLibrary = GetJsonBool(root, "visibleInLibrary"),
+                UserVisibleWhere = GetJsonStringArray(root, "userVisibleWhere")
+            };
+        }
+        catch (JsonException)
+        {
+            return new OutputArtifactTimelineMetadata();
+        }
+    }
+
+    private static string GetJsonString(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    private static bool GetJsonBool(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+        value.GetBoolean();
+
+    private static List<string> GetJsonStringArray(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString() ?? string.Empty)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private sealed class OutputArtifactTimelineMetadata
+    {
+        public string OutputKind { get; init; } = string.Empty;
+        public string Summary { get; init; } = string.Empty;
+        public string SourceEventType { get; init; } = string.Empty;
+        public bool VisibleInWorkflow { get; init; }
+        public bool VisibleInLibrary { get; init; }
+        public List<string> UserVisibleWhere { get; init; } = new();
+    }
+
     private static IEnumerable<WorkflowArtifactTimelineItem> NormalizeTimelineTitles(
         IEnumerable<WorkflowArtifactTimelineItem> items,
         NovelLibraryDocument library)
@@ -273,10 +400,40 @@ public static class ProjectWorkflow
     public static IReadOnlyList<WorkflowProductionStage> BuildProductionStages(
         NovelLibraryDocument library,
         IEnumerable<WorkflowArtifactTimelineItem> timeline,
-        IEnumerable<AgentScheduledTask> tasks)
+        IEnumerable<AgentScheduledTask> tasks) =>
+        BuildProductionStages(
+            library,
+            timeline,
+            tasks,
+            Array.Empty<WorkflowProductionEventSummary>());
+
+    public static IReadOnlyList<WorkflowProductionStage> BuildProductionStages(
+        NovelLibraryDocument library,
+        IEnumerable<WorkflowArtifactTimelineItem> timeline,
+        IEnumerable<AgentScheduledTask> tasks,
+        IEnumerable<WorkflowProductionEventSummary> productionEvents) =>
+        BuildProductionStages(
+            library,
+            timeline,
+            tasks,
+            productionEvents,
+            Array.Empty<WorkflowToolExecutionSummary>());
+
+    public static IReadOnlyList<WorkflowProductionStage> BuildProductionStages(
+        NovelLibraryDocument library,
+        IEnumerable<WorkflowArtifactTimelineItem> timeline,
+        IEnumerable<AgentScheduledTask> tasks,
+        IEnumerable<WorkflowProductionEventSummary> productionEvents,
+        IEnumerable<WorkflowToolExecutionSummary> toolExecutions)
     {
         var items = timeline.ToList();
         var taskList = tasks.ToList();
+        var eventList = productionEvents
+            .OrderByDescending(e => ParseDate(e.CreatedAt))
+            .ToList();
+        var toolList = toolExecutions
+            .OrderByDescending(t => ParseDate(t.StartedAt))
+            .ToList();
 
         var committedChapterCount = library.Volumes
             .SelectMany(volume => volume.Chapters)
@@ -286,31 +443,130 @@ public static class ProjectWorkflow
         {
             BuildStage("foundation", "故事地基", "故事地基", items, taskList,
                 item => item.Kind is "story_foundation_candidates" or "story_constitution",
-                "还没有故事地基候选或 Story Bible。", "让 Agent 根据创作目标生成故事地基。"),
+                "还没有故事地基候选或 Story Bible。", "让 Agent 根据创作目标生成故事地基。",
+                toolExecutions: toolList.Where(IsFoundationToolExecution).ToList()),
             BuildStage("volume_plan", "分卷规划", "创作工作流", items, taskList,
                 item => item.Kind == "volume_plan",
-                "还没有真实分卷规划。", "让 Agent 基于 Story Bible 规划第一卷。"),
+                "还没有真实分卷规划。", "让 Agent 基于 Story Bible 规划第一卷。",
+                toolExecutions: toolList.Where(IsVolumePlanToolExecution).ToList()),
             BuildStage("chapter_plan", "章节规划", "创作工作流", items, taskList,
                 item => item.Kind == "chapter_brief",
-                "还没有章节候选或章节目标。", "让 Agent 选择卷内章节并生成章节规划。", totalCount: library.PlannedChapterCount),
+                "还没有章节候选或章节目标。", "让 Agent 选择卷内章节并生成章节规划。", totalCount: library.PlannedChapterCount,
+                toolExecutions: toolList.Where(IsChapterPlanToolExecution).ToList()),
+            BuildStage("revision_plan", "修订计划", "创作工作流", items, taskList,
+                item => item.Kind == "revision_plan",
+                "还没有结构化修订计划。", "当用户或 Agent 要修改已提交章节时，先生成修订计划并分析下游影响。",
+                productionEvents: eventList.Where(IsRevisionPlanProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsRevisionPlanToolExecution).ToList()),
             BuildStage("context", "上下文包", "创作工作流", items, taskList,
                 item => item.Kind == "context_package",
-                "还没有章节上下文包。", "让 Agent 为目标章节构建上下文包。"),
+                "还没有章节上下文包。", "让 Agent 为目标章节构建上下文包。",
+                productionEvents: eventList.Where(IsContextProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsContextToolExecution).ToList()),
             BuildStage("draft", "正文草稿", "创作工作流", items, taskList,
                 item => item.Kind == "draft_artifact" || item.Kind == "chapter_artifact_summary" && !string.IsNullOrWhiteSpace(item.Preview),
-                "还没有真实正文草稿。", "让 Agent 在上下文包基础上生成正文草稿。"),
+                "还没有真实正文草稿。", "让 Agent 在上下文包基础上生成正文草稿。",
+                productionEvents: eventList.Where(IsDraftProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsDraftToolExecution).ToList()),
             BuildStage("gate", "结构门禁", "创作工作流", items, taskList,
                 item => item.Kind == "gate_report",
-                "还没有结构门禁报告。", "草稿生成后由 Agent 执行结构门禁。"),
+                "还没有结构门禁报告。", "草稿生成后由 Agent 执行结构门禁。",
+                productionEvents: eventList.Where(IsGateProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsGateToolExecution).ToList()),
             BuildStage("quality", "质量评审", "创作工作流", items, taskList,
                 item => item.Kind == "quality_review",
-                "还没有质量评审报告。", "门禁后由 Agent 执行质量评审。"),
+                "还没有质量评审报告。", "门禁后由 Agent 执行质量评审。",
+                productionEvents: eventList.Where(IsQualityProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsQualityToolExecution).ToList()),
             BuildStage("library", "书城入库", "小说书城", items, taskList,
                 item => item.Kind == "library_chapter" || item.IsFinal && item.Surface == "小说书城",
                 "还没有已入库的真实章节。", "通过门禁和质量评审后，再提交到小说书城。",
-                currentCount: committedChapterCount, totalCount: library.PlannedChapterCount)
+                currentCount: committedChapterCount, totalCount: library.PlannedChapterCount,
+                productionEvents: eventList.Where(IsLibraryProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsLibraryToolExecution).ToList()),
+            BuildStage("index", "后台索引", "系统后台", items, taskList,
+                item => false,
+                "还没有后台索引事件。", "正文入库后由后台索引与记忆沉淀继续处理。",
+                productionEvents: eventList.Where(IsIndexProductionEvent).ToList(),
+                toolExecutions: toolList.Where(IsIndexToolExecution).ToList())
         };
     }
+
+    public static IReadOnlyList<WorkflowProductionChain> BuildProductionChains(
+        IEnumerable<WorkflowProductionEventSummary> productionEvents)
+    {
+        return ProductionChainProjectionService.BuildWorkflowChainsCore(productionEvents);
+    }
+
+    private static bool IsContextProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType is "chapter_context_package_built" ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.PackageBuilt, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDraftProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType is "chapter_draft_generated" ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.DraftGenerated, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGateProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType is "chapter_gate_validated" ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.GateValidated, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsQualityProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType is "chapter_quality_reviewed" ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.ReviewCompleted, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLibraryProductionEvent(WorkflowProductionEventSummary evt) =>
+        !IsRevisionPlanProductionEvent(evt) &&
+        (evt.EventType is "chapter_committed" ||
+         evt.EventType is "knowledge_bindings_used" or "creative_intents_executed" or "chapter_continuity_facts_extracted" or "chapter_summary_recorded" ||
+         string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.FactsPersisted, StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.ChapterCommitted, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsIndexProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType.StartsWith("outbox_", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(evt.Stage, "index_outbox", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.IndexUpdated, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRevisionPlanProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType.StartsWith("revision_plan_", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(evt.ArtifactType, "RevisionPlan", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(evt.Stage, "packages_invalidated", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFoundationToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, "PlanStoryFoundation", "CommitStoryFoundation");
+
+    private static bool IsVolumePlanToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, "PlanVolumeArc", "CommitVolumeArc");
+
+    private static bool IsChapterPlanToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, "PlanChapter", "SelectChapterCandidate");
+
+    private static bool IsRevisionPlanToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, "CreateRevisionPlan", "InvalidateAffectedPackages", "AnalyzeDependencyImpact");
+
+    private static bool IsContextToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, NovelAgentProductionStages.ContextPackage) ||
+        HasBlockedInputArtifacts(tool);
+
+    private static bool IsDraftToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, NovelAgentProductionStages.DraftGeneration, "ReviseCommittedChapter") ||
+        ToolNameIs(tool, "ProduceChapter") && !HasBlockedInputArtifacts(tool);
+
+    private static bool IsGateToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, NovelAgentProductionStages.GateValidation, NovelAgentProductionStages.GateValidationOrRepair, NovelAgentProductionStages.DraftRepair);
+
+    private static bool IsQualityToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, NovelAgentProductionStages.QualityReview, "ReviewChapter", "AuditCommittedChapter");
+
+    private static bool IsLibraryToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, NovelAgentProductionStages.ChapterCommit, "CommitStoryFoundation", "CommitVolumeArc", "RollbackChapterVersion");
+
+    private static bool IsIndexToolExecution(WorkflowToolExecutionSummary tool) =>
+        ToolNameIs(tool, "RefreshProjectIndexes", "RetryProductionOutbox");
+
+    private static bool ToolNameIs(WorkflowToolExecutionSummary tool, params string[] names) =>
+        names.Any(name =>
+            string.Equals(tool.ToolName, name, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(tool.Phase, name, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsLibraryChapterVisible(NovelChapterView chapter) =>
         chapter.VisibleInLibrary ||
@@ -517,44 +773,144 @@ public static class ProjectWorkflow
         string emptyReason,
         string nextIntentHint,
         int currentCount = 0,
-        int totalCount = 0)
+        int totalCount = 0,
+        IReadOnlyList<WorkflowProductionEventSummary>? productionEvents = null,
+        IReadOnlyList<WorkflowToolExecutionSummary>? toolExecutions = null)
     {
         var artifacts = timeline.Where(predicate).OrderByDescending(item => ParseDate(item.UpdatedAt)).ToList();
+        var events = (productionEvents ?? Array.Empty<WorkflowProductionEventSummary>())
+            .OrderByDescending(e => ParseDate(e.CreatedAt))
+            .ToList();
+        var tools = (toolExecutions ?? Array.Empty<WorkflowToolExecutionSummary>())
+            .OrderByDescending(t => ParseDate(t.StartedAt))
+            .ToList();
         var activeTasks = tasks.Count(task => task.Status is "running" or "blocked" or "queued");
         var primary = artifacts.FirstOrDefault();
+        var primaryEvent = events.FirstOrDefault();
+        var primaryTool = tools.FirstOrDefault();
         var blocked = artifacts.Any(item =>
             item.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
             item.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
-            item.Status.Contains("rewrite", StringComparison.OrdinalIgnoreCase));
+            item.Status.Contains("rewrite", StringComparison.OrdinalIgnoreCase)) ||
+            events.Any(IsBlockedProductionEvent) ||
+            tools.Any(IsBlockedToolExecution);
+        var eventRunning = events.Any(evt =>
+            evt.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ||
+            evt.Status.Contains("queued", StringComparison.OrdinalIgnoreCase) ||
+            evt.Status.Contains("pending", StringComparison.OrdinalIgnoreCase));
+        var toolRunning = tools.Any(tool =>
+            tool.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ||
+            tool.Status.Contains("queued", StringComparison.OrdinalIgnoreCase) ||
+            tool.Status.Contains("pending", StringComparison.OrdinalIgnoreCase));
+        var eventReady = events.Count > 0 && events.All(evt =>
+            evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+            evt.Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
+            evt.Status.Contains("executed", StringComparison.OrdinalIgnoreCase));
+        var toolReady = tools.Count > 0 && tools.All(tool =>
+            tool.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+            tool.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
+        var latestEventReady = events.Count > 0 && (
+            events[0].Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+            events[0].Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
+            events[0].Status.Contains("executed", StringComparison.OrdinalIgnoreCase));
+        var latestToolReady = tools.Count > 0 && (
+            tools[0].Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+            tools[0].Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
         var running = activeTasks > 0 && artifacts.Any(item => item.Kind == "scheduled_task");
-        var status = artifacts.Count == 0
+        var status = artifacts.Count == 0 && events.Count == 0 && tools.Count == 0
             ? "empty"
             : blocked
                 ? "blocked"
-                : running
+                : running || eventRunning || toolRunning
                     ? "running"
-                    : artifacts.Any(item => item.IsFinal)
+                    : artifacts.Any(item => item.IsFinal) || eventReady || latestEventReady || toolReady || latestToolReady
                         ? "ready"
                         : "in_progress";
         var count = currentCount > 0 ? currentCount : artifacts.Count;
         var total = totalCount > 0 ? totalCount : artifacts.Count;
+        if (events.Count > 0 && currentCount <= 0)
+            count = events.Count(evt => evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase));
+        if (events.Count > 0 && totalCount <= 0)
+            total = events.Count;
+        if (events.Count == 0 && tools.Count > 0 && currentCount <= 0)
+            count = tools.Count(tool =>
+                tool.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+                tool.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
+        if (events.Count == 0 && tools.Count > 0 && totalCount <= 0)
+            total = tools.Count;
+
+        var toolSummary = primaryTool == null
+            ? string.Empty
+            : FirstNonEmpty(primaryTool.SemanticContract.DisplayName, primaryTool.ToolName);
 
         return new WorkflowProductionStage(
             key,
             label,
             surface,
             status,
-            primary?.Summary ?? emptyReason,
-            primary?.Preview ?? string.Empty,
-            artifacts.Count,
+            primaryEvent?.Message ?? primary?.Summary ?? toolSummary ?? emptyReason,
+            primaryEvent?.DataJson ?? primary?.Preview ?? BuildToolExecutionDetail(primaryTool),
+            Math.Max(Math.Max(artifacts.Count, events.Count), tools.Count),
             count,
             total,
-            primary?.UpdatedAt ?? string.Empty,
-            primary?.Id ?? string.Empty,
-            primary?.RunId ?? string.Empty,
-            artifacts.Count == 0 ? emptyReason : string.Empty,
-            nextIntentHint);
+            primaryEvent?.CreatedAt ?? primary?.UpdatedAt ?? primaryTool?.StartedAt ?? string.Empty,
+            primaryEvent?.ArtifactId ?? primary?.Id ?? primaryTool?.Id ?? string.Empty,
+            primaryEvent?.RuntimeRunId ?? primary?.RunId ?? primaryTool?.RunId ?? string.Empty,
+            artifacts.Count == 0 && events.Count == 0 && tools.Count == 0 ? emptyReason : string.Empty,
+            nextIntentHint,
+            events)
+        {
+            ToolExecutions = tools
+        };
     }
+
+    private static bool IsBlockedProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+        evt.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+        evt.Status.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsBlockedToolExecution(WorkflowToolExecutionSummary tool) =>
+        tool.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+        tool.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+        tool.Status.Contains("cancel", StringComparison.OrdinalIgnoreCase);
+
+    private static string BuildToolExecutionDetail(WorkflowToolExecutionSummary? tool)
+    {
+        if (tool == null)
+            return string.Empty;
+
+        var blockedInputs = tool.Failure?.InputArtifacts
+            .Where(artifact => artifact.BlocksExecution)
+            .ToList();
+        if (blockedInputs is { Count: > 0 })
+        {
+            return string.Join("；", blockedInputs.Select(artifact =>
+            {
+                var actions = artifact.RecommendedActions.Count == 0
+                    ? string.Empty
+                    : $"建议={string.Join("/", artifact.RecommendedActions.Take(3))}";
+                return string.Join("，", new[]
+                {
+                    $"阻断产物={artifact.ArtifactName}",
+                    $"状态={artifact.Status}",
+                    string.IsNullOrWhiteSpace(artifact.ArtifactId) ? string.Empty : $"ID={artifact.ArtifactId}",
+                    string.IsNullOrWhiteSpace(artifact.Message) ? string.Empty : artifact.Message,
+                    actions
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            }));
+        }
+
+        var inputs = tool.SemanticContract.InputArtifacts.Count == 0
+            ? string.Empty
+            : $"输入={string.Join("/", tool.SemanticContract.InputArtifacts.Take(4))}";
+        var outputs = tool.SemanticContract.OutputArtifacts.Count == 0
+            ? string.Empty
+            : $"输出={string.Join("/", tool.SemanticContract.OutputArtifacts.Take(4))}";
+        return string.Join("；", new[] { inputs, outputs }.Where(v => !string.IsNullOrWhiteSpace(v)));
+    }
+
+    private static bool HasBlockedInputArtifacts(WorkflowToolExecutionSummary tool) =>
+        tool.Failure?.InputArtifacts.Any(artifact => artifact.BlocksExecution) == true;
 
     private static WorkflowArtifactTimelineItem TimelineItem(
         string id,

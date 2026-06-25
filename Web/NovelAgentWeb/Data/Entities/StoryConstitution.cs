@@ -22,6 +22,10 @@ public sealed class StoryConstitution
     [StringLength(50)]
     public string ProjectId { get; set; } = string.Empty;
 
+    [Column("idempotency_key")]
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
+
     [Required]
     [Column("genre")]
     [StringLength(100)]

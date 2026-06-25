@@ -254,6 +254,41 @@ public class AgentMemoryUpdateTests
         Assert.Contains("不要硬模板", payload);
     }
 
+    [Fact]
+    public void ActionPrompt_IncludesWorkspaceKnowledgeConstraintEvidence()
+    {
+        var prompt = BuildActionUserPrompt(new AgentObservationContext
+        {
+            UserMessage = "第二章会不会违背上一章知识？",
+            WorkspaceState = new AgentWorkspaceState
+            {
+                KnowledgeBase = new AgentWorkspaceKnowledgeState
+                {
+                    RecentConstraintEvidence =
+                    {
+                        new AgentWorkspaceKnowledgeConstraintEvidenceState
+                        {
+                            KnowledgeId = "knowledge-1",
+                            Title = "银蓝邮徽能力边界",
+                            EntryType = "HardFact",
+                            ConstraintLevel = "HardConstraint",
+                            PackagePolicy = "DefaultEveryChapter",
+                            ProjectId = "project-1",
+                            ProjectTitle = "天命旧书",
+                            ChapterId = "chapter-1",
+                            GateStatus = "validated",
+                            EvidenceStatus = "satisfied"
+                        }
+                    }
+                }
+            }
+        });
+
+        Assert.Contains("RecentConstraintEvidence", prompt);
+        Assert.Contains("knowledge-1", prompt);
+        Assert.Contains("satisfied", prompt);
+    }
+
     private static AgentReflection ParseReflection(string json)
     {
         var method = typeof(AgentPlanner).GetMethod("ParseReflection", BindingFlags.NonPublic | BindingFlags.Static)

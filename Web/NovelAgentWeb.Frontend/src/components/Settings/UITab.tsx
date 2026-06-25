@@ -1,4 +1,5 @@
 import CollapsePanel from './CollapsePanel';
+import SettingsSelect from './SettingsSelect';
 import type { UserSettings } from '../../api/types';
 
 interface UITabProps {
@@ -7,6 +8,25 @@ interface UITabProps {
 }
 
 export default function UITab({ form, update }: UITabProps) {
+  const themeOptions = [
+    { value: 'dark', label: '深色（默认）' },
+    { value: 'light', label: '浅色' },
+  ];
+  const languageOptions = [
+    { value: 'zh-CN', label: '简体中文' },
+    { value: 'en', label: 'English' },
+  ];
+  const fontSizeOptions = [
+    { value: 'medium', label: '中等（默认）' },
+    { value: 'small', label: '小' },
+    { value: 'large', label: '大' },
+  ];
+  const lineHeightOptions = [
+    { value: 'normal', label: '正常（默认）' },
+    { value: 'compact', label: '紧凑' },
+    { value: 'relaxed', label: '宽松' },
+  ];
+
   return (
     <div className="settings-tab-content">
       {/* 4.1 Theme Settings */}
@@ -14,10 +34,11 @@ export default function UITab({ form, update }: UITabProps) {
         <div className="form-grid">
           <div className="form-field">
             <label>主题</label>
-            <select value={form.theme || 'dark'} onChange={(e) => update('theme', e.target.value)}>
-              <option value="dark">深色（默认）</option>
-              <option value="light">浅色</option>
-            </select>
+            <SettingsSelect
+              value={form.theme || 'dark'}
+              options={themeOptions}
+              onChange={(value) => update('theme', value)}
+            />
           </div>
           <div className="form-field">
             <label>自定义主题色</label>
@@ -31,10 +52,11 @@ export default function UITab({ form, update }: UITabProps) {
         <div className="form-grid">
           <div className="form-field">
             <label>界面语言</label>
-            <select value={form.language || 'zh-CN'} onChange={(e) => update('language', e.target.value)}>
-              <option value="zh-CN">简体中文</option>
-              <option value="en">English</option>
-            </select>
+            <SettingsSelect
+              value={form.language || 'zh-CN'}
+              options={languageOptions}
+              onChange={(value) => update('language', value)}
+            />
           </div>
         </div>
       </CollapsePanel>
@@ -43,31 +65,13 @@ export default function UITab({ form, update }: UITabProps) {
       <CollapsePanel id="ui-3" title="编辑器配置" defaultOpen={false}>
         <div className="form-grid">
           <div className="form-field">
-            <label>
-              <input
-                type="checkbox"
-                checked={form.showStepDetails ?? true}
-                onChange={(e) => update('showStepDetails', e.target.checked)}
-              />
-              显示 Agent 执行步骤详情
-            </label>
-          </div>
-          <div className="form-field">
             <label>字体大小</label>
-            <select disabled>
-              <option value="medium">中等（默认）</option>
-              <option value="small">小</option>
-              <option value="large">大</option>
-            </select>
+            <SettingsSelect value="medium" options={fontSizeOptions} disabled />
             <p className="settings-desc" style={{ marginTop: 4, marginBottom: 0 }}>功能即将推出</p>
           </div>
           <div className="form-field">
             <label>行间距</label>
-            <select disabled>
-              <option value="normal">正常（默认）</option>
-              <option value="compact">紧凑</option>
-              <option value="relaxed">宽松</option>
-            </select>
+            <SettingsSelect value="normal" options={lineHeightOptions} disabled />
             <p className="settings-desc" style={{ marginTop: 4, marginBottom: 0 }}>功能即将推出</p>
           </div>
           <div className="form-field">

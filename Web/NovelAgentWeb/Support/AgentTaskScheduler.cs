@@ -6,9 +6,7 @@ public sealed class AgentTaskScheduler
 {
     private static readonly HashSet<string> HighRiskActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "GenerateChapterWithChanges",
-        "RepairChapterDraft",
-        "CommitValidatedChapter",
+        "ProduceChapter",
         "CommitStoryFoundation",
         "CommitVolumeArc",
     };
@@ -23,14 +21,23 @@ public sealed class AgentTaskScheduler
 
     public AgentAction? BuildContinueAction(AgentObservationContext context)
     {
-        var repair = context.RecentObservations
+        var focusedRunId = LatestProjectContentRunId(context);
+        var requestedChapterId = LatestRequestedChapterId(context);
+        var repairQuery = context.RecentObservations
             .Where(o => o.IsRepairable && !string.IsNullOrWhiteSpace(o.RecommendedToolName))
-            .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefault();
+            .Where(o => string.IsNullOrWhiteSpace(focusedRunId) ||
+                        string.Equals(o.RunId, focusedRunId, StringComparison.OrdinalIgnoreCase))
+            .Where(o => string.IsNullOrWhiteSpace(requestedChapterId) ||
+                        ObservationMatchesChapter(context.MissionPlan, o, requestedChapterId));
+        var repair = repairQuery.OrderByDescending(o => o.CreatedAt).FirstOrDefault();
         if (repair != null)
             return BuildActionFromRepairObservation(repair);
 
-        var task = SelectActiveTask(context.MissionPlan);
+        var task = !string.IsNullOrWhiteSpace(focusedRunId)
+            ? SelectActiveTaskForRun(context.MissionPlan, focusedRunId)
+            : !string.IsNullOrWhiteSpace(requestedChapterId)
+                ? SelectActiveTaskForChapter(context.MissionPlan, requestedChapterId)
+                : SelectActiveTask(context.MissionPlan);
         if (task == null || string.IsNullOrWhiteSpace(task.NextAction))
             return null;
 
@@ -51,9 +58,17 @@ public sealed class AgentTaskScheduler
         var args = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (ToolNeedsRunId(task.NextAction) && !string.IsNullOrWhiteSpace(task.RunId))
             args["runId"] = task.RunId;
-        if (string.Equals(task.NextAction, "PlanChapter", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(context.TurnIntent.CreativeBrief))
-            args["creativeBrief"] = context.TurnIntent.CreativeBrief;
+        if (string.Equals(task.NextAction, "PlanChapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AgentAction
+            {
+                Type = AgentActionType.FinalReply,
+                Intent = "chapter_planning_needs_agent_directions",
+                Reply = "章节规划需要先由 Agent 整理 creativeBrief 和 candidateDirections；我不会从用户原话里自动推断候选方向。",
+                Suggestions = new[] { "补充章节创作方向", "查看当前状态" },
+                Source = "agent_task_scheduler",
+            };
+        }
 
         return new AgentAction
         {
@@ -97,7 +112,7 @@ public sealed class AgentTaskScheduler
             return;
         task.Status = "queued";
         task.RequiresConfirmation = false;
-        task.Reason = "autopilot_resume";
+        task.Reason = "agent_loop_resume";
         task.UpdatedAt = DateTime.UtcNow;
         plan.SchedulerState.ActiveTaskId = task.TaskId;
         plan.SchedulerState.ActiveRunId = task.RunId;
@@ -107,7 +122,76 @@ public sealed class AgentTaskScheduler
     }
 
     private static bool ToolNeedsRunId(string toolName) =>
-        toolName is "SelectChapterCandidate" or "BuildChapterContextPackage" or "GenerateChapterWithChanges" or
-            "ValidateChapterDraft" or "RepairChapterDraft" or "CommitValidatedChapter" or "RefreshProjectIndexes" or
+        toolName is "ProduceChapter" or "SelectChapterCandidate" or "RefreshProjectIndexes" or
             "AnalyzeDependencyImpact" or "ReviewChapter" or "CommitVolumeArc" or "CommitStoryFoundation";
+
+    private static AgentScheduledTask? SelectActiveTaskForRun(AgentMissionPlan plan, string runId)
+    {
+        var tasks = plan.SchedulerState?.Tasks ?? new List<AgentScheduledTask>();
+        return tasks.Where(t => string.Equals(t.RunId, runId, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Status == "running" ? 0 : t.Status == "queued" ? 1 : t.Status == "blocked" ? 2 : 3)
+            .FirstOrDefault(t => t.Status is "running" or "queued" or "blocked");
+    }
+
+    private static AgentScheduledTask? SelectActiveTaskForChapter(AgentMissionPlan plan, string chapterId)
+    {
+        var normalized = AgentChapterReferenceResolver.NormalizeChapterId(chapterId);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+
+        var tasks = plan.SchedulerState?.Tasks ?? new List<AgentScheduledTask>();
+        return tasks.Where(t => string.Equals(
+                AgentChapterReferenceResolver.NormalizeChapterId(t.ChapterId),
+                normalized,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Status == "running" ? 0 : t.Status == "queued" ? 1 : t.Status == "blocked" ? 2 : 3)
+            .FirstOrDefault(t => t.Status is "running" or "queued" or "blocked");
+    }
+
+    private static bool ObservationMatchesChapter(AgentMissionPlan plan, AgentRuntimeObservation observation, string chapterId)
+    {
+        var normalized = AgentChapterReferenceResolver.NormalizeChapterId(chapterId);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        var artifactChapterId = AgentChapterReferenceResolver.NormalizeChapterId(observation.Artifact?.ArtifactId);
+        if (string.Equals(artifactChapterId, normalized, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(observation.RunId))
+            return false;
+
+        return plan.SchedulerState.Tasks.Any(t =>
+            string.Equals(t.RunId, observation.RunId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                AgentChapterReferenceResolver.NormalizeChapterId(t.ChapterId),
+                normalized,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string LatestRequestedChapterId(AgentObservationContext context) =>
+        FirstNonEmpty(
+            AgentChapterReferenceResolver.NormalizeChapterId(context.TurnIntent?.ReferencedChapterId),
+            AgentChapterReferenceResolver.NormalizeChapterId(context.UserTurn?.TargetArtifact),
+            AgentChapterReferenceResolver.ResolveChapterId(context.UserMessage),
+            AgentChapterReferenceResolver.ResolveChapterId(context.TurnIntent?.RawMessage ?? string.Empty));
+
+    private static string LatestProjectContentRunId(AgentObservationContext context)
+    {
+        var observationRunId = context.RecentObservations
+            .Where(o => o.Success &&
+                        string.Equals(o.Artifact?.ArtifactType, "project_content_query", StringComparison.OrdinalIgnoreCase))
+            .Select(o => FirstNonEmpty(o.RunId, o.Artifact?.RunId))
+            .LastOrDefault(runId => !string.IsNullOrWhiteSpace(runId));
+        if (!string.IsNullOrWhiteSpace(observationRunId))
+            return observationRunId;
+
+        return context.MissionPlan.ActiveArtifacts
+            .Where(a => string.Equals(a.ArtifactType, "project_content_query", StringComparison.OrdinalIgnoreCase))
+            .Select(a => a.RunId)
+            .LastOrDefault(runId => !string.IsNullOrWhiteSpace(runId)) ?? string.Empty;
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 }

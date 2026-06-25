@@ -1,12 +1,10 @@
 using System.Text.Json;
-using System.Threading.Channels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
-using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
@@ -16,45 +14,49 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 [Authorize]
 public class AgentController : ControllerBase
 {
-    private readonly AgentRouter _router;
+    private readonly AgentTurnCoordinator _coordinator;
     private readonly AgentSessionManager _sessionManager;
-    private readonly IWorkspaceFactory _workspaceFactory;
-    private readonly ProjectScopedExecutor _projectScope;
     private readonly IAgentSessionService _agentSessionService;
     private readonly ICurrentUserService _currentUserService;
     private readonly IAgentSessionResumeService _resumeService;
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IAgentRuntimeEventFanout? _runtimeEventFanout;
+    private readonly IAgentRuntimeEventService? _runtimeEvents;
 
     public AgentController(
-        AgentRouter router,
+        AgentTurnCoordinator coordinator,
         AgentSessionManager sessionManager,
-        IWorkspaceFactory workspaceFactory,
-        ProjectScopedExecutor projectScope,
         IAgentSessionService agentSessionService,
         ICurrentUserService currentUserService,
         IAgentSessionResumeService resumeService,
-        IServiceScopeFactory scopeFactory)
+        IAgentRuntimeEventFanout? runtimeEventFanout = null,
+        IAgentRuntimeEventService? runtimeEvents = null)
     {
-        _router = router;
+        _coordinator = coordinator;
         _sessionManager = sessionManager;
-        _workspaceFactory = workspaceFactory;
-        _projectScope = projectScope;
         _agentSessionService = agentSessionService;
         _currentUserService = currentUserService;
         _resumeService = resumeService;
-        _scopeFactory = scopeFactory;
+        _runtimeEventFanout = runtimeEventFanout;
+        _runtimeEvents = runtimeEvents;
     }
 
     [HttpPost("agent/chat")]
     public async Task<IActionResult> Chat([FromBody] AgentChatRequest request, CancellationToken ct)
     {
         var sessionId = request.SessionId;
-        var response = await _router.HandleAsync(sessionId, request.Message ?? "", ct);
-        return Ok(AgentChatResponsePublicProjection.ToPublic(response));
+        var idempotencyKey = ControllerContext.HttpContext?.Request.Headers["Idempotency-Key"].ToString();
+        var response = await _coordinator.HandleAsync(
+            sessionId,
+            request.Message ?? "",
+            ct,
+            idempotencyKey,
+            request.ClientMessageId);
+        var payload = AgentChatResponsePublicProjection.ToPublic(response);
+        return Ok(payload);
     }
 
     [HttpGet("agent/sse/{sessionId}")]
-    public async Task StreamEvents(string sessionId, [FromQuery] string? token, CancellationToken ct)
+    public async Task StreamEvents(string sessionId, [FromQuery] string? token, [FromQuery] string? afterEventId, CancellationToken ct)
     {
         // Token is handled by OnMessageReceived in Program.cs JWT configuration
 
@@ -62,21 +64,109 @@ public class AgentController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
 
-        var reader = _sessionManager.GetEventReader(sessionId);
+        var replayAfterEventId = FirstNonEmpty(afterEventId, Request.Headers["Last-Event-ID"].ToString());
+        if (!string.IsNullOrWhiteSpace(replayAfterEventId))
+        {
+            var replayed = await ReplayRuntimeEventsAsync(sessionId, replayAfterEventId, 100, ct)
+                .ConfigureAwait(false);
+            foreach (var evt in replayed)
+                await WriteSseEventAsync(evt, ct).ConfigureAwait(false);
+        }
 
+        var reader = _sessionManager.GetEventReader(sessionId);
         try
         {
             await foreach (var evt in reader.ReadAllAsync(ct))
             {
-                var json = JsonSerializer.Serialize(ToPublicSseEvent(evt), new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                });
-                await Response.WriteAsync($"data: {json}\n\n", ct);
-                await Response.Body.FlushAsync(ct);
+                await WriteSseEventAsync(evt, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { /* client disconnected */ }
+    }
+
+    private async Task WriteSseEventAsync(AgentSseEvent evt, CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(ToPublicSseEvent(evt), new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        });
+        if (!string.IsNullOrWhiteSpace(evt.EventId))
+            await Response.WriteAsync($"id: {evt.EventId}\n", ct);
+        await Response.WriteAsync($"data: {json}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
+    }
+
+    private async Task<IReadOnlyList<AgentSseEvent>> ReplayRuntimeEventsAsync(
+        string sessionId,
+        string afterEventId,
+        int limit,
+        CancellationToken ct)
+    {
+        var merged = new List<AgentSseEvent>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        if (_runtimeEventFanout != null)
+        {
+            var redisEvents = await _runtimeEventFanout.ReplayAsync(sessionId, afterEventId, limit, ct)
+                .ConfigureAwait(false);
+            foreach (var evt in redisEvents)
+                AddReplayEvent(merged, seen, evt);
+        }
+
+        if (_runtimeEvents != null && merged.Count < limit)
+        {
+            var userId = _currentUserService.GetUserId();
+            var sqliteEvents = await _runtimeEvents
+                .GetRecentAsync(userId, sessionId, limit, ct, afterEventId)
+                .ConfigureAwait(false);
+            foreach (var evt in sqliteEvents)
+                AddReplayEvent(merged, seen, ToSseEvent(evt));
+        }
+
+        return merged.Take(limit).ToList();
+    }
+
+    private static void AddReplayEvent(ICollection<AgentSseEvent> events, ISet<string> seen, AgentSseEvent evt)
+    {
+        if (!string.IsNullOrWhiteSpace(evt.EventId) && !seen.Add(evt.EventId))
+            return;
+
+        events.Add(evt);
+    }
+
+    private static AgentSseEvent ToSseEvent(TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeEvent evt)
+    {
+        object? data = null;
+        if (!string.IsNullOrWhiteSpace(evt.DataJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.DataJson);
+                data = doc.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                data = null;
+            }
+        }
+
+        return new AgentSseEvent
+        {
+            EventId = evt.Id,
+            Type = evt.Type,
+            SessionId = evt.SessionId,
+            RunId = evt.RuntimeRunId,
+            SourceMessageId = ExtractSourceMessageId(data),
+            Stage = evt.Stage,
+            Status = evt.Status,
+            ArtifactType = evt.ArtifactType,
+            ArtifactId = evt.ArtifactId,
+            DisplaySurface = evt.DisplaySurface,
+            DisplayPolicy = evt.DisplayPolicy,
+            Message = evt.Message,
+            Data = data,
+            Timestamp = evt.CreatedAt
+        };
     }
 
     private static AgentSseEvent ToPublicSseEvent(AgentSseEvent evt)
@@ -86,14 +176,37 @@ public class AgentController : ControllerBase
 
         return new AgentSseEvent
         {
+            EventId = evt.EventId,
             Type = evt.Type,
             SessionId = evt.SessionId,
             RunId = evt.RunId,
+            SourceMessageId = evt.SourceMessageId,
             StepId = evt.StepId,
+            Stage = evt.Stage,
+            Status = evt.Status,
+            ArtifactType = evt.ArtifactType,
+            ArtifactId = evt.ArtifactId,
+            DisplaySurface = evt.DisplaySurface,
+            DisplayPolicy = evt.DisplayPolicy,
             Message = evt.Message,
             Data = AgentChatResponsePublicProjection.ToPublic(response),
             Timestamp = evt.Timestamp
         };
+    }
+
+    private static string ExtractSourceMessageId(object? data)
+    {
+        if (data is not JsonElement element || element.ValueKind != JsonValueKind.Object)
+            return string.Empty;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "sourceMessageId", StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind == JsonValueKind.String)
+                return property.Value.GetString() ?? string.Empty;
+        }
+
+        return string.Empty;
     }
 
     [HttpGet("agent/session/{sessionId}")]
@@ -108,7 +221,7 @@ public class AgentController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound();
+            return NotFound(Error("SESSION_NOT_FOUND", "会话不存在。", recoverable: false));
         }
     }
 
@@ -132,7 +245,7 @@ public class AgentController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound();
+            return NotFound(Error("SESSION_NOT_FOUND", "会话不存在。", recoverable: false));
         }
     }
 
@@ -140,7 +253,10 @@ public class AgentController : ControllerBase
     public async Task<IActionResult> CreateSession([FromQuery] string? projectId, CancellationToken ct)
     {
         var userId = _currentUserService.GetUserId();
-        var session = await _agentSessionService.GetOrCreateSessionAsync(null, userId, projectId, ct);
+        var idempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var header)
+            ? header.ToString()
+            : string.Empty;
+        var session = await _agentSessionService.GetOrCreateSessionAsync(null, userId, projectId, idempotencyKey, ct);
         return Ok(session);
     }
 
@@ -163,91 +279,17 @@ public class AgentController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound("Session not found.");
+            return NotFound(Error("SESSION_NOT_FOUND", "会话不存在。", recoverable: false));
         }
     }
 
-    [HttpPost("agent/step/{sessionId}/rollback")]
-    public async Task<IActionResult> RollbackStep(
-        string sessionId,
-        [FromBody] RollbackStepRequest request,
-        CancellationToken ct)
-    {
-        var session = await _sessionManager.GetSessionAsync(sessionId, ct);
-        if (session == null) return NotFound("Session not found.");
+    private static object Error(
+        string code,
+        string message,
+        bool recoverable,
+        string recommendedAction = "") =>
+        new { code, message, recoverable, recommendedAction };
 
-        var userId = _currentUserService.GetUserId();
-        var projectId = session.ActiveProjectId;
-
-        if (string.IsNullOrEmpty(projectId))
-            return BadRequest("Session has no active project.");
-
-        var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
-        try
-        {
-            var catalog = new NovelProjectCatalog(workspaceEntry.Workspace, _scopeFactory);
-            workspaceEntry.Workspace.SetRequestContext();
-            ProjectScopedExecutor.SetCatalog(catalog);
-            var bible = await _projectScope.RunSessionAsync(session,
-                () => workspaceEntry.Workspace.Orchestrator.GetStoryBibleAsync(ct), ct);
-
-            var run = bible.AgentRuns.FirstOrDefault(r => r.RunId == request.RunId);
-            if (run == null) return NotFound("Run not found.");
-
-            // Find the target step and reset all steps after it
-            var stepIndex = run.Steps.FindIndex(s => s.Id == request.StepId);
-            if (stepIndex < 0) return NotFound("Step not found.");
-
-            // Reset steps from the target onwards
-            for (var i = stepIndex; i < run.Steps.Count; i++)
-            {
-                run.Steps[i].Status = i == stepIndex ? NovelAgentStepStatus.Pending : NovelAgentStepStatus.Pending;
-            }
-            run.Status = NovelAgentRunStatus.Planning;
-            session.ActiveRunId = run.RunId;
-
-            await _sessionManager.SendEventAsync(sessionId, new AgentSseEvent
-            {
-                Type = AgentSseEventType.RunUpdate,
-                RunId = run.RunId,
-                Message = $"已回退到步骤: {run.Steps[stepIndex].Name}",
-                Data = run,
-            }, ct);
-
-            return Ok(new { success = true, message = $"已回退到步骤: {run.Steps[stepIndex].Name}" });
-        }
-        finally
-        {
-            ProjectScopedExecutor.ClearCatalog();
-            workspaceEntry.Workspace.ClearRequestContext();
-            if (!string.IsNullOrEmpty(projectId))
-                _workspaceFactory.Release(userId, projectId);
-        }
-    }
-
-    private static AgentSessionSummary ToSummary(AgentSession session) => new(
-        session.SessionId,
-        session.Title,
-        session.Phase,
-        session.ActiveProjectId,
-        session.ActiveRunId,
-        session.IsArchived,
-        session.UpdatedAt.ToString("O"),
-        session.ChatHistory.Count);
-
-    private static AgentSessionDetail ToDetail(AgentSession session) => new(
-        session.SessionId,
-        session.Title,
-        session.Phase,
-        session.ActiveProjectId,
-        session.ActiveRunId,
-        session.IsArchived,
-        session.RunHistory,
-        session.CreatedAt.ToString("O"),
-        session.UpdatedAt.ToString("O"),
-        session.ChatHistory.Select(turn => new AgentConversationTurnView(
-            turn.Role,
-            turn.Content,
-            turn.CreatedAt.ToString("O"))).ToList(),
-        AgentWorkingMemorySnapshot.From(session.WorkingMemory));
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 }

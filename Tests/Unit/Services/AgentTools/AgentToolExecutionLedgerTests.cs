@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -75,6 +76,45 @@ public class AgentToolExecutionLedgerTests
     }
 
     [Fact]
+    public async Task StartAsync_PersistsToolSemanticArtifactContract()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var ledger = new AgentToolExecutionLedger(db, redis.Object, NullLogger<AgentToolExecutionLedger>.Instance);
+
+        await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "run-1",
+            Phase: "Production",
+            Risk: "High",
+            Call: new AgentToolCall { Name = "ProduceChapter" },
+            SideEffects: new AgentToolSideEffectSpec
+            {
+                ReadsSqliteEntities = { "agent_runs" },
+                WritesSqliteEntities = { "chapters" }
+            },
+            SemanticContract: new AgentToolSemanticSpec
+            {
+                DisplayName = "生产章节闭环",
+                InputArtifacts = { "chapter_plan_run", "continuity_pack", "knowledge_binding_snapshot" },
+                OutputArtifacts = { "chapter_commit", "chapter_version" },
+                IdempotencyPolicy = "Uses runId + targetChapterId + commitPolicy.",
+                RollbackPolicy = "Recover through ChapterVersion rollback."
+            }));
+
+        var row = await db.AgentToolExecutions.SingleAsync();
+        using var document = JsonDocument.Parse(row.SemanticContractJson);
+        var root = document.RootElement;
+        Assert.Equal("生产章节闭环", root.GetProperty("displayName").GetString());
+        Assert.Contains(root.GetProperty("inputArtifacts").EnumerateArray(), item => item.GetString() == "continuity_pack");
+        Assert.Contains(root.GetProperty("outputArtifacts").EnumerateArray(), item => item.GetString() == "chapter_version");
+        Assert.Contains("commitPolicy", root.GetProperty("idempotencyPolicy").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ChapterVersion", root.GetProperty("rollbackPolicy").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CompleteAsync_FailedResultStoresFailureForRecovery()
     {
         await using var db = CreateDb();
@@ -88,7 +128,7 @@ public class AgentToolExecutionLedgerTests
             RunId: null,
             Phase: "Creation",
             Risk: "High",
-            Call: new AgentToolCall { Name = "GenerateChapterWithChanges" }));
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
 
         await ledger.CompleteAsync(
             started.Id,
@@ -97,16 +137,252 @@ public class AgentToolExecutionLedgerTests
                 Success = false,
                 Message = "生成正文前必须先构建章节上下文包。",
                 IsRepairable = true,
-                RecommendedToolName = "BuildChapterContextPackage",
+                RecommendedToolName = "ProduceChapter",
                 MissingPrerequisite = "chapter_context_package"
             });
 
         var row = await db.AgentToolExecutions.SingleAsync();
         Assert.Equal("failed", row.Status);
-        Assert.Equal("GenerateChapterWithChanges", row.ToolName);
-        Assert.Equal("BuildChapterContextPackage", row.RecommendedNextTool);
+        Assert.Equal("ProduceChapter", row.ToolName);
+        Assert.Equal("ProduceChapter", row.RecommendedNextTool);
         Assert.Equal("chapter_context_package", row.MissingPrerequisite);
         Assert.Contains("上下文包", row.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_PersistsStructuredToolFailureAndArtifactKind()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var ledger = new AgentToolExecutionLedger(db, redis.Object, NullLogger<AgentToolExecutionLedger>.Instance);
+
+        var started = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "run-1",
+            Phase: "Production",
+            Risk: "High",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+
+        await ledger.CompleteAsync(
+            started.Id,
+            new AgentToolExecutionResult
+            {
+                Success = false,
+                Phase = "changes_extracted",
+                Message = "CHANGES JSON 不是可解析对象。",
+                Failure = new AgentToolFailure
+                {
+                    Code = "CHANGES_PARSE_FAILED",
+                    FailedStage = "ChangesExtracted",
+                    Reason = "CHANGES JSON 不是可解析对象。",
+                    Recoverable = true,
+                    RecommendedAction = "ExtractChanges",
+                    ArtifactIds = new[] { "draft-1" }
+                },
+                Artifact = new AgentToolArtifact
+                {
+                    ArtifactType = "chapter_draft",
+                    ArtifactId = "draft-1",
+                    OutputKind = AgentToolOutputKind.ProcessArtifact,
+                    UserVisibleWhere = new[] { AgentRuntimeEventSurface.Workflow },
+                    Summary = "已保留可恢复草稿。"
+                },
+                Suggestions = new[] { "重新抽取 CHANGES", "基于草稿继续修订" },
+                RequiresConfirmation = true
+            });
+
+        var row = await db.AgentToolExecutions.SingleAsync();
+        Assert.Equal("failed", row.Status);
+        Assert.Equal("CHANGES_PARSE_FAILED", row.ErrorType);
+        Assert.Contains("\"failedStage\":\"ChangesExtracted\"", row.FailureJson);
+        Assert.Contains("\"artifactIds\":[\"draft-1\"]", row.FailureJson);
+        using var failureJson = JsonDocument.Parse(row.FailureJson);
+        var failureRoot = failureJson.RootElement;
+        Assert.True(failureRoot.GetProperty("requiresUserDecision").GetBoolean());
+        var producedArtifact = failureRoot.GetProperty("producedArtifacts").EnumerateArray().Single();
+        Assert.Equal("chapter_draft", producedArtifact.GetProperty("artifactType").GetString());
+        Assert.Equal("draft-1", producedArtifact.GetProperty("artifactId").GetString());
+        Assert.Equal("已保留可恢复草稿。", producedArtifact.GetProperty("summary").GetString());
+        var recoverableActions = failureRoot.GetProperty("recoverableActions")
+            .EnumerateArray()
+            .Select(x => x.GetString())
+            .ToArray();
+        Assert.Equal(new[] { "重新抽取 CHANGES", "基于草稿继续修订" }, recoverableActions);
+        Assert.Contains("\"outputKind\":\"ProcessArtifact\"", row.ArtifactJson);
+        Assert.Contains("\"userVisibleWhere\":[\"workflow\"]", row.ArtifactJson);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_FailedInputArtifactResolutionPersistsInputArtifactStates()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var ledger = new AgentToolExecutionLedger(db, redis.Object, NullLogger<AgentToolExecutionLedger>.Instance);
+
+        var started = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "run-next",
+            Phase: "Production",
+            Risk: "High",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+
+        await ledger.CompleteAsync(
+            started.Id,
+            new AgentToolExecutionResult
+            {
+                Success = false,
+                RunId = "run-next",
+                Phase = "semantic_precondition",
+                Message = "上一章提交后后台沉淀尚未完成，不能继续生产下一章。",
+                MissingPrerequisite = "previous_chapter_post_commit_outbox",
+                Failure = new AgentToolFailure
+                {
+                    Code = "TOOL_INPUT_ARTIFACT_BLOCKED",
+                    FailedStage = "semantic_precondition",
+                    Reason = "上一章提交后后台沉淀尚未完成，不能继续生产下一章。",
+                    Recoverable = true,
+                    RecommendedAction = "QueryProductionOutbox",
+                    RecoverableActions = new[] { "QueryNovelProductionState", "QueryProductionOutbox", "RetryProductionOutbox" }
+                },
+                Data = new ToolInputArtifactResolution
+                {
+                    BlocksExecution = true,
+                    MissingPrerequisite = "previous_chapter_post_commit_outbox",
+                    FailureCode = "TOOL_INPUT_ARTIFACT_BLOCKED",
+                    Reason = "上一章提交后后台沉淀尚未完成，不能继续生产下一章。",
+                    RunId = "run-next",
+                    InputArtifacts = new[]
+                    {
+                        new ToolInputArtifactState(
+                            "post_commit_outbox",
+                            "pending",
+                            "outbox-finalize-001",
+                            "上一章提交后事实沉淀仍在等待处理。",
+                            true,
+                            new[] { "QueryNovelProductionState", "QueryProductionOutbox", "RetryProductionOutbox" })
+                    }
+                }
+            });
+
+        var row = await db.AgentToolExecutions.SingleAsync();
+        using var failureJson = JsonDocument.Parse(row.FailureJson);
+        var inputArtifact = failureJson.RootElement.GetProperty("inputArtifacts").EnumerateArray().Single();
+        Assert.Equal("post_commit_outbox", inputArtifact.GetProperty("artifactName").GetString());
+        Assert.Equal("pending", inputArtifact.GetProperty("status").GetString());
+        Assert.Equal("outbox-finalize-001", inputArtifact.GetProperty("artifactId").GetString());
+        Assert.True(inputArtifact.GetProperty("blocksExecution").GetBoolean());
+        var actions = inputArtifact.GetProperty("recommendedActions")
+            .EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains("RetryProductionOutbox", actions);
+    }
+
+    [Fact]
+    public async Task FailRunningForSessionAsync_ClosesOnlyMatchingRunningExecutions()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var ledger = new AgentToolExecutionLedger(db, redis.Object, NullLogger<AgentToolExecutionLedger>.Instance);
+
+        var matching = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "chapter-run-1",
+            Phase: "Drafting",
+            Risk: "Medium",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+        var otherSession = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-2",
+            RunId: "chapter-run-2",
+            Phase: "Drafting",
+            Risk: "Medium",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+        await ledger.CompleteAsync(matching.Id, new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "draft_generated",
+            Message = "先完成一条"
+        });
+        var stillRunning = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "chapter-run-3",
+            Phase: "Drafting",
+            Risk: "Medium",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+
+        var closed = await ledger.FailRunningForSessionAsync(
+            "user-1",
+            "session-1",
+            "project-1",
+            "后台执行被应用停止取消。");
+
+        Assert.Equal(1, closed);
+        var rows = await db.AgentToolExecutions.ToDictionaryAsync(x => x.Id);
+        Assert.Equal("succeeded", rows[matching.Id].Status);
+        Assert.Equal("failed", rows[stillRunning.Id].Status);
+        Assert.Equal("runtime_cancelled", rows[stillRunning.Id].ResultPhase);
+        Assert.Contains("应用停止", rows[stillRunning.Id].ErrorMessage);
+        Assert.NotNull(rows[stillRunning.Id].CompletedAt);
+        Assert.Equal("running", rows[otherSession.Id].Status);
+    }
+
+    [Fact]
+    public async Task FailAllRunningAsync_ClosesStaleRunningExecutionsOnStartup()
+    {
+        await using var db = CreateDb();
+        var redis = new Mock<IDistributedCacheService>();
+        var ledger = new AgentToolExecutionLedger(db, redis.Object, NullLogger<AgentToolExecutionLedger>.Instance);
+
+        var staleOne = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            SessionId: "session-1",
+            RunId: "chapter-run-1",
+            Phase: "Drafting",
+            Risk: "Medium",
+            Call: new AgentToolCall { Name = "ProduceChapter" }));
+        var staleTwo = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-2",
+            ProjectId: null,
+            SessionId: "session-2",
+            RunId: null,
+            Phase: "Conversation",
+            Risk: "Low",
+            Call: new AgentToolCall { Name = "tool_search" }));
+        await ledger.CompleteAsync(staleTwo.Id, new AgentToolExecutionResult
+        {
+            Success = true,
+            Phase = "tool_search",
+            Message = "已完成"
+        });
+        var stillStale = await ledger.StartAsync(new AgentToolExecutionStart(
+            UserId: "user-2",
+            ProjectId: null,
+            SessionId: "session-2",
+            RunId: null,
+            Phase: "Conversation",
+            Risk: "Low",
+            Call: new AgentToolCall { Name = "QueryWorkspaceState" }));
+
+        var closed = await ledger.FailAllRunningAsync("应用启动时清理上次未收尾的工具执行。");
+
+        Assert.Equal(2, closed);
+        var rows = await db.AgentToolExecutions.ToDictionaryAsync(x => x.Id);
+        Assert.Equal("failed", rows[staleOne.Id].Status);
+        Assert.Equal("succeeded", rows[staleTwo.Id].Status);
+        Assert.Equal("failed", rows[stillStale.Id].Status);
+        Assert.Equal("runtime_cancelled", rows[staleOne.Id].ResultPhase);
+        Assert.Equal("runtime_cancelled", rows[stillStale.Id].ErrorType);
     }
 
     [Fact]

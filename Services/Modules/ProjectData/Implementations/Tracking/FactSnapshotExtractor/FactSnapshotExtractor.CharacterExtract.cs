@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using GuideCharacterState = TM.Services.Modules.ProjectData.Models.Guides.CharacterState;
 using GuideRelationshipState = TM.Services.Modules.ProjectData.Models.Guides.RelationshipState;
 using TM.Services.Modules.ProjectData.Models.Tracking;
+using TM.Services.Modules.ProjectData.Interfaces;
 
 namespace TM.Services.Modules.ProjectData.Implementations
 {
@@ -58,7 +59,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     var parsedPrev = ChapterParserHelper.ParseChapterId(prevChapterId);
                     if (parsedPrev.HasValue && parsedPrev.Value.volumeNumber > 1)
                     {
-                        var archives = await ServiceLocator.Get<VolumeFactArchiveStore>()
+                        var archives = await ServiceLocator.Get<IVolumeFactArchiveService>()
                             .GetPreviousArchivesAsync(parsedPrev.Value.volumeNumber).ConfigureAwait(false);
                         var archivesDesc = archives.OrderByDescending(a => a.VolumeNumber).ToList();
                         if (archivesDesc.Count == 0)

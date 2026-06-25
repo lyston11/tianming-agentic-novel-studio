@@ -13,19 +13,22 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
     private readonly IAgentToolExecutionLedger _toolExecutionLedger;
     private readonly IAgentRuntimeRunService _runtimeRuns;
     private readonly IAgentRuntimeEventService _runtimeEvents;
+    private readonly AgentToolRegistry _toolRegistry;
 
     public AgentSessionResumeService(
         AgentSessionManager sessions,
         IToolSearchCacheService toolSearchCache,
         IAgentToolExecutionLedger toolExecutionLedger,
         IAgentRuntimeRunService runtimeRuns,
-        IAgentRuntimeEventService runtimeEvents)
+        IAgentRuntimeEventService runtimeEvents,
+        AgentToolRegistry toolRegistry)
     {
         _sessions = sessions;
         _toolSearchCache = toolSearchCache;
         _toolExecutionLedger = toolExecutionLedger;
         _runtimeRuns = runtimeRuns;
         _runtimeEvents = runtimeEvents;
+        _toolRegistry = toolRegistry;
     }
 
     public async Task<AgentSessionResumeResponse> ResumeAsync(string sessionId, CancellationToken ct = default)
@@ -40,7 +43,8 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
         if (string.IsNullOrWhiteSpace(phase))
             phase = "Conversation";
 
-        var toolSearchLookup = await _toolSearchCache.GetAsync(session, phase, ct).ConfigureAwait(false);
+        var toolCatalogSignature = ToolCatalogSignature.Compute(_toolRegistry.ListToolSchemas());
+        var toolSearchLookup = await _toolSearchCache.GetAsync(session, phase, toolCatalogSignature, ct).ConfigureAwait(false);
         var tools = toolSearchLookup.Tools?.ToList() ?? new List<ToolSchema>();
         var recentToolExecutions = await _toolExecutionLedger
             .GetRecentAsync(
@@ -99,11 +103,34 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
 
         return new AgentRuntimeEventView
         {
+            EventId = evt.Id,
             Type = evt.Type,
             RunId = evt.RuntimeRunId,
+            SourceMessageId = ExtractString(data, "sourceMessageId"),
+            Stage = evt.Stage,
+            Status = evt.Status,
+            ArtifactType = evt.ArtifactType,
+            ArtifactId = evt.ArtifactId,
+            DisplaySurface = evt.DisplaySurface,
+            DisplayPolicy = evt.DisplayPolicy,
             Message = evt.Message,
             Data = data,
             Timestamp = evt.CreatedAt
         };
+    }
+
+    private static string ExtractString(JsonElement data, string propertyName)
+    {
+        if (data.ValueKind != JsonValueKind.Object)
+            return string.Empty;
+
+        foreach (var property in data.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind == JsonValueKind.String)
+                return property.Value.GetString() ?? string.Empty;
+        }
+
+        return string.Empty;
     }
 }

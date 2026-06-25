@@ -85,7 +85,10 @@ public sealed class AgentMissionTaskTreeService
             volume.UpdatedAt = DateTime.UtcNow;
         }
 
-        foreach (var run in bible.AgentRuns.Where(r => r.Intent == NovelAgentIntent.PlanChapter || !string.IsNullOrWhiteSpace(r.TargetChapterId)))
+        foreach (var run in bible.AgentRuns
+                     .Where(r => r.Intent == NovelAgentIntent.PlanChapter || !string.IsNullOrWhiteSpace(r.TargetChapterId))
+                     .OrderBy(r => r.UpdatedAt)
+                     .ThenBy(r => r.CreatedAt))
         {
             var volume = FindOrCreateVolumeForRun(plan, bible, run);
             var chapter = EnsureChapter(volume, FirstNonEmpty(run.TargetChapterId, run.ChapterBrief?.ChapterId, run.RunId));
@@ -276,7 +279,7 @@ public sealed class AgentMissionTaskTreeService
                 Status = MapTaskStatus(chapter, session),
                 NextAction = FirstNonEmpty(chapter.NextAction, "PlanChapter"),
                 BlockedReason = FirstNonEmpty(chapter.QualityIssueSummary, chapter.GateIssueSummary),
-                Risk = chapter.NextAction is "GenerateChapterWithChanges" or "RepairChapterDraft" or "CommitValidatedChapter" ? "High" : "Medium",
+                Risk = chapter.NextAction == "ProduceChapter" ? "High" : "Medium",
                 RequiresConfirmation = false,
                 Reason = FirstNonEmpty(chapter.LastTransitionReason, chapter.DependencyStatus, chapter.QualityStatus, chapter.Status),
                 UpdatedAt = chapter.UpdatedAt,
@@ -318,10 +321,14 @@ public sealed class AgentMissionTaskTreeService
         var allowed = new List<string>();
         if (bible.Constitution == null)
         {
+            if (HasPendingStoryFoundationCandidates(bible))
+                allowed.Add("CommitStoryFoundation");
             allowed.Add("PlanStoryFoundation");
         }
         else if (bible.VolumeArcs.Count == 0)
         {
+            if (HasPendingVolumeArcPlan(bible))
+                allowed.Add("CommitVolumeArc");
             allowed.Add("PlanVolumeArc");
         }
         else
@@ -339,6 +346,18 @@ public sealed class AgentMissionTaskTreeService
             .Take(12)
             .ToList();
     }
+
+    private static bool HasPendingVolumeArcPlan(StoryBibleDocument bible) =>
+        bible.AgentRuns.Any(r =>
+            r.Intent == NovelAgentIntent.PlanVolumeArc &&
+            r.VolumeArcPlan != null &&
+            r.Status is not (NovelAgentRunStatus.Completed or NovelAgentRunStatus.Failed or NovelAgentRunStatus.Cancelled));
+
+    private static bool HasPendingStoryFoundationCandidates(StoryBibleDocument bible) =>
+        bible.AgentRuns.Any(r =>
+            r.Intent == NovelAgentIntent.CreateStoryFoundation &&
+            r.MacroCandidates.Count > 0 &&
+            r.Status is not (NovelAgentRunStatus.Failed or NovelAgentRunStatus.Cancelled));
 
     private static void SyncVerifiedState(AgentMissionPlan plan, AgentSession session)
     {
@@ -419,7 +438,7 @@ public sealed class AgentMissionTaskTreeService
                 chapter.RequiresRevalidation = false;
                 chapter.Status = "needs_context_rebuild";
                 chapter.ContextStatus = "stale";
-                chapter.NextAction = "BuildChapterContextPackage";
+                chapter.NextAction = "ProduceChapter";
                 chapter.UserVisibleStatus = MapUserVisibleStatus(chapter);
             }
             else if (mode == "needs_revalidation")
@@ -427,7 +446,7 @@ public sealed class AgentMissionTaskTreeService
                 chapter.RequiresRevalidation = true;
                 chapter.Status = "needs_revalidation";
                 chapter.GateStatus = "stale";
-                chapter.NextAction = "ValidateChapterDraft";
+                chapter.NextAction = "ProduceChapter";
                 chapter.UserVisibleStatus = MapUserVisibleStatus(chapter);
             }
         }
@@ -474,13 +493,13 @@ public sealed class AgentMissionTaskTreeService
         if (qualityGate.Status is "fail" or "needs_rewrite")
         {
             chapter.Status = "quality_failed";
-            chapter.NextAction = "RepairChapterDraft";
+            chapter.NextAction = "ProduceChapter";
         }
         else if (qualityGate.Status is "pass" or "warn")
         {
             chapter.Status = chapter.GateStatus == "validated" ? "quality_passed" : chapter.Status;
             if (chapter.GateStatus == "validated")
-                chapter.NextAction = "CommitValidatedChapter";
+                chapter.NextAction = "ProduceChapter";
         }
         chapter.UserVisibleStatus = MapUserVisibleStatus(chapter);
     }
@@ -579,8 +598,10 @@ public sealed class AgentMissionTaskTreeService
             return "pending_quality_review";
         if (chapter.GateStatus == "validated")
             return "validated";
-        if (chapter.GateStatus is "failed" or "gate_failed" || run.Status == NovelAgentRunStatus.Repairing)
-            return run.Status == NovelAgentRunStatus.Repairing ? "repairing" : "gate_failed";
+        if (chapter.GateStatus is "failed" or "gate_failed")
+            return "gate_failed";
+        if (run.Status == NovelAgentRunStatus.Repairing)
+            return "repairing";
         if (chapter.DraftStatus == "draft_generated")
             return "draft_generated";
         if (chapter.ContextStatus is "ready" or "context_ready")
@@ -609,18 +630,18 @@ public sealed class AgentMissionTaskTreeService
     private static string ComputeNextAction(AgentChapterTask chapter) =>
         chapter.Status switch
         {
-            "planned" => chapter.CandidateStatus == "candidate_selected" ? "BuildChapterContextPackage" : "SelectChapterCandidate",
-            "candidate_selected" => "BuildChapterContextPackage",
-            "context_ready" => "GenerateChapterWithChanges",
-            "draft_generated" => "ValidateChapterDraft",
-            "gate_failed" => "RepairChapterDraft",
-            "repairing" => "ValidateChapterDraft",
-            "validated" => chapter.QualityStatus == "pending_quality_review" ? "ReviewChapter" : "CommitValidatedChapter",
-            "pending_quality_review" => "ReviewChapter",
-            "quality_failed" => "RepairChapterDraft",
-            "quality_passed" => "CommitValidatedChapter",
-            "needs_context_rebuild" => "BuildChapterContextPackage",
-            "needs_revalidation" => "ValidateChapterDraft",
+            "planned" => chapter.CandidateStatus == "candidate_selected" ? "ProduceChapter" : "SelectChapterCandidate",
+            "candidate_selected" or
+                "context_ready" or
+                "draft_generated" or
+                "gate_failed" or
+                "repairing" or
+                "validated" or
+                "pending_quality_review" or
+                "quality_failed" or
+                "quality_passed" or
+                "needs_context_rebuild" or
+                "needs_revalidation" => "ProduceChapter",
             "requires_review" => "ReviewChapter",
             "committed" => "ReviewChapter",
             _ => "PlanChapter",
@@ -636,16 +657,27 @@ public sealed class AgentMissionTaskTreeService
             actions.Add("ReviewChapter");
         if (chapter.Status is "quality_passed")
             actions.Add("ReviewChapter");
-        if (chapter.Status is "gate_failed" or "repairing" or "quality_failed")
-            actions.Add("ValidateChapterDraft");
-        if (chapter.Status is "needs_context_rebuild" || chapter.RequiresContextRebuild)
-            actions.Add("BuildChapterContextPackage");
-        if (chapter.Status is "needs_revalidation" || chapter.RequiresRevalidation)
-            actions.Add("ValidateChapterDraft");
+        if (IsChapterProductionState(chapter) || chapter.RequiresContextRebuild || chapter.RequiresRevalidation)
+            actions.Add("ProduceChapter");
         if (chapter.Status == "requires_review")
             actions.Add("AnalyzeDependencyImpact");
         return actions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
+
+    private static bool IsChapterProductionState(AgentChapterTask chapter) =>
+        chapter.Status == "planned" && chapter.CandidateStatus == "candidate_selected" ||
+        chapter.Status is
+            "candidate_selected" or
+            "context_ready" or
+            "draft_generated" or
+            "gate_failed" or
+            "repairing" or
+            "validated" or
+            "pending_quality_review" or
+            "quality_failed" or
+            "quality_passed" or
+            "needs_context_rebuild" or
+            "needs_revalidation";
 
     private static string MapUserVisibleStatus(AgentChapterTask chapter) =>
         chapter.Status switch
@@ -670,7 +702,7 @@ public sealed class AgentMissionTaskTreeService
 
     private static string MapTaskStatus(AgentChapterTask chapter, AgentSession session)
     {
-        if (chapter.Status is "gate_failed" or "blocked" or "quality_failed" or "needs_context_rebuild" or "needs_revalidation" or "requires_review")
+        if (chapter.Status == "blocked" || chapter.QualityStatus == "blocked")
             return "blocked";
         if (chapter.Status == "committed")
             return "done";

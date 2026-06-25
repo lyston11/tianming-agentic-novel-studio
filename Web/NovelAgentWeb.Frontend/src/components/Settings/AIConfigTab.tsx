@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import CollapsePanel from './CollapsePanel';
-import type { UserSettings, LlmPreset } from '../../api/types';
+import SettingsSelect from './SettingsSelect';
+import type { UserSettings, LlmPreset, LlmConnectionHealth } from '../../api/types';
 
 interface AIConfigTabProps {
   form: Partial<UserSettings>;
@@ -13,6 +14,10 @@ interface AIConfigTabProps {
   applyPreset: (preset: LlmPreset) => void;
   hasCustomConfig: boolean;
   samePreset: (preset: LlmPreset, form: Partial<UserSettings>) => boolean;
+  llmHealth?: LlmConnectionHealth;
+  isLlmHealthFetching: boolean;
+  onRefreshLlmHealth: () => void;
+  hasUnsavedChanges: boolean;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -26,6 +31,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   custom: '自定义',
 };
 
+const PROVIDER_OPTIONS = Object.entries(PROVIDER_LABELS).map(([value, label]) => ({ value, label }));
+
+const EMBEDDING_PROVIDER_OPTIONS = [
+  { value: 'local', label: '本地 ONNX 模型' },
+  { value: 'openai', label: 'OpenAI Embedding' },
+  { value: 'custom', label: '自定义' },
+];
+
 export default function AIConfigTab({
   form,
   update,
@@ -37,6 +50,10 @@ export default function AIConfigTab({
   applyPreset,
   hasCustomConfig,
   samePreset,
+  llmHealth,
+  isLlmHealthFetching,
+  onRefreshLlmHealth,
+  hasUnsavedChanges,
 }: AIConfigTabProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showEmbeddingApiKey, setShowEmbeddingApiKey] = useState(false);
@@ -46,6 +63,24 @@ export default function AIConfigTab({
       {/* 2.1 LLM Config */}
       <CollapsePanel id="ai-1" title="大模型配置" defaultOpen={true}>
         <div className="form-grid">
+          <div className={`llm-health-card ${llmHealth?.status ?? 'unknown'}`}>
+            <div className="llm-health-main">
+              <span className="llm-health-dot" />
+              <div className="llm-health-copy">
+                <strong>{healthTitle(llmHealth, isLlmHealthFetching)}</strong>
+                <span>{healthMessage(llmHealth, isLlmHealthFetching, hasUnsavedChanges)}</span>
+              </div>
+            </div>
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={onRefreshLlmHealth}
+              disabled={isLlmHealthFetching}
+            >
+              {isLlmHealthFetching ? '检测中...' : '重新检测'}
+            </button>
+          </div>
+
           {/* Presets */}
           <div className="preset-grid">
             {hasCustomConfig && (
@@ -69,11 +104,11 @@ export default function AIConfigTab({
 
           <div className="form-field">
             <label>服务商</label>
-            <select value={form.llmProvider || 'openai'} onChange={(e) => update('llmProvider', e.target.value)}>
-              {Object.entries(PROVIDER_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <SettingsSelect
+              value={form.llmProvider || 'openai'}
+              options={PROVIDER_OPTIONS}
+              onChange={(value) => update('llmProvider', value)}
+            />
           </div>
 
           <div className="form-field">
@@ -188,11 +223,11 @@ export default function AIConfigTab({
           <p className="settings-desc">配置用于 RAG 检索的 Embedding 模型。本地模型无需联网即可使用。</p>
           <div className="form-field">
             <label>Provider</label>
-            <select value={form.embeddingProvider || 'local'} onChange={(e) => update('embeddingProvider', e.target.value)}>
-              <option value="local">本地 ONNX 模型</option>
-              <option value="openai">OpenAI Embedding</option>
-              <option value="custom">自定义</option>
-            </select>
+            <SettingsSelect
+              value={form.embeddingProvider || 'local'}
+              options={EMBEDDING_PROVIDER_OPTIONS}
+              onChange={(value) => update('embeddingProvider', value)}
+            />
           </div>
           <div className="form-field">
             <label>模型</label>
@@ -234,4 +269,35 @@ export default function AIConfigTab({
       </CollapsePanel>
     </div>
   );
+}
+
+function healthTitle(health: LlmConnectionHealth | undefined, loading: boolean): string {
+  if (loading && !health) return '正在检测模型连接';
+  switch (health?.status) {
+    case 'ready':
+      return '模型连接可用';
+    case 'authentication_failed':
+      return '模型认证失败';
+    case 'missing_config':
+      return '模型配置不完整';
+    case 'connection_failed':
+      return '模型连接失败';
+    case 'provider_error':
+      return '模型服务异常';
+    default:
+      return '模型状态未知';
+  }
+}
+
+function healthMessage(
+  health: LlmConnectionHealth | undefined,
+  loading: boolean,
+  hasUnsavedChanges: boolean,
+): string {
+  if (loading && !health) return '正在读取当前已保存配置。';
+  if (!health) return '还没有当前配置的健康检查结果。';
+  const savedNotice = hasUnsavedChanges ? '（当前表单有未保存改动）' : '';
+  const detail = health.recommendedAction || health.message || '请检查模型配置。';
+  const target = [health.provider, health.model].filter(Boolean).join(' / ');
+  return `${target || '未配置模型'}：${detail}${savedNotice}`;
 }

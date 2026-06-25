@@ -95,9 +95,9 @@ Located at `Web/NovelAgentWeb/appsettings.json`, this file contains core configu
     "BatchSize": 100
   },
   "Embedding": {
-    "Provider": "stub",
-    "Model": "stub-hash-v1",
-    "RequireRealEmbeddings": false
+    "Provider": "bge-small-zh",
+    "Model": "bge-small-zh-v1.5",
+    "RequireRealEmbeddings": true
   },
   "JwtSettings": {
     "SecretKey": "CHANGE_THIS_IN_PRODUCTION",
@@ -120,10 +120,10 @@ Located at `Web/NovelAgentWeb/appsettings.json`, this file contains core configu
 | `Qdrant:Port` | Qdrant gRPC port | `6334` | Yes |
 | `Qdrant:VectorDimension` | Embedding vector size | `512` | Yes |
 | `Qdrant:BatchSize` | Bulk operation batch size | `100` | No |
-| `Embedding:Provider` | Embedding provider. Current build supports `stub` only | `stub` | Yes |
-| `Embedding:RequireRealEmbeddings` | Fail startup if real embeddings are required but unavailable | `false` | No |
-| `Redis:Enabled` | Enable Redis-backed distributed cache; `false` uses local distributed memory cache | `false` | No |
-| `Redis:ConnectionString` | Redis endpoint when `Redis:Enabled=true` | `localhost:6379` | No |
+| `Embedding:Provider` | Embedding provider. Current build supports `bge-small-zh` | `bge-small-zh` | Yes |
+| `Embedding:RequireRealEmbeddings` | Fail startup if real embeddings are unavailable | `true` | Yes |
+| `Redis:Enabled` | Enable Redis-backed runtime state, locks, event broadcast, and tool cache | `true` | Yes |
+| `Redis:ConnectionString` | Redis endpoint | `localhost:6379` | Yes |
 | `JwtSettings:SecretKey` | JWT signing secret (min 32 chars) | - | **Yes** |
 | `JwtSettings:Issuer` | JWT token issuer | `NovelAgentWeb` | Yes |
 | `JwtSettings:Audience` | JWT token audience | `NovelAgentWeb` | Yes |
@@ -153,20 +153,16 @@ The system uses the following tables:
 - **CharacterLedgers**: Character state snapshots
 - **CanonLedgers**: Story canon entries
 
-### Migration Script
+### Database And Index Updates
 
-For migrating from legacy JSON storage to SQLite, use:
+Database schema updates are handled by the current Web project migrations:
 
 ```bash
-cd Scripts/Migration
-dotnet run
+cd Web/NovelAgentWeb
+dotnet ef database update
 ```
 
-This will:
-1. Read existing JSON projects from `App_Data/Projects/`
-2. Create corresponding database entries
-3. Preserve file relationships
-4. Log migration results
+Qdrant knowledge, memory, and chapter indexes are rebuilt through the current outbox and vectorization services. Legacy JSON/vector migration tools are intentionally removed from the production path.
 
 ---
 
@@ -354,11 +350,10 @@ Configuration is loaded in this order (later overrides earlier):
 curl http://localhost:5002/health
 ```
 
-The health response includes an `embedding` block. In the default local build it
-reports `provider=stub`, `semanticQuality=degraded`, and
-`deterministicStub=true`; this means Qdrant/RAG plumbing is testable, but search
-quality is not model-grade semantic retrieval until a real embedding provider is
-implemented and configured.
+The health response includes embedding, Qdrant, Redis, and database status. The
+current runtime expects `provider=bge-small-zh` with model-grade semantic
+retrieval; missing model files or unavailable vector infrastructure should be
+treated as deployment errors.
 
 ### Database Health Check
 

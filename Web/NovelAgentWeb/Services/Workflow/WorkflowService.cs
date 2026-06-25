@@ -1,9 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using TM.Framework.Common.Helpers;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 
@@ -20,6 +23,9 @@ public class WorkflowService : IWorkflowService
     private readonly AgentSessionManager _sessionManager;
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IProductionWorkflowBridge _productionWorkflowBridge;
+    private readonly IProductionChainProjectionService _productionChainProjection;
+    private readonly INovelProductionStateQueryService? _productionStateQuery;
     private readonly ILogger<WorkflowService> _logger;
 
     public WorkflowService(
@@ -29,7 +35,10 @@ public class WorkflowService : IWorkflowService
         AgentSessionManager sessionManager,
         MissionBlackboardRecoveryService blackboardRecovery,
         IServiceScopeFactory scopeFactory,
-        ILogger<WorkflowService> logger)
+        IProductionWorkflowBridge productionWorkflowBridge,
+        IProductionChainProjectionService productionChainProjection,
+        ILogger<WorkflowService> logger,
+        INovelProductionStateQueryService? productionStateQuery = null)
     {
         _db = db;
         _currentUserService = currentUserService;
@@ -37,6 +46,9 @@ public class WorkflowService : IWorkflowService
         _sessionManager = sessionManager;
         _blackboardRecovery = blackboardRecovery;
         _scopeFactory = scopeFactory;
+        _productionWorkflowBridge = productionWorkflowBridge;
+        _productionChainProjection = productionChainProjection;
+        _productionStateQuery = productionStateQuery;
         _logger = logger;
     }
 
@@ -54,7 +66,7 @@ public class WorkflowService : IWorkflowService
         try
         {
             var catalog = new NovelProjectCatalog(workspaceEntry.Workspace, _scopeFactory);
-            await catalog.UpsertAsync(MapToCatalogProject(project), makeActive: false, ct);
+            await catalog.UpsertAsync(MapToCatalogProject(project), ct);
 
             var workflow = await ProjectWorkflow.BuildAsync(
                 workspaceEntry.Workspace,
@@ -67,15 +79,25 @@ public class WorkflowService : IWorkflowService
             if (workflow == null)
                 throw new KeyNotFoundException($"Project {projectId} not found");
 
-            var dbLibrary = await BuildDatabaseLibraryAsync(project, workflow.Library, workflow.ChapterArtifacts, ct);
+            var productionEvents = await _productionWorkflowBridge
+                .LoadProjectEventsAsync(project.Id, cancellationToken: ct)
+                .ConfigureAwait(false);
+            var toolExecutions = await LoadProjectToolExecutionsAsync(project.Id, userId, ct)
+                .ConfigureAwait(false);
+            var productionChains = await BuildWorkflowProductionChainsAsync(project.Id, userId, productionEvents, ct)
+                .ConfigureAwait(false);
+            var creativeIntents = await LoadCreativeIntentEvidenceAsync(project.Id, userId, ct)
+                .ConfigureAwait(false);
+            var dbLibrary = await BuildDatabaseLibraryAsync(project, workflow.Library, workflow.ChapterArtifacts, productionChains, creativeIntents, ct);
             if (dbLibrary != null)
             {
                 var dbTimeline = ProjectWorkflow.BuildArtifactTimeline(
                     dbLibrary,
-                    new StoryBibleDocument { AgentRuns = workflow.Runs.ToList() },
+                    new StoryBibleDocument { AgentRuns = workflow.RawRuns.ToList() },
                     workflow.ChapterArtifacts,
-                    workflow.SchedulerTasks);
-                var dbStages = ProjectWorkflow.BuildProductionStages(dbLibrary, dbTimeline, workflow.SchedulerTasks);
+                    workflow.SchedulerTasks,
+                    productionEvents);
+                var dbStages = ProjectWorkflow.BuildProductionStages(dbLibrary, dbTimeline, workflow.SchedulerTasks, productionEvents, toolExecutions);
 
                 workflow = workflow with
                 {
@@ -83,11 +105,36 @@ public class WorkflowService : IWorkflowService
                     Library = dbLibrary,
                     IsEmptyProject = workflow.ActivityScore <= 0 && dbLibrary.PlannedChapterCount == 0 && dbLibrary.GeneratedChapterCount == 0,
                     ProductionStages = dbStages,
+                    ProductionChains = productionChains,
                     ArtifactTimeline = dbTimeline
                 };
             }
+            else if (productionEvents.Count > 0 || toolExecutions.Count > 0)
+            {
+                var timeline = ProjectWorkflow.BuildArtifactTimeline(
+                    workflow.Library,
+                    new StoryBibleDocument { AgentRuns = workflow.RawRuns.ToList() },
+                    workflow.ChapterArtifacts,
+                    workflow.SchedulerTasks,
+                    productionEvents);
+                workflow = workflow with
+                {
+                    ProductionStages = ProjectWorkflow.BuildProductionStages(
+                        workflow.Library,
+                        timeline,
+                        workflow.SchedulerTasks,
+                        productionEvents,
+                        toolExecutions),
+                    ProductionChains = productionChains,
+                    ArtifactTimeline = timeline
+                };
+            }
 
-            return workflow;
+            return workflow with
+            {
+                CreativeIntents = creativeIntents,
+                ProductionChains = productionChains
+            };
         }
         finally
         {
@@ -106,11 +153,24 @@ public class WorkflowService : IWorkflowService
         if (project == null)
             throw new KeyNotFoundException($"Project {request.ProjectId} not found");
 
+        var idempotencyKey = EmptyToNull(request.IdempotencyKey);
+        if (idempotencyKey != null)
+        {
+            var existing = await FindVolumeArcByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapToResponse(existing);
+        }
+
         var volumeArc = new VolumeArc
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
             ProjectId = request.ProjectId,
+            IdempotencyKey = idempotencyKey,
             VolumeNumber = request.VolumeNumber,
             VolumeTitle = request.VolumeTitle,
             VolumeTheme = request.VolumeTheme,
@@ -129,7 +189,23 @@ public class WorkflowService : IWorkflowService
         };
 
         _db.VolumeArcs.Add(volumeArc);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException) when (idempotencyKey != null)
+        {
+            _db.Entry(volumeArc).State = EntityState.Detached;
+            var existing = await FindVolumeArcByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapToResponse(existing);
+
+            throw;
+        }
 
         _logger.LogInformation("Created volume arc {VolumeArcId} for project {ProjectId}", volumeArc.Id, request.ProjectId);
 
@@ -269,6 +345,297 @@ public class WorkflowService : IWorkflowService
         };
     }
 
+    private async Task<VolumeArc?> FindVolumeArcByIdempotencyKeyAsync(
+        string projectId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _db.VolumeArcs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(volumeArc =>
+                    volumeArc.ProjectId == projectId &&
+                    volumeArc.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private async Task<IReadOnlyList<WorkflowCreativeIntentEvidence>> LoadCreativeIntentEvidenceAsync(
+        string projectId,
+        string userId,
+        CancellationToken ct)
+    {
+        return await _db.CreativeIntents
+            .AsNoTracking()
+            .Where(intent => intent.ProjectId == projectId && intent.UserId == userId)
+            .OrderByDescending(intent => intent.UpdatedAt)
+            .Take(50)
+            .Select(intent => new WorkflowCreativeIntentEvidence(
+                intent.Id,
+                intent.NormalizedIntent,
+                intent.TargetScope,
+                intent.TargetChapterId ?? string.Empty,
+                intent.ImpactLevel,
+                intent.Source,
+                intent.Status))
+            .ToListAsync(ct);
+    }
+
+    private async Task<IReadOnlyList<WorkflowChapterRevisionPlanSummary>> LoadChapterRevisionPlanSummariesAsync(
+        string projectId,
+        string userId,
+        CancellationToken ct)
+    {
+        var plans = await _db.RevisionPlans
+            .AsNoTracking()
+            .Where(plan => plan.ProjectId == projectId && plan.UserId == userId)
+            .OrderByDescending(plan => plan.UpdatedAt)
+            .Take(200)
+            .Select(plan => new
+            {
+                plan.Id,
+                plan.Source,
+                plan.PlanType,
+                plan.TargetScope,
+                TargetChapterId = plan.TargetChapterId ?? string.Empty,
+                TargetChapterLogicalId = plan.TargetChapterLogicalId ?? string.Empty,
+                TargetChapterDisplayName = plan.TargetChapterDisplayName ?? string.Empty,
+                plan.Status,
+                plan.RiskLevel,
+                plan.Recommendation,
+                plan.AffectedChapterIdsJson,
+                plan.InvalidatedPackageIdsJson
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return plans
+            .Select(plan => new WorkflowChapterRevisionPlanSummary(
+                plan.Id,
+                plan.Source,
+                plan.PlanType,
+                plan.TargetScope,
+                plan.TargetChapterId,
+                plan.TargetChapterLogicalId,
+                plan.TargetChapterDisplayName,
+                plan.Status,
+                plan.RiskLevel,
+                plan.Recommendation,
+                ChapterIdentityResolver.ParseStringArray(plan.AffectedChapterIdsJson),
+                ChapterIdentityResolver.ParseStringArray(plan.InvalidatedPackageIdsJson)))
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<WorkflowProductionChain>> BuildWorkflowProductionChainsAsync(
+        string projectId,
+        string userId,
+        IReadOnlyList<WorkflowProductionEventSummary> productionEvents,
+        CancellationToken ct)
+    {
+        if (_productionStateQuery != null)
+        {
+            var state = await _productionStateQuery.QueryAsync(
+                    new NovelProductionStateQueryRequest(
+                        UserId: userId,
+                        SessionId: string.Empty,
+                        ProjectId: projectId,
+                        RunId: string.Empty,
+                        ChapterId: string.Empty,
+                        ChapterNumber: 0,
+                        IncludeEvents: true),
+                    ct)
+                .ConfigureAwait(false);
+            if (state?.ProductionChains.Count > 0)
+                return state.ProductionChains.Select(MapProductionChain).ToList();
+        }
+
+        return _productionChainProjection.BuildWorkflowChains(productionEvents);
+    }
+
+    private static WorkflowProductionChain MapProductionChain(NovelProductionChainState chain) =>
+        new(
+            chain.Id,
+            chain.ChapterId,
+            chain.ChapterLogicalId,
+            chain.ChapterDisplayName,
+            chain.RuntimeRunId,
+            chain.PackageId,
+            chain.Status,
+            chain.Summary,
+            chain.Steps
+                .OrderBy(step => step.CreatedAt)
+                .LastOrDefault(step => step.CreatedAt != default)
+                ?.CreatedAt
+                .ToString("O") ?? string.Empty,
+            chain.ChapterVersionId,
+            chain.ChapterVersionNumber,
+            chain.FactSnapshotId,
+            chain.FactSnapshotVersion,
+            chain.RevisionPlanIds,
+            chain.RebuildLinks.Select(link => new WorkflowPackageRebuildLinkEvidence(
+                link.OldPackageId,
+                link.OldPackageStatus,
+                link.NewPackageId,
+                link.NewPackageStatus,
+                link.NewPackageKind,
+                link.ChapterId,
+                link.RuntimeRunId)).ToList(),
+            chain.Steps.Select(MapProductionChainStep).ToList(),
+            chain.Evidence);
+
+    private static WorkflowProductionChainStep MapProductionChainStep(NovelProductionChainStepState step) =>
+        new(
+            step.Key,
+            step.Label,
+            step.Status,
+            step.EventId,
+            step.EventType,
+            step.Stage,
+            step.ArtifactType,
+            step.ArtifactId,
+            step.Message,
+            step.CreatedAt == default ? string.Empty : step.CreatedAt.ToString("O"),
+            step.OutboxEventId);
+
+    private async Task<IReadOnlyList<WorkflowToolExecutionSummary>> LoadProjectToolExecutionsAsync(
+        string projectId,
+        string userId,
+        CancellationToken ct)
+    {
+        var rows = await _db.AgentToolExecutions
+            .AsNoTracking()
+            .Where(execution => execution.ProjectId == projectId && execution.UserId == userId)
+            .OrderByDescending(execution => execution.StartedAt)
+            .Take(30)
+            .Select(execution => new
+            {
+                execution.Id,
+                RunId = execution.RunId ?? string.Empty,
+                execution.ToolName,
+                execution.Phase,
+                execution.Status,
+                execution.Risk,
+                execution.ResultMessage,
+                execution.ErrorMessage,
+                execution.SemanticContractJson,
+                execution.FailureJson,
+                execution.StartedAt,
+                execution.CompletedAt
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return rows
+            .Select(row => new WorkflowToolExecutionSummary
+            {
+                Id = row.Id,
+                RunId = row.RunId,
+                ToolName = row.ToolName,
+                Phase = row.Phase,
+                Status = row.Status,
+                Risk = row.Risk,
+                ResultMessage = row.ResultMessage,
+                ErrorMessage = row.ErrorMessage,
+                StartedAt = row.StartedAt.ToString("O"),
+                CompletedAt = row.CompletedAt?.ToString("O") ?? string.Empty,
+                SemanticContract = ParseToolSemanticContract(row.SemanticContractJson),
+                Failure = ParseToolFailure(row.FailureJson)
+            })
+            .Reverse()
+            .ToList();
+    }
+
+    private static WorkflowToolSemanticContractSummary ParseToolSemanticContract(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "{}")
+            return new WorkflowToolSemanticContractSummary();
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            return new WorkflowToolSemanticContractSummary
+            {
+                DisplayName = GetString(root, "displayName"),
+                DomainSurface = GetString(root, "domainSurface"),
+                OutputKind = GetString(root, "outputKind"),
+                InputArtifacts = GetStringArray(root, "inputArtifacts"),
+                OutputArtifacts = GetStringArray(root, "outputArtifacts"),
+                IdempotencyPolicy = GetString(root, "idempotencyPolicy"),
+                RollbackPolicy = GetString(root, "rollbackPolicy"),
+                UserVisibleWhere = GetString(root, "userVisibleWhere"),
+                ResultSemantics = GetString(root, "resultSemantics")
+            };
+        }
+        catch (JsonException)
+        {
+            return new WorkflowToolSemanticContractSummary();
+        }
+    }
+
+    private static WorkflowToolFailureSummary? ParseToolFailure(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "{}")
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            return new WorkflowToolFailureSummary
+            {
+                Code = GetString(root, "code"),
+                FailedStage = GetString(root, "failedStage"),
+                Reason = GetString(root, "reason"),
+                Recoverable = GetBool(root, "recoverable"),
+                RecommendedAction = GetString(root, "recommendedAction"),
+                InputArtifacts = GetToolInputArtifacts(root)
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string GetString(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    private static bool GetBool(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+        value.GetBoolean();
+
+    private static List<string> GetStringArray(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+            return new List<string>();
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+            .Select(item => item.GetString()!.Trim())
+            .ToList();
+    }
+
+    private static IReadOnlyList<WorkflowToolInputArtifactSummary> GetToolInputArtifacts(JsonElement root)
+    {
+        if (!root.TryGetProperty("inputArtifacts", out var value) || value.ValueKind != JsonValueKind.Array)
+            return Array.Empty<WorkflowToolInputArtifactSummary>();
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new WorkflowToolInputArtifactSummary(
+                GetString(item, "artifactName"),
+                GetString(item, "status"),
+                GetString(item, "artifactId"),
+                GetString(item, "message"),
+                GetBool(item, "blocksExecution"),
+                GetStringArray(item, "recommendedActions")))
+            .ToList();
+    }
+
     private static NovelProjectInfo MapToCatalogProject(NovelProject project)
     {
         return new NovelProjectInfo
@@ -289,10 +656,16 @@ public class WorkflowService : IWorkflowService
         NovelProject project,
         NovelLibraryDocument currentLibrary,
         IReadOnlyList<WorkflowChapterArtifactSummary> chapterArtifacts,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        IReadOnlyList<WorkflowCreativeIntentEvidence> creativeIntents,
         CancellationToken ct)
     {
         var volumeArcs = await _db.VolumeArcs
             .Where(v => v.ProjectId == project.Id && v.UserId == project.UserId)
+            .OrderBy(v => v.VolumeNumber)
+            .ToListAsync(ct);
+        var canonicalVolumes = await _db.Volumes
+            .Where(v => v.ProjectId == project.Id)
             .OrderBy(v => v.VolumeNumber)
             .ToListAsync(ct);
         var chapters = await _db.Chapters
@@ -300,16 +673,20 @@ public class WorkflowService : IWorkflowService
             .OrderBy(c => c.ChapterNumber)
             .ToListAsync(ct);
 
-        if (volumeArcs.Count == 0 && chapters.Count == 0)
+        if (canonicalVolumes.Count == 0 && volumeArcs.Count == 0 && chapters.Count == 0)
             return null;
 
         var chapterContents = await LoadChapterContentsAsync(chapters, ct);
-        var volumes = BuildDatabaseVolumes(volumeArcs, chapters, chapterArtifacts, chapterContents).ToList();
+        var revisionPlans = await LoadChapterRevisionPlanSummariesAsync(project.Id, project.UserId, ct)
+            .ConfigureAwait(false);
+        var volumes = BuildDatabaseVolumes(canonicalVolumes, volumeArcs, chapters, chapterArtifacts, chapterContents, productionChains, creativeIntents, revisionPlans).ToList();
         var allChapters = volumes.SelectMany(v => v.Chapters).ToList();
         var generatedCount = allChapters.Count(c => c.HasGeneratedContent || IsCommitted(c.Status));
         var plannedChapterCount = Math.Max(
             allChapters.Count,
-            volumeArcs.Sum(v => Math.Max(v.TargetChapters ?? 0, v.CurrentChapters)));
+            canonicalVolumes.Count > 0
+                ? allChapters.Count
+                : volumeArcs.Sum(v => Math.Max(v.TargetChapters ?? 0, v.CurrentChapters)));
         var needsRewriteCount = allChapters.Count(c => c.NeedsRewrite);
         var selectedChapter = allChapters
             .OrderByDescending(c => c.HasGeneratedContent)
@@ -326,7 +703,7 @@ public class WorkflowService : IWorkflowService
             project.StoryConstitution?.ReaderPromise ?? string.Empty,
             project.Status,
             currentLibrary.ActiveBook?.IsActive ?? project.Status != "archived",
-            volumeArcs.Count,
+            canonicalVolumes.Count > 0 ? canonicalVolumes.Count : volumeArcs.Count,
             generatedCount,
             plannedChapterCount,
             needsRewriteCount,
@@ -351,15 +728,23 @@ public class WorkflowService : IWorkflowService
     }
 
     private static IEnumerable<NovelVolumeView> BuildDatabaseVolumes(
+        IReadOnlyList<Volume> canonicalVolumes,
         IReadOnlyList<VolumeArc> volumeArcs,
         IReadOnlyList<Chapter> chapters,
         IReadOnlyList<WorkflowChapterArtifactSummary> chapterArtifacts,
-        IReadOnlyDictionary<string, string> chapterContents)
+        IReadOnlyDictionary<string, string> chapterContents,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        IReadOnlyList<WorkflowCreativeIntentEvidence> creativeIntents,
+        IReadOnlyList<WorkflowChapterRevisionPlanSummary> revisionPlans)
     {
         var assignedChapterIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var syntheticChapters = BuildSyntheticWorkflowChapters(chapterArtifacts);
         var assignedSyntheticIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var databaseChapterIds = chapters.Select(c => c.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var databaseChapterNumbers = chapters
+            .Where(c => c.ChapterNumber > 0)
+            .Select(c => c.ChapterNumber)
+            .ToHashSet();
         var titleByChapterId = chapterArtifacts
             .Where(a => !string.IsNullOrWhiteSpace(a.ChapterId) && !string.IsNullOrWhiteSpace(a.CandidateTitle))
             .GroupBy(a => a.ChapterId, StringComparer.OrdinalIgnoreCase)
@@ -373,6 +758,51 @@ public class WorkflowService : IWorkflowService
             })
             .Where(item => !string.IsNullOrWhiteSpace(item.Title))
             .ToDictionary(item => item.ChapterId, item => item.Title!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var volume in canonicalVolumes.OrderBy(v => v.VolumeNumber))
+        {
+            var volumeChapters = chapters
+                .Where(c => !assignedChapterIds.Contains(c.Id))
+                .Where(c => string.Equals(c.VolumeId, volume.Id, StringComparison.OrdinalIgnoreCase))
+                .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.Title, volume.VolumeNumber, chapterContents, titleByChapterId, productionChains, creativeIntents, revisionPlans))
+                .OrderBy(c => c.BeatIndex <= 0 ? int.MaxValue : c.BeatIndex)
+                .ThenBy(c => c.ChapterId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var chapter in volumeChapters)
+                assignedChapterIds.Add(chapter.ChapterId);
+
+            yield return new NovelVolumeView(
+                volume.Id,
+                volume.Title,
+                "committed",
+                volumeChapters.FirstOrDefault()?.ChapterId ?? string.Empty,
+                volumeChapters.LastOrDefault()?.ChapterId ?? string.Empty,
+                volumeChapters.Count,
+                volumeChapters);
+        }
+
+        if (canonicalVolumes.Count > 0)
+        {
+            var canonicalUnassigned = chapters
+                .Where(c => !assignedChapterIds.Contains(c.Id))
+                .Select(chapter => MapDatabaseChapter(chapter, "database-chapters", "未归档章节", 0, chapterContents, titleByChapterId, productionChains, creativeIntents, revisionPlans))
+                .ToList();
+
+            if (canonicalUnassigned.Count > 0)
+            {
+                yield return new NovelVolumeView(
+                    "database-chapters",
+                    "未归档章节",
+                    "Draft",
+                    canonicalUnassigned.FirstOrDefault()?.ChapterId ?? string.Empty,
+                    canonicalUnassigned.LastOrDefault()?.ChapterId ?? string.Empty,
+                    canonicalUnassigned.Count,
+                    canonicalUnassigned);
+            }
+
+            yield break;
+        }
+
         var nextChapterStart = 1;
 
         foreach (var volume in volumeArcs)
@@ -380,29 +810,32 @@ public class WorkflowService : IWorkflowService
             var targetCount = Math.Max(volume.TargetChapters ?? 0, volume.CurrentChapters);
             var chapterEnd = targetCount > 0 ? nextChapterStart + targetCount - 1 : int.MaxValue;
             var volumeChapters = chapters
+                .Where(c => !assignedChapterIds.Contains(c.Id))
                 .Where(c => string.Equals(c.VolumeId, volume.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber, chapterContents, titleByChapterId))
-                .ToList();
-            if (volumeChapters.Count == 0)
-            {
-                volumeChapters = chapters
+                .Concat(chapters
                     .Where(c => !assignedChapterIds.Contains(c.Id))
-                    .Where(c => string.IsNullOrWhiteSpace(c.VolumeId))
-                    .Where(c => c.ChapterNumber >= nextChapterStart && c.ChapterNumber <= chapterEnd)
-                    .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber, chapterContents, titleByChapterId))
-                    .ToList();
-            }
-            if (volumeChapters.Count == 0 && volume.VolumeNumber == 1)
-            {
-                volumeChapters.AddRange(syntheticChapters
-                    .Where(artifact => !databaseChapterIds.Contains(artifact.ChapterId))
-                    .Select((artifact, index) =>
-                    MapWorkflowArtifactChapter(artifact, volume.Id, volume.VolumeTitle, volume.VolumeNumber, index + 1)));
-                foreach (var chapter in volumeChapters)
-                    assignedSyntheticIds.Add(chapter.ChapterId);
-            }
+                    .Where(c => !string.Equals(c.VolumeId, volume.Id, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => IsChapterNumberInRange(c.ChapterNumber, nextChapterStart, chapterEnd)))
+                .DistinctBy(c => c.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(chapter => MapDatabaseChapter(chapter, volume.Id, volume.VolumeTitle, volume.VolumeNumber, chapterContents, titleByChapterId, productionChains, creativeIntents, revisionPlans))
+                .ToList();
+
+            var syntheticForVolume = syntheticChapters
+                .Where(artifact => !assignedSyntheticIds.Contains(artifact.ChapterId))
+                .Where(artifact => !IsCoveredByDatabaseChapter(artifact, databaseChapterIds, databaseChapterNumbers))
+                .Where(artifact => IsChapterNumberInRange(ExtractChapterNumber(artifact.ChapterId), nextChapterStart, chapterEnd))
+                .Select((artifact, index) =>
+                    MapWorkflowArtifactChapter(artifact, volume.Id, volume.VolumeTitle, volume.VolumeNumber, volumeChapters.Count + index + 1, productionChains, creativeIntents, revisionPlans))
+                .ToList();
+            volumeChapters.AddRange(syntheticForVolume);
+            volumeChapters = volumeChapters
+                .OrderBy(c => c.BeatIndex <= 0 ? int.MaxValue : c.BeatIndex)
+                .ThenBy(c => c.ChapterId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             foreach (var chapter in volumeChapters)
                 assignedChapterIds.Add(chapter.ChapterId);
+            foreach (var chapter in syntheticForVolume)
+                assignedSyntheticIds.Add(chapter.ChapterId);
             if (targetCount > 0)
                 nextChapterStart = chapterEnd + 1;
 
@@ -418,12 +851,12 @@ public class WorkflowService : IWorkflowService
 
         var unassigned = chapters
             .Where(c => !assignedChapterIds.Contains(c.Id))
-            .Select(chapter => MapDatabaseChapter(chapter, "database-chapters", "数据库章节", 0, chapterContents, titleByChapterId))
+            .Select(chapter => MapDatabaseChapter(chapter, "database-chapters", "数据库章节", 0, chapterContents, titleByChapterId, productionChains, creativeIntents, revisionPlans))
             .ToList();
         unassigned.AddRange(syntheticChapters
             .Where(a => !assignedSyntheticIds.Contains(a.ChapterId))
-            .Where(a => !databaseChapterIds.Contains(a.ChapterId))
-            .Select((artifact, index) => MapWorkflowArtifactChapter(artifact, "workflow-artifacts", "工作流章节", 0, index + 1)));
+            .Where(a => !IsCoveredByDatabaseChapter(a, databaseChapterIds, databaseChapterNumbers))
+            .Select((artifact, index) => MapWorkflowArtifactChapter(artifact, "workflow-artifacts", "工作流章节", 0, index + 1, productionChains, creativeIntents, revisionPlans)));
 
         if (unassigned.Count > 0 || volumeArcs.Count == 0)
         {
@@ -436,6 +869,21 @@ public class WorkflowService : IWorkflowService
                 unassigned.Count,
                 unassigned);
         }
+    }
+
+    private static bool IsChapterNumberInRange(int chapterNumber, int start, int end) =>
+        chapterNumber > 0 && chapterNumber >= start && chapterNumber <= end;
+
+    private static bool IsCoveredByDatabaseChapter(
+        WorkflowChapterArtifactSummary artifact,
+        ISet<string> databaseChapterIds,
+        ISet<int> databaseChapterNumbers)
+    {
+        if (databaseChapterIds.Contains(artifact.ChapterId))
+            return true;
+
+        var chapterNumber = ExtractChapterNumber(artifact.ChapterId);
+        return chapterNumber > 0 && databaseChapterNumbers.Contains(chapterNumber);
     }
 
     private static List<WorkflowChapterArtifactSummary> BuildSyntheticWorkflowChapters(
@@ -458,7 +906,10 @@ public class WorkflowService : IWorkflowService
         string volumeId,
         string volumeTitle,
         int volumeNumber,
-        int fallbackIndex)
+        int fallbackIndex,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        IReadOnlyList<WorkflowCreativeIntentEvidence> creativeIntents,
+        IReadOnlyList<WorkflowChapterRevisionPlanSummary> revisionPlans)
     {
         var beatIndex = ExtractChapterNumber(artifact.ChapterId);
         if (beatIndex <= 0)
@@ -514,7 +965,8 @@ public class WorkflowService : IWorkflowService
             writingStatus,
             artifact.RunId,
             artifact.GateStatus,
-            artifact.QualityStatus);
+            artifact.QualityStatus,
+            BuildChapterProductionSummary(artifact.ChapterId, productionChains, creativeIntents, revisionPlans));
     }
 
     private static string ResolveArtifactWritingStatus(WorkflowChapterArtifactSummary artifact)
@@ -539,8 +991,7 @@ public class WorkflowService : IWorkflowService
 
     private static int ExtractChapterNumber(string chapterId)
     {
-        var digits = new string((chapterId ?? string.Empty).Where(char.IsDigit).ToArray());
-        return int.TryParse(digits, out var value) ? value : 0;
+        return ChapterParserHelper.ExtractChapterNumber(chapterId ?? string.Empty);
     }
 
     private async Task<Dictionary<string, string>> LoadChapterContentsAsync(
@@ -584,7 +1035,10 @@ public class WorkflowService : IWorkflowService
         string volumeTitle,
         int volumeNumber,
         IReadOnlyDictionary<string, string> chapterContents,
-        IReadOnlyDictionary<string, string> titleByChapterId)
+        IReadOnlyDictionary<string, string> titleByChapterId,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        IReadOnlyList<WorkflowCreativeIntentEvidence> creativeIntents,
+        IReadOnlyList<WorkflowChapterRevisionPlanSummary> revisionPlans)
     {
         var writingStatus = ResolveChapterWritingStatus(chapter);
         var content = chapterContents.TryGetValue(chapter.Id, out var value) ? value : string.Empty;
@@ -638,7 +1092,348 @@ public class WorkflowService : IWorkflowService
             writingStatus,
             string.Empty,
             committed ? $"gate:{chapter.Id}" : string.Empty,
-            string.Empty);
+            string.Empty,
+            BuildChapterProductionSummary(chapter.Id, productionChains, creativeIntents, revisionPlans));
+    }
+
+    private static WorkflowChapterProductionSummary? BuildChapterProductionSummary(
+        string chapterId,
+        IReadOnlyList<WorkflowProductionChain> productionChains,
+        IReadOnlyList<WorkflowCreativeIntentEvidence> creativeIntents,
+        IReadOnlyList<WorkflowChapterRevisionPlanSummary> revisionPlans)
+    {
+        if (string.IsNullOrWhiteSpace(chapterId) || productionChains.Count == 0)
+            return null;
+
+        var chain = productionChains
+            .Where(item => ChainMatchesChapter(item, chapterId))
+            .OrderByDescending(item => item.UpdatedAt ?? string.Empty, StringComparer.Ordinal)
+            .ThenByDescending(item => item.ChapterVersionNumber)
+            .ThenByDescending(item => item.FactSnapshotVersion)
+            .FirstOrDefault();
+        if (chain == null)
+            return null;
+
+        var evidence = chain.Evidence;
+        var rebuildPackageIds = chain.RebuildLinks
+            .Select(link => link.OldPackageId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var matchedRevisionPlans = revisionPlans
+            .Where(plan => RevisionPlanMatchesChapterOrChain(plan, chapterId, chain, rebuildPackageIds))
+            .Take(12)
+            .ToList();
+        var matchedCreativeIntents = creativeIntents
+            .Where(intent => CreativeIntentMatchesChapter(intent, chapterId))
+            .Select(intent => new WorkflowChapterCreativeIntentSummary(
+                intent.IntentId,
+                intent.NormalizedIntent,
+                intent.TargetScope,
+                intent.TargetChapterId,
+                intent.ImpactLevel,
+                intent.Source,
+                intent.Status))
+            .Take(12)
+            .ToList();
+        var hasCanonicalEvidence = !string.IsNullOrWhiteSpace(chain.ChapterVersionId)
+            || !string.IsNullOrWhiteSpace(chain.FactSnapshotId)
+            || chain.RevisionPlanIds.Count > 0
+            || chain.RebuildLinks.Count > 0
+            || matchedRevisionPlans.Count > 0
+            || matchedCreativeIntents.Count > 0
+            || evidence.Gate != null
+            || evidence.FactSnapshot != null
+            || evidence.AgentReview != null
+            || evidence.ChapterChangeCount > 0
+            || evidence.ChapterChangeArtifactIds.Count > 0;
+        var traceItems = BuildChapterProductionTraceItems(chain, evidence, matchedRevisionPlans);
+
+        return new WorkflowChapterProductionSummary(
+            chain.Id,
+            chain.Status,
+            chain.Summary,
+            chain.RuntimeRunId,
+            chain.PackageId,
+            chain.UpdatedAt,
+            chain.ChapterVersionId,
+            chain.ChapterVersionNumber,
+            chain.FactSnapshotId,
+            chain.FactSnapshotVersion,
+            evidence.FactSnapshot?.EndingState ?? string.Empty,
+            evidence.Gate?.Status ?? string.Empty,
+            evidence.AgentReview?.OverallResult ?? string.Empty,
+            evidence.AgentReview?.RecommendedAction ?? string.Empty,
+            evidence.ChapterChangeCount,
+            chain.RevisionPlanIds.Count,
+            chain.RebuildLinks.Count,
+            chain.RevisionPlanIds.ToList(),
+            matchedRevisionPlans,
+            rebuildPackageIds,
+            matchedCreativeIntents,
+            traceItems,
+            hasCanonicalEvidence);
+    }
+
+    private static IReadOnlyList<WorkflowChapterProductionTraceItem> BuildChapterProductionTraceItems(
+        WorkflowProductionChain chain,
+        WorkflowProductionChainEvidence evidence,
+        IReadOnlyList<WorkflowChapterRevisionPlanSummary> revisionPlans)
+    {
+        var items = new List<WorkflowChapterProductionTraceItem>();
+
+        foreach (var plan in revisionPlans)
+        {
+            var relatedIds = plan.AffectedChapterIds
+                .Concat(plan.InvalidatedPackageIds)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"revision-plan:{plan.RevisionPlanId}",
+                "修订计划",
+                plan.Status,
+                "RevisionPlan",
+                plan.RevisionPlanId,
+                FirstNonEmpty(plan.Recommendation, plan.PlanType, plan.Source),
+                relatedIds));
+        }
+
+        foreach (var link in chain.RebuildLinks)
+        {
+            var artifactId = FirstNonEmpty(link.NewPackageId, link.OldPackageId);
+            var relatedIds = new[] { link.OldPackageId, link.NewPackageId, link.ChapterId, link.RuntimeRunId }
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"rebuild-package:{link.OldPackageId}:{link.NewPackageId}",
+                "生产包重建",
+                FirstNonEmpty(link.NewPackageStatus, link.OldPackageStatus, "recorded"),
+                "TianmingPackage",
+                artifactId,
+                $"{FirstNonEmpty(link.OldPackageId, "旧包")} -> {FirstNonEmpty(link.NewPackageId, "新包")}",
+                relatedIds));
+        }
+
+        if (!string.IsNullOrWhiteSpace(chain.PackageId))
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"package:{chain.PackageId}",
+                "当前生产包",
+                FirstNonEmpty(chain.Status, "recorded"),
+                "TianmingPackage",
+                chain.PackageId,
+                FirstNonEmpty(chain.Summary, chain.RuntimeRunId),
+                RelatedIds(chain.RuntimeRunId, chain.ChapterId, chain.ChapterLogicalId)));
+        }
+
+        foreach (var step in chain.Steps.Where(IsDraftTraceStep).Take(3))
+        {
+            var artifactId = FirstNonEmpty(step.ArtifactId, step.EventId);
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"draft:{artifactId}",
+                "正文草稿",
+                FirstNonEmpty(step.Status, "generated"),
+                FirstNonEmpty(step.ArtifactType, "chapter_draft"),
+                artifactId,
+                FirstNonEmpty(step.Message, step.Label, "正文草稿已生成。"),
+                RelatedIds(step.EventId, step.OutboxEventId, chain.PackageId, chain.RuntimeRunId)));
+        }
+
+        if (evidence.Gate != null)
+        {
+            var description = evidence.Gate.Issues.Count > 0
+                ? string.Join(" / ", evidence.Gate.Issues.Take(3))
+                : "协议、事实、蓝图、RAG 与 CHANGES 已校验。";
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"gate:{chain.Id}",
+                "门禁校验",
+                evidence.Gate.Status,
+                "GenerationGateReport",
+                chain.PackageId,
+                description,
+                RelatedIds(chain.PackageId, chain.RuntimeRunId)));
+        }
+
+        if (evidence.AgentReview != null)
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"agent-review:{chain.Id}",
+                "Agent 总编验收",
+                FirstNonEmpty(evidence.AgentReview.OverallResult, evidence.AgentReview.Decision),
+                "AgentReview",
+                chain.PackageId,
+                BuildAgentReviewTraceDescription(evidence.AgentReview),
+                RelatedIds(chain.PackageId, chain.RuntimeRunId)));
+        }
+
+        if (evidence.ChapterChangeCount > 0 || evidence.ChapterChangeArtifactIds.Count > 0)
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"changes:{chain.Id}",
+                "CHANGES 沉淀",
+                evidence.ChapterChangeArtifactIds.Count > 0 ? "applied" : "recorded",
+                "ChapterChange",
+                evidence.ChapterChangeArtifactIds.FirstOrDefault() ?? string.Empty,
+                evidence.ChapterChangeCount > 0 ? $"已沉淀 {evidence.ChapterChangeCount} 条变更" : "已记录变更证据",
+                evidence.ChapterChangeArtifactIds));
+        }
+
+        if (!string.IsNullOrWhiteSpace(chain.ChapterVersionId))
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"chapter-version:{chain.ChapterVersionId}",
+                "章节版本",
+                chain.ChapterVersionNumber > 0 ? $"v{chain.ChapterVersionNumber}" : "recorded",
+                "ChapterVersion",
+                chain.ChapterVersionId,
+                "正文已形成可回滚版本。",
+                RelatedIds(chain.PackageId, chain.RuntimeRunId)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(chain.FactSnapshotId))
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"fact-snapshot:{chain.FactSnapshotId}",
+                "事实快照",
+                chain.FactSnapshotVersion > 0 ? $"v{chain.FactSnapshotVersion}" : "recorded",
+                "ProjectFactSnapshot",
+                chain.FactSnapshotId,
+                FirstNonEmpty(evidence.FactSnapshot?.EndingState, evidence.FactSnapshot?.ProtagonistStatus, "章节事实已沉淀。"),
+                RelatedIds(chain.ChapterVersionId, chain.PackageId, chain.RuntimeRunId)));
+        }
+
+        var outboxIds = chain.Steps
+            .Select(step => step.OutboxEventId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToList();
+        if (outboxIds.Count > 0)
+        {
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"outbox:{outboxIds[0]}",
+                "后台索引任务",
+                "queued",
+                "OutboxEvent",
+                outboxIds[0],
+                $"已记录 {outboxIds.Count} 个后台任务。",
+                outboxIds));
+        }
+
+        return items
+            .Where(item => !string.IsNullOrWhiteSpace(item.Key))
+            .Take(20)
+            .ToList();
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+
+    private static string BuildAgentReviewTraceDescription(WorkflowAgentReviewSummaryEvidence review)
+    {
+        var parts = new List<string>();
+        var action = FirstNonEmpty(review.RecommendedAction, review.Decision);
+        if (!string.IsNullOrWhiteSpace(action))
+            parts.Add($"动作：{action}");
+
+        if (review.Problems.Count > 0)
+            parts.Add($"问题：{string.Join("；", review.Problems.Take(2))}");
+
+        if (review.Suggestions.Count > 0)
+            parts.Add($"建议：{string.Join("；", review.Suggestions.Take(2))}");
+
+        return parts.Count > 0
+            ? string.Join("。", parts)
+            : FirstNonEmpty(review.OverallResult, review.Decision, "Agent 总编验收已记录。");
+    }
+
+    private static IReadOnlyList<string> RelatedIds(params string?[] values) =>
+        values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static bool IsDraftTraceStep(WorkflowProductionChainStep step)
+    {
+        var canonicalStage = NovelAgentProductionStages.ToCanonicalStage(step.Stage);
+        return string.Equals(step.Key, "draft", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(step.EventType, "chapter_draft_generated", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(canonicalStage, NovelAgentProductionStages.DraftGenerated, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(canonicalStage, NovelAgentProductionStages.DraftRewritten, StringComparison.OrdinalIgnoreCase)
+            || step.ArtifactType.Contains("draft", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ChainMatchesChapter(WorkflowProductionChain chain, string chapterId)
+    {
+        if (string.Equals(chain.ChapterId, chapterId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(chain.ChapterLogicalId, chapterId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var targetNumber = ExtractChapterNumber(chapterId);
+        if (targetNumber <= 0)
+            return false;
+
+        return ExtractChapterNumber(chain.ChapterId) == targetNumber
+            || ExtractChapterNumber(chain.ChapterLogicalId) == targetNumber;
+    }
+
+    private static bool RevisionPlanMatchesChapterOrChain(
+        WorkflowChapterRevisionPlanSummary plan,
+        string chapterId,
+        WorkflowProductionChain chain,
+        IReadOnlyList<string> rebuildPackageIds)
+    {
+        if (chain.RevisionPlanIds.Contains(plan.RevisionPlanId, StringComparer.OrdinalIgnoreCase))
+            return true;
+
+        if (RevisionPlanMatchesChapter(plan, chapterId))
+            return true;
+
+        return plan.InvalidatedPackageIds.Any(packageId =>
+            !string.IsNullOrWhiteSpace(packageId) &&
+            (rebuildPackageIds.Contains(packageId, StringComparer.OrdinalIgnoreCase) ||
+             string.Equals(packageId, chain.PackageId, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool RevisionPlanMatchesChapter(WorkflowChapterRevisionPlanSummary plan, string chapterId)
+    {
+        if (string.Equals(plan.TargetChapterId, chapterId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(plan.TargetChapterLogicalId, chapterId, StringComparison.OrdinalIgnoreCase)
+            || plan.AffectedChapterIds.Contains(chapterId, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var targetNumber = ExtractChapterNumber(chapterId);
+        if (targetNumber <= 0)
+            return false;
+
+        return ExtractChapterNumber(plan.TargetChapterId) == targetNumber
+            || ExtractChapterNumber(plan.TargetChapterLogicalId) == targetNumber
+            || plan.AffectedChapterIds.Any(id => ExtractChapterNumber(id) == targetNumber);
+    }
+
+    private static bool CreativeIntentMatchesChapter(WorkflowCreativeIntentEvidence intent, string chapterId)
+    {
+        if (string.Equals(intent.TargetChapterId, chapterId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var targetNumber = ExtractChapterNumber(chapterId);
+        if (targetNumber > 0 && ExtractChapterNumber(intent.TargetChapterId) == targetNumber)
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(intent.TargetChapterId))
+            return false;
+
+        var scope = (intent.TargetScope ?? string.Empty).Trim().ToLowerInvariant();
+        return scope is "book" or "project" or "volume" or "all" or "global" or "novel"
+            || scope.Contains("全书", StringComparison.Ordinal)
+            || scope.Contains("项目", StringComparison.Ordinal)
+            || scope.Contains("整本", StringComparison.Ordinal)
+            || scope.Contains("卷", StringComparison.Ordinal);
     }
 
     private static string ResolveReadableChapterTitle(

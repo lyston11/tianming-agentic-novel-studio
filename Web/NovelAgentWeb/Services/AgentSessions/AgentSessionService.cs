@@ -32,6 +32,7 @@ public class AgentSessionService : IAgentSessionService
         string? sessionId,
         string userId,
         string? projectId,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default)
     {
         // If sessionId provided, try to get existing session
@@ -47,12 +48,25 @@ public class AgentSessionService : IAgentSessionService
             }
         }
 
+        var normalizedIdempotencyKey = EmptyToNull(idempotencyKey);
+        if (normalizedIdempotencyKey != null)
+        {
+            var existing = await FindSessionByIdempotencyKeyAsync(
+                    userId,
+                    normalizedIdempotencyKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return await MapToResponseAsync(existing, cancellationToken).ConfigureAwait(false);
+        }
+
         // Create new session
         var session = new AgentSessionEntity
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = userId,
             ProjectId = projectId,
+            IdempotencyKey = normalizedIdempotencyKey,
             Title = "新会话",
             SessionData = "{}",
             CreatedAt = DateTime.UtcNow,
@@ -60,12 +74,40 @@ public class AgentSessionService : IAgentSessionService
         };
 
         _dbContext.AgentSessions.Add(session);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException) when (normalizedIdempotencyKey != null)
+        {
+            _dbContext.Entry(session).State = EntityState.Detached;
+            var existing = await FindSessionByIdempotencyKeyAsync(
+                    userId,
+                    normalizedIdempotencyKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return await MapToResponseAsync(existing, cancellationToken).ConfigureAwait(false);
+
+            throw;
+        }
 
         _logger.LogInformation("Created new agent session {SessionId} for user {UserId}", session.Id, userId);
 
         return await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task<AgentSessionEntity?> FindSessionByIdempotencyKeyAsync(
+        string userId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _dbContext.AgentSessions
+            .AsNoTracking()
+            .WithUserFilter(userId)
+            .FirstOrDefaultAsync(session =>
+                    session.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
 
     public async Task<AgentSessionResponse> GetSessionByIdAsync(
         string sessionId,
@@ -177,17 +219,20 @@ public class AgentSessionService : IAgentSessionService
             .OrderBy(t => t.TurnIndex)
             .Select(t => new AgentConversationTurn
             {
+                TurnId = t.Id,
+                TurnIndex = t.TurnIndex,
                 Role = t.Role,
                 Content = t.Content,
                 CreatedAt = t.CreatedAt
             })
             .ToListAsync(ct)
             .ConfigureAwait(false);
+        var displayTitle = BuildDisplayTitle(session.Title, messages);
 
         return new AgentSessionResponse
         {
             SessionId = session.Id,
-            Title = session.Title,
+            Title = displayTitle,
             Phase = string.IsNullOrWhiteSpace(data.Phase) ? "idle" : data.Phase,
             ActiveProjectId = projectId,
             ActiveRunId = activeRuntimeRun?.Id,
@@ -199,6 +244,37 @@ public class AgentSessionService : IAgentSessionService
             Memory = new AgentWorkingMemorySnapshot(),
             MessageCount = messages.Count
         };
+    }
+
+    private static string BuildDisplayTitle(string? storedTitle, IReadOnlyList<AgentConversationTurn> messages)
+    {
+        var title = NormalizeTitle(storedTitle);
+        if (!IsAutoTruncatedTitle(title))
+            return string.IsNullOrWhiteSpace(title) ? "新会话" : title;
+
+        var firstUserMessage = messages
+            .FirstOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+            ?.Content;
+        var recovered = NormalizeTitle(firstUserMessage);
+        if (string.IsNullOrWhiteSpace(recovered))
+            return string.IsNullOrWhiteSpace(title) ? "新会话" : title;
+
+        return recovered.Length <= 80 ? recovered : recovered[..80].TrimEnd();
+    }
+
+    private static bool IsAutoTruncatedTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title) || title == "新会话")
+            return true;
+        return title.EndsWith("...", StringComparison.Ordinal) || title.EndsWith("…", StringComparison.Ordinal);
+    }
+
+    private static string NormalizeTitle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        return string.Join(' ', value.Split(new[] { '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            .Trim();
     }
 
     private static SessionData DeserializeSessionData(string? sessionData)
@@ -228,4 +304,7 @@ public class AgentSessionService : IAgentSessionService
         public string? ActiveRunId { get; set; }
         public List<string> RunHistory { get; set; } = new();
     }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

@@ -37,4 +37,6 @@ public class CreateProjectRequest
     /// </summary>
     [Url(ErrorMessage = "CoverImageUrl must be a valid URL")]
     public string? CoverImageUrl { get; set; }
+
+    public string? IdempotencyKey { get; set; }
 }

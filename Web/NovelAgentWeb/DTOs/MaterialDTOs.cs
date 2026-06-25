@@ -7,6 +7,9 @@ namespace TM.Web.NovelAgentWeb.DTOs;
 /// </summary>
 public class UploadMaterialRequest
 {
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
+
     [Required]
     public string ProjectId { get; set; } = null!;
 
@@ -26,6 +29,9 @@ public class UploadMaterialRequest
 /// </summary>
 public class CreateMaterialRequest
 {
+    [StringLength(160)]
+    public string? IdempotencyKey { get; set; }
+
     [Required]
     public string ProjectId { get; set; } = null!;
 

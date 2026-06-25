@@ -1,3 +1,5 @@
+import { notifyUnauthorizedSession, readStoredAuthToken } from '../services/authStorage';
+
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 export class ApiError extends Error {
@@ -14,20 +16,73 @@ export class ApiError extends Error {
   }
 }
 
-function getToken(): string | null {
-  try {
-    const stored = localStorage.getItem('auth-storage');
-    if (!stored) return null;
-    const parsed = JSON.parse(stored);
-    return parsed?.state?.token || null;
-  } catch {
-    return null;
+export type ApiEnvelope<T> = {
+  success: boolean;
+  data?: T | null;
+  error?: {
+    code?: string;
+    message?: string;
+    stage?: string;
+    recoverable?: boolean;
+    recommendedAction?: string;
+    requiresUserDecision?: boolean;
+    artifactIds?: string[];
+  } | null;
+  requestId?: string;
+  serverTime?: string;
+  apiVersion?: string;
+  toolSchemaVersion?: string;
+  agentLoopVersion?: string;
+  kernelVersion?: string;
+};
+
+function isApiEnvelope(value: unknown): value is ApiEnvelope<unknown> {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.success === 'boolean'
+    && typeof record.apiVersion === 'string'
+    && typeof record.toolSchemaVersion === 'string'
+    && typeof record.agentLoopVersion === 'string'
+    && typeof record.kernelVersion === 'string'
+    && ('data' in record || 'error' in record);
+}
+
+function unwrapEnvelope<T>(value: unknown): T {
+  if (!isApiEnvelope(value)) {
+    throw new Error('API 响应缺少统一信封');
+  }
+
+  if (!value.success) {
+    const message = value.error?.message || value.error?.code || 'API 请求失败';
+    throw new Error(message);
+  }
+
+  return value.data as T;
+}
+
+function readEnvelopeError(text: string, fallback: string): string {
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    if (isApiEnvelope(parsed)) {
+      return parsed.error?.message || parsed.error?.code || fallback;
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
 }
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   // Get token from localStorage (Zustand persist format)
-  const token = getToken();
+  const token = readStoredAuthToken();
 
   const headers: Record<string, string> = {};
 
@@ -57,7 +112,13 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new ApiError(response.status, response.statusText, text);
+    if (response.status === 401) {
+      notifyUnauthorizedSession();
+    }
+    throw new ApiError(
+      response.status,
+      response.statusText,
+      readEnvelopeError(text, `${response.status} ${response.statusText}`));
   }
 
   if (response.status === 204) {
@@ -69,7 +130,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
-  return JSON.parse(text) as T;
+  return unwrapEnvelope<T>(JSON.parse(text));
 }
 
 export const get = <T>(path: string) => api<T>(path);

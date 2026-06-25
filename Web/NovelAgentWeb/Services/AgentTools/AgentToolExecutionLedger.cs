@@ -47,6 +47,7 @@ public sealed class AgentToolExecutionLedger : IAgentToolExecutionLedger
             ArgumentsJson = argumentsJson,
             ArgumentsHash = Sha256(argumentsJson),
             SideEffectsJson = JsonSerializer.Serialize(start.SideEffects ?? new AgentToolSideEffectSpec()),
+            SemanticContractJson = SerializeSemanticContract(start.SemanticContract),
             Status = "running",
             StartedAt = DateTime.UtcNow
         };
@@ -72,6 +73,8 @@ public sealed class AgentToolExecutionLedger : IAgentToolExecutionLedger
         execution.ResultMessage = result.Message;
         execution.ErrorType = result.Success ? string.Empty : InferErrorType(result);
         execution.ErrorMessage = result.Success ? string.Empty : result.Message;
+        execution.FailureJson = SerializeFailure(result);
+        execution.ArtifactJson = SerializeArtifact(result.Artifact);
         execution.RecommendedNextTool = result.RecommendedToolName;
         execution.MissingPrerequisite = result.MissingPrerequisite;
         execution.CompletedAt = completedAt;
@@ -104,6 +107,36 @@ public sealed class AgentToolExecutionLedger : IAgentToolExecutionLedger
         await RefreshRecentAsync(execution.UserId, execution.SessionId, execution.ProjectId, ct).ConfigureAwait(false);
     }
 
+    public async Task<int> FailRunningForSessionAsync(
+        string userId,
+        string sessionId,
+        string? projectId,
+        string reason,
+        CancellationToken ct = default)
+    {
+        var normalizedProjectId = NullIfEmpty(projectId);
+        var running = await _db.AgentToolExecutions
+            .Where(x =>
+                x.UserId == userId &&
+                x.SessionId == sessionId &&
+                x.ProjectId == normalizedProjectId &&
+                x.Status == "running")
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return await FailRunningExecutionsAsync(running, reason, ct).ConfigureAwait(false);
+    }
+
+    public async Task<int> FailAllRunningAsync(string reason, CancellationToken ct = default)
+    {
+        var running = await _db.AgentToolExecutions
+            .Where(x => x.Status == "running")
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return await FailRunningExecutionsAsync(running, reason, ct).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<AgentToolExecutionSnapshot>> GetRecentAsync(
         string userId,
         string sessionId,
@@ -134,6 +167,53 @@ public sealed class AgentToolExecutionLedger : IAgentToolExecutionLedger
         }
 
         return recent;
+    }
+
+    private async Task<int> FailRunningExecutionsAsync(
+        IReadOnlyList<AgentToolExecution> running,
+        string reason,
+        CancellationToken ct)
+    {
+        if (running.Count == 0)
+            return 0;
+
+        var completedAt = DateTime.UtcNow;
+        foreach (var execution in running)
+        {
+            execution.Status = "failed";
+            execution.ResultPhase = "runtime_cancelled";
+            execution.ResultMessage = reason;
+            execution.ErrorType = "runtime_cancelled";
+            execution.ErrorMessage = reason;
+            execution.FailureJson = SerializeFailure(new AgentToolExecutionResult
+            {
+                Success = false,
+                Message = reason,
+                Failure = new AgentToolFailure
+                {
+                    Code = "RUNTIME_CANCELLED",
+                    FailedStage = "runtime_cancelled",
+                    Reason = reason,
+                    Recoverable = true,
+                    RecommendedAction = "QueryRuntimeRun"
+                }
+            });
+            execution.CompletedAt = completedAt;
+            execution.DurationMs = Math.Max(0, (int)(completedAt - execution.StartedAt).TotalMilliseconds);
+        }
+
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        var affectedHotStates = running
+            .Select(x => new { x.UserId, x.SessionId, x.ProjectId })
+            .Distinct()
+            .ToList();
+        foreach (var state in affectedHotStates)
+            await RefreshRecentAsync(state.UserId, state.SessionId, state.ProjectId, ct).ConfigureAwait(false);
+
+        foreach (var execution in running)
+            await BumpToolExecutionVersionAsync(execution, ct).ConfigureAwait(false);
+        return running.Count;
     }
 
     private Task BumpToolExecutionVersionAsync(AgentToolExecution execution, CancellationToken ct) =>
@@ -200,12 +280,90 @@ public sealed class AgentToolExecutionLedger : IAgentToolExecutionLedger
 
     private static string InferErrorType(AgentToolExecutionResult result)
     {
+        if (result.Failure != null && !string.IsNullOrWhiteSpace(result.Failure.Code))
+            return result.Failure.Code;
         if (result.IsRepairable)
             return "repairable";
         if (!string.IsNullOrWhiteSpace(result.MissingPrerequisite))
             return "missing_prerequisite";
         return "tool_failure";
     }
+
+    private static string SerializeFailure(AgentToolExecutionResult result)
+    {
+        if (result.Success)
+            return "{}";
+
+        var failure = result.Failure ?? new AgentToolFailure
+        {
+            Code = InferErrorType(result),
+            FailedStage = string.IsNullOrWhiteSpace(result.Phase) ? "tool_execution" : result.Phase,
+            Reason = result.Message,
+            Recoverable = result.IsRepairable,
+            RecommendedAction = result.RecommendedToolName,
+            ArtifactIds = result.Artifact == null || string.IsNullOrWhiteSpace(result.Artifact.ArtifactId)
+                ? Array.Empty<string>()
+                : new[] { result.Artifact.ArtifactId },
+            RequiresUserDecision = result.RequiresConfirmation
+        };
+
+        NormalizeFailureFromResult(failure, result);
+        return JsonSerializer.Serialize(failure, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+    }
+
+    private static void NormalizeFailureFromResult(AgentToolFailure failure, AgentToolExecutionResult result)
+    {
+        if (string.IsNullOrWhiteSpace(failure.Code))
+            failure.Code = InferErrorType(result);
+        if (string.IsNullOrWhiteSpace(failure.FailedStage))
+            failure.FailedStage = string.IsNullOrWhiteSpace(result.Phase) ? "tool_execution" : result.Phase;
+        if (string.IsNullOrWhiteSpace(failure.Reason))
+            failure.Reason = result.Message;
+        if (!failure.Recoverable)
+            failure.Recoverable = result.IsRepairable || result.Suggestions.Count > 0 || !string.IsNullOrWhiteSpace(result.RecommendedToolName);
+        if (string.IsNullOrWhiteSpace(failure.RecommendedAction))
+            failure.RecommendedAction = result.RecommendedToolName;
+        if (failure.ArtifactIds.Count == 0 && result.Artifact != null && !string.IsNullOrWhiteSpace(result.Artifact.ArtifactId))
+            failure.ArtifactIds = new[] { result.Artifact.ArtifactId };
+        if (failure.ProducedArtifacts.Count == 0 && result.Artifact != null)
+            failure.ProducedArtifacts = new[] { ToProducedArtifact(result.Artifact) };
+        if (failure.InputArtifacts.Count == 0 && result.Data is ToolInputArtifactResolution resolution)
+            failure.InputArtifacts = resolution.InputArtifacts;
+        if (failure.RecoverableActions.Count == 0 && result.Suggestions.Count > 0)
+            failure.RecoverableActions = result.Suggestions;
+        if (result.RequiresConfirmation)
+            failure.RequiresUserDecision = true;
+    }
+
+    private static AgentToolProducedArtifact ToProducedArtifact(AgentToolArtifact artifact) => new()
+    {
+        ArtifactType = artifact.ArtifactType,
+        ArtifactId = artifact.ArtifactId,
+        OutputKind = artifact.OutputKind,
+        UserVisibleWhere = artifact.UserVisibleWhere,
+        Summary = artifact.Summary
+    };
+
+    private static string SerializeArtifact(AgentToolArtifact? artifact) =>
+        artifact == null
+            ? "{}"
+            : JsonSerializer.Serialize(artifact, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+    private static string SerializeSemanticContract(AgentToolSemanticSpec? semantic) =>
+        semantic == null
+            ? "{}"
+            : JsonSerializer.Serialize(new
+            {
+                semantic.DisplayName,
+                semantic.DomainSurface,
+                semantic.OutputKind,
+                semantic.InputArtifacts,
+                semantic.OutputArtifacts,
+                semantic.IdempotencyPolicy,
+                semantic.RollbackPolicy,
+                semantic.UserVisibleWhere,
+                semantic.ResultSemantics
+            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
     private static string? NullIfEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

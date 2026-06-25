@@ -21,6 +21,7 @@ public class AgentSessionServiceTests
             null,
             "user-1",
             "project-1",
+            idempotencyKey: null,
             CancellationToken.None);
 
         Assert.Equal("project-1", response.ActiveProjectId);
@@ -31,6 +32,53 @@ public class AgentSessionServiceTests
         Assert.DoesNotContain(
             response.GetType().GetProperties().Select(p => p.Name),
             name => string.Equals(name, "SessionData", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetOrCreateSessionAsync_WithSameIdempotencyKey_ReturnsExistingSession()
+    {
+        await using var db = CreateDb();
+        var service = CreateService(db);
+
+        var first = await service.GetOrCreateSessionAsync(
+            null,
+            "user-1",
+            "project-1",
+            idempotencyKey: "session-create-key-001",
+            CancellationToken.None);
+        var second = await service.GetOrCreateSessionAsync(
+            null,
+            "user-1",
+            "project-1",
+            idempotencyKey: "session-create-key-001",
+            CancellationToken.None);
+
+        Assert.Equal(first.SessionId, second.SessionId);
+        var session = await db.AgentSessions.SingleAsync();
+        Assert.Equal("session-create-key-001", session.IdempotencyKey);
+    }
+
+    [Fact]
+    public async Task GetOrCreateSessionAsync_WithDifferentIdempotencyKeys_CreatesDifferentSessions()
+    {
+        await using var db = CreateDb();
+        var service = CreateService(db);
+
+        var first = await service.GetOrCreateSessionAsync(
+            null,
+            "user-1",
+            "project-1",
+            idempotencyKey: "session-create-key-001",
+            CancellationToken.None);
+        var second = await service.GetOrCreateSessionAsync(
+            null,
+            "user-1",
+            "project-1",
+            idempotencyKey: "session-create-key-002",
+            CancellationToken.None);
+
+        Assert.NotEqual(first.SessionId, second.SessionId);
+        Assert.Equal(2, await db.AgentSessions.CountAsync());
     }
 
     [Fact]
@@ -65,6 +113,66 @@ public class AgentSessionServiceTests
         Assert.Single(response);
         Assert.Equal("project-1", response[0].ActiveProjectId);
         Assert.Equal(1, response[0].MessageCount);
+    }
+
+    [Fact]
+    public async Task GetSessionByIdAsync_ReturnsStableTurnIdentityForFrontendKeys()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = "session-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            Title = "会话",
+            SessionData = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        db.AgentChatTurns.AddRange(
+            new AgentChatTurn
+            {
+                Id = "turn-user-1",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                SessionId = "session-1",
+                TurnIndex = 1,
+                Role = "user",
+                Content = "继续第二章",
+                CreatedAt = new DateTime(2026, 6, 24, 14, 0, 0, DateTimeKind.Utc)
+            },
+            new AgentChatTurn
+            {
+                Id = "turn-agent-1",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                SessionId = "session-1",
+                TurnIndex = 2,
+                Role = "assistant",
+                Content = "第二章正在处理",
+                CreatedAt = new DateTime(2026, 6, 24, 14, 0, 0, DateTimeKind.Utc)
+            });
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        var response = await service.GetSessionByIdAsync(
+            "session-1",
+            "user-1",
+            isAdmin: false,
+            CancellationToken.None);
+
+        Assert.Collection(
+            response.Messages,
+            first =>
+            {
+                Assert.Equal("turn-user-1", first.TurnId);
+                Assert.Equal(1, first.TurnIndex);
+            },
+            second =>
+            {
+                Assert.Equal("turn-agent-1", second.TurnId);
+                Assert.Equal(2, second.TurnIndex);
+            });
     }
 
     [Fact]

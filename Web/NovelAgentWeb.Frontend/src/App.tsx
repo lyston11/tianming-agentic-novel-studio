@@ -1,7 +1,9 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { getSettings } from './api';
+import { AUTH_UNAUTHORIZED_EVENT, hasValidAuthSession } from './services/authStorage';
+import { useAuthStore } from './stores/authStore';
 import { useProjectStore } from './stores/useProjectStore';
 import Rail from './components/layout/Rail';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -23,7 +25,13 @@ const queryClient = new QueryClient({
 });
 
 function AppLayout() {
-  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
+  const { user, token, isAuthenticated: storedIsAuthenticated } = useAuthStore();
+  const isAuthenticated = hasValidAuthSession({ user, token, isAuthenticated: storedIsAuthenticated });
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: getSettings,
+    enabled: isAuthenticated,
+  });
   const initializeFromStorage = useProjectStore((s) => s.initializeFromStorage);
 
   useEffect(() => {
@@ -41,27 +49,46 @@ function AppLayout() {
       <Rail />
       <main className="desk">
         <Routes>
-          <Route path="/" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
-          <Route path="/agent" element={<ProtectedRoute><AgentPage /></ProtectedRoute>} />
-          <Route path="/materials" element={<ProtectedRoute><MaterialsPage /></ProtectedRoute>} />
-          <Route path="/workflow" element={<ProtectedRoute><WorkflowPage /></ProtectedRoute>} />
-          <Route path="/workflow/:projectId" element={<ProtectedRoute><WorkflowPage /></ProtectedRoute>} />
-          <Route path="/library" element={<ProtectedRoute><LibraryPage /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/" element={<AgentPage />} />
+          <Route path="/agent" element={<AgentPage />} />
+          <Route path="/materials" element={<MaterialsPage />} />
+          <Route path="/workflow" element={<WorkflowPage />} />
+          <Route path="/workflow/:projectId" element={<WorkflowPage />} />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
     </div>
   );
 }
 
+function AuthSessionBoundary() {
+  const clearAuth = useAuthStore((s) => s.clearAuth);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      clearAuth();
+      queryClient.clear();
+      navigate('/login', { replace: true });
+    };
+
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, [clearAuth, navigate]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <AuthSessionBoundary />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          <Route path="/*" element={<AppLayout />} />
+          <Route path="/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

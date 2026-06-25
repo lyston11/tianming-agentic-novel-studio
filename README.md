@@ -18,7 +18,7 @@
 - **🔐 多用户支持**: JWT 认证，用户数据隔离，多项目管理
 - **📚 项目管理**: 创建、编辑、删除小说项目，支持项目元数据管理
 - **📖 章节管理**: 完整的 CRUD 操作，Markdown 格式存储
-- **🔍 向量检索链路**: 基于 Qdrant 的章节/知识库检索；默认 embedding 为 degraded stub，真实语义质量需接入正式 embedding provider
+- **🔍 向量检索链路**: 基于 Qdrant + BGE embedding 的章节、知识库和记忆召回
 - **🤖 NovelAgent**: AI 驱动的章节生成，包含故事地基、卷规划、章节规划和生成后复盘
 - **📊 账本管理**: 
   - **伏笔账本**: Planned → Setup → Reinforced → Due → Paid Off 生命周期
@@ -31,7 +31,7 @@
 
 - **三层架构**: 前端 (React) → API (ASP.NET Core) → 数据层 (SQLite + Qdrant)
 - **RESTful API**: 标准化的 HTTP 接口，易于扩展
-- **向量嵌入**: 章节内容自动向量化；当前默认 `stub-hash-v1` 用于链路验证和本地测试
+- **向量嵌入**: 章节、知识库和记忆内容自动向量化；当前构建要求可用的 BGE embedding runtime
 - **实时状态管理**: Zustand + TanStack Query 数据管理
 - **自动化部署**: 一键部署脚本，健康检查
 
@@ -336,7 +336,7 @@ Content-Type: application/json
 
 ### 知识库检索
 
-当前构建仍使用 `Embedding:Provider=stub` 的确定性 hash 向量，`/health` 会标记 `semanticQuality=degraded`。这能验证 Qdrant/数据库链路和 fallback 行为，但不能等同真实模型级语义质量。
+当前构建使用 `bge-small-zh` embedding runtime。`/health` 会暴露 embedding、Qdrant、Redis 和数据库状态；如果模型文件或向量服务不可用，启动和健康检查应直接暴露错误，而不是退回到确定性假向量。
 
 #### 搜索项目知识条目
 ```http
@@ -394,9 +394,9 @@ export Qdrant__Host="qdrant-server"
     "VectorDimension": 512
   },
   "Embedding": {
-    "Provider": "stub",
-    "Model": "stub-hash-v1",
-    "RequireRealEmbeddings": false
+    "Provider": "bge-small-zh",
+    "Model": "bge-small-zh-v1.5",
+    "RequireRealEmbeddings": true
   },
   "JwtSettings": {
     "SecretKey": "CHANGE_THIS_IN_PRODUCTION",
@@ -434,7 +434,7 @@ dotnet run
 - ✓ 章节执行 (Chapter Execution)
 - ✓ 生成后复盘 (Post-Reflection)
 - ✓ Canon/伏笔/角色账本 (Ledgers)
-- ✓ RAG 相似片段链路 (Vector Retrieval；默认 stub embedding 为 degraded 模式)
+- ✓ RAG 相似片段链路 (Vector Retrieval；BGE embedding + Qdrant)
 
 ---
 
@@ -564,20 +564,19 @@ npm run dev
 
 - [x] 多用户认证和授权
 - [x] SQLite 数据库集成
-- [x] Qdrant 向量检索链路（默认 stub embedding，`/health` 暴露 degraded 状态）
+- [x] Qdrant 向量检索链路（真实 embedding provider，`/health` 暴露运行状态）
 - [x] 项目和章节 CRUD API
 - [x] React 前端界面
 - [x] JWT Token 认证
 - [x] 用户数据隔离
 - [x] 自动化部署脚本
 - [x] 单元测试和集成测试
-- [x] 本地分布式内存缓存 fallback
-- [x] Redis 可选接入（`Redis:Enabled=true` 时启用）
+- [x] Redis 运行状态、锁、事件广播与工具缓存接入
 
 ### 计划中
 
 - [ ] PostgreSQL 支持（替代 SQLite，提升并发）
-- [ ] 真实 embedding provider 接入（替代 stub hash 向量）
+- [ ] embedding 模型资产打包和部署健康检查继续强化
 - [ ] WebSocket 实时协作
 - [ ] 富文本编辑器集成
 - [ ] 章节版本控制
@@ -594,12 +593,12 @@ npm run dev
 
 **A:** 编辑 `Web/NovelAgentWeb/appsettings.json` 中的 `JwtSettings:SecretKey`，或通过环境变量设置 `JWT_SECRET_KEY`。密钥至少 32 个字符。
 
-### Q: 如何迁移现有 JSON 数据到数据库？
+### Q: 如何更新数据库结构？
 
-**A:** 运行迁移脚本：
+**A:** 使用当前项目内的 EF Core migration。旧 JSON/向量迁移脚本已经移除，不再作为兼容入口：
 ```bash
-cd Scripts/Migration
-dotnet run
+cd Web/NovelAgentWeb
+dotnet ef database update
 ```
 
 ### Q: Qdrant 连接失败怎么办？

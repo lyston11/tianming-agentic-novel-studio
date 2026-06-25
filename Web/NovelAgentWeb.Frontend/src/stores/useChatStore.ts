@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { AgentConversationTurnView, AgentDecisionTrace, AgentRagContext, AgentRuntimeStep, AgentWorkingMemorySnapshot } from '../api/types';
+import type {
+  AgentConversationTurnView,
+  AgentDecisionTrace,
+  AgentMemoryAuditSummary,
+  AgentRagContext,
+  AgentRuntimeStep,
+  AgentWorkingMemorySnapshot,
+} from '../api/types';
 
 export interface ChatMessage {
   id: string;
@@ -11,6 +18,7 @@ export interface ChatMessage {
   decision?: AgentDecisionTrace | null;
   rag?: AgentRagContext | null;
   memory?: AgentWorkingMemorySnapshot | null;
+  memoryAudit?: AgentMemoryAuditSummary | null;
   runtimeTrace?: AgentRuntimeStep[] | null;
   timestamp: Date;
 }
@@ -22,7 +30,7 @@ interface ChatState {
 
   loadSessionMessages: (sessionId: string, turns: AgentConversationTurnView[], memory?: AgentWorkingMemorySnapshot | null) => void;
   setCurrentSessionMessages: (sessionId: string) => void;
-  addUserMessage: (sessionId: string, content: string) => void;
+  addUserMessage: (sessionId: string, content: string, id?: string) => string;
   addAgentMessage: (
     sessionId: string,
     content: string,
@@ -32,7 +40,8 @@ interface ChatState {
     decision?: AgentDecisionTrace | null,
     rag?: AgentRagContext | null,
     memory?: AgentWorkingMemorySnapshot | null,
-    runtimeTrace?: AgentRuntimeStep[] | null
+    runtimeTrace?: AgentRuntimeStep[] | null,
+    memoryAudit?: AgentMemoryAuditSummary | null
   ) => void;
   setSending: (sending: boolean) => void;
   clearMessages: () => void;
@@ -46,9 +55,18 @@ const welcomeMessage: ChatMessage = {
   timestamp: new Date(),
 };
 
+let localMessageSequence = 0;
+
+function createLocalMessageId(role: ChatMessage['role']) {
+  localMessageSequence += 1;
+  return `${role}-${Date.now()}-${localMessageSequence}`;
+}
+
 function mapTurn(turn: AgentConversationTurnView, index: number, memory?: AgentWorkingMemorySnapshot | null, isLastAgent = false): ChatMessage {
+  const stableTurnId = turn.turnId?.trim()
+    || `${turn.role}-${turn.turnIndex ?? index}-${turn.createdAt}`;
   return {
-    id: `${turn.role}-${turn.createdAt}-${index}`,
+    id: stableTurnId,
     role: turn.role === 'user' ? 'user' : 'agent',
     content: turn.content,
     memory: isLastAgent ? memory : undefined,
@@ -90,10 +108,11 @@ export const useChatStore = create<ChatState>((set) => ({
       messages: state.messagesBySession[sessionId] ?? [welcomeMessage],
     })),
 
-  addUserMessage: (sessionId, content) =>
+  addUserMessage: (sessionId, content, id) => {
+    const messageId = id || createLocalMessageId('user');
     set((state) => {
       const message: ChatMessage = {
-        id: `user-${Date.now()}`,
+        id: messageId,
         role: 'user',
         content,
         timestamp: new Date(),
@@ -106,12 +125,14 @@ export const useChatStore = create<ChatState>((set) => ({
           [sessionId]: [...sessionMessages, message],
         },
       };
-    }),
+    });
+    return messageId;
+  },
 
-  addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace) =>
+  addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace, memoryAudit) =>
     set((state) => {
       const message: ChatMessage = {
-        id: `agent-${Date.now()}`,
+        id: createLocalMessageId('agent'),
         role: 'agent',
         content,
         suggestions,
@@ -120,6 +141,7 @@ export const useChatStore = create<ChatState>((set) => ({
         decision,
         rag,
         memory,
+        memoryAudit,
         runtimeTrace,
         timestamp: new Date(),
       };

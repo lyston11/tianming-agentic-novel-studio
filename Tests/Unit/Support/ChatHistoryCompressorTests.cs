@@ -24,6 +24,21 @@ namespace Tests.Unit.Support;
     }
 
     [Fact]
+    public async Task CompressAsync_DoesNotExtractKeyDecisionsFromMessageKeywords()
+    {
+        var compressor = new ChatHistoryCompressor(
+            NullLogger<ChatHistoryCompressor>.Instance,
+            Mock.Of<IChatHistoryRepository>());
+        var history = BuildTurns(10);
+        history[0].Content = "我决定不要恋爱情绪推进，必须打怪升级。";
+
+        var layered = await compressor.CompressAsync(history, CancellationToken.None);
+
+        var summary = Assert.Single(layered.Summaries);
+        Assert.Empty(summary.KeyDecisions);
+    }
+
+    [Fact]
     public async Task CompressAsync_CreatesMetaSummaryWhenThirtyTurnsAreAvailable()
     {
         var compressor = new ChatHistoryCompressor(

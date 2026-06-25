@@ -49,11 +49,24 @@ public class StoryBibleService : IStoryBibleService
         if (project == null)
             throw new KeyNotFoundException($"Project {request.ProjectId} not found");
 
+        var idempotencyKey = EmptyToNull(request.IdempotencyKey);
+        if (idempotencyKey != null)
+        {
+            var existing = await FindConstitutionByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapConstitutionToResponse(existing);
+        }
+
         var constitution = new StoryConstitution
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
             ProjectId = request.ProjectId,
+            IdempotencyKey = idempotencyKey,
             Genre = request.Genre,
             SubGenre = request.SubGenre,
             CoreHook = request.CoreHook,
@@ -66,12 +79,40 @@ public class StoryBibleService : IStoryBibleService
         };
 
         _db.StoryConstitutions.Add(constitution);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException) when (idempotencyKey != null)
+        {
+            _db.Entry(constitution).State = EntityState.Detached;
+            var existing = await FindConstitutionByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapConstitutionToResponse(existing);
+
+            throw;
+        }
 
         _logger.LogInformation("Created story constitution {ConstitutionId} for project {ProjectId}", constitution.Id, request.ProjectId);
 
         return MapConstitutionToResponse(constitution);
     }
+
+    private async Task<StoryConstitution?> FindConstitutionByIdempotencyKeyAsync(
+        string projectId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _db.StoryConstitutions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(constitution =>
+                    constitution.ProjectId == projectId &&
+                    constitution.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
 
     public async Task<StoryConstitutionResponse?> GetConstitutionByProjectAsync(string projectId, CancellationToken ct = default)
     {
@@ -160,11 +201,24 @@ public class StoryBibleService : IStoryBibleService
         if (project == null)
             throw new KeyNotFoundException($"Project {request.ProjectId} not found");
 
+        var idempotencyKey = EmptyToNull(request.IdempotencyKey);
+        if (idempotencyKey != null)
+        {
+            var existing = await FindCharacterByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapCharacterToResponse(existing);
+        }
+
         var character = new Character
         {
             Id = Guid.NewGuid().ToString(),
             UserId = userId,
             ProjectId = request.ProjectId,
+            IdempotencyKey = idempotencyKey,
             Name = request.Name,
             Role = request.Role,
             Alias = request.Alias,
@@ -185,12 +239,40 @@ public class StoryBibleService : IStoryBibleService
         };
 
         _db.Characters.Add(character);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException) when (idempotencyKey != null)
+        {
+            _db.Entry(character).State = EntityState.Detached;
+            var existing = await FindCharacterByIdempotencyKeyAsync(
+                    request.ProjectId,
+                    idempotencyKey,
+                    ct)
+                .ConfigureAwait(false);
+            if (existing != null)
+                return MapCharacterToResponse(existing);
+
+            throw;
+        }
 
         _logger.LogInformation("Created character {CharacterId} in project {ProjectId}", character.Id, request.ProjectId);
 
         return MapCharacterToResponse(character);
     }
+
+    private async Task<Character?> FindCharacterByIdempotencyKeyAsync(
+        string projectId,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        await _db.Characters
+            .AsNoTracking()
+            .FirstOrDefaultAsync(character =>
+                    character.ProjectId == projectId &&
+                    character.IdempotencyKey == idempotencyKey,
+                cancellationToken)
+            .ConfigureAwait(false);
 
     public async Task<List<CharacterResponse>> ListCharactersAsync(string projectId, CancellationToken ct = default)
     {
@@ -353,4 +435,7 @@ public class StoryBibleService : IStoryBibleService
             UpdatedAt = character.UpdatedAt
         };
     }
+
+    private static string? EmptyToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

@@ -47,7 +47,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var registerResponse = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
         registerResponse.EnsureSuccessStatusCode();
-        var authData = await registerResponse.Content.ReadFromJsonAsync<AuthResponse>();
+        var authData = await registerResponse.Content.ReadEnvelopeDataAsync<AuthResponse>();
 
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authData!.Token);
@@ -63,7 +63,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var createResponse = await client.PostAsJsonAsync("/api/projects", createRequest);
         createResponse.EnsureSuccessStatusCode();
-        var project = await createResponse.Content.ReadFromJsonAsync<ProjectResponse>();
+        var project = await createResponse.Content.ReadEnvelopeDataAsync<ProjectResponse>();
 
         // Act - First request (cache miss)
         var sw1 = Stopwatch.StartNew();
@@ -110,7 +110,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var registerResponse = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
         registerResponse.EnsureSuccessStatusCode();
-        var authData = await registerResponse.Content.ReadFromJsonAsync<AuthResponse>();
+        var authData = await registerResponse.Content.ReadEnvelopeDataAsync<AuthResponse>();
 
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authData!.Token);
@@ -123,7 +123,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var createResponse = await client.PostAsJsonAsync("/api/projects", createRequest);
         createResponse.EnsureSuccessStatusCode();
-        var project = await createResponse.Content.ReadFromJsonAsync<ProjectResponse>();
+        var project = await createResponse.Content.ReadEnvelopeDataAsync<ProjectResponse>();
 
         // Prime the cache
         await client.GetAsync($"/api/projects/{project!.Id}");
@@ -138,7 +138,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
         // Get project again (should fetch from DB, not cache)
         var updatedResponse = await client.GetAsync($"/api/projects/{project.Id}");
         updatedResponse.EnsureSuccessStatusCode();
-        var updatedProject = await updatedResponse.Content.ReadFromJsonAsync<ProjectResponse>();
+        var updatedProject = await updatedResponse.Content.ReadEnvelopeDataAsync<ProjectResponse>();
 
         // Assert
         Assert.Equal("Updated Title for Cache Test", updatedProject!.Title);
@@ -162,7 +162,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var registerResponse = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
         registerResponse.EnsureSuccessStatusCode();
-        var authData = await registerResponse.Content.ReadFromJsonAsync<AuthResponse>();
+        var authData = await registerResponse.Content.ReadEnvelopeDataAsync<AuthResponse>();
 
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authData!.Token);
@@ -210,7 +210,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
     }
 
     [Fact]
-    public async Task CacheService_RemoveByPrefix_ShouldClearAllMatchingKeys()
+    public void CacheService_RemoveByPrefix_ShouldClearAllMatchingKeys()
     {
         // Arrange
         using var scope = _factory.Services.CreateScope();
@@ -244,7 +244,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
 
         var registerResponse = await client.PostAsJsonAsync("/api/auth/register", registerRequest);
         registerResponse.EnsureSuccessStatusCode();
-        var authData = await registerResponse.Content.ReadFromJsonAsync<AuthResponse>();
+        var authData = await registerResponse.Content.ReadEnvelopeDataAsync<AuthResponse>();
 
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authData!.Token);
@@ -256,7 +256,7 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
             Genre = "玄幻"
         };
         var createResponse = await client.PostAsJsonAsync("/api/projects", createRequest);
-        var project = await createResponse.Content.ReadFromJsonAsync<ProjectResponse>();
+        var project = await createResponse.Content.ReadEnvelopeDataAsync<ProjectResponse>();
 
         // Act - Make 10 requests
         var times = new List<long>();

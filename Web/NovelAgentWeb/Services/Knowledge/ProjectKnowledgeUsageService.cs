@@ -3,6 +3,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Services.Knowledge;
 
@@ -14,12 +15,14 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
     private readonly ILogger<ProjectKnowledgeUsageService> _logger;
     private readonly IDistributedCacheService? _redisCache;
     private readonly IMemoryCacheService? _memoryCache;
+    private readonly IOutputArtifactRecorder? _outputArtifacts;
 
     public ProjectKnowledgeUsageService(
         NovelAgentDbContext db,
         IAgentMemoryEventService events,
-        ILogger<ProjectKnowledgeUsageService> logger)
-        : this(db, events, null, logger, null, null)
+        ILogger<ProjectKnowledgeUsageService> logger,
+        IOutputArtifactRecorder? outputArtifacts = null)
+        : this(db, events, null, logger, null, null, outputArtifacts)
     {
     }
 
@@ -29,7 +32,8 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
         IAgentMemoryRepository? memoryRepository,
         ILogger<ProjectKnowledgeUsageService> logger,
         IDistributedCacheService? redisCache = null,
-        IMemoryCacheService? memoryCache = null)
+        IMemoryCacheService? memoryCache = null,
+        IOutputArtifactRecorder? outputArtifacts = null)
     {
         _db = db;
         _events = events;
@@ -37,6 +41,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
         _logger = logger;
         _redisCache = redisCache;
         _memoryCache = memoryCache;
+        _outputArtifacts = outputArtifacts;
     }
 
     public async Task MarkImportedAsync(
@@ -66,6 +71,7 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             _db.ProjectKnowledgeUsages.Add(usage);
             created = true;
         }
+        await ApplyDefaultBindingSemanticsAsync(usage, ct);
 
         await _db.SaveChangesAsync(ct);
         await _events.AppendAsync(
@@ -80,17 +86,28 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             new { knowledgeId, source },
             ct);
 
+        await RecordBindingOutputArtifactAsync(
+                usage,
+                "knowledge_imported",
+                "imported",
+                sessionId,
+                null,
+                source,
+                ct)
+            .ConfigureAwait(false);
+
         await SyncImportedMemoryAsync(userId, projectId, knowledgeId, sessionId, ct);
         await InvalidateProjectCachesAsync(userId, projectId, sessionId, ct);
         _logger.LogDebug("Marked knowledge {KnowledgeId} imported for project {ProjectId}", knowledgeId, projectId);
     }
 
-    public async Task MarkReferencedAsync(
+    public async Task<bool> MarkReferencedAsync(
         string userId,
         string projectId,
         string knowledgeId,
         string? sessionId,
         string? runId,
+        string? idempotencyKey = null,
         CancellationToken ct = default)
     {
         var usage = await FindUsageAsync(userId, projectId, knowledgeId, ct);
@@ -107,11 +124,21 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             _db.ProjectKnowledgeUsages.Add(usage);
         }
 
+        var normalizedKey = FirstNonEmpty(idempotencyKey);
+        if (!string.IsNullOrWhiteSpace(normalizedKey) &&
+            HasUsageIdempotencyKey(usage.UsageIdempotencyKeysJson, normalizedKey))
+        {
+            return false;
+        }
+
         usage.Status = "referenced";
         usage.SourceSessionId = sessionId ?? usage.SourceSessionId;
         usage.SourceRunId = runId ?? usage.SourceRunId;
         usage.LastUsedAt = DateTime.UtcNow;
         usage.UsageCount++;
+        if (!string.IsNullOrWhiteSpace(normalizedKey))
+            usage.UsageIdempotencyKeysJson = AddUsageIdempotencyKey(usage.UsageIdempotencyKeysJson, normalizedKey);
+        await ApplyDefaultBindingSemanticsAsync(usage, ct);
 
         await _db.SaveChangesAsync(ct);
         await _events.AppendAsync(
@@ -126,9 +153,20 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             new { knowledgeId, usage.UsageCount },
             ct);
 
+        await RecordBindingOutputArtifactAsync(
+                usage,
+                "knowledge_referenced",
+                "referenced",
+                sessionId,
+                runId,
+                "agent_reference",
+                ct)
+            .ConfigureAwait(false);
+
         await SyncReferencedMemoryAsync(userId, projectId, ct);
         await InvalidateProjectCachesAsync(userId, projectId, sessionId, ct);
         _logger.LogDebug("Marked knowledge {KnowledgeId} referenced for project {ProjectId}", knowledgeId, projectId);
+        return true;
     }
 
     public async Task<IReadOnlyList<ProjectKnowledgeUsage>> ListForProjectAsync(
@@ -153,6 +191,95 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
             x.UserId == userId &&
             x.ProjectId == projectId &&
             x.KnowledgeId == knowledgeId, ct);
+    }
+
+    private async Task RecordBindingOutputArtifactAsync(
+        ProjectKnowledgeUsage usage,
+        string stage,
+        string status,
+        string? sessionId,
+        string? runId,
+        string source,
+        CancellationToken ct)
+    {
+        if (_outputArtifacts == null)
+            return;
+
+        await _outputArtifacts.RecordAsync(
+                new OutputArtifactRecordRequest(
+                    RuntimeRunId: FirstNonEmpty(runId, usage.SourceRunId, $"knowledge-binding:{usage.Id}"),
+                    UserId: usage.UserId,
+                    ProjectId: usage.ProjectId,
+                    ChapterId: null,
+                    PackageId: null,
+                    ToolName: "ProjectKnowledgeUsage",
+                    Stage: stage,
+                    Status: status,
+                    ArtifactType: "project_knowledge_binding",
+                    ArtifactId: usage.KnowledgeId,
+                    OutputKind: "ProcessArtifact",
+                    Summary: $"知识 {usage.KnowledgeId} 已在项目 {usage.ProjectId} 标记为 {status}。",
+                    UserVisibleWhere: new[] { "创作工作流", "知识库" },
+                    VisibleInWorkflow: true,
+                    VisibleInLibrary: false,
+                    SourceEventType: stage,
+                    SourceEventId: usage.Id,
+                    Data: new
+                    {
+                        usage.Id,
+                        usage.KnowledgeId,
+                        usage.ProjectId,
+                        usage.Status,
+                        usage.Role,
+                        usage.Scope,
+                        usage.Priority,
+                        usage.ConstraintLevel,
+                        usage.PackagePolicy,
+                        usage.BoundVersion,
+                        usage.UsageCount,
+                        sessionId,
+                        runId,
+                        source
+                    }),
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ApplyDefaultBindingSemanticsAsync(ProjectKnowledgeUsage usage, CancellationToken ct)
+    {
+        var knowledge = await _db.KnowledgeBases
+            .AsNoTracking()
+            .Where(x => x.Id == usage.KnowledgeId && x.UserId == usage.UserId)
+            .Select(x => new { x.EntryType, x.Weight, x.IdempotencyKey, x.Id })
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        var entryType = knowledge?.EntryType ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(usage.Role) ||
+            string.Equals(usage.Role, "Reference", StringComparison.OrdinalIgnoreCase))
+        {
+            usage.Role = string.IsNullOrWhiteSpace(entryType) ? "Reference" : entryType.Trim();
+        }
+        if (string.IsNullOrWhiteSpace(usage.Scope))
+            usage.Scope = "ProjectWide";
+        if (usage.Priority <= 0)
+            usage.Priority = knowledge?.Weight > 0 ? knowledge.Weight : 50;
+        if (string.IsNullOrWhiteSpace(usage.ConstraintLevel) ||
+            string.Equals(usage.ConstraintLevel, "Reference", StringComparison.OrdinalIgnoreCase))
+        {
+            usage.ConstraintLevel = string.Equals(entryType, "HardFact", StringComparison.OrdinalIgnoreCase)
+                ? "HardConstraint"
+                : "Reference";
+        }
+        if (string.IsNullOrWhiteSpace(usage.PackagePolicy) ||
+            string.Equals(usage.PackagePolicy, "RelevantOnly", StringComparison.OrdinalIgnoreCase))
+        {
+            usage.PackagePolicy = string.Equals(entryType, "HardFact", StringComparison.OrdinalIgnoreCase)
+                ? "DefaultEveryChapter"
+                : "RelevantOnly";
+        }
+        if (string.IsNullOrWhiteSpace(usage.BoundVersion))
+            usage.BoundVersion = knowledge?.IdempotencyKey ?? knowledge?.Id;
     }
 
     private async Task SyncImportedMemoryAsync(
@@ -224,13 +351,48 @@ public class ProjectKnowledgeUsageService : IProjectKnowledgeUsageService
                     Source = entry.SourceType ?? "manual",
                     ProjectUsageStatus = x.Status,
                     ProjectUsageCount = x.UsageCount,
-                    ProjectLastUsedAt = x.LastUsedAt
+                    ProjectLastUsedAt = x.LastUsedAt,
+                    Role = x.Role,
+                    Scope = x.Scope,
+                    Priority = x.Priority,
+                    ConstraintLevel = x.ConstraintLevel,
+                    PackagePolicy = x.PackagePolicy,
+                    BoundVersion = x.BoundVersion ?? string.Empty
                 };
             })
             .ToList();
     }
 
     private static List<string> ParseTags(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<string>();
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return new List<string>();
+        }
+    }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+    private static bool HasUsageIdempotencyKey(string? json, string key) =>
+        ReadUsageIdempotencyKeys(json).Contains(key, StringComparer.OrdinalIgnoreCase);
+
+    private static string AddUsageIdempotencyKey(string? json, string key)
+    {
+        var keys = ReadUsageIdempotencyKeys(json);
+        if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            keys.Add(key);
+        return System.Text.Json.JsonSerializer.Serialize(keys.TakeLast(64).ToArray());
+    }
+
+    private static List<string> ReadUsageIdempotencyKeys(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return new List<string>();

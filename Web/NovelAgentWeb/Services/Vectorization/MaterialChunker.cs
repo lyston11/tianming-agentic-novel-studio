@@ -1,15 +1,11 @@
+using System.Text;
+
 namespace TM.Web.NovelAgentWeb.Services.Vectorization;
 
 /// <summary>
 /// Implements text chunking functionality for vectorization of large materials.
 /// Splits long text into overlapping chunks suitable for embedding and vector storage.
 /// </summary>
-/// <remarks>
-/// IMPORTANT: This implementation uses simplified whitespace-based tokenization.
-/// Token counts are approximations and do NOT reflect actual LLM token counts,
-/// especially for non-Latin scripts (Chinese, Japanese, etc.) where character-to-token
-/// ratios differ significantly from English.
-/// </remarks>
 public class MaterialChunker : IMaterialChunker
 {
     private const int MaxTokensPerChunk = 1500;
@@ -29,15 +25,32 @@ public class MaterialChunker : IMaterialChunker
             return new List<MaterialChunk>();
         }
 
-        var tokens = TokenizeSimple(text);
+        var tokens = TokenizeForEmbedding(text);
         var chunks = new List<MaterialChunk>();
         var startIndex = 0;
 
         while (startIndex < tokens.Count)
         {
-            var endIndex = Math.Min(startIndex + MaxTokensPerChunk, tokens.Count);
+            var endIndex = startIndex;
+            var tokenCount = 0;
+            while (endIndex < tokens.Count)
+            {
+                var next = tokens[endIndex];
+                if (tokenCount > 0 && tokenCount + next.EstimatedTokens > MaxTokensPerChunk)
+                    break;
+
+                tokenCount += next.EstimatedTokens;
+                endIndex++;
+            }
+
+            if (endIndex == startIndex)
+            {
+                tokenCount = tokens[startIndex].EstimatedTokens;
+                endIndex = startIndex + 1;
+            }
+
             var chunkTokens = tokens.GetRange(startIndex, endIndex - startIndex);
-            var chunkContent = string.Join(" ", chunkTokens);
+            var chunkContent = string.Concat(chunkTokens.Select(t => t.Text)).Trim();
 
             chunks.Add(new MaterialChunk
             {
@@ -45,7 +58,7 @@ public class MaterialChunker : IMaterialChunker
                 ChunkIndex = chunks.Count,
                 ChunkTotal = 0, // Will be set after loop
                 Content = chunkContent,
-                TokenCount = chunkTokens.Count
+                TokenCount = tokenCount
             });
 
             // Move to next chunk with overlap
@@ -54,7 +67,7 @@ public class MaterialChunker : IMaterialChunker
                 break;
             }
 
-            startIndex = endIndex - OverlapTokens;
+            startIndex = Math.Max(startIndex + 1, endIndex - OverlapTokens);
         }
 
         // Set ChunkTotal for all chunks
@@ -66,33 +79,69 @@ public class MaterialChunker : IMaterialChunker
         return chunks;
     }
 
-    /// <summary>
-    /// Performs simplified whitespace-based tokenization.
-    /// </summary>
-    /// <remarks>
-    /// WARNING: This is a placeholder implementation for development/testing only.
-    /// Token counts produced by this method are INACCURATE and do not reflect actual
-    /// LLM tokenization behavior. Whitespace splitting is particularly problematic for:
-    /// - Chinese text (each character may be 2-3 tokens)
-    /// - Japanese text (mixing kanji/hiragana/katakana)
-    /// - Code and technical content
-    /// - Special characters and punctuation
-    ///
-    /// TODO: Replace with proper tokenizer integration:
-    /// - For OpenAI models: Use tiktoken library (cl100k_base encoding for text-embedding-3-*)
-    /// - For other providers: Use their respective tokenization libraries
-    /// - Consider caching token counts to avoid repeated tokenization overhead
-    ///
-    /// FIXME: Add logging/metrics to track when this method produces significantly
-    /// inaccurate counts (e.g., when chunk size exceeds embedding model limits).
-    /// </remarks>
-    private List<string> TokenizeSimple(string text)
+    private static List<ChunkToken> TokenizeForEmbedding(string text)
     {
-        // Simplified whitespace-based tokenization for development
-        // This DOES NOT accurately represent actual token counts
-        return text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
+        var tokens = new List<ChunkToken>();
+        var pendingSpace = false;
+        var word = new StringBuilder();
+
+        foreach (var ch in text)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                FlushWord(tokens, word, ref pendingSpace);
+                if (tokens.Count > 0)
+                    pendingSpace = true;
+                continue;
+            }
+
+            if (IsStandaloneTextUnit(ch))
+            {
+                FlushWord(tokens, word, ref pendingSpace);
+                var textUnit = pendingSpace ? $" {ch}" : ch.ToString();
+                tokens.Add(new ChunkToken(textUnit, 1));
+                pendingSpace = false;
+                continue;
+            }
+
+            word.Append(ch);
+            if (word.Length >= 80)
+                FlushWord(tokens, word, ref pendingSpace);
+        }
+
+        FlushWord(tokens, word, ref pendingSpace);
+        return tokens;
     }
+
+    private static void FlushWord(List<ChunkToken> tokens, StringBuilder word, ref bool pendingSpace)
+    {
+        if (word.Length == 0)
+            return;
+
+        var value = word.ToString();
+        var text = pendingSpace && tokens.Count > 0 ? $" {value}" : value;
+        tokens.Add(new ChunkToken(text, EstimateLatinTokenCount(value)));
+        word.Clear();
+        pendingSpace = false;
+    }
+
+    private static int EstimateLatinTokenCount(string value) =>
+        Math.Max(1, (int)Math.Ceiling(value.Length / 4.0));
+
+    private static bool IsStandaloneTextUnit(char ch) =>
+        IsCjk(ch) || IsWidePunctuation(ch);
+
+    private static bool IsCjk(char ch) =>
+        ch is >= '\u3400' and <= '\u9FFF' or
+            >= '\uF900' and <= '\uFAFF' or
+            >= '\u3040' and <= '\u30FF' or
+            >= '\uAC00' and <= '\uD7AF';
+
+    private static bool IsWidePunctuation(char ch) =>
+        ch is >= '\u3000' and <= '\u303F' or
+            >= '\uFF00' and <= '\uFFEF';
+
+    private sealed record ChunkToken(string Text, int EstimatedTokens);
 }
 
 /// <summary>

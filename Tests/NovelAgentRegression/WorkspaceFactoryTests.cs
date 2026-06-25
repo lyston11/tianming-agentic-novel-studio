@@ -7,8 +7,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Moq;
+using TM.Services.Framework.AI.Embedding;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Memory;
+using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 using TM.Tests.NovelAgentRegression.Helpers;
@@ -79,9 +84,12 @@ public class WorkspaceFactoryTests : IDisposable
         envMock.Setup(e => e.ContentRootPath).Returns(Path.GetTempPath());
         services.AddSingleton(envMock.Object);
 
-        services.AddSingleton(new UserSettingsManager(
-            Path.GetTempPath(),
-            "WorkspaceFactoryTests"));
+        services.AddSingleton(RegressionUserSettingsFactory.CreateDbBacked("test-user-1"));
+        services.AddSingleton(Mock.Of<IVectorStore>());
+        services.AddSingleton(Mock.Of<IMicroEmbeddingService>());
+        services.AddScoped(_ => Mock.Of<ICurrentUserService>());
+        services.AddScoped(_ => Mock.Of<IAgentMemoryRepository>());
+        services.AddTianmingProductionKernelServices();
 
         _serviceProvider = services.BuildServiceProvider();
     }

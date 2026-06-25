@@ -44,10 +44,10 @@ public class StoryBibleRepositoryTests : IDisposable
 
         _memoryCacheMock.Setup(c => c.GetOrSetAsync(
                 It.IsAny<string>(),
-                It.IsAny<Func<Task<StoryBible>>>(),
+                It.IsAny<Func<Task<StoryBible?>>>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((string _, Func<Task<StoryBible>> factory, TimeSpan _, CancellationToken _) => factory());
+            .Returns((string _, Func<Task<StoryBible?>> factory, TimeSpan _, CancellationToken _) => factory());
 
         _repository = new StoryBibleRepository(
             _dbContext,
@@ -350,7 +350,7 @@ public class StoryBibleRepositoryTests : IDisposable
         Assert.Single(loaded.ForeshadowEntries);
         Assert.Equal("Test Foreshadow", loaded.ForeshadowEntries[0].Title);
         Assert.Equal("planted", loaded.ForeshadowEntries[0].Status);
-        Assert.NotNull(loaded.ForeshadowEntries[0].PlantedAt);
+        Assert.NotEqual(default, loaded.ForeshadowEntries[0].PlantedAt);
     }
 
     [Fact]

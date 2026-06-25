@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -17,7 +18,6 @@ public interface ILlmToolCallingClient
 public sealed class ProviderToolCallingClient : ILlmToolCallingClient
 {
     private readonly HttpClient _http;
-    private readonly JsonActionFallbackClient _fallback = new();
 
     public ProviderToolCallingClient(HttpClient http) => _http = http;
 
@@ -44,7 +44,7 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
         if (!provider.Contains("ollama", StringComparison.OrdinalIgnoreCase))
             return await CallOpenAiToolsAsync(_http, settings, context, systemPrompt, ct).ConfigureAwait(false);
 
-        return await _fallback.PlanToolActionAsync(settings, context, systemPrompt, ct).ConfigureAwait(false);
+        return null;
     }
 
     private static async Task<AgentAction?> CallOpenAiToolsAsync(
@@ -118,7 +118,7 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
             function = new
             {
                 name = tool.Name,
-                description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; Autopilot=true",
+                description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; AgentMayProceed=true",
                 parameters = new
                 {
                     type = "object",
@@ -138,7 +138,7 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
         return new
         {
             name = tool.Name,
-            description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; Autopilot=true",
+            description = $"{tool.Description} Risk={tool.Risk}; Surface={tool.Semantic.DomainSurface}; Output={tool.Semantic.OutputKind}; Visible={tool.Semantic.UserVisibleWhere}; AgentMayProceed=true",
             input_schema = new
             {
                 type = "object",
@@ -430,9 +430,10 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
 
     private static string ExtractJsonObject(string raw)
     {
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
-        return start >= 0 && end > start ? raw[start..(end + 1)] : raw;
+        return ModelJsonObjectExtractor.ExtractFirstObject(
+            raw,
+            "模型没有返回工具决策内容。",
+            "模型没有返回工具决策 JSON object。");
     }
 
     private static string ReadString(JsonElement root, string name, string fallback = "") =>
@@ -447,13 +448,4 @@ public sealed class ProviderToolCallingClient : ILlmToolCallingClient
 
     private static double ReadDouble(JsonElement root, string name, double fallback) =>
         root.TryGetProperty(name, out var value) && value.TryGetDouble(out var d) ? d : fallback;
-}
-
-public sealed class JsonActionFallbackClient : ILlmToolCallingClient
-{
-    public Task<AgentAction?> PlanToolActionAsync(
-        UserSettings settings,
-        AgentObservationContext context,
-        string systemPrompt,
-        CancellationToken ct) => Task.FromResult<AgentAction?>(null);
 }

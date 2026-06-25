@@ -77,7 +77,7 @@ public interface IProjectService
 
     /// <summary>
     /// Delete a project with ownership verification and cascade deletion.
-    /// Deletes: project, chapters (DB), foreshadows (DB), and Qdrant collection.
+    /// Deletes database-owned project data and enqueues asynchronous index cleanup.
     /// Only the project owner (or admin) can delete the project.
     /// </summary>
     /// <param name="projectId">Project ID</param>

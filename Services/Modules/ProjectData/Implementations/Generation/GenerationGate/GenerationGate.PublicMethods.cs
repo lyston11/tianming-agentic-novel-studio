@@ -4,7 +4,6 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading.Tasks;
-using TM.Services.Framework.AI.SemanticKernel;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 using TM.Services.Modules.ProjectData.Implementations.Generation;
 using TM.Services.Modules.ProjectData.Models.Guides;
@@ -29,18 +28,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
                     : (xmlBlock.Index, xmlBlock.Length);
             }
 
-            var xmlOpen = ChangesXmlOpenRegex.Matches(content).Cast<Match>().LastOrDefault();
-            if (xmlOpen?.Success == true)
-                return (xmlOpen.Index, xmlOpen.Length);
-
-            var idx = content.IndexOf(ChangesSeparator, StringComparison.Ordinal);
-            if (idx >= 0)
-                return (idx, ChangesSeparator.Length);
-
-            var m = ChangesSeparatorLineRegex.Match(content);
-            if (m.Success)
-                return (m.Index, m.Length);
-
             return (-1, 0);
         }
 
@@ -51,18 +38,6 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             var xmlBlock = ChangesXmlBlockRegex.Matches(content).Cast<Match>().LastOrDefault();
             if (xmlBlock?.Success == true) return xmlBlock.Index;
-
-            var xmlOpen = ChangesXmlOpenRegex.Matches(content).Cast<Match>().LastOrDefault();
-            if (xmlOpen?.Success == true) return xmlOpen.Index;
-
-            var idx = content.IndexOf(ChangesSeparator, StringComparison.Ordinal);
-            if (idx >= 0) return idx;
-
-            var sepMatch = ChangesSeparatorLineRegex.Match(content);
-            if (sepMatch.Success) return sepMatch.Index;
-
-            var mdMatch = MdChangesHeaderRegex.Match(content);
-            if (mdMatch.Success) return mdMatch.Index;
 
             return -1;
         }
@@ -93,7 +68,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         {
             var result = new GateResult { ChapterId = chapterId };
 
-            TM.App.Log($"[GG][{GenerationCorrelation.Current}] start: {chapterId}");
+            TM.App.Log($"[GG][{chapterId}] start");
 
             var protocolResult = ValidateChangesProtocol(rawContent, factSnapshot, contextIds);
             if (!protocolResult.Success)
@@ -221,7 +196,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 if (designIssues.Count > threshold)
                 {
                     result.AddFailure(FailureType.Consistency, designIssues);
-                    TM.App.Log($"[GG][{GenerationCorrelation.Current}] fail: design {designIssues.Count}/{totalElements} missing (threshold={threshold})");
+                    TM.App.Log($"[GG][{chapterId}] fail: design {designIssues.Count}/{totalElements} missing (threshold={threshold})");
                     return result;
                 }
                 else if (designIssues.Count > 0)
@@ -235,46 +210,16 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 var omissions = await _omissionDetector.DetectAsync(contentToValidate, protocolResult.Changes!).ConfigureAwait(false);
                 if (omissions.Count > 0)
                 {
-                    var residualOmissions = new List<EntityOmissionRecord>();
-                    var autoPatched = new List<EntityOmissionRecord>();
-                    foreach (var o in omissions)
+                    var issues = omissions.Select(o => new ConsistencyIssue
                     {
-                        var descriptor = EntityDimensionRegistry.GetByCode(o.DimensionCode);
-                        if (descriptor?.Strategy == DriftStrategy.AutoPatch && descriptor.AutoPatchAction != null)
-                        {
-                            try
-                            {
-                                descriptor.AutoPatchAction(protocolResult.Changes!, o.EntityId, o.EntityName, "在正文中出现，无显式状态变化");
-                                autoPatched.Add(o);
-                            }
-                            catch (Exception patchEx)
-                            {
-                                TM.App.Log($"[GG] 漏报自动补录失败（{o.DimensionName}/{o.EntityName}）: {patchEx.Message}");
-                                residualOmissions.Add(o);
-                            }
-                        }
-                        else
-                        {
-                            residualOmissions.Add(o);
-                        }
-                    }
-
-                    if (autoPatched.Count > 0)
-                        TM.App.Log($"[GG] 漏报自动补录 {autoPatched.Count} 项: {string.Join("; ", autoPatched.Take(3).Select(o => $"{o.DimensionName}/{o.EntityName}"))}");
-
-                    if (residualOmissions.Count > 0)
-                    {
-                        var issues = residualOmissions.Select(o => new ConsistencyIssue
-                        {
-                            EntityId = o.EntityId,
-                            IssueType = IssueTypes.OmittedDeclaration,
-                            Expected = $"[漏报] {o.DimensionName}'{o.EntityName}'出现于本章正文应在 CHANGES.{o.ChangeFieldName} 中申报",
-                            Actual = $"[漏报] {o.DimensionName}'{o.EntityName}'出现在正文但 CHANGES.{o.ChangeFieldName} 未申报"
-                        }).ToList();
-                        result.AddConsistencyFailure(issues);
-                        TM.App.Log($"[GG] fail: Omission {residualOmissions.Count} 项（不可自动补录）: {string.Join("; ", residualOmissions.Take(3).Select(o => $"{o.DimensionName}/{o.EntityName}"))}");
-                        return result;
-                    }
+                        EntityId = o.EntityId,
+                        IssueType = IssueTypes.OmittedDeclaration,
+                        Expected = $"[漏报] {o.DimensionName}'{o.EntityName}'出现于本章正文应在 CHANGES.{o.ChangeFieldName} 中申报",
+                        Actual = $"[漏报] {o.DimensionName}'{o.EntityName}'出现在正文但 CHANGES.{o.ChangeFieldName} 未申报"
+                    }).ToList();
+                    result.AddConsistencyFailure(issues);
+                    TM.App.Log($"[GG] fail: Omission {omissions.Count} 项: {string.Join("; ", omissions.Take(3).Select(o => $"{o.DimensionName}/{o.EntityName}"))}");
+                    return result;
                 }
             }
             catch (Exception ex)
@@ -283,7 +228,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             }
 
             result.Success = true;
-            TM.App.Log($"[GG][{GenerationCorrelation.Current}] ok: {chapterId}");
+            TM.App.Log($"[GG][{chapterId}] ok");
             return result;
         }
 
@@ -450,7 +395,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
 
             if (changesPart == null)
             {
-                result.AddError($"未识别到CHANGES区域（首选格式：{ChangesXmlOpen}...{ChangesXmlClose}；兼容旧格式和末尾 JSON）");
+                result.AddError($"未识别到CHANGES区域：请在正文结尾使用 {ChangesXmlOpen}...{ChangesXmlClose} 包裹合法 JSON 对象。");
                 return result;
             }
 
@@ -478,7 +423,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
             {
                 var canonResult = ChapterChangesCanonicalizer.Canonicalize(result.Changes, snapshot, contextIds);
                 result.Changes = canonResult.Canonical;
-                var corrId = GenerationCorrelation.Current;
+                const string corrId = "gate";
                 if (canonResult.HasPatches && InfoLogDedup.ShouldLog($"GG:Canon:Patch:{corrId}"))
                     TM.App.Log($"[GG] 归一化补丁({canonResult.PatchLog.Count}): {string.Join("; ", canonResult.PatchLog)}");
                 if (canonResult.AmbiguousFields.Count > 0 && InfoLogDedup.ShouldLog($"GG:Canon:Ambig:{corrId}"))
@@ -489,13 +434,13 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 {
                     var totalKept = CountChangesItems(result.Changes);
                     var totalAttempted = totalKept + forgedCount;
-                    GenerationProgressHub.Report($"⚠ 模型本次伪造了 {forgedCount} 处实体ID（账本不存在），系统已自动剔除");
+                    TM.App.Log($"[GG] 模型本次伪造了 {forgedCount} 处实体ID（账本不存在），系统已自动剔除");
 
                     if (forgedCount >= ForgedIdHardThreshold && forgedCount * 5 >= totalAttempted * 4)
                     {
                         var msg = $"模型大面积伪造实体ID（{forgedCount}/{totalAttempted}），请严格使用账本中已存在的实体名称或 ShortId，禁止自造不存在的ID";
                         result.AddError(msg);
-                        GenerationProgressHub.Report($"⚠ 检测到大面积伪造（{forgedCount}/{totalAttempted}），触发重写");
+                        TM.App.Log($"[GG] 检测到大面积伪造（{forgedCount}/{totalAttempted}），触发重写");
                         return result;
                     }
                 }
@@ -513,9 +458,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
         private enum ChangesFormatType
         {
             XmlBlock,
-            XmlOpenOnly,
-            WithMarker,
-            TrailingJsonOnly
+            Missing
         }
 
         private static (string content, string? changes, ChangesFormatType format) IdentifyChangesRegion(string rawContent)
@@ -530,158 +473,7 @@ namespace TM.Services.Modules.ProjectData.Implementations
                 );
             }
 
-            var xmlOpenMatch = ChangesXmlOpenRegex.Matches(rawContent).Cast<Match>().LastOrDefault();
-            if (xmlOpenMatch?.Success == true)
-            {
-                return (
-                    rawContent.Substring(0, xmlOpenMatch.Index).Trim(),
-                    rawContent.Substring(xmlOpenMatch.Index + xmlOpenMatch.Length).Trim(),
-                    ChangesFormatType.XmlOpenOnly
-                );
-            }
-
-            var idx = rawContent.IndexOf(ChangesSeparator, StringComparison.Ordinal);
-            if (idx >= 0)
-            {
-                return (
-                    rawContent.Substring(0, idx).Trim(),
-                    rawContent.Substring(idx + ChangesSeparator.Length).Trim(),
-                    ChangesFormatType.WithMarker
-                );
-            }
-
-            var sepMatch = ChangesSeparatorLineRegex.Match(rawContent);
-            if (sepMatch.Success)
-            {
-                return (
-                    rawContent.Substring(0, sepMatch.Index).Trim(),
-                    rawContent.Substring(sepMatch.Index + sepMatch.Length).Trim(),
-                    ChangesFormatType.WithMarker
-                );
-            }
-
-            var mdMatch = MdChangesHeaderRegex.Match(rawContent);
-            if (mdMatch.Success)
-            {
-                return (
-                    rawContent.Substring(0, mdMatch.Index).Trim(),
-                    rawContent.Substring(mdMatch.Index + mdMatch.Length).Trim(),
-                    ChangesFormatType.WithMarker
-                );
-            }
-
-            var jsonResult = TryIdentifyTrailingJson(rawContent);
-            if (jsonResult.HasValue)
-            {
-                return (
-                    rawContent.Substring(0, jsonResult.Value.startIndex).Trim(),
-                    jsonResult.Value.json,
-                    ChangesFormatType.TrailingJsonOnly
-                );
-            }
-
-            return (rawContent, null, ChangesFormatType.WithMarker);
-        }
-
-        private static (int startIndex, string json)? TryIdentifyTrailingJson(string rawContent)
-        {
-            var lastBrace = rawContent.LastIndexOf('}');
-            if (lastBrace >= 0)
-            {
-                var braceCount = 0;
-                var jsonStartIndex = -1;
-
-                for (var i = lastBrace; i >= 0; i--)
-                {
-                    var c = rawContent[i];
-                    if (c == '}') braceCount++;
-                    else if (c == '{')
-                    {
-                        braceCount--;
-                        if (braceCount == 0)
-                        {
-                            jsonStartIndex = i;
-                            break;
-                        }
-                    }
-                }
-
-                if (jsonStartIndex >= 0)
-                {
-                    var candidateJson = rawContent.Substring(jsonStartIndex, lastBrace - jsonStartIndex + 1);
-                    var exactResult = TryValidateTrailingJsonCandidate(rawContent, jsonStartIndex, candidateJson);
-                    if (exactResult.HasValue)
-                    {
-                        return exactResult;
-                    }
-                }
-            }
-
-            for (var jsonStartIndex = rawContent.LastIndexOf('{'); jsonStartIndex >= 0; jsonStartIndex = rawContent.LastIndexOf('{', jsonStartIndex - 1))
-            {
-                var candidateJson = rawContent.Substring(jsonStartIndex);
-                var repairedResult = TryValidateTrailingJsonCandidate(rawContent, jsonStartIndex, candidateJson);
-                if (repairedResult.HasValue)
-                {
-                    return repairedResult;
-                }
-            }
-
-            return null;
-        }
-
-        private static (int startIndex, string json)? TryValidateTrailingJsonCandidate(string rawContent, int jsonStartIndex, string candidateJson)
-        {
-            var repairedJson = RepairChangesJson(candidateJson);
-            var candidates = string.Equals(repairedJson, candidateJson, StringComparison.Ordinal)
-                ? new[] { candidateJson }
-                : new[] { candidateJson, repairedJson };
-
-            foreach (var json in candidates)
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(json, new JsonDocumentOptions
-                    {
-                        CommentHandling = JsonCommentHandling.Skip,
-                        AllowTrailingCommas = true
-                    });
-
-                    if (doc.RootElement.ValueKind != JsonValueKind.Object) continue;
-
-                    var matchedFields = 0;
-                    foreach (var field in ChangesSignatureFields)
-                    {
-                        if (doc.RootElement.TryGetProperty(field, out _) ||
-                            doc.RootElement.TryGetProperty(ToCamelCase(field), out _))
-                        {
-                            matchedFields++;
-                        }
-                    }
-
-                    if (matchedFields < 2) continue;
-
-                    var actualStart = jsonStartIndex;
-                    var beforeJson = rawContent.Substring(0, jsonStartIndex).TrimEnd();
-                    var codeBlockIdx = beforeJson.LastIndexOf("```", StringComparison.Ordinal);
-                    if (codeBlockIdx >= 0)
-                    {
-                        var between = beforeJson.Substring(codeBlockIdx + 3).Trim();
-                        if (string.IsNullOrEmpty(between) || between.Equals("json", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var lineStart = beforeJson.LastIndexOf('\n', codeBlockIdx);
-                            actualStart = lineStart >= 0 ? lineStart : codeBlockIdx;
-                        }
-                    }
-
-                    return (actualStart, json);
-                }
-                catch (JsonException)
-                {
-                }
-            }
-
-            return null;
+            return (rawContent, null, ChangesFormatType.Missing);
         }
 
         private static string ToCamelCase(string s) =>

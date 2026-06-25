@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.Projects;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Projects;
@@ -89,7 +90,7 @@ public class ProjectController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             _logger.LogWarning(ex, "Project {ProjectId} not found", id);
-            return NotFound(new { message = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -118,6 +119,9 @@ public class ProjectController : ControllerBase
         }
 
         var userId = _currentUserService.GetUserId();
+        request.IdempotencyKey = Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKey)
+            ? idempotencyKey.ToString()
+            : string.Empty;
 
         var project = await _projectService.CreateProjectAsync(
             request,
@@ -170,7 +174,7 @@ public class ProjectController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             _logger.LogWarning(ex, "Project {ProjectId} not found", id);
-            return NotFound(new { message = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -181,7 +185,7 @@ public class ProjectController : ControllerBase
 
     /// <summary>
     /// Delete a project with ownership verification.
-    /// Cascades to chapters, foreshadows, and Qdrant collection.
+    /// Cascades database records and enqueues asynchronous index cleanup.
     /// </summary>
     /// <param name="id">Project ID</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -211,7 +215,7 @@ public class ProjectController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             _logger.LogWarning(ex, "Project {ProjectId} not found", id);
-            return NotFound(new { message = ex.Message });
+            return NotFound(ApiErrors.NotFound(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {

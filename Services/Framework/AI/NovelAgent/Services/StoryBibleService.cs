@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -18,41 +17,16 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
     public sealed class StoryBibleService
     {
-        private const string StorageSubPath = "Framework/AI/NovelAgent";
-        private const string StoryBibleFileName = "story_bible.json";
         private const int MaxAgentRuns = 100;
         private const int MaxRevisions = 200;
 
         private readonly SemaphoreSlim _ioLock = new(1, 1);
-        private readonly IStoryBibleDocumentStore? _documentStore;
-        private readonly string _storageIdentity;
+        private readonly IStoryBibleDocumentStore _documentStore;
         private StoryBibleDocument? _cache;
 
-        public StoryBibleService(
-            IStoryBibleDocumentStore? documentStore = null,
-            string storageIdentity = "sqlite-redis://story-bible")
+        public StoryBibleService(IStoryBibleDocumentStore documentStore)
         {
-            _documentStore = documentStore;
-            _storageIdentity = string.IsNullOrWhiteSpace(storageIdentity)
-                ? "sqlite-redis://story-bible"
-                : storageIdentity;
-
-            try
-            {
-                StoragePathHelper.CurrentProjectChanged += (_, _) =>
-                {
-                    _cache = null;
-                };
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[StoryBibleService] 订阅项目切换事件失败: {ex.Message}");
-            }
-        }
-
-        public string GetStoragePath()
-        {
-            return _storageIdentity;
+            _documentStore = documentStore ?? throw new ArgumentNullException(nameof(documentStore));
         }
 
         public async Task<StoryBibleDocument> LoadAsync(CancellationToken ct = default)
@@ -64,16 +38,8 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             {
                 if (_cache != null) return Clone(_cache);
 
-                _cache = _documentStore == null
-                    ? new StoryBibleDocument()
-                    : await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
+                _cache = await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
                 Normalize(_cache);
-                return Clone(_cache);
-            }
-            catch (Exception ex)
-            {
-                TM.App.Log($"[StoryBibleService] 加载 Story Bible 失败: {ex.Message}");
-                _cache = new StoryBibleDocument();
                 return Clone(_cache);
             }
             finally
@@ -241,8 +207,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 return new StoryBibleCommitResult
                 {
                     Success = false,
-                    Message = "故事创意宪法为空，无法提交。",
-                    StoragePath = GetStoragePath()
+                    Message = "故事创意宪法为空，无法提交。"
                 };
             }
 
@@ -257,7 +222,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                         Success = false,
                         RequiresOverwrite = true,
                         Message = "当前项目已经存在 Story Bible。若要覆盖，请明确传入 overwrite=true。",
-                        StoragePath = GetStoragePath(),
                         Document = Clone(document)
                     };
                 }
@@ -277,7 +241,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     Success = true,
                     Message = "Story Bible 已提交保存。",
-                    StoragePath = GetStoragePath(),
                     Document = Clone(document)
                 };
             }
@@ -297,8 +260,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 return new StoryBibleCommitResult
                 {
                     Success = false,
-                    Message = "设定账本条目为空，无法追加。",
-                    StoragePath = GetStoragePath()
+                    Message = "设定账本条目为空，无法追加。"
                 };
             }
 
@@ -322,7 +284,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     Success = true,
                     Message = "设定账本条目已追加。",
-                    StoragePath = GetStoragePath(),
                     Document = Clone(document)
                 };
             }
@@ -352,7 +313,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                     {
                         Success = false,
                         Message = "未找到指定设定账本条目。",
-                        StoragePath = GetStoragePath(),
                         Document = Clone(document)
                     };
                 }
@@ -374,7 +334,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     Success = true,
                     Message = $"设定账本条目状态已更新为 {status}。",
-                    StoragePath = GetStoragePath(),
                     Document = Clone(document)
                 };
             }
@@ -396,8 +355,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 return new StoryBibleCommitResult
                 {
                     Success = false,
-                    Message = "卷级规划为空，无法提交。",
-                    StoragePath = GetStoragePath()
+                    Message = "卷级规划为空，无法提交。"
                 };
             }
 
@@ -415,7 +373,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                         Success = false,
                         RequiresOverwrite = true,
                         Message = "当前 Story Bible 已存在同一卷级规划。若要覆盖，请明确传入 overwrite=true。",
-                        StoragePath = GetStoragePath(),
                         Document = Clone(document)
                     };
                 }
@@ -440,7 +397,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     Success = true,
                     Message = "卷级规划已提交到 Story Bible。",
-                    StoragePath = GetStoragePath(),
                     Document = Clone(document)
                 };
             }
@@ -599,8 +555,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 return new StoryBibleCommitResult
                 {
                     Success = false,
-                    Message = "章节连续性事实为空，无法沉淀。",
-                    StoragePath = GetStoragePath()
+                    Message = "章节连续性事实为空，无法沉淀。"
                 };
             }
 
@@ -626,7 +581,6 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
                 {
                     Success = true,
                     Message = "章节连续性事实已沉淀到 Story Bible。",
-                    StoragePath = GetStoragePath(),
                     Document = Clone(document)
                 };
             }
@@ -690,9 +644,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         {
             if (_cache != null) return _cache;
 
-            _cache = _documentStore == null
-                ? new StoryBibleDocument()
-                : await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
+            _cache = await _documentStore.LoadAsync(ct).ConfigureAwait(false) ?? new StoryBibleDocument();
             Normalize(_cache);
             return _cache;
         }
@@ -700,8 +652,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
         private async Task SaveWithoutLockAsync(StoryBibleDocument document, CancellationToken ct)
         {
             Normalize(document);
-            if (_documentStore != null)
-                await _documentStore.SaveAsync(Clone(document), ct).ConfigureAwait(false);
+            await _documentStore.SaveAsync(Clone(document), ct).ConfigureAwait(false);
             _cache = Clone(document);
         }
 

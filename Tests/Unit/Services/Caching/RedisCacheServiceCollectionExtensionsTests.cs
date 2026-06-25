@@ -47,7 +47,7 @@ public class RedisCacheServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddNovelAgentDistributedCache_WithExplicitFallback_RegistersMemoryDistributedCache()
+    public void AddNovelAgentDistributedCache_WithExplicitFallback_StillThrows()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -56,10 +56,10 @@ public class RedisCacheServiceCollectionExtensionsTests
         });
         var services = new ServiceCollection();
 
-        services.AddNovelAgentDistributedCache(configuration);
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddNovelAgentDistributedCache(configuration));
 
-        using var provider = services.BuildServiceProvider();
-        Assert.IsType<MemoryDistributedCache>(provider.GetRequiredService<IDistributedCache>());
+        Assert.Contains("Redis is required", exception.Message);
     }
 
     [Fact]

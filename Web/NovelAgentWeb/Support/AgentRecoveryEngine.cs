@@ -14,7 +14,6 @@ public enum ToolFailureType
     MissingPrerequisite = 0,
     InvalidParameters = 1,
     LogicConstraintViolation = 2,
-    ResourceUnavailable = 3,
 }
 
 public sealed class PrerequisiteToolStep
@@ -98,10 +97,15 @@ public sealed class AgentRecoveryEngine
             Reason = failedResult.Message,
         };
 
-        if (IsRepairableDraftGateFailure(failedCall, message))
+        if (string.Equals(failedCall.Name, "ProduceChapter", StringComparison.OrdinalIgnoreCase))
         {
-            analysis.IsRecoverable = true;
-            analysis.RecommendedChains = BuildDraftRepairChains(failedCall, session);
+            if (IsRepairableClosedLoopChapterFailure(failedCall, failedResult, message))
+            {
+                analysis.Type = ToolFailureType.MissingPrerequisite;
+                analysis.IsRecoverable = true;
+                analysis.RecommendedChains = BuildProduceChapterRetryChain(failedCall, session);
+            }
+
             return analysis;
         }
 
@@ -125,21 +129,24 @@ public sealed class AgentRecoveryEngine
                 analysis.RecommendedChains = new();
                 break;
 
-            case ToolFailureType.ResourceUnavailable:
-                // Could be recoverable if we can initialize the resource
-                analysis.IsRecoverable = true;
-                analysis.RecommendedChains = BuildResourceInitChains(failedCall, message, session, bible);
-                break;
         }
 
         return analysis;
     }
 
-    private static bool IsRepairableDraftGateFailure(AgentToolCall failedCall, string message)
+    private static bool IsRepairableClosedLoopChapterFailure(
+        AgentToolCall failedCall,
+        AgentToolExecutionResult failedResult,
+        string message)
     {
-        if (!string.Equals(failedCall.Name, "ValidateChapterDraft", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(failedCall.Name, "RepairChapterDraft", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(failedCall.Name, "ProduceChapter", StringComparison.OrdinalIgnoreCase))
             return false;
+
+        if (failedResult.Failure?.RequiresUserDecision == true ||
+            failedResult.Failure?.Recoverable == false)
+        {
+            return false;
+        }
 
         return message.Contains("硬门禁", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("gate_failed", StringComparison.OrdinalIgnoreCase) ||
@@ -149,19 +156,20 @@ public sealed class AgentRecoveryEngine
                message.Contains("未识别到 changes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static List<PrerequisiteToolChain> BuildDraftRepairChains(
+    private static List<PrerequisiteToolChain> BuildProduceChapterRetryChain(
         AgentToolCall failedCall,
         AgentSession session)
     {
         var runId = failedCall.Arguments.TryGetValue("runId", out var rid)
             ? rid
             : session.ActiveRunId ?? string.Empty;
-        var repairStrategy = failedCall.Arguments.TryGetValue("repairStrategy", out var strategy) && !string.IsNullOrWhiteSpace(strategy)
-            ? strategy
-            : "patch_missing_continuity";
-        var repairAttempt = failedCall.Arguments.TryGetValue("repairAttempt", out var attempt) && !string.IsNullOrWhiteSpace(attempt)
-            ? attempt
-            : "1";
+        var arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(runId))
+            arguments["runId"] = runId;
+        if (failedCall.Arguments.TryGetValue("commitPolicy", out var commitPolicy) && !string.IsNullOrWhiteSpace(commitPolicy))
+            arguments["commitPolicy"] = commitPolicy;
+        if (failedCall.Arguments.TryGetValue("maxRepairAttempts", out var maxRepairAttempts) && !string.IsNullOrWhiteSpace(maxRepairAttempts))
+            arguments["maxRepairAttempts"] = maxRepairAttempts;
 
         return new List<PrerequisiteToolChain>
         {
@@ -173,19 +181,14 @@ public sealed class AgentRecoveryEngine
                     {
                         ToolCall = new AgentToolCall
                         {
-                            Name = "RepairChapterDraft",
-                            Arguments = new()
-                            {
-                                ["runId"] = runId,
-                                ["repairStrategy"] = repairStrategy,
-                                ["repairAttempt"] = repairAttempt,
-                            },
+                            Name = "ProduceChapter",
+                            Arguments = arguments,
                         },
-                        MissingPrerequisiteTag = "chapter_draft_repair",
+                        MissingPrerequisiteTag = "chapter_closed_loop_retry",
                     },
                 },
                 Priority = 2,
-                Description = "章节草稿门禁失败，需要先修复正文和修订记录",
+                Description = "章节闭环生产失败，需要由 ProduceChapter 重新生成、校验和修复",
             }
         };
     }
@@ -271,12 +274,9 @@ public sealed class AgentRecoveryEngine
             return ToolFailureType.LogicConstraintViolation;
         }
 
-        // ResourceUnavailable patterns
         if (message.Contains("尚未固化") || message.Contains("还未") ||
             message.Contains("未知工具"))
-        {
-            return ToolFailureType.ResourceUnavailable;
-        }
+            return ToolFailureType.LogicConstraintViolation;
 
         // Default to InvalidParameters if no pattern matches
         return ToolFailureType.InvalidParameters;
@@ -291,10 +291,8 @@ public sealed class AgentRecoveryEngine
         var chains = new List<PrerequisiteToolChain>();
         var runId = failedCall.Arguments.TryGetValue("runId", out var rid) ? rid : session.ActiveRunId ?? string.Empty;
 
-        // Tool-specific prerequisite chains
-        if (failedCall.Name == "BuildChapterContextPackage")
+        if (string.Equals(failedCall.Name, "ProduceChapter", StringComparison.OrdinalIgnoreCase))
         {
-            // Check for "候选还没选定" or "选定章节候选" (more specific - means selection needed)
             if (message.Contains("候选还没选定") || message.Contains("选定章节候选"))
             {
                 chains.Add(new PrerequisiteToolChain
@@ -315,7 +313,13 @@ public sealed class AgentRecoveryEngine
                     Description = "章节候选未选定，需要先选择候选",
                 });
             }
-            else if (message.Contains("还没有候选") || message.Contains("没有章节候选"))
+            else if (message.Contains("上下文包") ||
+                     message.Contains("context") ||
+                     message.Contains("草稿") ||
+                     message.Contains("draft") ||
+                     message.Contains("门禁") ||
+                     message.Contains("gate") ||
+                     message.Contains("校验"))
             {
                 chains.Add(new PrerequisiteToolChain
                 {
@@ -325,84 +329,14 @@ public sealed class AgentRecoveryEngine
                         {
                             ToolCall = new AgentToolCall
                             {
-                                Name = "PlanChapter",
-                                Arguments = new()
-                                {
-                                    ["creativeBrief"] = session.WorkingMemory?.CurrentGoal ?? "继续当前章节规划",
-                                    ["sourceTurnId"] = string.Empty, // AgentConversationTurn doesn't have TurnId
-                                },
-                            },
-                            MissingPrerequisiteTag = "chapter_candidates",
-                        },
-                    },
-                    Priority = 1,
-                    Description = "缺少章节候选，需要先规划章节",
-                });
-            }
-        }
-        else if (failedCall.Name == "GenerateChapterWithChanges" || failedCall.Name == "ValidateChapterDraft")
-        {
-            if (message.Contains("上下文包") || message.Contains("context"))
-            {
-                chains.Add(new PrerequisiteToolChain
-                {
-                    Steps = new()
-                    {
-                        new PrerequisiteToolStep
-                        {
-                            ToolCall = new AgentToolCall
-                            {
-                                Name = "BuildChapterContextPackage",
+                                Name = "ProduceChapter",
                                 Arguments = new() { ["runId"] = runId },
                             },
-                            MissingPrerequisiteTag = "chapter_context_package",
+                            MissingPrerequisiteTag = "chapter_closed_loop_retry",
                         },
                     },
                     Priority = 1,
-                    Description = "缺少上下文包，需要先构建",
-                });
-            }
-            else if (message.Contains("草稿") || message.Contains("draft"))
-            {
-                chains.Add(new PrerequisiteToolChain
-                {
-                    Steps = new()
-                    {
-                        new PrerequisiteToolStep
-                        {
-                            ToolCall = new AgentToolCall
-                            {
-                                Name = "GenerateChapterWithChanges",
-                                Arguments = new() { ["runId"] = runId },
-                            },
-                            MissingPrerequisiteTag = "chapter_draft",
-                        },
-                    },
-                    Priority = 1,
-                    Description = "缺少章节草稿，需要先生成",
-                });
-            }
-        }
-        else if (failedCall.Name == "CommitValidatedChapter")
-        {
-            if (message.Contains("门禁") || message.Contains("gate") || message.Contains("校验"))
-            {
-                chains.Add(new PrerequisiteToolChain
-                {
-                    Steps = new()
-                    {
-                        new PrerequisiteToolStep
-                        {
-                            ToolCall = new AgentToolCall
-                            {
-                                Name = "ValidateChapterDraft",
-                                Arguments = new() { ["runId"] = runId },
-                            },
-                            MissingPrerequisiteTag = "generation_gate",
-                        },
-                    },
-                    Priority = 1,
-                    Description = "门禁未通过，需要先校验",
+                    Description = "章节闭环产物缺失或校验失败，需要重新运行 ProduceChapter",
                 });
             }
         }
@@ -410,39 +344,4 @@ public sealed class AgentRecoveryEngine
         return chains;
     }
 
-    private List<PrerequisiteToolChain> BuildResourceInitChains(
-        AgentToolCall failedCall,
-        string message,
-        AgentSession session,
-        StoryBibleDocument bible)
-    {
-        var chains = new List<PrerequisiteToolChain>();
-
-        if (message.Contains("story bible 尚未固化") || message.Contains("故事地基"))
-        {
-            chains.Add(new PrerequisiteToolChain
-            {
-                Steps = new()
-                {
-                    new PrerequisiteToolStep
-                    {
-                        ToolCall = new AgentToolCall
-                        {
-                            Name = "PlanStoryFoundation",
-                            Arguments = new()
-                            {
-                                ["userSeed"] = session.WorkingMemory?.CurrentGoal ?? "生成故事地基",
-                                ["genre"] = "通用",
-                            },
-                        },
-                        MissingPrerequisiteTag = "story_foundation",
-                    },
-                },
-                Priority = 1,
-                Description = "Story Bible 未初始化，需要先规划故事地基",
-            });
-        }
-
-        return chains;
-    }
 }

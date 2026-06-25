@@ -41,6 +41,18 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("validationIssueCount")]
         public int ValidationIssueCount { get; set; }
 
+        [JsonPropertyName("meetsAcceptedCreativeIntents")]
+        public bool MeetsAcceptedCreativeIntents { get; set; } = true;
+
+        [JsonPropertyName("continuityRisk")]
+        public string ContinuityRisk { get; set; } = string.Empty;
+
+        [JsonPropertyName("chapterPacing")]
+        public string ChapterPacing { get; set; } = string.Empty;
+
+        [JsonPropertyName("recommendedAction")]
+        public string RecommendedAction { get; set; } = string.Empty;
+
         [JsonPropertyName("requiresRewrite")]
         public bool RequiresRewrite { get; set; }
 

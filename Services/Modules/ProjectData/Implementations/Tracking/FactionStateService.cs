@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
+using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Guides;
 using TM.Services.Modules.ProjectData.Models.Tracking;
 
@@ -12,10 +11,12 @@ namespace TM.Services.Modules.ProjectData.Implementations
     public class FactionStateService
     {
         private readonly GuideManager _guideManager;
+        private readonly IDesignElementLookupService _elementLookup;
 
-        public FactionStateService(GuideManager guideManager)
+        public FactionStateService(GuideManager guideManager, IDesignElementLookupService elementLookup)
         {
             _guideManager = guideManager;
+            _elementLookup = elementLookup;
         }
 
         private const string BaseFileName = "faction_state_guide.json";
@@ -55,30 +56,11 @@ namespace TM.Services.Modules.ProjectData.Implementations
             TM.App.Log($"[FactionState] 已更新 {change.FactionId} 在 {chapterId} 的状态: {change.NewStatus}");
         }
 
-        private static async Task<string?> TryResolveFactionDisplayNameAsync(string factionId)
+        private async Task<string?> TryResolveFactionDisplayNameAsync(string factionId)
         {
             try
             {
-                var elementsPath = Path.Combine(
-                    StoragePathHelper.GetProjectConfigPath(), "Design", "elements.json");
-                if (!File.Exists(elementsPath)) return null;
-
-                var json = await File.ReadAllTextAsync(elementsPath).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                if (!root.TryGetProperty("data", out var data)) return null;
-                if (!data.TryGetProperty("factionrules", out var factionModule)) return null;
-                if (!factionModule.TryGetProperty("faction_rules", out var factions)) return null;
-
-                foreach (var item in factions.EnumerateArray())
-                {
-                    var id = item.TryGetProperty("Id", out var idProp) ? idProp.GetString() : null;
-                    if (string.Equals(id, factionId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var name = item.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
-                        return string.IsNullOrWhiteSpace(name) ? null : name;
-                    }
-                }
+                return await _elementLookup.ResolveFactionNameAsync(factionId).ConfigureAwait(false);
             }
             catch (Exception ex) { TM.App.Log($"[FactionState] 读取势力名失败: {ex.Message}"); }
             return null;
