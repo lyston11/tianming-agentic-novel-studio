@@ -434,8 +434,45 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("knowledgeConstraintChecks")]
         public List<KnowledgeConstraintCheck> KnowledgeConstraintChecks { get; set; } = new();
 
+        /// <summary>
+        /// 违反的设计规则列表（完整快照，包含 RuleType/ConstraintLevel/SourceKnowledgeIds）。
+        /// 用于 Rewrite Loop 传递完整规则上下文，让 LLM 能精确定位修复方向。
+        /// </summary>
+        [JsonPropertyName("violatedDesignRules")]
+        public List<DesignRuleViolation> ViolatedDesignRules { get; set; } = new();
+
         [JsonPropertyName("validatedAt")]
         public DateTime ValidatedAt { get; set; } = DateTime.Now;
+    }
+
+    /// <summary>
+    /// 设计规则违反详情，传递完整上下文到 Rewrite Loop。
+    /// </summary>
+    public sealed class DesignRuleViolation
+    {
+        [JsonPropertyName("ruleId")]
+        public string RuleId { get; set; } = string.Empty;
+
+        [JsonPropertyName("ruleType")]
+        public string RuleType { get; set; } = string.Empty;
+
+        [JsonPropertyName("ruleContent")]
+        public string RuleContent { get; set; } = string.Empty;
+
+        [JsonPropertyName("constraintLevel")]
+        public string ConstraintLevel { get; set; } = string.Empty;
+
+        [JsonPropertyName("violationType")]
+        public string ViolationType { get; set; } = string.Empty; // "missing" | "forbidden_triggered"
+
+        [JsonPropertyName("sourceKnowledgeIds")]
+        public List<string> SourceKnowledgeIds { get; set; } = new();
+
+        [JsonPropertyName("priority")]
+        public int Priority { get; set; }
+
+        [JsonPropertyName("version")]
+        public int Version { get; set; }
     }
 
     public sealed class KnowledgeConstraintCheck

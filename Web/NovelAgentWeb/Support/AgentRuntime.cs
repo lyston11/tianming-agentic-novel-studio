@@ -362,9 +362,43 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
         await EmitAsync(session, AgentSseEventType.AgentObserving, "正在观察项目上下文...", ct);
 
         // ── Main loop: LLM-driven, up to maxSteps ──
+        var consecutiveChatReplies = 0;     // 连续 ChatReply 计数（无工具调用）
+        var consecutiveFailures = 0;        // 连续工具失败计数
+        const int MaxConsecutiveChatReplies = 3;
+        const int MaxConsecutiveFailures = 3;
+
         for (var step = 1; step <= maxSteps; step++)
         {
             ct.ThrowIfCancellationRequested();
+
+            // 智能终止：检测 Progress Stagnation
+            if (consecutiveChatReplies >= MaxConsecutiveChatReplies)
+            {
+                _logger.LogInformation(
+                    "Agent loop early terminated at step {Step}/{MaxSteps}: {Count} consecutive chat replies (no progress)",
+                    step, maxSteps, consecutiveChatReplies);
+                trace.Add(new AgentRuntimeStep
+                {
+                    StepIndex = step,
+                    Stage = "early_terminate",
+                    StopReason = $"连续 {consecutiveChatReplies} 步无工具调用，提前终止避免资源浪费"
+                });
+                break;
+            }
+            if (consecutiveFailures >= MaxConsecutiveFailures)
+            {
+                _logger.LogWarning(
+                    "Agent loop early terminated at step {Step}/{MaxSteps}: {Count} consecutive failures",
+                    step, maxSteps, consecutiveFailures);
+                trace.Add(new AgentRuntimeStep
+                {
+                    StepIndex = step,
+                    Stage = "early_terminate",
+                    StopReason = $"连续 {consecutiveFailures} 步工具失败，停止尝试避免无意义重试"
+                });
+                break;
+            }
+
             userMessage = await DrainInterruptsAsync(session, userMessage, ct).ConfigureAwait(false);
 
             // Observe - only if we have a project
@@ -405,6 +439,12 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
             session.WorkingMemory.LastDecision = action.ToDecision();
             RememberUserMessage(session, userMessage, action);
             trace.Add(new AgentRuntimeStep { StepIndex = step, Stage = "plan", Action = action });
+
+            // 智能终止检测：跟踪 ChatReply 连续次数（不涉及工具调用的纯回复）
+            if (action.Type == AgentActionType.ChatReply || action.IsNoTool)
+                consecutiveChatReplies++;
+            else
+                consecutiveChatReplies = 0;
 
             // ── Handle action types ──
 
@@ -616,6 +656,16 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
                 session.WorkingMemory.PendingToolCall = null;
                 session.WorkingMemory.PendingConfirmation = null;
             }
+
+            // 记录工具执行历史（永不压缩，用于跨 ChatHistory 压缩持久化）
+            RecordToolExecutionSnapshot(session, step, action.ToolCall, result);
+
+            // 更新连续状态计数（用于智能终止）
+            consecutiveChatReplies = 0; // 有工具调用，重置 ChatReply 计数
+            if (result.Success)
+                consecutiveFailures = 0;
+            else
+                consecutiveFailures++;
 
             // Handle tool execution failure with automatic recovery
             if (!result.Success)
@@ -2922,5 +2972,47 @@ public sealed class AgentRuntime : IAgentForegroundTurnRunner, IAgentInterruptDe
         session.WorkingMemory.MissionPlan.InteractionState?.Intent ??
         session.WorkingMemory.MissionPlan.TurnIntent ??
         new TurnIntent { RawMessage = userMessage };
+
+    /// <summary>
+    /// 记录工具执行快照到 WorkingMemory.ToolExecutionHistory。
+    /// 这些快照永不压缩，确保 LLM 在 ChatHistory 压缩后仍能看到所有工具调用历史。
+    /// </summary>
+    private static void RecordToolExecutionSnapshot(
+        AgentSession session,
+        int stepIndex,
+        AgentToolCall? toolCall,
+        AgentToolExecutionResult result)
+    {
+        if (toolCall == null) return;
+
+        const int MaxHistorySize = 200; // 上限防止内存无限增长
+
+        var summary = !string.IsNullOrWhiteSpace(result.Message)
+            ? (result.Message.Length > 500 ? result.Message.Substring(0, 500) + "..." : result.Message)
+            : (result.Success ? "执行成功" : "执行失败");
+
+        var snapshot = new ToolExecutionSnapshot
+        {
+            StepIndex = stepIndex,
+            RuntimeRunId = result.RunId ?? session.ActiveRunId ?? string.Empty,
+            ToolName = toolCall.Name,
+            Arguments = new Dictionary<string, string>(toolCall.Arguments, StringComparer.OrdinalIgnoreCase),
+            Success = result.Success,
+            ResultSummary = summary,
+            ArtifactType = result.Artifact?.ArtifactType ?? string.Empty,
+            ArtifactId = result.Artifact?.ArtifactId ?? string.Empty,
+            Phase = result.Phase ?? session.Phase ?? string.Empty,
+            ExecutedAt = DateTime.UtcNow
+        };
+
+        session.WorkingMemory.ToolExecutionHistory.Add(snapshot);
+
+        // 防止内存无限增长：保留最近 200 条
+        if (session.WorkingMemory.ToolExecutionHistory.Count > MaxHistorySize)
+        {
+            var overflow = session.WorkingMemory.ToolExecutionHistory.Count - MaxHistorySize;
+            session.WorkingMemory.ToolExecutionHistory.RemoveRange(0, overflow);
+        }
+    }
 
 }

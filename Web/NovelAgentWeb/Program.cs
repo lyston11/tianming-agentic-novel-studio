@@ -239,6 +239,7 @@ builder.Services.AddScoped<IAgentSessionResumeService, AgentSessionResumeService
 builder.Services.AddScoped<IAgentToolExecutionLedger, AgentToolExecutionLedger>();
 builder.Services.AddScoped<IToolInputArtifactResolver, ToolInputArtifactResolver>();
 builder.Services.AddScoped<IAgentRuntimeRunService, AgentRuntimeRunService>();
+builder.Services.AddScoped<IRuntimeRunToolExecutionStore, RuntimeRunToolExecutionStore>();
 builder.Services.AddScoped<IAgentInterruptService, AgentInterruptService>();
 builder.Services.AddScoped<IAgentRuntimeEventService, AgentRuntimeEventService>();
 builder.Services.AddSingleton<IAgentRuntimeEventFanout, RedisAgentRuntimeEventFanout>();

@@ -40,12 +40,15 @@ public sealed class AgentRuntimeRunService : IAgentRuntimeRunService
         }
 
         var now = DateTime.UtcNow;
+        var projectId = string.IsNullOrWhiteSpace(request.ProjectId) ? null : request.ProjectId;
         var run = new AgentRuntimeRun
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = request.UserId,
             SessionId = request.SessionId,
-            ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? null : request.ProjectId,
+            ProjectId = projectId,
+            LockedProjectId = projectId, // 创建时锁定 ProjectId，运行中不可变更
+            ExecutedToolsJson = "[]",
             Status = AgentRuntimeRunStatus.Queued,
             Mode = NormalizeMode(request.Mode),
             CurrentPhase = AgentRuntimeRunStatus.Queued,

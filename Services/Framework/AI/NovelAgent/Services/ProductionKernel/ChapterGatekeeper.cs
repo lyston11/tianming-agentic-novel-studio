@@ -53,6 +53,17 @@ namespace TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel
                     {
                         report.Issues.Add($"设计规则硬约束未满足（{ruleLabel}）：{TrimForIssue(rule.RuleContent)}");
                         report.RepairHints.Add($"重写正文必须体现设计规则【{rule.RuleType}】：{TrimForIssue(rule.RuleContent)}");
+                        report.ViolatedDesignRules.Add(new DesignRuleViolation
+                        {
+                            RuleId = rule.RuleId,
+                            RuleType = rule.RuleType,
+                            RuleContent = rule.RuleContent,
+                            ConstraintLevel = rule.ConstraintLevel,
+                            ViolationType = "missing",
+                            SourceKnowledgeIds = rule.SourceKnowledgeIds?.ToList() ?? new(),
+                            Priority = rule.Priority,
+                            Version = rule.Version
+                        });
                         hasFailure = true;
                     }
                 }
@@ -63,6 +74,17 @@ namespace TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel
                     {
                         report.Issues.Add($"设计规则禁用项被触发（{ruleLabel}）：{TrimForIssue(rule.RuleContent)}");
                         report.RepairHints.Add($"重写正文必须移除被禁用的设计：{TrimForIssue(rule.RuleContent)}");
+                        report.ViolatedDesignRules.Add(new DesignRuleViolation
+                        {
+                            RuleId = rule.RuleId,
+                            RuleType = rule.RuleType,
+                            RuleContent = rule.RuleContent,
+                            ConstraintLevel = rule.ConstraintLevel,
+                            ViolationType = "forbidden_triggered",
+                            SourceKnowledgeIds = rule.SourceKnowledgeIds?.ToList() ?? new(),
+                            Priority = rule.Priority,
+                            Version = rule.Version
+                        });
                         hasFailure = true;
                     }
                 }

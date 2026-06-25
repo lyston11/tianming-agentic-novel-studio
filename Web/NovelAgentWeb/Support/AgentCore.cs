@@ -557,6 +557,12 @@ public sealed class AgentWorkingMemory
     public AgentProjectMemory ProjectMemory { get; set; } = new();
     public AgentAuthorMemory AuthorMemory { get; set; } = new();
     public AgentExecutionMemory ExecutionMemory { get; set; } = new();
+
+    /// <summary>
+    /// 永不压缩的工具执行历史摘要。
+    /// 用于在 ChatHistory 被压缩后，LLM 仍能看到所有工具调用的上下文。
+    /// </summary>
+    public List<ToolExecutionSnapshot> ToolExecutionHistory { get; set; } = new();
 }
 
 public sealed class AgentSessionMemory
@@ -601,6 +607,24 @@ public sealed class AgentExecutionMemory
     public List<string> RepeatedBlockers { get; set; } = new();
     public List<string> SuccessfulRepairNotes { get; set; } = new();
     public List<string> KnowledgeProcessingFailures { get; set; } = new();
+}
+
+/// <summary>
+/// 工具执行历史快照 - 永久保留，不被 ChatHistory 压缩影响。
+/// 用于让 LLM 始终能看到本次会话中所有工具调用的关键信息。
+/// </summary>
+public sealed class ToolExecutionSnapshot
+{
+    public int StepIndex { get; set; }
+    public string RuntimeRunId { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public Dictionary<string, string> Arguments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool Success { get; set; }
+    public string ResultSummary { get; set; } = string.Empty;
+    public string ArtifactType { get; set; } = string.Empty;
+    public string ArtifactId { get; set; } = string.Empty;
+    public string Phase { get; set; } = string.Empty;
+    public DateTime ExecutedAt { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class AgentMissionState

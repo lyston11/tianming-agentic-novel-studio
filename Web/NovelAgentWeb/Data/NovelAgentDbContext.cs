@@ -1589,6 +1589,8 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.LockedProjectId).HasColumnName("locked_project_id");
+            entity.Property(e => e.ExecutedToolsJson).HasColumnName("executed_tools_json").HasDefaultValue("[]");
             entity.Property(e => e.Status).HasColumnName("status").IsRequired();
             entity.Property(e => e.Mode).HasColumnName("mode").HasDefaultValue("inspect").IsRequired();
             entity.Property(e => e.CurrentPhase).HasColumnName("current_phase");

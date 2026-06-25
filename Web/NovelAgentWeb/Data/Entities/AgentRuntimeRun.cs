@@ -25,6 +25,22 @@ public sealed class AgentRuntimeRun
     [StringLength(50)]
     public string? ProjectId { get; set; }
 
+    /// <summary>
+    /// 锁定的 ProjectId（RuntimeRun 创建后不可变）。
+    /// 防止运行中切换项目导致 Workspace 隔离失效。
+    /// 工具执行时优先使用此字段而非 session.ActiveProjectId。
+    /// </summary>
+    [Column("locked_project_id")]
+    [StringLength(50)]
+    public string? LockedProjectId { get; set; }
+
+    /// <summary>
+    /// 已执行工具的指纹列表（JSON 数组）。
+    /// 用于跨进程重启的工具去重，防止崩溃后重复执行副作用工具。
+    /// </summary>
+    [Column("executed_tools_json")]
+    public string ExecutedToolsJson { get; set; } = "[]";
+
     [Required]
     [Column("status")]
     [StringLength(30)]
