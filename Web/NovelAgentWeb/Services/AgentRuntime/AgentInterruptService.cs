@@ -25,6 +25,10 @@ public sealed class AgentInterruptService : IAgentInterruptService
 
     public async Task<AgentInterrupt> AddAsync(CreateAgentInterruptRequest request, CancellationToken ct = default)
     {
+        // 根据 Kind 自动分配优先级（stop > direction_change > supplement > status > freeform）
+        var kind = string.IsNullOrWhiteSpace(request.Kind) ? "freeform" : request.Kind;
+        var priority = request.Priority > 0 ? request.Priority : ComputeInterruptPriority(kind);
+
         var interrupt = new AgentInterrupt
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -32,9 +36,9 @@ public sealed class AgentInterruptService : IAgentInterruptService
             UserId = request.UserId,
             SessionId = request.SessionId,
             ProjectId = string.IsNullOrWhiteSpace(request.ProjectId) ? null : request.ProjectId,
-            Kind = string.IsNullOrWhiteSpace(request.Kind) ? "freeform" : request.Kind,
+            Kind = kind,
             Status = AgentInterruptStatus.Pending,
-            Priority = request.Priority,
+            Priority = priority,
             Message = request.Message.Trim(),
             DecisionJson = "{}",
             CreatedAt = DateTime.UtcNow
@@ -119,6 +123,21 @@ public sealed class AgentInterruptService : IAgentInterruptService
             .ThenBy(i => i.CreatedAt)
             .ToListAsync(ct)
             .ConfigureAwait(false);
+
+    /// <summary>
+    /// 根据中断 Kind 计算优先级。
+    /// 优先级越高，越先被处理。
+    /// stop (100) > direction_change (80) > supplement (50) > status (30) > freeform (10)
+    /// </summary>
+    private static int ComputeInterruptPriority(string kind) => kind?.ToLowerInvariant() switch
+    {
+        "stop" or "cancel" => 100,           // 最高优先级：用户要求停止
+        "direction_change" => 80,            // 改变方向：需要调整规划
+        "supplement" => 50,                  // 补充要求：在合适时机处理
+        "status" => 30,                       // 状态查询：低优先级
+        "freeform" => 10,                    // 自由形式：兜底
+        _ => 20                               // 未知类型：略高于 freeform
+    };
 
     private async Task CachePendingInterruptsAsync(string runtimeRunId, CancellationToken ct)
     {
