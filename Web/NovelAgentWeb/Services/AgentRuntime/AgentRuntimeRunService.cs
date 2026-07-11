@@ -138,6 +138,19 @@ public sealed class AgentRuntimeRunService : IAgentRuntimeRunService
             .ToList();
     }
 
+    public async Task<IReadOnlyList<AgentRuntimeRun>> ListQueuedAsync(
+        int limit = 500,
+        CancellationToken ct = default)
+    {
+        return await _db.AgentRuntimeRuns
+            .AsNoTracking()
+            .Where(r => r.Status == AgentRuntimeRunStatus.Queued)
+            .OrderBy(r => r.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 1000))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+    }
+
     public async Task<AgentRuntimeRun> MarkRunningAsync(string runtimeRunId, CancellationToken ct = default)
     {
         var run = await RequireRunAsync(runtimeRunId, ct).ConfigureAwait(false);

@@ -198,9 +198,10 @@ public static class ProjectWorkflow
             var isFinal = visibleInLibrary ||
                           string.Equals(metadata.OutputKind, "FinalArtifact", StringComparison.OrdinalIgnoreCase);
             var sourceEvent = FirstNonEmpty(metadata.SourceEventType, evt.EventType);
+            var outputArtifactId = FirstNonEmpty(evt.ArtifactId, evt.Id);
 
             items.Add(TimelineItem(
-                $"output-artifact:{FirstNonEmpty(evt.ArtifactId, evt.Id)}",
+                $"output-artifact:{evt.Id}:{outputArtifactId}",
                 FirstNonEmpty(evt.ArtifactType, "output_artifact"),
                 isFinal ? "最终产物" : "过程产物",
                 surface,
@@ -472,7 +473,11 @@ public static class ProjectWorkflow
                 item => item.Kind == "gate_report",
                 "还没有结构门禁报告。", "草稿生成后由 Agent 执行结构门禁。",
                 productionEvents: eventList.Where(IsGateProductionEvent).ToList(),
-                toolExecutions: toolList.Where(IsGateToolExecution).ToList()),
+                toolExecutions: toolList.Where(IsGateToolExecution).ToList(),
+                recoveryEvents: eventList.Where(evt =>
+                    IsRepairProductionEvent(evt) ||
+                    IsQualityProductionEvent(evt) ||
+                    IsLibraryProductionEvent(evt)).ToList()),
             BuildStage("quality", "质量评审", "创作工作流", items, taskList,
                 item => item.Kind == "quality_review",
                 "还没有质量评审报告。", "门禁后由 Agent 执行质量评审。",
@@ -513,6 +518,10 @@ public static class ProjectWorkflow
     private static bool IsQualityProductionEvent(WorkflowProductionEventSummary evt) =>
         evt.EventType is "chapter_quality_reviewed" ||
         string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.ReviewCompleted, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRepairProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.EventType is "chapter_draft_repaired" or "chapter_agent_review_feedback_applied" ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.DraftRewritten, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsLibraryProductionEvent(WorkflowProductionEventSummary evt) =>
         !IsRevisionPlanProductionEvent(evt) &&
@@ -775,7 +784,8 @@ public static class ProjectWorkflow
         int currentCount = 0,
         int totalCount = 0,
         IReadOnlyList<WorkflowProductionEventSummary>? productionEvents = null,
-        IReadOnlyList<WorkflowToolExecutionSummary>? toolExecutions = null)
+        IReadOnlyList<WorkflowToolExecutionSummary>? toolExecutions = null,
+        IReadOnlyList<WorkflowProductionEventSummary>? recoveryEvents = null)
     {
         var artifacts = timeline.Where(predicate).OrderByDescending(item => ParseDate(item.UpdatedAt)).ToList();
         var events = (productionEvents ?? Array.Empty<WorkflowProductionEventSummary>())
@@ -784,60 +794,67 @@ public static class ProjectWorkflow
         var tools = (toolExecutions ?? Array.Empty<WorkflowToolExecutionSummary>())
             .OrderByDescending(t => ParseDate(t.StartedAt))
             .ToList();
+        var recoveries = (recoveryEvents ?? Array.Empty<WorkflowProductionEventSummary>())
+            .OrderByDescending(e => ParseDate(e.CreatedAt))
+            .ToList();
+        var currentEvents = ApplyProductionEventRecoveries(
+            CollapseToCurrentProductionEvents(events),
+            recoveries);
+        var currentTools = CollapseToCurrentToolExecutions(tools);
+        var latestReadyEvidenceAt = GetLatestReadyEvidenceAt(artifacts, currentEvents, currentTools);
+        var visibleTools = currentTools
+            .Where(tool => !IsBlockedToolExecution(tool) ||
+                           latestReadyEvidenceAt == DateTime.MinValue ||
+                           ParseToolActivityAt(tool) > latestReadyEvidenceAt)
+            .ToList();
         var activeTasks = tasks.Count(task => task.Status is "running" or "blocked" or "queued");
         var primary = artifacts.FirstOrDefault();
-        var primaryEvent = events.FirstOrDefault();
-        var primaryTool = tools.FirstOrDefault();
+        var primaryEvent = currentEvents.FirstOrDefault();
+        var primaryTool = visibleTools.FirstOrDefault();
         var blocked = artifacts.Any(item =>
             item.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
             item.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
             item.Status.Contains("rewrite", StringComparison.OrdinalIgnoreCase)) ||
-            events.Any(IsBlockedProductionEvent) ||
-            tools.Any(IsBlockedToolExecution);
-        var eventRunning = events.Any(evt =>
+            currentEvents.Any(IsBlockedProductionEvent) ||
+            visibleTools.Any(IsBlockedToolExecution);
+        var eventRunning = currentEvents.Any(evt =>
             evt.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ||
             evt.Status.Contains("queued", StringComparison.OrdinalIgnoreCase) ||
             evt.Status.Contains("pending", StringComparison.OrdinalIgnoreCase));
-        var toolRunning = tools.Any(tool =>
+        var toolRunning = visibleTools.Any(tool =>
             tool.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ||
             tool.Status.Contains("queued", StringComparison.OrdinalIgnoreCase) ||
             tool.Status.Contains("pending", StringComparison.OrdinalIgnoreCase));
-        var eventReady = events.Count > 0 && events.All(evt =>
+        var eventReady = currentEvents.Count > 0 && currentEvents.All(evt =>
             evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
             evt.Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
             evt.Status.Contains("executed", StringComparison.OrdinalIgnoreCase));
-        var toolReady = tools.Count > 0 && tools.All(tool =>
-            tool.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
-            tool.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
-        var latestEventReady = events.Count > 0 && (
-            events[0].Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
-            events[0].Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
-            events[0].Status.Contains("executed", StringComparison.OrdinalIgnoreCase));
-        var latestToolReady = tools.Count > 0 && (
-            tools[0].Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
-            tools[0].Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
+        var toolReady = visibleTools.Count > 0 && visibleTools.All(IsCompletedToolExecution);
+        var latestEventReady = currentEvents.Count > 0 && (
+            currentEvents[0].Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+            currentEvents[0].Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
+            currentEvents[0].Status.Contains("executed", StringComparison.OrdinalIgnoreCase));
+        var latestToolReady = visibleTools.Count > 0 && IsCompletedToolExecution(visibleTools[0]);
         var running = activeTasks > 0 && artifacts.Any(item => item.Kind == "scheduled_task");
-        var status = artifacts.Count == 0 && events.Count == 0 && tools.Count == 0
+        var status = artifacts.Count == 0 && currentEvents.Count == 0 && visibleTools.Count == 0
             ? "empty"
             : blocked
                 ? "blocked"
                 : running || eventRunning || toolRunning
                     ? "running"
                     : artifacts.Any(item => item.IsFinal) || eventReady || latestEventReady || toolReady || latestToolReady
-                        ? "ready"
-                        : "in_progress";
+                ? "ready"
+                : "in_progress";
         var count = currentCount > 0 ? currentCount : artifacts.Count;
         var total = totalCount > 0 ? totalCount : artifacts.Count;
-        if (events.Count > 0 && currentCount <= 0)
-            count = events.Count(evt => evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase));
-        if (events.Count > 0 && totalCount <= 0)
-            total = events.Count;
-        if (events.Count == 0 && tools.Count > 0 && currentCount <= 0)
-            count = tools.Count(tool =>
-                tool.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
-                tool.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase));
-        if (events.Count == 0 && tools.Count > 0 && totalCount <= 0)
-            total = tools.Count;
+        if (currentEvents.Count > 0 && currentCount <= 0)
+            count = currentEvents.Count(evt => evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase));
+        if (currentEvents.Count > 0 && totalCount <= 0)
+            total = currentEvents.Count;
+        if (currentEvents.Count == 0 && visibleTools.Count > 0 && currentCount <= 0)
+            count = visibleTools.Count(IsCompletedToolExecution);
+        if (currentEvents.Count == 0 && visibleTools.Count > 0 && totalCount <= 0)
+            total = visibleTools.Count;
 
         var toolSummary = primaryTool == null
             ? string.Empty
@@ -850,19 +867,133 @@ public static class ProjectWorkflow
             status,
             primaryEvent?.Message ?? primary?.Summary ?? toolSummary ?? emptyReason,
             primaryEvent?.DataJson ?? primary?.Preview ?? BuildToolExecutionDetail(primaryTool),
-            Math.Max(Math.Max(artifacts.Count, events.Count), tools.Count),
+            Math.Max(Math.Max(artifacts.Count, currentEvents.Count), currentTools.Count),
             count,
             total,
             primaryEvent?.CreatedAt ?? primary?.UpdatedAt ?? primaryTool?.StartedAt ?? string.Empty,
             primaryEvent?.ArtifactId ?? primary?.Id ?? primaryTool?.Id ?? string.Empty,
             primaryEvent?.RuntimeRunId ?? primary?.RunId ?? primaryTool?.RunId ?? string.Empty,
-            artifacts.Count == 0 && events.Count == 0 && tools.Count == 0 ? emptyReason : string.Empty,
+            artifacts.Count == 0 && currentEvents.Count == 0 && visibleTools.Count == 0 ? emptyReason : string.Empty,
             nextIntentHint,
             events)
         {
-            ToolExecutions = tools
+            ToolExecutions = visibleTools
         };
     }
+
+    private static List<WorkflowProductionEventSummary> CollapseToCurrentProductionEvents(
+        IReadOnlyList<WorkflowProductionEventSummary> events) =>
+        events
+            .GroupBy(BuildProductionStageStateKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(evt => ParseDate(evt.CreatedAt)).First())
+            .OrderByDescending(evt => ParseDate(evt.CreatedAt))
+            .ToList();
+
+    private static string BuildProductionStageStateKey(WorkflowProductionEventSummary evt)
+    {
+        var stage = FirstNonEmpty(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), evt.Stage, evt.EventType);
+        return $"{stage}:{BuildProductionEventTargetKey(evt)}";
+    }
+
+    private static string BuildProductionEventTargetKey(WorkflowProductionEventSummary evt) =>
+        FirstNonEmpty(
+            evt.ChapterId,
+            evt.PackageId,
+            string.Equals(evt.ArtifactType, "outbox_event", StringComparison.OrdinalIgnoreCase) ? evt.ArtifactId : string.Empty,
+            evt.ArtifactId,
+            evt.RuntimeRunId,
+            evt.Id);
+
+    private static List<WorkflowProductionEventSummary> ApplyProductionEventRecoveries(
+        IReadOnlyList<WorkflowProductionEventSummary> currentEvents,
+        IReadOnlyList<WorkflowProductionEventSummary> recoveryEvents) =>
+        currentEvents
+            .Select(evt => TryApplyProductionEventRecovery(evt, recoveryEvents))
+            .OrderByDescending(evt => ParseDate(evt.CreatedAt))
+            .ToList();
+
+    private static WorkflowProductionEventSummary TryApplyProductionEventRecovery(
+        WorkflowProductionEventSummary evt,
+        IReadOnlyList<WorkflowProductionEventSummary> recoveryEvents)
+    {
+        if (!IsBlockedProductionEvent(evt))
+            return evt;
+
+        var eventCreatedAt = ParseDate(evt.CreatedAt);
+        var targetKey = BuildProductionEventTargetKey(evt);
+        var recovery = recoveryEvents.FirstOrDefault(candidate =>
+            IsCompletedProductionEvent(candidate) &&
+            ParseDate(candidate.CreatedAt) > eventCreatedAt &&
+            string.Equals(BuildProductionEventTargetKey(candidate), targetKey, StringComparison.OrdinalIgnoreCase));
+        if (recovery == null)
+            return evt;
+
+        return evt with
+        {
+            Status = "completed",
+            Message = $"已恢复：{recovery.Message}",
+            ArtifactType = recovery.ArtifactType,
+            ArtifactId = recovery.ArtifactId,
+            DataJson = recovery.DataJson,
+            CreatedAt = recovery.CreatedAt
+        };
+    }
+
+    private static bool IsCompletedProductionEvent(WorkflowProductionEventSummary evt) =>
+        evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+        evt.Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
+        evt.Status.Contains("executed", StringComparison.OrdinalIgnoreCase) ||
+        evt.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase);
+
+    private static List<WorkflowToolExecutionSummary> CollapseToCurrentToolExecutions(
+        IReadOnlyList<WorkflowToolExecutionSummary> tools) =>
+        tools
+            .GroupBy(BuildToolExecutionStateKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(tool => ParseDate(tool.StartedAt)).First())
+            .OrderByDescending(tool => ParseDate(tool.StartedAt))
+            .ToList();
+
+    private static string BuildToolExecutionStateKey(WorkflowToolExecutionSummary tool)
+    {
+        var output = FirstNonEmpty(
+            tool.SemanticContract.OutputKind,
+            tool.SemanticContract.OutputArtifacts.Count == 0
+                ? string.Empty
+                : string.Join("/", tool.SemanticContract.OutputArtifacts));
+        return FirstNonEmpty(output, tool.ToolName, tool.Id);
+    }
+
+    private static DateTime GetLatestReadyEvidenceAt(
+        IReadOnlyList<WorkflowArtifactTimelineItem> artifacts,
+        IReadOnlyList<WorkflowProductionEventSummary> events,
+        IReadOnlyList<WorkflowToolExecutionSummary> tools)
+    {
+        var latest = DateTime.MinValue;
+        foreach (var artifact in artifacts.Where(IsReadyArtifact))
+            latest = MaxDate(latest, ParseDate(artifact.UpdatedAt));
+        foreach (var evt in events.Where(IsCompletedProductionEvent))
+            latest = MaxDate(latest, ParseDate(evt.CreatedAt));
+        foreach (var tool in tools.Where(IsCompletedToolExecution))
+            latest = MaxDate(latest, ParseToolActivityAt(tool));
+        return latest;
+    }
+
+    private static bool IsReadyArtifact(WorkflowArtifactTimelineItem item) =>
+        item.IsFinal ||
+        item.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+        item.Status.Contains("committed", StringComparison.OrdinalIgnoreCase) ||
+        item.Status.Contains("validated", StringComparison.OrdinalIgnoreCase) ||
+        item.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCompletedToolExecution(WorkflowToolExecutionSummary tool) =>
+        tool.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
+        tool.Status.Contains("succeeded", StringComparison.OrdinalIgnoreCase);
+
+    private static DateTime ParseToolActivityAt(WorkflowToolExecutionSummary tool) =>
+        MaxDate(ParseDate(tool.CompletedAt), ParseDate(tool.StartedAt));
+
+    private static DateTime MaxDate(DateTime left, DateTime right) =>
+        left >= right ? left : right;
 
     private static bool IsBlockedProductionEvent(WorkflowProductionEventSummary evt) =>
         evt.Status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||

@@ -1011,15 +1011,7 @@ public sealed class NovelProductionStateQueryService : INovelProductionStateQuer
                     report.RepairHintCount
                 }),
                 CreatedAt = report.CreatedAt,
-                GateEvidence = new WorkflowGateEvidence(
-                    FirstNonEmpty(report.Status, NormalizeGateStatus(report.Status)),
-                    report.ProtocolPassed,
-                    report.FactSnapshotPassed,
-                    report.BlueprintPassed,
-                    report.RagPassed,
-                    report.ChangesDetected,
-                    Array.Empty<string>(),
-                    Array.Empty<string>())
+                GateEvidence = BuildGateEvidence(report)
             });
         }
 
@@ -1144,6 +1136,40 @@ public sealed class NovelProductionStateQueryService : INovelProductionStateQuer
             continuityRisk,
             chapterPacing,
             recommendedAction);
+    }
+
+    private static WorkflowGateEvidence BuildGateEvidence(NovelProductionGenerationGateReportState report)
+    {
+        IReadOnlyList<string> issues = Array.Empty<string>();
+        IReadOnlyList<string> repairHints = Array.Empty<string>();
+
+        if (!string.IsNullOrWhiteSpace(report.ReportJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(report.ReportJson);
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    var root = document.RootElement;
+                    issues = GetFlexibleStringArray(root, "issues");
+                    repairHints = GetFlexibleStringArray(root, "repairHints");
+                }
+            }
+            catch (JsonException)
+            {
+                // ReportJson carries explanatory evidence; persisted columns remain authoritative.
+            }
+        }
+
+        return new WorkflowGateEvidence(
+            FirstNonEmpty(report.Status, NormalizeGateStatus(report.Status)),
+            report.ProtocolPassed,
+            report.FactSnapshotPassed,
+            report.BlueprintPassed,
+            report.RagPassed,
+            report.ChangesDetected,
+            issues,
+            repairHints);
     }
 
     private static void AddSyntheticEvent(

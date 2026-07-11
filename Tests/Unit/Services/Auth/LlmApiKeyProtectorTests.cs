@@ -34,4 +34,16 @@ public sealed class LlmApiKeyProtectorTests
 
         Assert.Equal(string.Empty, protector.Unprotect("not-a-valid-protected-payload"));
     }
+
+    [Fact]
+    public void TryUnprotect_WhenKeyRingDoesNotMatchReportsFailure()
+    {
+        ILlmApiKeyProtector writer = new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider());
+        ILlmApiKeyProtector reader = new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider());
+
+        var protectedValue = writer.Protect("sk-unit-test-secret");
+
+        Assert.False(reader.TryUnprotect(protectedValue, out var plaintext));
+        Assert.Equal(string.Empty, plaintext);
+    }
 }

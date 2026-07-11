@@ -124,6 +124,14 @@ public sealed class ChapterContextPackageRecorder : IChapterContextPackageRecord
         };
         const string message = "章节生产包已构建并持久化。";
 
+        await AppendPrePackageStageEventsAsync(
+                request,
+                chapterIdentity.CanonicalChapterId,
+                createdPackage.Id,
+                package,
+                cancellationToken)
+            .ConfigureAwait(false);
+
         await _eventWriter.AppendChapterStageAsync(
                 new AppendChapterProductionEventRequest(
                     RuntimeRunId: request.RuntimeRunId,
@@ -162,6 +170,151 @@ public sealed class ChapterContextPackageRecorder : IChapterContextPackageRecord
             .ConfigureAwait(false);
 
         return createdPackage;
+    }
+
+    private async Task AppendPrePackageStageEventsAsync(
+        RecordChapterContextPackageRequest request,
+        string chapterId,
+        string packageId,
+        ChapterContextPackageSummary package,
+        CancellationToken cancellationToken)
+    {
+        var stages = BuildPrePackageStageEvents(package);
+        foreach (var stage in stages)
+        {
+            await _eventWriter.AppendChapterStageAsync(
+                    new AppendChapterProductionEventRequest(
+                        RuntimeRunId: request.RuntimeRunId,
+                        UserId: request.UserId,
+                        ProjectId: request.ProjectId,
+                        ChapterId: chapterId,
+                        PackageId: packageId,
+                        EventType: stage.EventType,
+                        Stage: stage.Stage,
+                        Status: "completed",
+                        Message: stage.Message,
+                        ArtifactType: "tianming_package",
+                        ArtifactId: packageId,
+                        Data: stage.Data),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            await _runtimeEvents.AppendAsync(
+                    new CreateAgentRuntimeEventRequest(
+                        RuntimeRunId: string.IsNullOrWhiteSpace(request.AgentRuntimeRunId)
+                            ? request.RuntimeRunId
+                            : request.AgentRuntimeRunId.Trim(),
+                        UserId: request.UserId,
+                        SessionId: request.SessionId,
+                        ProjectId: request.ProjectId,
+                        Type: "production_progress",
+                        Message: stage.Message,
+                        Data: stage.Data,
+                        Stage: stage.Stage,
+                        Status: "completed",
+                        ArtifactType: "tianming_package",
+                        ArtifactId: packageId,
+                        DisplaySurface: AgentRuntimeEventSurface.Workflow,
+                        DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline,
+                        PublishToSse: true),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static IReadOnlyList<PrePackageStageEvent> BuildPrePackageStageEvents(
+        ChapterContextPackageSummary package)
+    {
+        var bindings = package.KnowledgeBindings;
+        var classifiedCount = bindings.Count(binding => !string.IsNullOrWhiteSpace(binding.ClassificationId));
+        var pendingClassificationCount = bindings.Count - classifiedCount;
+        var hardConstraintCount = bindings.Count(binding =>
+            string.Equals(binding.ConstraintLevel, "HardConstraint", StringComparison.OrdinalIgnoreCase));
+        var referenceCount = bindings.Count(binding =>
+            string.Equals(binding.ConstraintLevel, "Reference", StringComparison.OrdinalIgnoreCase));
+        var importedCount = bindings.Count(binding =>
+            string.Equals(binding.ProjectUsageStatus, "imported", StringComparison.OrdinalIgnoreCase));
+        var referencedCount = bindings.Count(binding =>
+            string.Equals(binding.ProjectUsageStatus, "referenced", StringComparison.OrdinalIgnoreCase));
+        var hardDesignRuleCount = package.DesignRules.Count(rule =>
+            string.Equals(rule.ConstraintLevel, "HardConstraint", StringComparison.OrdinalIgnoreCase));
+        var blueprint = package.PersistedBlueprint;
+
+        return new[]
+        {
+            new PrePackageStageEvent(
+                "chapter_knowledge_resolved",
+                NovelAgentProductionStages.KnowledgeResolved,
+                $"项目知识已进入章节生产包：绑定 {bindings.Count} 条，硬事实 {package.HardContinuityFacts.Count} 条，RAG 查询 {package.RagQueries.Count} 条。",
+                new
+                {
+                    knowledgeBindingCount = bindings.Count,
+                    hardContinuityFactCount = package.HardContinuityFacts.Count,
+                    ragQueryCount = package.RagQueries.Count,
+                    hardConstraintCount,
+                    referenceCount,
+                    importedCount,
+                    referencedCount,
+                    shouldEnterGateCount = bindings.Count(binding => binding.ShouldEnterGate),
+                    shouldEnterBlueprintCount = bindings.Count(binding => binding.ShouldEnterBlueprint),
+                    shouldEnterFactSnapshotCount = bindings.Count(binding => binding.ShouldEnterFactSnapshot)
+                }),
+            new PrePackageStageEvent(
+                "chapter_knowledge_classified",
+                NovelAgentProductionStages.KnowledgeClassified,
+                $"项目知识分类状态已汇总：已分类 {classifiedCount} 条，待分类 {pendingClassificationCount} 条。",
+                new
+                {
+                    knowledgeBindingCount = bindings.Count,
+                    classifiedCount,
+                    pendingClassificationCount,
+                    classificationModels = bindings
+                        .Select(binding => binding.ClassificationModel)
+                        .Where(model => !string.IsNullOrWhiteSpace(model))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(8)
+                        .ToArray(),
+                    hardConstraintCount,
+                    referenceCount
+                }),
+            new PrePackageStageEvent(
+                "chapter_story_design_built",
+                NovelAgentProductionStages.StoryDesignBuilt,
+                $"故事规则输入已整理：世界规则 {package.WorldRules.Count} 条，角色状态 {package.CharacterStates.Count} 条，设计规则 {package.DesignRules.Count} 条。",
+                new
+                {
+                    worldRuleCount = package.WorldRules.Count,
+                    characterStateCount = package.CharacterStates.Count,
+                    activeConflictCount = package.ActiveConflicts.Count,
+                    activeForeshadowingCount = package.ActiveForeshadowing.Count,
+                    designRuleCount = package.DesignRules.Count,
+                    hardDesignRuleCount,
+                    acceptedCreativeIntentCount = package.AcceptedCreativeIntents.Count,
+                    sourceRevisionPlanCount = package.SourceRevisionPlans.Count
+                }),
+            new PrePackageStageEvent(
+                "chapter_blueprint_built",
+                NovelAgentProductionStages.ChapterBlueprintBuilt,
+                blueprint == null
+                    ? $"章节蓝图输入已整理：蓝图片段 {package.ChapterBlueprints.Count} 条。"
+                    : $"章节蓝图已进入生产包：{blueprint.Title}。",
+                new
+                {
+                    blueprintLineCount = package.ChapterBlueprints.Count,
+                    blueprintId = blueprint?.BlueprintId ?? string.Empty,
+                    blueprintTitle = blueprint?.Title ?? string.Empty,
+                    blueprintVersion = blueprint?.Version ?? 0,
+                    blueprintStatus = blueprint?.Status ?? string.Empty,
+                    keyEventCount = blueprint?.KeyEvents.Count ?? 0,
+                    characterCount = blueprint?.Characters.Count ?? 0,
+                    requiredKnowledgeCount = blueprint?.RequiredKnowledgeIds.Count ?? 0,
+                    appliedDesignRuleCount = blueprint?.AppliedDesignRuleIds.Count ?? 0,
+                    dependencyChapterCount = blueprint?.DependencyChapterIds.Count ?? 0,
+                    blueprint?.TargetWordCount,
+                    longDistanceRecallCount = package.LongDistanceRecall.Count,
+                    previousSummaryCount = package.PreviousSummaries.Count
+                })
+        };
     }
 
     private async Task ThrowIfOpenHardKnowledgeConflictAsync(
@@ -480,4 +633,10 @@ public sealed class ChapterContextPackageRecorder : IChapterContextPackageRecord
     }
 
     private sealed record ResolvedChapterIdentity(string CanonicalChapterId, string LogicalChapterId);
+
+    private sealed record PrePackageStageEvent(
+        string EventType,
+        string Stage,
+        string Message,
+        object Data);
 }

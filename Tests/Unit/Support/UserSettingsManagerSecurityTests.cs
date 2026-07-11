@@ -57,7 +57,7 @@ public sealed class UserSettingsManagerSecurityTests
         var manager = new UserSettingsManager(
             provider.GetRequiredService<IServiceScopeFactory>(),
             httpContextAccessor,
-            new NoCurrentUserContext(),
+            new FixedCurrentUserContext("user-settings-security"),
             provider.GetRequiredService<ILlmApiKeyProtector>());
 
         await manager.SaveAsync(new UserSettings
@@ -79,9 +79,72 @@ public sealed class UserSettingsManagerSecurityTests
         Assert.Equal("sk-unit-secret", loaded.LlmApiKey);
     }
 
+    [Fact]
+    public async Task LoadAsync_WhenEncryptedApiKeyCannotBeReadPreservesUnreadableState()
+    {
+        var writer = new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider());
+        var reader = new DataProtectionLlmApiKeyProtector(new EphemeralDataProtectionProvider());
+        var services = new ServiceCollection();
+        var dbName = Guid.NewGuid().ToString("N");
+        services.AddSingleton<ILlmApiKeyProtector>(reader);
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+
+        using var provider = services.BuildServiceProvider();
+        var httpContextAccessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, "user-settings-security") },
+                    authenticationType: "unit-test"))
+            }
+        };
+        var manager = new UserSettingsManager(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            httpContextAccessor,
+            new FixedCurrentUserContext("user-settings-security"),
+            provider.GetRequiredService<ILlmApiKeyProtector>());
+
+        await manager.SaveAsync(new UserSettings
+        {
+            LlmProvider = "anthropic",
+            LlmBaseUrl = "https://example.test/anthropic",
+            LlmModel = "mimo-v2.5-pro",
+            LlmApiKey = "sk-readable-before-replace"
+        });
+
+        using (var scope = provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            var entity = await db.UserSettings.SingleAsync(s => s.UserId == "user-settings-security");
+            entity.LlmApiKeyEncrypted = writer.Protect("sk-written-by-another-key-ring");
+            await db.SaveChangesAsync();
+        }
+
+        var loaded = await manager.LoadAsync();
+
+        Assert.True(loaded.LlmApiKeyEncryptedValuePresent);
+        Assert.False(loaded.LlmApiKeyReadable);
+        Assert.Equal(string.Empty, loaded.LlmApiKey);
+    }
+
     private sealed class NoCurrentUserContext : IBackgroundUserContext
     {
         public BackgroundUserSnapshot? Current => null;
+
+        public IDisposable Push(string userId, string username = "background-agent", string email = "", string role = "author") =>
+            new NoopDisposable();
+    }
+
+    private sealed class FixedCurrentUserContext : IBackgroundUserContext
+    {
+        public FixedCurrentUserContext(string userId)
+        {
+            Current = new BackgroundUserSnapshot(userId, "author", "author@example.com", "author");
+        }
+
+        public BackgroundUserSnapshot? Current { get; }
 
         public IDisposable Push(string userId, string username = "background-agent", string email = "", string role = "author") =>
             new NoopDisposable();

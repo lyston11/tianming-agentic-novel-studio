@@ -278,6 +278,8 @@ function healthTitle(health: LlmConnectionHealth | undefined, loading: boolean):
       return '模型连接可用';
     case 'authentication_failed':
       return '模型认证失败';
+    case 'api_key_unavailable':
+      return 'API Key 不可用';
     case 'missing_config':
       return '模型配置不完整';
     case 'connection_failed':

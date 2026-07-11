@@ -570,6 +570,60 @@ public class AgentTurnCoordinatorRuntimeQueueTests
     }
 
     [Fact]
+    public async Task HandleAsync_WhenForegroundReportsLlmMissingConfiguration_ReturnsReadinessGateMessage()
+    {
+        await using var db = CreateDb();
+        var currentUser = FixedUser("user-1");
+        var chat = new Mock<IChatHistoryRepository>();
+        chat.Setup(x => x.GetHotWindowAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ChatHistoryTurnDto>());
+        var sessions = new AgentSessionManager(db, currentUser.Object, chat.Object);
+        var runs = new AgentRuntimeRunService(db);
+        var interrupts = new AgentInterruptService(db);
+        var queue = new RecordingRuntimeQueue();
+        var ledger = new AgentToolExecutionLedger(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolExecutionLedger>.Instance);
+        var foreground = new StubForegroundTurnRunner(AgentForegroundTurnResult.Reply(new AgentChatResponse(
+            "当前没有配置可用的模型服务，我只能进入降级模式。",
+            Array.Empty<string>(),
+            "session-1",
+            null,
+            "idle")));
+        var readinessGate = new StubBackgroundRunReadinessGate(AgentBackgroundRunReadiness.Blocked(
+            "llm_not_ready",
+            "失败阶段：config\n原因：模型 API Key 不可用，可能已经过期、失效，或需要重新保存。",
+            new[] { "打开用户设置", "重新检测模型" }));
+
+        var session = await sessions.GetOrCreateSessionAsync("session-1");
+        await sessions.SaveSessionAsync(session);
+
+        var coordinator = new AgentTurnCoordinator(
+            sessions,
+            ledger,
+            currentUser.Object,
+            runs,
+            interrupts,
+            queue,
+            foreground,
+            backgroundReadinessGate: readinessGate);
+
+        var response = await coordinator.HandleAsync("session-1", "帮我写一本小说", CancellationToken.None);
+
+        Assert.Equal("llm_not_ready", response.Phase);
+        Assert.Contains("API Key 不可用", response.Reply);
+        Assert.DoesNotContain("DataProtection", response.Reply);
+        Assert.Empty(queue.EnqueuedRunIds);
+        Assert.Empty(await db.AgentRuntimeRuns.ToListAsync());
+        Assert.Equal(1, readinessGate.CallCount);
+    }
+
+    [Fact]
     public async Task HandleAsync_WhenForegroundAuthFailureWasPersisted_ReplacesPersistedAssistantTurnWithReadinessMessage()
     {
         await using var db = CreateDb();

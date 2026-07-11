@@ -60,7 +60,8 @@ public class AgentMemoryRepositoryTests
         Assert.Null(result.LongTermGoal);
         Assert.Null(result.ReaderPromise);
         Assert.Empty(result.Constraints);
-        Assert.Empty(result.UnresolvedThreads);
+        Assert.Empty(result.ReferencedKnowledgeIds);
+        Assert.Empty(result.UsedTropePatterns);
     }
 
     [Fact]
@@ -588,6 +589,31 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
+    public async Task UnionMemoryAsync_UsesDistributedLockWhenAvailable()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+        await db.SaveChangesAsync();
+        var locks = new RecordingDistributedLockService();
+        var repository = CreateRepository(db, locks);
+
+        await repository.UnionMemoryAsync(
+            "user-1",
+            "project-1",
+            new Dictionary<string, IReadOnlyList<string>>
+            {
+                ["execution.repeated_blockers"] = new[] { "blocker-a" }
+            });
+
+        Assert.Equal(new[] { "agent_memory:user-1:project-1" }, locks.AcquiredKeys);
+        Assert.Single(locks.ReleasedLeases);
+    }
+
+    [Fact]
     public async Task UnionMemoryAsync_ProjectlessExecutionUsesNullProjectIdAndReadsBack()
     {
         await using var connection = await CreateOpenSqliteConnectionAsync();
@@ -699,13 +725,49 @@ public class AgentMemoryRepositoryTests
         }
     }
 
-    private AgentMemoryRepository CreateRepository(NovelAgentDbContext dbContext) =>
+    private AgentMemoryRepository CreateRepository(
+        NovelAgentDbContext dbContext,
+        IDistributedLockService? distributedLocks = null) =>
         new(
             dbContext,
             _mockRedisCache.Object,
             _mockMemoryCache.Object,
             _mockLogger.Object,
-            new ProductionTruthStore(dbContext));
+            new ProductionTruthStore(dbContext),
+            distributedLocks: distributedLocks);
+
+    private sealed class RecordingDistributedLockService : IDistributedLockService
+    {
+        public List<string> AcquiredKeys { get; } = new();
+        public List<DistributedLockLease> ReleasedLeases { get; } = new();
+
+        public Task<DistributedLockLease?> TryAcquireAsync(
+            string key,
+            TimeSpan ttl,
+            string owner,
+            CancellationToken ct = default)
+        {
+            AcquiredKeys.Add(key);
+            return Task.FromResult<DistributedLockLease?>(new DistributedLockLease(
+                key,
+                "token-1",
+                owner,
+                DateTime.UtcNow,
+                DateTime.UtcNow.Add(ttl)));
+        }
+
+        public Task<DistributedLockLease?> ExtendAsync(
+            DistributedLockLease lease,
+            TimeSpan ttl,
+            CancellationToken ct = default) =>
+            Task.FromResult<DistributedLockLease?>(lease with { ExpiresAt = DateTime.UtcNow.Add(ttl) });
+
+        public Task ReleaseAsync(DistributedLockLease lease, CancellationToken ct = default)
+        {
+            ReleasedLeases.Add(lease);
+            return Task.CompletedTask;
+        }
+    }
 
     private static async Task<SqliteConnection> CreateOpenSqliteConnectionAsync()
     {

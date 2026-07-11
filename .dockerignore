@@ -2,6 +2,14 @@
 **/node_modules
 **/bin
 **/obj
+**/App_Data/**
+**/DataProtectionKeys/**
+**/publish/**
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.db-shm
+**/*.db-wal
 **/App_Data/Qdrant
 **/.claude
 **/Tests

@@ -29,6 +29,18 @@ public class ProgramConfigurationTests
     }
 
     [Fact]
+    public void DockerCompose_ApiUsesQdrantHttpBaseUrlAndGrpcPortSeparately()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
+
+        Assert.Contains("Qdrant__BaseUrl=http://qdrant:6333", compose);
+        Assert.Contains("Qdrant__Host=qdrant", compose);
+        Assert.Contains("Qdrant__Port=6334", compose);
+        Assert.DoesNotContain("Qdrant__BaseUrl=http://qdrant:6334", compose);
+    }
+
+    [Fact]
     public void Program_DoesNotRegisterContentDocumentServiceTwice()
     {
         var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
@@ -48,6 +60,18 @@ public class ProgramConfigurationTests
         var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
 
         Assert.Contains("AddScoped<IOutputArtifactRecorder, OutputArtifactRecorder>", programSource);
+    }
+
+    [Fact]
+    public void Program_PersistsDataProtectionKeysForContainerRuntime()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+
+        Assert.Contains("App_Data", programSource);
+        Assert.Contains("DataProtectionKeys", programSource);
+        Assert.Contains("PersistKeysToFileSystem", programSource);
+        Assert.Contains("SetApplicationName(\"NovelAgentWeb\")", programSource);
     }
 
     [Fact]
@@ -304,6 +328,47 @@ public class ProgramConfigurationTests
         Assert.Contains("continuity_risk", reviewColumns);
         Assert.Contains("chapter_pacing", reviewColumns);
         Assert.Contains("recommended_action", reviewColumns);
+    }
+
+    [Fact]
+    public async Task SqliteSchemaNormalizer_AddsMissingOutboxProcessingLeaseColumnsToExistingOutboxTable()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TABLE outbox_events (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT NULL,
+                    runtime_run_id TEXT NULL,
+                    event_type TEXT NOT NULL,
+                    aggregate_type TEXT NOT NULL,
+                    aggregate_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NULL,
+                    next_attempt_at TEXT NULL,
+                    completed_at TEXT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+
+        SqliteSchemaNormalizer.Normalize(db);
+
+        var outboxColumns = await ReadColumnsAsync(connection, "outbox_events");
+        Assert.Contains("processing_owner", outboxColumns);
+        Assert.Contains("processing_lease_expires_at", outboxColumns);
     }
 
     private static async Task<HashSet<string>> ReadColumnsAsync(SqliteConnection connection, string tableName)

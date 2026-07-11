@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TM.Web.NovelAgentWeb.DTOs;
@@ -36,8 +35,7 @@ public class AuthController : ControllerBase
             }
 
             var response = await _authService.RegisterAsync(request);
-            var debugJson = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true });
-            _logger.LogInformation("User {Username} registered. Response JSON: {Json}", request.Username, debugJson);
+            _logger.LogInformation("User {Username} registered successfully", request.Username);
 
             return CreatedAtAction(nameof(Register), new { id = response.User.Id }, response);
         }

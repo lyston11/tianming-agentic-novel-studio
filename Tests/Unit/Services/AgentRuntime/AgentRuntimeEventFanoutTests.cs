@@ -5,12 +5,33 @@ using StackExchange.Redis;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
+using TM.Web.NovelAgentWeb.Support;
 using Xunit;
 
 namespace Tests.Unit.Services.AgentRuntime;
 
 public class AgentRuntimeEventFanoutTests
 {
+    [Fact]
+    public async Task FanoutBridge_WhenRedisSubscribeFails_DoesNotThrowAndKeepsHostAlive()
+    {
+        var subscriber = new Mock<ISubscriber>();
+        subscriber
+            .Setup(x => x.SubscribeAsync(
+                It.IsAny<RedisChannel>(),
+                It.IsAny<Action<RedisChannel, RedisValue>>(),
+                It.IsAny<CommandFlags>()))
+            .ThrowsAsync(new RedisConnectionException(ConnectionFailureType.UnableToConnect, "redis unavailable"));
+        var redis = new Mock<IConnectionMultiplexer>();
+        redis.Setup(x => x.GetSubscriber(It.IsAny<object>())).Returns(subscriber.Object);
+        var bridge = new RedisAgentRuntimeEventFanoutBridge(
+            new[] { redis.Object },
+            new AgentSseEventBus(),
+            NullLogger<RedisAgentRuntimeEventFanoutBridge>.Instance);
+
+        await bridge.RunAsync(CancellationToken.None);
+    }
+
     [Fact]
     public async Task PublishAsync_WritesEventToDurableSessionListBeforePubSub()
     {
@@ -21,7 +42,7 @@ public class AgentRuntimeEventFanoutTests
         redis.Setup(x => x.GetSubscriber(It.IsAny<object>())).Returns(subscriber.Object);
         var fanout = CreateFanout(redis.Object);
 
-        await fanout.PublishAsync("session-1", new AgentSseEvent
+        await fanout.PublishAsync("user-1", "session-1", new AgentSseEvent
         {
             EventId = "event-1",
             Type = "production_progress",
@@ -31,17 +52,17 @@ public class AgentRuntimeEventFanoutTests
         });
 
         database.Verify(x => x.ListRightPushAsync(
-            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:session-1"),
+            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:user-1:session-1"),
             It.Is<RedisValue>(value => value.ToString().Contains("\"eventId\":\"event-1\"")),
             When.Always,
             CommandFlags.None), Times.Once);
         database.Verify(x => x.ListTrimAsync(
-            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:session-1"),
+            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:user-1:session-1"),
             -200,
             -1,
             CommandFlags.None), Times.Once);
         database.Verify(x => x.StreamAddAsync(
-            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
             It.Is<RedisValue>(field => field.ToString() == "payload"),
             It.Is<RedisValue>(value => value.ToString().Contains("\"eventId\":\"event-1\"")),
             null,
@@ -61,7 +82,7 @@ public class AgentRuntimeEventFanoutTests
         };
         var database = new Mock<IDatabase>();
         database.Setup(x => x.ListRangeAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:user-1:session-1"),
                 0,
                 -1,
                 CommandFlags.None))
@@ -70,7 +91,7 @@ public class AgentRuntimeEventFanoutTests
         redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(database.Object);
         var fanout = CreateFanout(redis.Object);
 
-        var replayed = await fanout.ReplayAsync("session-1", "event-1", 10);
+        var replayed = await fanout.ReplayAsync("user-1", "session-1", "event-1", 10);
 
         Assert.Collection(
             replayed,
@@ -83,13 +104,13 @@ public class AgentRuntimeEventFanoutTests
     {
         var database = new Mock<IDatabase>();
         database.Setup(x => x.ListRangeAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:user-1:session-1"),
                 0,
                 -1,
                 CommandFlags.None))
             .ReturnsAsync(Array.Empty<RedisValue>());
         database.Setup(x => x.StreamRangeAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
                 null,
                 null,
                 null,
@@ -105,7 +126,7 @@ public class AgentRuntimeEventFanoutTests
         redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(database.Object);
         var fanout = CreateFanout(redis.Object);
 
-        var replayed = await fanout.ReplayAsync("session-1", "event-1", 10);
+        var replayed = await fanout.ReplayAsync("user-1", "session-1", "event-1", 10);
 
         Assert.Collection(
             replayed,

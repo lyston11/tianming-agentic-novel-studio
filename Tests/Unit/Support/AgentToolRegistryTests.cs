@@ -88,22 +88,40 @@ public class AgentToolRegistryTests
             scope.ServiceProvider.GetRequiredService<IChapterCommitTruthRecorder>(),
             scope.ServiceProvider.GetRequiredService<ICreativeIntentService>(),
             scope.ServiceProvider.GetRequiredService<IProductionEventWriter>());
-        var outboxes = await db.OutboxEvents
-            .Where(e =>
-                e.EventType == "finalize_chapter_commit_metadata" &&
-                e.AggregateType == "chapter" &&
-                e.Status == "pending")
-            .OrderBy(e => e.CreatedAt)
-            .ToListAsync();
-        foreach (var outbox in outboxes)
-        {
-            await finalizer.ProcessOutboxAsync(outbox);
-            outbox.Status = "completed";
-            outbox.CompletedAt = DateTime.UtcNow;
-            outbox.UpdatedAt = DateTime.UtcNow;
-        }
 
-        await db.SaveChangesAsync();
+        var postCommitTypes = new[]
+        {
+            "finalize_chapter_commit_metadata",
+            "extract_chapter_continuity_facts",
+            "index_chapter_content"
+        };
+
+        for (var pass = 0; pass < 5; pass++)
+        {
+            var outboxes = await db.OutboxEvents
+                .Where(e =>
+                    postCommitTypes.Contains(e.EventType) &&
+                    e.Status == "pending")
+                .OrderBy(e => e.CreatedAt)
+                .ToListAsync();
+            if (outboxes.Count == 0)
+                break;
+
+            foreach (var outbox in outboxes)
+            {
+                if (outbox.EventType == "finalize_chapter_commit_metadata" &&
+                    outbox.AggregateType == "chapter")
+                {
+                    await finalizer.ProcessOutboxAsync(outbox);
+                }
+
+                outbox.Status = "completed";
+                outbox.CompletedAt = DateTime.UtcNow;
+                outbox.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync();
+        }
     }
 
     private static bool JsonContainsText(string? json, string expected)
@@ -2921,8 +2939,34 @@ public class AgentToolRegistryTests
                     e.RuntimeRunId == run.RunId &&
                     e.EventType == "finalize_chapter_commit_metadata" &&
                     e.AggregateType == "chapter");
+                var runOutboxes = await verifyDb.OutboxEvents
+                    .Where(e => e.RuntimeRunId == run.RunId)
+                    .OrderBy(e => e.EventType)
+                    .ToListAsync();
+                var queuedEvents = await verifyDb.ProductionEvents
+                    .Where(e => e.RuntimeRunId == run.RunId &&
+                                e.EventType == "outbox_queued")
+                    .OrderBy(e => e.EventType)
+                    .ToListAsync();
+                var indexOutbox = await verifyDb.OutboxEvents.SingleAsync(e =>
+                    e.EventType == "index_chapter_content" &&
+                    e.AggregateType == "chapter_version");
                 Assert.Equal("pending", outbox.Status);
                 Assert.Contains("\"targetChapterId\":\"chapter-001\"", outbox.PayloadJson);
+                Assert.NotEmpty(runOutboxes);
+                Assert.Contains(runOutboxes, e => e.EventType == "finalize_chapter_commit_metadata");
+                Assert.All(runOutboxes, runOutbox =>
+                    Assert.Contains(queuedEvents, e =>
+                        e.ArtifactType == "outbox_event" &&
+                        e.ArtifactId == runOutbox.Id &&
+                        e.Status == runOutbox.Status &&
+                        e.DataJson?.Contains(runOutbox.EventType, StringComparison.Ordinal) == true));
+                Assert.Null(indexOutbox.RuntimeRunId);
+                Assert.DoesNotContain(queuedEvents, e =>
+                    e.DataJson?.Contains("index_chapter_content", StringComparison.Ordinal) == true);
+                Assert.DoesNotContain(await verifyDb.ProductionEvents.ToListAsync(), e =>
+                    e.RuntimeRunId == run.RunId &&
+                    e.Stage == NovelAgentProductionStages.RunCompleted);
             }
         }
         finally
@@ -11455,6 +11499,9 @@ public class AgentToolRegistryTests
             Assert.Contains("knowledge-silver-badge-boundary", knowledgeEvent.DataJson);
             Assert.DoesNotContain(await verifyDb.ProductionEvents.ToListAsync(), e =>
                 e.RuntimeRunId == run.RunId &&
+                e.EventType == "chapter_production_completed");
+            Assert.DoesNotContain(await verifyDb.ProductionEvents.ToListAsync(), e =>
+                e.RuntimeRunId == run.RunId &&
                 e.EventType == "chapter_commit_finished");
             Assert.Contains(await verifyDb.AgentRuntimeEvents.ToListAsync(), e =>
                 e.RuntimeRunId == run.RunId &&
@@ -12075,6 +12122,166 @@ public class AgentToolRegistryTests
             Assert.Contains(report.Issues, issue => issue.Code == "protagonist_continuity_mismatch" && issue.ChapterNumber == 2);
             Assert.Contains("CreateRevisionPlan", result.Suggestions);
             Assert.Contains("QueryProjectContent", result.Suggestions);
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunBookValidation_PersistsWorkflowAndRuntimeProgressEvents()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"agent-tool-book-validation-events-{Guid.NewGuid():N}");
+        var settings = CreateDbBackedSettingsManager();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:StorageRoot"] = root,
+                ["NovelAgent:ProjectName"] = "AgenticNovelStudio"
+            })
+            .Build();
+        var services = new ServiceCollection();
+        var dbName = Guid.NewGuid().ToString("N");
+        services.AddDbContext<NovelAgentDbContext>(options =>
+            options.UseInMemoryDatabase(dbName));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IBookValidationService, BookValidationService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddScoped<IProductionEventWriter, ProductionEventWriter>();
+        services.AddScoped<IAgentRuntimeEventService, AgentRuntimeEventService>();
+        services.AddSingleton<IToolSearchCacheService, RecordingToolSearchCacheService>();
+        var provider = BuildToolServiceProvider(services);
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
+            db.Users.Add(new UserEntity
+            {
+                Id = "user-1",
+                Username = "author",
+                Email = "author@example.com",
+                PasswordHash = "hash",
+                Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProjectEntity
+            {
+                Id = "project-1",
+                UserId = "user-1",
+                Title = "整书校验工作流测试书",
+                Status = "Writing",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            db.Chapters.Add(new ChapterEntity
+            {
+                Id = "project-1-chapter-001",
+                ProjectId = "project-1",
+                Title = "第一章：银蓝邮徽",
+                ChapterNumber = 1,
+                Status = "committed",
+                WordCount = 3200,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+
+            var document = await contentDocuments.SaveOrReplaceTextAsync(
+                "user-1",
+                "project-1",
+                "chapter",
+                "project-1-chapter-001",
+                "chapter_body",
+                "第一章：银蓝邮徽",
+                "第一章：银蓝邮徽\n沈砚在废弃邮局获得银蓝邮徽，并带着它冲进黑雨。",
+                CancellationToken.None);
+            var chapter = await db.Chapters.SingleAsync(c => c.Id == "project-1-chapter-001");
+            chapter.CurrentDocumentId = document.Id;
+            db.ProjectFactSnapshots.Add(new ProjectFactSnapshot
+            {
+                Id = "fact-chapter-001",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                ChapterId = "project-1-chapter-001",
+                VersionNumber = 1,
+                Source = "llm_fact_writer",
+                SnapshotJson = JsonSerializer.Serialize(new
+                {
+                    protagonistName = "沈砚",
+                    endingState = "沈砚带着银蓝邮徽冲进黑雨",
+                    nextChapterMustCarry = new[] { "沈砚必须仍持有银蓝邮徽" }
+                }),
+                CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var workspace = new NovelAgentWorkspace(
+            new TestWebHostEnvironment(root),
+            configuration,
+            settings,
+            new WorkspaceProductionRuntimeBuilder(),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            "user-1",
+            "project-1");
+        var catalog = CreateDbBackedCatalog(workspace);
+        var registry = new AgentToolRegistry(
+            settings,
+            provider,
+            NullLogger<AgentToolRegistry>.Instance);
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var result = await registry.ExecuteAsync(
+                new AgentToolCall
+                {
+                    Name = "RunBookValidation",
+                    Arguments = new Dictionary<string, string>
+                    {
+                        ["startChapterNumber"] = "1",
+                        ["endChapterNumber"] = "1"
+                    }
+                },
+                new AgentSession
+                {
+                    UserId = "user-1",
+                    SessionId = "session-1",
+                    ActiveProjectId = "project-1",
+                    ActiveRunId = "production-run-book-validation",
+                    RuntimeRunId = "runtime-run-book-validation"
+                },
+                new StoryBibleDocument(),
+                confirmed: true,
+                CancellationToken.None);
+
+            Assert.True(result.Success, result.Message);
+
+            await using var verifyScope = provider.CreateAsyncScope();
+            var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            var productionEvent = await verifyDb.ProductionEvents.SingleAsync(e =>
+                e.RuntimeRunId == "production-run-book-validation" &&
+                e.EventType == "book_validation_completed");
+            Assert.Equal(NovelAgentProductionStages.ReviewCompleted, productionEvent.Stage);
+            Assert.Equal("validated", productionEvent.Status);
+            Assert.Equal("book_validation_report", productionEvent.ArtifactType);
+            Assert.Equal("project-1", productionEvent.ArtifactId);
+            Assert.Contains("整书校验", productionEvent.Message);
+            Assert.Contains("overallStatus", productionEvent.DataJson);
+
+            var runtimeEvent = await verifyDb.AgentRuntimeEvents.SingleAsync(e =>
+                e.RuntimeRunId == "runtime-run-book-validation" &&
+                e.Type == "production_progress" &&
+                e.Stage == NovelAgentProductionStages.ReviewCompleted &&
+                e.ArtifactType == "book_validation_report");
+            Assert.Equal("validated", runtimeEvent.Status);
+            Assert.Equal(AgentRuntimeEventSurface.Workflow, runtimeEvent.DisplaySurface);
+            Assert.Equal(AgentRuntimeEventDisplayPolicy.Timeline, runtimeEvent.DisplayPolicy);
         }
         finally
         {

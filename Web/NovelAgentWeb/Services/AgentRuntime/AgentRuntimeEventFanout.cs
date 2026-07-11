@@ -13,8 +13,8 @@ internal static class AgentRuntimeEventFanoutInstance
 
 public interface IAgentRuntimeEventFanout
 {
-    Task PublishAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default);
-    Task<IReadOnlyList<AgentSseEvent>> ReplayAsync(string sessionId, string? afterEventId = null, int limit = 100, CancellationToken ct = default);
+    Task PublishAsync(string userId, string sessionId, AgentSseEvent evt, CancellationToken ct = default);
+    Task<IReadOnlyList<AgentSseEvent>> ReplayAsync(string userId, string sessionId, string? afterEventId = null, int limit = 100, CancellationToken ct = default);
 }
 
 public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
@@ -40,7 +40,7 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
         _logger = logger;
     }
 
-    public async Task PublishAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
+    public async Task PublishAsync(string userId, string sessionId, AgentSseEvent evt, CancellationToken ct = default)
     {
         if (_redis == null)
             return;
@@ -48,12 +48,13 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
         ct.ThrowIfCancellationRequested();
         try
         {
+            var scopeKey = BuildScopeKey(userId, sessionId);
             evt.SessionId = sessionId;
             var payload = JsonSerializer.Serialize(
                 new AgentRuntimeEventFanoutEnvelope(AgentRuntimeEventFanoutInstance.Id, evt),
                 _jsonOptions);
             var database = _redis.GetDatabase();
-            var replayKey = BuildReplayKey(sessionId);
+            var replayKey = BuildReplayKey(scopeKey);
             await database.ListRightPushAsync(replayKey, payload, When.Always, CommandFlags.None)
                 .ConfigureAwait(false);
             await database.ListTrimAsync(replayKey, -_replayLimit, -1, CommandFlags.None)
@@ -61,7 +62,7 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
             await database.KeyExpireAsync(replayKey, _replayTtl, flags: CommandFlags.None)
                 .ConfigureAwait(false);
             await database.StreamAddAsync(
-                    BuildStreamKey(sessionId),
+                    BuildStreamKey(scopeKey),
                     "payload",
                     payload,
                     messageId: null,
@@ -80,6 +81,7 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
     }
 
     public async Task<IReadOnlyList<AgentSseEvent>> ReplayAsync(
+        string userId,
         string sessionId,
         string? afterEventId = null,
         int limit = 100,
@@ -91,8 +93,9 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
         ct.ThrowIfCancellationRequested();
         try
         {
+            var scopeKey = BuildScopeKey(userId, sessionId);
             var values = await _redis.GetDatabase()
-                .ListRangeAsync(BuildReplayKey(sessionId), 0, -1, CommandFlags.None)
+                .ListRangeAsync(BuildReplayKey(scopeKey), 0, -1, CommandFlags.None)
                 .ConfigureAwait(false);
             var requestedLimit = Math.Clamp(limit, 1, _replayLimit);
             var events = new List<AgentSseEvent>();
@@ -119,7 +122,7 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
 
             if (events.Count == 0)
             {
-                var streamEvents = await ReplayFromStreamAsync(sessionId, afterEventId, requestedLimit, ct)
+                var streamEvents = await ReplayFromStreamAsync(scopeKey, sessionId, afterEventId, requestedLimit, ct)
                     .ConfigureAwait(false);
                 events.AddRange(streamEvents);
             }
@@ -145,18 +148,30 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
 
     private AgentSseEvent? DeserializeEvent(RedisValue value) => DeserializeEvent(value, _jsonOptions);
 
-    private RedisKey BuildReplayKey(string sessionId) => $"{_instanceName}agent_runtime:events:{sessionId}";
+    private RedisKey BuildReplayKey(string scopeKey) => $"{_instanceName}agent_runtime:events:{scopeKey}";
 
-    private RedisKey BuildStreamKey(string sessionId) => $"{_instanceName}agent_runtime:events:stream:{sessionId}";
+    private RedisKey BuildStreamKey(string scopeKey) => $"{_instanceName}agent_runtime:events:stream:{scopeKey}";
+
+    private static string BuildScopeKey(string userId, string sessionId) =>
+        $"{NormalizeScopePart(userId, nameof(userId))}:{NormalizeScopePart(sessionId, nameof(sessionId))}";
+
+    private static string NormalizeScopePart(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"{name} is required for runtime event fanout scope.", name);
+
+        return value.Trim();
+    }
 
     private async Task<IReadOnlyList<AgentSseEvent>> ReplayFromStreamAsync(
+        string scopeKey,
         string sessionId,
         string? afterEventId,
         int limit,
         CancellationToken ct)
     {
         var entries = await _redis!.GetDatabase()
-            .StreamRangeAsync(BuildStreamKey(sessionId), null, null, null, Order.Ascending, CommandFlags.None)
+            .StreamRangeAsync(BuildStreamKey(scopeKey), null, null, null, Order.Ascending, CommandFlags.None)
             .ConfigureAwait(false);
         var events = new List<AgentSseEvent>();
         var cursorSeen = string.IsNullOrWhiteSpace(afterEventId);
@@ -204,31 +219,48 @@ public sealed class RedisAgentRuntimeEventFanoutBridge : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await RunAsync(stoppingToken).ConfigureAwait(false);
+    }
+
+    internal async Task RunAsync(CancellationToken stoppingToken)
+    {
         var redis = _redisConnections.FirstOrDefault();
         if (redis == null)
             return;
 
         var subscriber = redis.GetSubscriber();
-        await subscriber.SubscribeAsync(
-            RedisChannel.Literal(RedisAgentRuntimeEventFanout.ChannelName),
-            async (_, value) =>
-            {
-                try
+        try
+        {
+            await subscriber.SubscribeAsync(
+                RedisChannel.Literal(RedisAgentRuntimeEventFanout.ChannelName),
+                async (_, value) =>
                 {
-                    var evt = DeserializeEvent(value);
-                    if (evt == null || string.IsNullOrWhiteSpace(evt.SessionId))
-                        return;
+                    try
+                    {
+                        var evt = DeserializeEvent(value);
+                        if (evt == null || string.IsNullOrWhiteSpace(evt.SessionId))
+                            return;
 
-                    await _events.SendAsync(evt.SessionId, evt, stoppingToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Redis runtime event fanout bridge failed to deliver event.");
-                }
-            }).ConfigureAwait(false);
+                        await _events.SendAsync(evt.SessionId, evt, stoppingToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Redis runtime event fanout bridge failed to deliver event.");
+                    }
+                }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Redis runtime event fanout bridge is unavailable; falling back to local SSE only.");
+            return;
+        }
 
         try
         {
@@ -239,8 +271,15 @@ public sealed class RedisAgentRuntimeEventFanoutBridge : BackgroundService
         }
         finally
         {
-            await subscriber.UnsubscribeAsync(RedisChannel.Literal(RedisAgentRuntimeEventFanout.ChannelName))
-                .ConfigureAwait(false);
+            try
+            {
+                await subscriber.UnsubscribeAsync(RedisChannel.Literal(RedisAgentRuntimeEventFanout.ChannelName))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Redis runtime event fanout bridge failed to unsubscribe cleanly.");
+            }
         }
     }
 

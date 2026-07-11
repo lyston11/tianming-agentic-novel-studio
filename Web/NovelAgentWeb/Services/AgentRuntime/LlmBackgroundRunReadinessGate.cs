@@ -22,12 +22,17 @@ public sealed class LlmBackgroundRunReadinessGate : IAgentBackgroundRunReadiness
         CancellationToken ct = default)
     {
         var settings = await _settingsManager.LoadAsync(ct).ConfigureAwait(false);
-        var health = await _healthService.CheckAsync(new LlmConnectionHealthInput(
+        var input = new LlmConnectionHealthInput(
                 settings.LlmProvider,
                 settings.LlmBaseUrl,
                 settings.LlmModel,
-                settings.LlmApiKey),
-            ct).ConfigureAwait(false);
+                settings.LlmApiKey);
+        var health = settings.LlmApiKeyEncryptedValuePresent && !settings.LlmApiKeyReadable
+            ? LlmConnectionHealthResult.ApiKeyUnavailable(
+                input.Normalize(),
+                "模型 API Key 不可用，可能已经过期、失效，或需要重新保存。",
+                "请在用户设置中重新粘贴并保存 API Key，然后重新检测模型连接。")
+            : await _healthService.CheckAsync(input, ct).ConfigureAwait(false);
 
         if (string.Equals(health.Status, "ready", StringComparison.OrdinalIgnoreCase))
             return AgentBackgroundRunReadiness.Ready();
@@ -47,10 +52,10 @@ public sealed class LlmBackgroundRunReadinessGate : IAgentBackgroundRunReadiness
         var action = FirstNonEmpty(health.RecommendedAction, "请在用户设置中检查模型配置后重试。");
 
         return
-            $"我现在不能开始后台写作任务，因为模型连接未就绪。\n" +
+            $"当前阻断点是模型连接未就绪，Agent 不会启动后台工具链。\n" +
+            $"原因：{message}\n" +
             $"失败阶段：{stage}\n" +
             $"当前模型：{provider} / {model}\n" +
-            $"原因：{message}\n" +
             $"下一步：{action}";
     }
 

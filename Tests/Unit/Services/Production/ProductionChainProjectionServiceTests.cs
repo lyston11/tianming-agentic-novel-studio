@@ -1,5 +1,6 @@
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Services.Framework.AI.NovelAgent.Models;
 using Xunit;
 
 namespace Tests.Unit.Services.Production;
@@ -105,6 +106,166 @@ public sealed class ProductionChainProjectionServiceTests
         Assert.Equal("Pass", evidence.GetType().GetProperty("AgentReview")?.GetValue(evidence)?.GetType().GetProperty("OverallResult")?.GetValue(evidence.GetType().GetProperty("AgentReview")?.GetValue(evidence)));
         Assert.Equal("沈砚冲进旧邮路入口", evidence.GetType().GetProperty("FactSnapshot")?.GetValue(evidence)?.GetType().GetProperty("EndingState")?.GetValue(evidence.GetType().GetProperty("FactSnapshot")?.GetValue(evidence)));
         Assert.Equal(1, evidence.GetType().GetProperty("ChapterChangeCount")?.GetValue(evidence));
+    }
+
+    [Fact]
+    public void BuildWorkflowChainsCore_ProjectsRunCompletedAsReadableCompletionStep()
+    {
+        var events = new[]
+        {
+            Event(
+                id: "event-commit",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_committed",
+                stage: NovelAgentProductionStages.ChapterCommitted,
+                message: "第二章已提交书城。",
+                artifactType: "chapter_version",
+                artifactId: "version-chapter-002",
+                dataJson: "{\"versionNumber\":1}",
+                createdAt: "2026-06-24T03:02:00Z"),
+            Event(
+                id: "event-completed",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_production_completed",
+                stage: NovelAgentProductionStages.RunCompleted,
+                message: "章节生产闭环已完成。",
+                artifactType: "chapter_production_run",
+                artifactId: "runtime-run-1",
+                dataJson: "{}",
+                createdAt: "2026-06-24T03:03:00Z")
+        };
+
+        var chain = Assert.Single(ProductionChainProjectionService.BuildWorkflowChainsCore(events));
+
+        Assert.Equal("completed", chain.Status);
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "completed" &&
+            step.Label == "生产完成" &&
+            step.EventType == "chapter_production_completed" &&
+            step.Stage == NovelAgentProductionStages.RunCompleted);
+    }
+
+    [Fact]
+    public void BuildWorkflowChainsCore_ProjectsBookValidationAsReadableValidationStep()
+    {
+        var events = new[]
+        {
+            Event(
+                id: "event-book-validation",
+                runId: "runtime-run-validation",
+                packageId: "",
+                eventType: "book_validation_completed",
+                stage: NovelAgentProductionStages.ReviewCompleted,
+                message: "整书校验 validated：章节 2 个，问题 0 个。",
+                artifactType: "book_validation_report",
+                artifactId: "project-1",
+                dataJson: """
+                {
+                  "overallStatus": "validated",
+                  "chapterCount": 2,
+                  "issueCount": 0
+                }
+                """,
+                createdAt: "2026-06-24T03:03:00Z",
+                chapterId: "")
+        };
+
+        var chain = Assert.Single(ProductionChainProjectionService.BuildWorkflowChainsCore(events));
+
+        Assert.Equal("completed", chain.Status);
+        var step = Assert.Single(chain.Steps);
+        Assert.Equal("book_validation", step.Key);
+        Assert.Equal("整书校验", step.Label);
+        Assert.Equal("book_validation_completed", step.EventType);
+        Assert.Equal("book_validation_report", step.ArtifactType);
+    }
+
+    [Fact]
+    public void BuildWorkflowChainsCore_ProjectsPrePackageStagesAsReadableSteps()
+    {
+        var events = new[]
+        {
+            Event(
+                id: "event-knowledge-resolved",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_knowledge_resolved",
+                stage: NovelAgentProductionStages.KnowledgeResolved,
+                message: "项目知识已进入章节生产包。",
+                artifactType: "tianming_package",
+                artifactId: "pkg-chapter-002",
+                dataJson: "{\"knowledgeBindingCount\":2}",
+                createdAt: "2026-06-24T03:00:00Z"),
+            Event(
+                id: "event-knowledge-classified",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_knowledge_classified",
+                stage: NovelAgentProductionStages.KnowledgeClassified,
+                message: "项目知识分类状态已汇总。",
+                artifactType: "tianming_package",
+                artifactId: "pkg-chapter-002",
+                dataJson: "{\"classifiedCount\":1}",
+                createdAt: "2026-06-24T03:01:00Z"),
+            Event(
+                id: "event-story-design",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_story_design_built",
+                stage: NovelAgentProductionStages.StoryDesignBuilt,
+                message: "故事规则输入已整理。",
+                artifactType: "tianming_package",
+                artifactId: "pkg-chapter-002",
+                dataJson: "{\"designRuleCount\":1}",
+                createdAt: "2026-06-24T03:02:00Z"),
+            Event(
+                id: "event-chapter-blueprint",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_blueprint_built",
+                stage: NovelAgentProductionStages.ChapterBlueprintBuilt,
+                message: "章节蓝图已进入生产包。",
+                artifactType: "tianming_package",
+                artifactId: "pkg-chapter-002",
+                dataJson: "{\"blueprintId\":\"blueprint-chapter-002\"}",
+                createdAt: "2026-06-24T03:03:00Z"),
+            Event(
+                id: "event-package",
+                runId: "runtime-run-1",
+                packageId: "pkg-chapter-002",
+                eventType: "chapter_context_package_built",
+                stage: NovelAgentProductionStages.PackageBuilt,
+                message: "章节生产包已构建并持久化。",
+                artifactType: "tianming_package",
+                artifactId: "pkg-chapter-002",
+                dataJson: "{}",
+                createdAt: "2026-06-24T03:04:00Z")
+        };
+
+        var chain = Assert.Single(ProductionChainProjectionService.BuildWorkflowChainsCore(events));
+
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "knowledge_resolved" &&
+            step.Label == "知识绑定" &&
+            step.EventId == "event-knowledge-resolved");
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "knowledge_classified" &&
+            step.Label == "知识分类" &&
+            step.EventId == "event-knowledge-classified");
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "story_design" &&
+            step.Label == "故事规则" &&
+            step.EventId == "event-story-design");
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "chapter_blueprint" &&
+            step.Label == "章节蓝图" &&
+            step.EventId == "event-chapter-blueprint");
+        Assert.Contains(chain.Steps, step =>
+            step.Key == "context" &&
+            step.Label == "上下文包" &&
+            step.EventId == "event-package");
     }
 
     [Fact]

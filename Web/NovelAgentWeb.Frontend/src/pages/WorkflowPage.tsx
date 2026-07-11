@@ -349,8 +349,14 @@ function chapterProductionSummaryChips(chapter?: NovelChapterView | null) {
 
 function productionStageCaption(stage: WorkflowProductionStage) {
   if (stage.status === 'empty') return stage.emptyReason || stage.nextIntentHint || '未开始';
+  const status = stage.status.toLowerCase();
+  const isCurrentBlocked = status.includes('blocked') || status.includes('fail');
+  if (!isCurrentBlocked && stage.summary) return stage.summary;
   if (stage.productionEvents.length > 0) {
-    const latest = stage.productionEvents[0];
+    const latest = isCurrentBlocked
+      ? stage.productionEvents[0]
+      : stage.productionEvents.find((event) => !isBlockedProductionEvent(event));
+    if (!latest) return stage.summary || stage.nextIntentHint || '等待产物';
     return `${latest.stage || latest.eventType} · ${latest.status}`;
   }
   return stage.summary || stage.nextIntentHint || '等待产物';
@@ -376,13 +382,52 @@ function compactEventData(dataJson: string) {
 
 function stageEventsForChapter(stage: WorkflowProductionStage, chapterId?: string | null) {
   const events = stage.productionEvents ?? [];
-  if (!chapterId) return events.slice(0, 3);
-  const matched = events.filter((event) => event.chapterId === chapterId);
-  return (matched.length > 0 ? matched : events).slice(0, 3);
+  const scopedEvents = chapterId
+    ? events.filter((event) => event.chapterId === chapterId)
+    : events;
+  const matched = scopedEvents.length > 0 ? scopedEvents : events;
+  const stageStatus = stage.status.toLowerCase();
+  if (!stageStatus.includes('blocked') && !stageStatus.includes('fail')) {
+    return matched.filter((event) => !isBlockedProductionEvent(event)).slice(0, 3);
+  }
+  return matched.slice(0, 3);
+}
+
+function isBlockedProductionEvent(event: WorkflowProductionEventSummary) {
+  const status = event.status.toLowerCase();
+  return status.includes('fail') || status.includes('blocked') || status.includes('invalid');
+}
+
+function toolExecutionStateKey(tool: WorkflowToolExecutionSummary) {
+  const outputKey = tool.semanticContract?.outputKind
+    || tool.semanticContract?.outputArtifacts?.join('/')
+    || '';
+  return outputKey || tool.toolName || tool.id;
+}
+
+function toolActivityTime(tool: WorkflowToolExecutionSummary) {
+  return Math.max(parseTime(tool.completedAt), parseTime(tool.startedAt));
+}
+
+function collapseCurrentToolExecutions(tools: WorkflowToolExecutionSummary[]) {
+  const byKey = new Map<string, WorkflowToolExecutionSummary>();
+  tools.forEach((tool) => {
+    const key = toolExecutionStateKey(tool);
+    const existing = byKey.get(key);
+    if (!existing || toolActivityTime(tool) >= toolActivityTime(existing)) {
+      byKey.set(key, tool);
+    }
+  });
+  return Array.from(byKey.values()).sort((a, b) => toolActivityTime(b) - toolActivityTime(a));
+}
+
+function parseTime(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
 }
 
 function toolExecutionsForStage(stage: WorkflowProductionStage) {
-  return (stage.toolExecutions ?? []).slice(0, 3);
+  return collapseCurrentToolExecutions(stage.toolExecutions ?? []).slice(0, 3);
 }
 
 function toolExecutionDisplayName(tool: WorkflowToolExecutionSummary) {
@@ -394,7 +439,7 @@ function toolExecutionStatusLabel(status: string) {
   if (value.includes('fail')) return '失败';
   if (value.includes('cancel')) return '已取消';
   if (value.includes('running') || value.includes('execut')) return '执行中';
-  if (value.includes('complete') || value.includes('success')) return '已完成';
+  if (value.includes('complete') || value.includes('success') || value.includes('succeed')) return '已完成';
   if (value.includes('pending') || value.includes('queued')) return '排队中';
   return status || '未记录';
 }
@@ -403,7 +448,7 @@ function toolExecutionClass(tool: WorkflowToolExecutionSummary) {
   const value = tool.status.toLowerCase();
   if (value.includes('fail') || value.includes('cancel')) return 'blocked';
   if (value.includes('running') || value.includes('execut')) return 'running';
-  if (value.includes('complete') || value.includes('success')) return 'done';
+  if (value.includes('complete') || value.includes('success') || value.includes('succeed')) return 'done';
   return 'drafting';
 }
 
@@ -1336,6 +1381,16 @@ function artifactSummaryText(artifact: WorkflowArtifactTimelineItem, chapterTitl
   return summary;
 }
 
+function artifactRenderKey(artifact: WorkflowArtifactTimelineItem, index: number) {
+  return [
+    artifact.id || artifact.kind || 'artifact',
+    artifact.updatedAt || 'no-time',
+    artifact.runId || 'no-run',
+    artifact.status || 'no-status',
+    index,
+  ].join(':');
+}
+
 function chapterStatusClass(chapter?: NovelChapterView | null) {
   const status = chapter?.artifactStatus || chapter?.writingStatus || chapter?.status || 'unstarted';
   if (status === 'committed' || status === 'quality_passed') return 'done';
@@ -1491,6 +1546,11 @@ function artifactPriority(artifact: WorkflowArtifactTimelineItem) {
     chapter_brief: 30,
   };
   return order[artifact.kind] ?? 10;
+}
+
+function isCompletedProductionChain(chain: WorkflowProductionChain) {
+  const status = chain.status.toLowerCase();
+  return status === 'completed' || status === 'committed' || status === 'done';
 }
 
 function progressStatusFromArtifact(
@@ -1694,6 +1754,13 @@ export default function WorkflowPage() {
       ? chain.steps.some((step) => step.artifactId === selectedChapter.chapterId)
       : true;
   });
+  const completedProductionChapterIds = new Set((workflow?.productionChains ?? [])
+    .filter(isCompletedProductionChain)
+    .map((chain) => chain.chapterId)
+    .filter(Boolean));
+  const committedChapterUpdatedAtById = new Map(chapters
+    .filter(isLibraryChapter)
+    .map((chapter) => [chapter.chapterId, Date.parse(chapter.updatedAt || '0')]));
   const selectedProductionEvents = selectedProductionStages
     .flatMap((stage) => stageEventsForChapter(stage, selectedChapter?.chapterId));
   const selectedProductionEvidence = collectProductionEvidence(selectedProductionEvents, selectedProductionChains);
@@ -1765,6 +1832,14 @@ export default function WorkflowPage() {
   const scheduleText = scheduleHeadline(selectedProjectTaskQueue, scheduleCounts);
   const blockedArtifacts = timeline
     .filter((artifact) => artifact.isUserVisible && artifactClass(artifact) === 'blocked')
+    .filter((artifact) => {
+      if (!artifact.chapterId) return true;
+      if (completedProductionChapterIds.has(artifact.chapterId)) return false;
+      const committedAt = committedChapterUpdatedAtById.get(artifact.chapterId) ?? 0;
+      if (committedAt <= 0) return true;
+      const artifactAt = Date.parse(artifact.updatedAt || '0');
+      return artifactAt > committedAt;
+    })
     .slice(0, 5);
   const hasWorkflowSession = !!activeWorkflowSessionId;
   const diagnosticReasons: string[] = [
@@ -2538,7 +2613,6 @@ export default function WorkflowPage() {
                         <div className="workflow-production-stage-grid">
                           {selectedProductionStages.map((stage) => {
                             const events = stageEventsForChapter(stage, selectedChapter?.chapterId);
-                            const tools = toolExecutionsForStage(stage);
                             return (
                               <article key={stage.key} className={`workflow-production-stage ${productionStageClass(stage)}`}>
                                 <div className="workflow-production-stage-title">
@@ -2661,9 +2735,9 @@ export default function WorkflowPage() {
                     <div className="workflow-step-grid" aria-label="本章工作流产物记录">
                       {selectedChapterAuditArtifacts.length === 0 ? (
                         <div className="empty compact">这一章没有需要单独展开的过程证据。</div>
-                      ) : selectedChapterAuditArtifacts.map((artifact) => (
+                      ) : selectedChapterAuditArtifacts.map((artifact, index) => (
                         <button
-                          key={artifact.id}
+                          key={artifactRenderKey(artifact, index)}
                           type="button"
                           className={`ops-artifact-card ${selectedAuditArtifact?.id === artifact.id ? 'selected' : ''} ${artifactClass(artifact)}`}
                           onClick={() => setSelectedArtifactId(artifact.id)}
@@ -2911,9 +2985,9 @@ export default function WorkflowPage() {
               </div>
               {blockedArtifacts.length === 0 ? (
                 <p className="ops-muted-line">暂无阻塞产物</p>
-              ) : blockedArtifacts.map((artifact) => (
+              ) : blockedArtifacts.map((artifact, index) => (
                 <button
-                  key={artifact.id}
+                  key={artifactRenderKey(artifact, index)}
                   type="button"
                   className="ops-task-row blocked"
                   onClick={() => setSelectedArtifactId(artifact.id)}

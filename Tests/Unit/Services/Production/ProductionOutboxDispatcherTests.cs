@@ -12,6 +12,7 @@ using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
@@ -279,6 +280,44 @@ public class ProductionOutboxDispatcherTests
     }
 
     [Fact]
+    public async Task DispatchPendingAsync_WhenProcessingLeaseIsActive_DoesNotStealOutbox()
+    {
+        await using var db = CreateDb();
+        var truthStore = new ProductionTruthStore(db);
+        await SeedProjectAndChapterAsync(db);
+        var outbox = await truthStore.EnqueueOutboxAsync(new EnqueueOutboxEventRequest(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            RuntimeRunId: "run-1",
+            EventType: "extract_chapter_continuity_facts",
+            AggregateType: "chapter",
+            AggregateId: "project-1-chapter-001",
+            PayloadJson: "{}"));
+        outbox.Status = "processing";
+        outbox.ProcessingOwner = "worker-a";
+        outbox.ProcessingLeaseExpiresAt = DateTime.UtcNow.AddMinutes(5);
+        outbox.UpdatedAt = DateTime.UtcNow.AddMinutes(-20);
+        await db.SaveChangesAsync();
+
+        var processor = new RecordingChapterFactOutboxProcessor();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance,
+            chapterFactProcessor: processor);
+
+        var dispatched = await dispatcher.DispatchPendingAsync();
+
+        var leased = await db.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal(0, dispatched);
+        Assert.Equal("processing", leased.Status);
+        Assert.Equal("worker-a", leased.ProcessingOwner);
+        Assert.Null(processor.ProcessedEvent);
+    }
+
+    [Fact]
     public async Task DispatchPendingAsync_WhenChapterFactOutboxFails_AppendsPostCommitFailureEvent()
     {
         await using var db = CreateDb();
@@ -318,12 +357,12 @@ public class ProductionOutboxDispatcherTests
             started =>
             {
                 Assert.Equal("outbox_processing", started.EventType);
-                Assert.Equal("post_commit_facts", started.Stage);
+                Assert.Equal(NovelAgentProductionStages.FactsPersisted, started.Stage);
             },
             failure =>
             {
                 Assert.Equal("outbox_failed", failure.EventType);
-                Assert.Equal("post_commit_facts", failure.Stage);
+                Assert.Equal(NovelAgentProductionStages.FactsPersisted, failure.Stage);
                 Assert.Equal("retryable_failed", failure.Status);
                 Assert.Contains("extract_chapter_continuity_facts", failure.DataJson);
                 Assert.Contains("facts writer timeout", failure.DataJson);
@@ -355,7 +394,7 @@ public class ProductionOutboxDispatcherTests
             started =>
             {
                 Assert.Equal("outbox_processing", started.EventType);
-                Assert.Equal("index_outbox", started.Stage);
+                Assert.Equal(NovelAgentProductionStages.IndexUpdated, started.Stage);
                 Assert.Equal("running", started.Status);
                 Assert.Equal("project-1-chapter-001", started.ChapterId);
                 Assert.Equal("pkg-1", started.PackageId);
@@ -365,13 +404,102 @@ public class ProductionOutboxDispatcherTests
             completed =>
             {
                 Assert.Equal("outbox_completed", completed.EventType);
-                Assert.Equal("index_outbox", completed.Stage);
+                Assert.Equal(NovelAgentProductionStages.IndexUpdated, completed.Stage);
                 Assert.Equal("completed", completed.Status);
                 Assert.Equal("project-1-chapter-001", completed.ChapterId);
                 Assert.Equal("pkg-1", completed.PackageId);
                 Assert.Equal("outbox_event", completed.ArtifactType);
                 Assert.Contains("index_chapter_content", completed.DataJson);
             });
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_AppendsRunCompletedOnlyAfterAllRunOutboxesComplete()
+    {
+        await using var db = CreateDb();
+        var truthStore = new ProductionTruthStore(db);
+        var (version, _) = await SeedChapterVersionOutboxAsync(db);
+        db.AgentRuntimeRuns.Add(new AgentRuntimeRun
+        {
+            Id = "run-1",
+            UserId = "user-1",
+            SessionId = "session-1",
+            ProjectId = "project-1",
+            Status = "running",
+            Mode = AgentRuntimeRunMode.Production,
+            CurrentPhase = "chapter_commit",
+            ActiveTool = "ProduceChapter",
+            CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+            UpdatedAt = DateTime.UtcNow.AddMinutes(-5)
+        });
+        await db.SaveChangesAsync();
+        await truthStore.AppendEventAsync(new CreateProductionEventRequest(
+            RuntimeRunId: "run-1",
+            UserId: "user-1",
+            ProjectId: "project-1",
+            ChapterId: "project-1-chapter-001",
+            PackageId: "pkg-1",
+            EventType: "chapter_committed",
+            Stage: NovelAgentProductionStages.ChapterCommitted,
+            Status: "completed",
+            Message: "第一章已提交书城。",
+            ArtifactType: "chapter_version",
+            ArtifactId: version.Id,
+            DataJson: "{}"));
+        await truthStore.EnqueueOutboxAsync(new EnqueueOutboxEventRequest(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            RuntimeRunId: "run-1",
+            EventType: "finalize_chapter_commit_metadata",
+            AggregateType: "chapter",
+            AggregateId: "project-1-chapter-001",
+            PayloadJson: "{}"));
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance,
+            new ProductionEventWriter(truthStore),
+            chapterCommitFinalizer: new RecordingChapterCommitPostCommitFinalizer(),
+            runtimeEvents: new AgentRuntimeEventService(db));
+
+        var firstDispatch = await dispatcher.DispatchPendingAsync(maxItems: 1);
+        var prematureCompletionEvents = await db.ProductionEvents
+            .Where(e => e.RuntimeRunId == "run-1" &&
+                        e.EventType == "chapter_production_completed")
+            .ToListAsync();
+
+        var secondDispatch = await dispatcher.DispatchPendingAsync(maxItems: 1);
+        var completionEvent = await db.ProductionEvents.SingleAsync(e =>
+            e.RuntimeRunId == "run-1" &&
+            e.EventType == "chapter_production_completed");
+        var runtimeEvents = await db.AgentRuntimeEvents
+            .Where(e => e.RuntimeRunId == "run-1")
+            .OrderBy(e => e.CreatedAt)
+            .ToListAsync();
+
+        Assert.Equal(1, firstDispatch);
+        Assert.Empty(prematureCompletionEvents);
+        Assert.Equal(1, secondDispatch);
+        Assert.Equal(NovelAgentProductionStages.RunCompleted, completionEvent.Stage);
+        Assert.Equal("completed", completionEvent.Status);
+        Assert.Equal("chapter_production_run", completionEvent.ArtifactType);
+        Assert.Equal("run-1", completionEvent.ArtifactId);
+        Assert.Contains("全部完成", completionEvent.Message);
+        Assert.Contains(runtimeEvents, e =>
+            e.Type == "production_progress" &&
+            e.Stage == NovelAgentProductionStages.IndexUpdated &&
+            e.Status == "running" &&
+            e.ArtifactType == "outbox_event");
+        Assert.Contains(runtimeEvents, e =>
+            e.Type == "production_progress" &&
+            e.Stage == NovelAgentProductionStages.RunCompleted &&
+            e.Status == "completed" &&
+            e.ArtifactType == "chapter_production_run" &&
+            e.ArtifactId == "run-1" &&
+            e.DisplaySurface == AgentRuntimeEventSurface.Workflow &&
+            e.DisplayPolicy == AgentRuntimeEventDisplayPolicy.Timeline);
     }
 
     [Fact]

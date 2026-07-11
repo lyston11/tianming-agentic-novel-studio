@@ -31,7 +31,9 @@ public sealed class LlmConnectionHealthServiceTests
         Assert.Equal("mimo-v2.5-pro", result.Model);
         Assert.Equal("https://example.test/anthropic", result.BaseUrl);
         Assert.Contains("用户设置", result.RecommendedAction);
+        Assert.Contains("API Key 不可用", result.Message);
         Assert.DoesNotContain("sk-secret", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("invalid api key", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

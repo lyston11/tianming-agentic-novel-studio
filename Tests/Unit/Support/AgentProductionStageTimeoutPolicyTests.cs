@@ -44,6 +44,9 @@ public sealed class AgentProductionStageTimeoutPolicyTests
     [InlineData(NovelAgentProductionStages.DraftRepair, NovelAgentProductionStages.DraftRewritten)]
     [InlineData(NovelAgentProductionStages.QualityReview, NovelAgentProductionStages.ReviewCompleted)]
     [InlineData(NovelAgentProductionStages.ChapterCommit, NovelAgentProductionStages.ChapterCommitted)]
+    [InlineData("post_commit_facts", NovelAgentProductionStages.FactsPersisted)]
+    [InlineData("post_commit_metadata", NovelAgentProductionStages.FactsPersisted)]
+    [InlineData("index_outbox", NovelAgentProductionStages.IndexUpdated)]
     public void ToCanonicalStage_MapsLegacyProductionStages(string legacyStage, string canonicalStage)
     {
         Assert.Equal(canonicalStage, NovelAgentProductionStages.ToCanonicalStage(legacyStage));

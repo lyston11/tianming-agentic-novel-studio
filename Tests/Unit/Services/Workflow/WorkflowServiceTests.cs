@@ -351,6 +351,30 @@ public sealed class WorkflowServiceTests
                         "draft-artifact-002",
                         "正文草稿已生成，长度 4200 字。",
                         DateTime.UtcNow.AddSeconds(-8).ToString("O"),
+                        string.Empty),
+                    new WorkflowProductionChainStep(
+                        "draft",
+                        "正文草稿",
+                        "failed",
+                        "evt-draft-repair-002",
+                        "chapter_repair_report",
+                        NovelAgentProductionStages.DraftRewritten,
+                        "chapter_repair_report",
+                        "draft-artifact-002",
+                        "章节草稿修复后仍未通过硬门禁。",
+                        DateTime.UtcNow.AddSeconds(-7).ToString("O"),
+                        string.Empty),
+                    new WorkflowProductionChainStep(
+                        "completed",
+                        "生产完成",
+                        "completed",
+                        "evt-completed-002",
+                        "chapter_production_completed",
+                        NovelAgentProductionStages.RunCompleted,
+                        "chapter_production_run",
+                        "runtime-run-1",
+                        "第二章生产闭环已完成。",
+                        DateTime.UtcNow.AddSeconds(-1).ToString("O"),
                         string.Empty)
                 },
                 new WorkflowProductionChainEvidence(
@@ -468,11 +492,20 @@ public sealed class WorkflowServiceTests
             && item.ArtifactId == "pkg-chapter-002"
             && item.RelatedArtifactIds.Contains("pkg-old-002"));
         Assert.Contains(chapter.ProductionSummary.TraceItems, item =>
-            item.Key == "draft:draft-artifact-002"
+            item.Key == "draft:draft-artifact-002:evt-draft-002"
             && item.Label == "正文草稿"
             && item.Status == "completed"
             && item.ArtifactId == "draft-artifact-002"
             && item.Description.Contains("4200"));
+        Assert.Contains(chapter.ProductionSummary.TraceItems, item =>
+            item.Key == "draft:draft-artifact-002:evt-draft-repair-002"
+            && item.Label == "正文草稿"
+            && item.Status == "failed"
+            && item.ArtifactId == "draft-artifact-002"
+            && item.Description.Contains("修复后仍未通过"));
+        Assert.Equal(
+            chapter.ProductionSummary.TraceItems.Count,
+            chapter.ProductionSummary.TraceItems.Select(item => item.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.Contains(chapter.ProductionSummary.TraceItems, item =>
             item.Key == "gate:chain-project-1-chapter-002"
             && item.Label == "门禁校验"
@@ -496,12 +529,125 @@ public sealed class WorkflowServiceTests
             && item.Label == "事实快照"
             && item.Status == "v2"
             && item.Description.Contains("怪潮开始围站"));
+        Assert.Contains(chapter.ProductionSummary.TraceItems, item =>
+            item.Key == "completed:runtime-run-1"
+            && item.Label == "生产完成"
+            && item.Status == "completed"
+            && item.Description.Contains("第二章生产闭环已完成。"));
         Assert.Equal(2, chapter.ProductionSummary.CreativeIntents.Count);
         Assert.Contains(chapter.ProductionSummary.CreativeIntents, intent =>
             intent.IntentId == "intent-accepted-002" && intent.Status == "accepted");
         Assert.Contains(chapter.ProductionSummary.CreativeIntents, intent =>
             intent.IntentId == "intent-global-001" && intent.Status == "executed");
         Assert.True(chapter.ProductionSummary.HasCanonicalEvidence);
+    }
+
+    [Fact]
+    public async Task BuildDatabaseLibraryAsync_WhenCommittedChainHasFailedGateEvidence_ReportsCommittedSummaryAndKeepsGateTrace()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        SeedUserProject(db);
+        db.Volumes.Add(new Volume
+        {
+            Id = "volume-1",
+            ProjectId = "project-1",
+            Title = "第一卷：黑雨旧邮路",
+            VolumeNumber = 1
+        });
+        db.Chapters.Add(new Chapter
+        {
+            Id = "project-1-chapter-002",
+            ProjectId = "project-1",
+            VolumeId = "volume-1",
+            Title = "第二章：旧邮路入口",
+            ChapterNumber = 2,
+            Status = "committed",
+            WordCount = 4200,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var productionChains = new[]
+        {
+            new WorkflowProductionChain(
+                "chain-project-1-chapter-002",
+                "project-1-chapter-002",
+                "chapter-002",
+                "第二章：旧邮路入口",
+                "runtime-run-1",
+                "pkg-chapter-002",
+                "completed",
+                "章节已通过硬门禁并提交成稿。",
+                DateTime.UtcNow.ToString("O"),
+                "chapter-version-002-v2",
+                2,
+                string.Empty,
+                0,
+                Array.Empty<string>(),
+                Array.Empty<WorkflowPackageRebuildLinkEvidence>(),
+                Array.Empty<WorkflowProductionChainStep>(),
+                new WorkflowProductionChainEvidence(
+                    new WorkflowGateEvidence(
+                        "gate_failed",
+                        false,
+                        false,
+                        true,
+                        true,
+                        false,
+                        new[] { "CHANGES段的JSON格式错误" },
+                        new[] { "重新提取 CHANGES 后复检" }),
+                    null,
+                    null,
+                    0,
+                    Array.Empty<string>()))
+        };
+        var service = CreateService(db, "user-1");
+        var method = typeof(WorkflowService).GetMethod(
+            "BuildDatabaseLibraryAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        var project = await db.NovelProjects.SingleAsync(p => p.Id == "project-1");
+        var currentLibrary = new NovelLibraryDocument(
+            Array.Empty<NovelBookView>(),
+            null,
+            Array.Empty<NovelVolumeView>(),
+            null,
+            0,
+            0,
+            0);
+
+        var task = Assert.IsAssignableFrom<Task<NovelLibraryDocument?>>(
+            method!.Invoke(service, new object[]
+            {
+                project,
+                currentLibrary,
+                Array.Empty<WorkflowChapterArtifactSummary>(),
+                productionChains,
+                Array.Empty<WorkflowCreativeIntentEvidence>(),
+                CancellationToken.None
+            })!);
+        var library = await task;
+
+        var chapter = Assert.Single(Assert.Single(library!.Volumes).Chapters);
+        Assert.NotNull(chapter.ProductionSummary);
+        Assert.Equal("completed", chapter.ProductionSummary!.Status);
+        Assert.Equal("validated", chapter.ProductionSummary.GateStatus);
+        Assert.Contains("已通过硬门禁", chapter.ProductionSummary.Summary);
+        var packageTrace = Assert.Single(
+            chapter.ProductionSummary.TraceItems,
+            item => item.Key == "package:pkg-chapter-002");
+        Assert.Equal("completed", packageTrace.Status);
+        Assert.Contains("已通过硬门禁", packageTrace.Description);
+        var gateTrace = Assert.Single(
+            chapter.ProductionSummary.TraceItems,
+            item => item.Key == "gate:chain-project-1-chapter-002");
+        Assert.Equal("gate_failed", gateTrace.Status);
+        Assert.Contains("CHANGES段的JSON格式错误", gateTrace.Description);
     }
 
     [Fact]

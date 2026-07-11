@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using TM.Services.Framework.AI.Embedding;
@@ -98,39 +99,6 @@ builder.Services.AddAuthentication(options =>
         ClockSkew = TimeSpan.Zero
     };
 
-    // Add detailed logging for JWT authentication
-    options.Events = new JwtBearerEvents
-    {
-        OnAuthenticationFailed = context =>
-        {
-            Console.WriteLine($"JWT Authentication Failed: {context.Exception.Message}");
-            return Task.CompletedTask;
-        },
-        OnTokenValidated = context =>
-        {
-            Console.WriteLine($"JWT Token Validated for user: {context.Principal?.Identity?.Name}");
-            return Task.CompletedTask;
-        },
-        OnMessageReceived = context =>
-        {
-            // EventSource cannot send custom headers, so accept token from query string for SSE endpoints
-            if (context.Request.Path.StartsWithSegments("/api/agent/sse"))
-            {
-                var token = context.Request.Query["token"].FirstOrDefault();
-                if (!string.IsNullOrEmpty(token))
-                {
-                    context.Token = token;
-                }
-            }
-
-            var authToken = context.Token ?? context.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
-            if (!string.IsNullOrEmpty(authToken))
-            {
-                Console.WriteLine($"JWT Token Received: {authToken.Substring(0, Math.Min(50, authToken.Length))}...");
-            }
-            return Task.CompletedTask;
-        }
-    };
 });
 
 builder.Services.AddAuthorization();
@@ -153,7 +121,14 @@ builder.Services.AddScoped<IToolSearchCacheService, ToolSearchCacheService>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
-builder.Services.AddDataProtection();
+var dataProtectionKeysDirectory = Path.Combine(
+    builder.Environment.ContentRootPath,
+    "App_Data",
+    "DataProtectionKeys");
+Directory.CreateDirectory(dataProtectionKeysDirectory);
+builder.Services.AddDataProtection()
+    .SetApplicationName("NovelAgentWeb")
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysDirectory));
 builder.Services.AddSingleton<ILlmApiKeyProtector, DataProtectionLlmApiKeyProtector>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<JwtTokenGenerator>();

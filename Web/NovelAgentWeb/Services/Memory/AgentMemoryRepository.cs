@@ -17,15 +17,19 @@ public class AgentMemoryRepository : IAgentMemoryRepository
     private readonly ILogger<AgentMemoryRepository> _logger;
     private readonly IProductionTruthStore _truthStore;
     private readonly IAgentMemoryVersionService? _versions;
+    private readonly IDistributedLockService? _distributedLocks;
+    private readonly string _memoryLockOwner;
 
     private static readonly TimeSpan MemoryCacheDuration = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RedisCacheDuration = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MemoryDistributedLockTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MemoryDistributedLockAcquireTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MemoryDistributedLockRetryDelay = TimeSpan.FromMilliseconds(100);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> MemoryLocks = new(StringComparer.Ordinal);
     private static readonly HashSet<string> UnionListMemoryTypes = new(StringComparer.Ordinal)
     {
         "project.referenced_knowledge_ids",
         "project.constraints",
-        "project.unresolved_threads",
         "project.used_trope_patterns",
         "execution.successful_repairs",
         "execution.repeated_blockers",
@@ -43,7 +47,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         IMemoryCacheService memoryCache,
         ILogger<AgentMemoryRepository> logger,
         IProductionTruthStore truthStore,
-        IAgentMemoryVersionService? versions = null)
+        IAgentMemoryVersionService? versions = null,
+        IDistributedLockService? distributedLocks = null)
     {
         _context = context;
         _redisCache = redisCache;
@@ -51,6 +56,8 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         _logger = logger;
         _truthStore = truthStore;
         _versions = versions;
+        _distributedLocks = distributedLocks;
+        _memoryLockOwner = $"agent-memory:{Environment.MachineName}:{Guid.NewGuid():N}";
     }
 
     public async Task<ProjectMemory> GetProjectMemoryAsync(string userId, string projectId, CancellationToken ct = default, string? runId = null, string? sessionId = null)
@@ -416,9 +423,14 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
         var lockKey = $"{userId}:{lockProjectId ?? "<global>"}";
         var memoryLock = MemoryLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
-        await memoryLock.WaitAsync(ct);
+        var distributedLockKey = BuildMemoryDistributedLockKey(userId, lockProjectId);
+        var lease = await AcquireMemoryDistributedLockAsync(distributedLockKey, ct).ConfigureAwait(false);
+        var localLockAcquired = false;
         try
         {
+            await memoryLock.WaitAsync(ct);
+            localLockAcquired = true;
+
             var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
             IDbContextTransaction? transaction = null;
 
@@ -494,7 +506,12 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
         finally
         {
-            memoryLock.Release();
+            if (localLockAcquired)
+            {
+                memoryLock.Release();
+            }
+
+            await ReleaseMemoryDistributedLockAsync(lease, CancellationToken.None).ConfigureAwait(false);
         }
 
         foreach (var memoryType in updates.Keys)
@@ -513,6 +530,44 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
         _logger.LogDebug("Union updated {Count} memory fields for user {UserId}, project {ProjectId}", updates.Count, userId, projectId);
     }
+
+    private async Task<DistributedLockLease?> AcquireMemoryDistributedLockAsync(string lockKey, CancellationToken ct)
+    {
+        if (_distributedLocks == null)
+            return null;
+
+        var startedAt = DateTime.UtcNow;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var lease = await _distributedLocks
+                .TryAcquireAsync(lockKey, MemoryDistributedLockTtl, _memoryLockOwner, ct)
+                .ConfigureAwait(false);
+            if (lease != null)
+                return lease;
+
+            if (DateTime.UtcNow - startedAt >= MemoryDistributedLockAcquireTimeout)
+                throw new TimeoutException($"Timed out acquiring agent memory distributed lock '{lockKey}'.");
+
+            await Task.Delay(MemoryDistributedLockRetryDelay, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReleaseMemoryDistributedLockAsync(DistributedLockLease? lease, CancellationToken ct)
+    {
+        if (lease == null || _distributedLocks == null)
+            return;
+
+        await _distributedLocks.ReleaseAsync(lease, ct).ConfigureAwait(false);
+    }
+
+    private static string BuildMemoryDistributedLockKey(string userId, string? projectId) =>
+        $"agent_memory:{NormalizeLockSegment(userId)}:{NormalizeLockSegment(projectId ?? "<global>")}";
+
+    private static string NormalizeLockSegment(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? "unknown"
+            : value.Trim().Replace(' ', '_').Replace(':', '_');
 
     public async Task UpdateSessionMemoryAsync(string userId, string projectId, string sessionId, Dictionary<string, object> updates, CancellationToken ct = default)
     {
@@ -825,7 +880,6 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         "project.long_term_goal",
         "project.reader_promise",
         "project.constraints",
-        "project.unresolved_threads",
         "project.referenced_knowledge_ids",
         "project.imported_knowledge_ids",
         "project.knowledge_inventory",

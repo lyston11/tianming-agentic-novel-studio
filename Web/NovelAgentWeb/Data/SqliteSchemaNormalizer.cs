@@ -22,6 +22,18 @@ public static class SqliteSchemaNormalizer
         new("recommended_action", "TEXT NOT NULL DEFAULT ''"),
     ];
 
+    private static readonly MissingColumn[] AgentRuntimeRunContractColumns =
+    [
+        new("locked_project_id", "TEXT NULL"),
+        new("executed_tools_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ];
+
+    private static readonly MissingColumn[] OutboxProcessingLeaseColumns =
+    [
+        new("processing_owner", "TEXT NULL"),
+        new("processing_lease_expires_at", "TEXT NULL"),
+    ];
+
     private static readonly MissingColumn[] RevisionPlanDisplayIdentityColumns =
     [
         new("target_chapter_logical_id", "TEXT NULL"),
@@ -41,6 +53,8 @@ public static class SqliteSchemaNormalizer
         try
         {
             EnsureUserSettingsColumns(connection);
+            EnsureAgentRuntimeRunColumns(connection);
+            EnsureOutboxEventColumns(connection);
             EnsureProductionTruthTables(connection);
             EnsureMemoryAuditTables(connection);
         }
@@ -57,6 +71,24 @@ public static class SqliteSchemaNormalizer
             return;
 
         EnsureMissingColumns(connection, "user_settings", UserSettingsColumns);
+    }
+
+    private static void EnsureAgentRuntimeRunColumns(IDbConnection connection)
+    {
+        if (!TableExists(connection, "agent_runtime_runs"))
+            return;
+
+        EnsureMissingColumns(connection, "agent_runtime_runs", AgentRuntimeRunContractColumns);
+    }
+
+    private static void EnsureOutboxEventColumns(IDbConnection connection)
+    {
+        if (!TableExists(connection, "outbox_events"))
+            return;
+
+        EnsureMissingColumns(connection, "outbox_events", OutboxProcessingLeaseColumns);
+        EnsureIndex(connection, "idx_outbox_processing_lease",
+            "CREATE INDEX idx_outbox_processing_lease ON outbox_events (status, processing_lease_expires_at)");
     }
 
     private static void EnsureProductionTruthTables(IDbConnection connection)

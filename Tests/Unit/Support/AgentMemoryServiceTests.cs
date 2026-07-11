@@ -16,7 +16,6 @@ public class AgentMemoryServiceTests
             ProjectMemory = new ProjectMemory
             {
                 Constraints = new List<string> { "旧约束" },
-                UnresolvedThreads = new List<string> { "旧伏笔" },
                 ReferencedKnowledgeIds = new List<string> { "kb-old" },
                 UsedTropePatterns = new List<string> { "旧套路" }
             },
@@ -43,7 +42,6 @@ public class AgentMemoryServiceTests
         {
             ProjectId = "project-1",
             Constraints = new List<string> { "旧约束" },
-            UnresolvedThreads = new List<string> { "旧伏笔" },
             ReferencedKnowledgeIds = new List<string> { "kb-old" },
             UsedTropePatterns = new List<string> { "旧套路" }
         };
@@ -72,8 +70,7 @@ public class AgentMemoryServiceTests
                     },
                     ProjectMemory = new ProjectMemoryUpdate
                     {
-                        NewConstraints = new List<string> { "不要出现现代科技元素" },
-                        UnresolvedThreads = new List<string> { "主角身世之谜（第15章揭示）" }
+                        NewConstraints = new List<string> { "不要出现现代科技元素" }
                     },
                     AuthorMemory = new AuthorMemoryUpdate
                     {

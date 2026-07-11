@@ -17,7 +17,8 @@ public sealed class ProductionDependencyGuard : IProductionDependencyGuard
     private static readonly HashSet<string> ChapterPostCommitOutboxTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "finalize_chapter_commit_metadata",
-        "extract_chapter_continuity_facts"
+        "extract_chapter_continuity_facts",
+        "index_chapter_content"
     };
 
     private readonly NovelAgentDbContext _db;
@@ -80,17 +81,37 @@ public sealed class ProductionDependencyGuard : IProductionDependencyGuard
             .AsNoTracking()
             .Where(evt =>
                 evt.ProjectId == request.ProjectId &&
-                evt.AggregateType == "chapter" &&
                 ChapterPostCommitOutboxTypes.Contains(evt.EventType) &&
                 BlockingOutboxStatuses.Contains(evt.Status));
         if (!isAdmin)
             query = query.Where(evt => evt.UserId == request.UserId);
 
-        var blocking = (await query
+        var candidates = await query
                 .OrderBy(evt => evt.CreatedAt)
                 .ToListAsync(cancellationToken)
-                .ConfigureAwait(false))
-            .Where(evt => IsSameChapterIdentity(evt.AggregateId, previousChapter.Id, previousChapterNumber))
+                .ConfigureAwait(false);
+        var chapterVersionIds = candidates
+            .Where(evt => string.Equals(evt.AggregateType, "chapter_version", StringComparison.OrdinalIgnoreCase))
+            .Select(evt => evt.AggregateId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var chapterIdByVersionId = chapterVersionIds.Count == 0
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : await _db.ChapterVersions
+                .AsNoTracking()
+                .Where(version =>
+                    version.ProjectId == request.ProjectId &&
+                    chapterVersionIds.Contains(version.Id))
+                .ToDictionaryAsync(
+                    version => version.Id,
+                    version => version.ChapterId,
+                    StringComparer.OrdinalIgnoreCase,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+        var blocking = candidates
+            .Where(evt => IsBlockingPreviousChapterOutbox(evt, previousChapter.Id, previousChapterNumber, chapterIdByVersionId))
             .ToList();
         if (blocking.Count == 0)
             return Array.Empty<ProductionDependencyBlock>();
@@ -154,5 +175,23 @@ public sealed class ProductionDependencyGuard : IProductionDependencyGuard
 
         var candidateNumber = ExtractTrailingNumber(normalized);
         return candidateNumber > 0 && chapterNumber > 0 && candidateNumber == chapterNumber;
+    }
+
+    private static bool IsBlockingPreviousChapterOutbox(
+        Data.Entities.OutboxEvent evt,
+        string previousChapterId,
+        int previousChapterNumber,
+        IReadOnlyDictionary<string, string> chapterIdByVersionId)
+    {
+        if (string.Equals(evt.AggregateType, "chapter", StringComparison.OrdinalIgnoreCase))
+            return IsSameChapterIdentity(evt.AggregateId, previousChapterId, previousChapterNumber);
+
+        if (string.Equals(evt.AggregateType, "chapter_version", StringComparison.OrdinalIgnoreCase) &&
+            chapterIdByVersionId.TryGetValue(evt.AggregateId, out var chapterId))
+        {
+            return IsSameChapterIdentity(chapterId, previousChapterId, previousChapterNumber);
+        }
+
+        return false;
     }
 }

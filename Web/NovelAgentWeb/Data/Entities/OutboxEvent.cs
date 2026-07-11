@@ -14,6 +14,8 @@ public class OutboxEvent
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public DateTime? NextAttemptAt { get; set; }
+    public string? ProcessingOwner { get; set; }
+    public DateTime? ProcessingLeaseExpiresAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

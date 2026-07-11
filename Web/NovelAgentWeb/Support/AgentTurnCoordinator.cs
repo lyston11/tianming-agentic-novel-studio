@@ -118,7 +118,7 @@ public sealed class AgentTurnCoordinator
         string userMessage,
         CancellationToken ct)
     {
-        if (_backgroundReadinessGate == null || !IsLlmAuthFailureReply(foregroundResponse.Reply))
+        if (_backgroundReadinessGate == null || !IsLlmUnavailableReply(foregroundResponse.Reply))
             return null;
 
         var readiness = await _backgroundReadinessGate.CheckAsync(session.SessionId, userMessage, ct).ConfigureAwait(false);
@@ -137,14 +137,18 @@ public sealed class AgentTurnCoordinator
         return response;
     }
 
-    private static bool IsLlmAuthFailureReply(string? reply)
+    private static bool IsLlmUnavailableReply(string? reply)
     {
         if (string.IsNullOrWhiteSpace(reply))
             return false;
 
         return reply.Contains("API 认证失败", StringComparison.OrdinalIgnoreCase) ||
                reply.Contains("模型接口认证失败", StringComparison.OrdinalIgnoreCase) ||
-               reply.Contains("Invalid API Key", StringComparison.OrdinalIgnoreCase);
+               reply.Contains("Invalid API Key", StringComparison.OrdinalIgnoreCase) ||
+               reply.Contains("API Key 不可用", StringComparison.OrdinalIgnoreCase) ||
+               reply.Contains("当前没有配置可用的模型服务", StringComparison.OrdinalIgnoreCase) ||
+               reply.Contains("模型配置不完整", StringComparison.OrdinalIgnoreCase) ||
+               reply.Contains("降级模式", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<AgentChatResponse> RecordInterruptAsync(

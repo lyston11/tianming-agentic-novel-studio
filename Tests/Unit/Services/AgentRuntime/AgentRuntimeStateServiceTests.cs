@@ -526,6 +526,7 @@ public class AgentRuntimeStateServiceTests
             PublishToSse: true));
 
         fanout.Verify(x => x.PublishAsync(
+                "user-1",
                 "session-1",
                 It.Is<AgentSseEvent>(evt =>
                     evt.Type == "production_progress" &&

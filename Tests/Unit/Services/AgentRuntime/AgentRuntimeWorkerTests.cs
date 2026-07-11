@@ -17,6 +17,64 @@ namespace Tests.Unit.Services.AgentRuntime;
 public class AgentRuntimeWorkerTests
 {
     [Fact]
+    public async Task RecoverQueuedRunsAsync_EnqueuesPersistedQueuedRunsOnStartup()
+    {
+        var queuedRuns = new[]
+        {
+            new TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeRun
+            {
+                Id = "run-queued-1",
+                UserId = "user-1",
+                SessionId = "session-1",
+                Status = AgentRuntimeRunStatus.Queued,
+                UpdatedAt = DateTime.UtcNow.AddMinutes(-2)
+            },
+            new TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeRun
+            {
+                Id = "run-queued-2",
+                UserId = "user-1",
+                SessionId = "session-2",
+                Status = AgentRuntimeRunStatus.Queued,
+                UpdatedAt = DateTime.UtcNow.AddMinutes(-1)
+            }
+        };
+        var runs = new Mock<IAgentRuntimeRunService>();
+        runs.Setup(x => x.ListQueuedAsync(500, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(queuedRuns);
+        var queue = new RecordingRuntimeQueue();
+        var services = new ServiceCollection()
+            .AddSingleton(runs.Object)
+            .BuildServiceProvider();
+        var worker = new AgentRuntimeWorker(
+            queue,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<AgentRuntimeWorker>.Instance,
+            new BusyLeaseService());
+
+        var recovered = await worker.RecoverQueuedRunsAsync(CancellationToken.None);
+
+        Assert.Equal(2, recovered);
+        Assert.Equal(new[] { "run-queued-1", "run-queued-2" }, queue.EnqueuedRunIds);
+    }
+
+    [Fact]
+    public async Task AgentRuntimeQueue_EnqueueAsyncWaitsWhenCapacityIsFull()
+    {
+        var queue = new AgentRuntimeQueue(capacity: 1);
+        await queue.EnqueueAsync("run-1");
+
+        var secondEnqueue = queue.EnqueueAsync("run-2").AsTask();
+        var completedBeforeRead = await Task.WhenAny(secondEnqueue, Task.Delay(50));
+        Assert.NotSame(secondEnqueue, completedBeforeRead);
+
+        await using var enumerator = queue.DequeueAllAsync().GetAsyncEnumerator();
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.Equal("run-1", enumerator.Current);
+
+        await secondEnqueue.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task ExecuteRunWithLeaseAsync_WhenLeaseIsBusyDoesNotResolveRuntimeServices()
     {
         var services = new ServiceCollection().BuildServiceProvider();
@@ -143,6 +201,23 @@ public class AgentRuntimeWorkerTests
     {
         public ValueTask EnqueueAsync(string runtimeRunId, CancellationToken ct = default) =>
             ValueTask.CompletedTask;
+
+        public async IAsyncEnumerable<string> DequeueAllAsync([EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class RecordingRuntimeQueue : IAgentRuntimeQueue
+    {
+        public List<string> EnqueuedRunIds { get; } = new();
+
+        public ValueTask EnqueueAsync(string runtimeRunId, CancellationToken ct = default)
+        {
+            EnqueuedRunIds.Add(runtimeRunId);
+            return ValueTask.CompletedTask;
+        }
 
         public async IAsyncEnumerable<string> DequeueAllAsync([EnumeratorCancellation] CancellationToken ct = default)
         {

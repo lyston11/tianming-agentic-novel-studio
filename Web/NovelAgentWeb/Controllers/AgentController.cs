@@ -56,9 +56,20 @@ public class AgentController : ControllerBase
     }
 
     [HttpGet("agent/sse/{sessionId}")]
-    public async Task StreamEvents(string sessionId, [FromQuery] string? token, [FromQuery] string? afterEventId, CancellationToken ct)
+    public async Task StreamEvents(string sessionId, [FromQuery] string? afterEventId, CancellationToken ct)
     {
-        // Token is handled by OnMessageReceived in Program.cs JWT configuration
+        var userId = _currentUserService.GetUserId();
+        var isAdmin = _currentUserService.IsAdmin();
+        try
+        {
+            await _agentSessionService.GetSessionByIdAsync(sessionId, userId, isAdmin, ct)
+                .ConfigureAwait(false);
+        }
+        catch (KeyNotFoundException)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
 
         Response.ContentType = "text/event-stream";
         Response.Headers.Append("Cache-Control", "no-cache");
@@ -67,7 +78,7 @@ public class AgentController : ControllerBase
         var replayAfterEventId = FirstNonEmpty(afterEventId, Request.Headers["Last-Event-ID"].ToString());
         if (!string.IsNullOrWhiteSpace(replayAfterEventId))
         {
-            var replayed = await ReplayRuntimeEventsAsync(sessionId, replayAfterEventId, 100, ct)
+            var replayed = await ReplayRuntimeEventsAsync(userId, sessionId, replayAfterEventId, 100, ct)
                 .ConfigureAwait(false);
             foreach (var evt in replayed)
                 await WriteSseEventAsync(evt, ct).ConfigureAwait(false);
@@ -97,6 +108,7 @@ public class AgentController : ControllerBase
     }
 
     private async Task<IReadOnlyList<AgentSseEvent>> ReplayRuntimeEventsAsync(
+        string userId,
         string sessionId,
         string afterEventId,
         int limit,
@@ -107,7 +119,7 @@ public class AgentController : ControllerBase
 
         if (_runtimeEventFanout != null)
         {
-            var redisEvents = await _runtimeEventFanout.ReplayAsync(sessionId, afterEventId, limit, ct)
+            var redisEvents = await _runtimeEventFanout.ReplayAsync(userId, sessionId, afterEventId, limit, ct)
                 .ConfigureAwait(false);
             foreach (var evt in redisEvents)
                 AddReplayEvent(merged, seen, evt);
@@ -115,7 +127,6 @@ public class AgentController : ControllerBase
 
         if (_runtimeEvents != null && merged.Count < limit)
         {
-            var userId = _currentUserService.GetUserId();
             var sqliteEvents = await _runtimeEvents
                 .GetRecentAsync(userId, sessionId, limit, ct, afterEventId)
                 .ConfigureAwait(false);

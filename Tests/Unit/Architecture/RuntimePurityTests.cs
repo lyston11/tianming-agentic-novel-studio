@@ -1,9 +1,41 @@
 using Xunit;
+using System.Diagnostics;
 
 namespace Tests.Unit.Architecture;
 
 public class RuntimePurityTests
 {
+    [Fact]
+    public void RepositoryAndDockerContext_DoNotIncludeRuntimeState()
+    {
+        var root = FindRepositoryRoot();
+        var dockerignorePath = Path.Combine(root, ".dockerignore");
+        var dockerignore = File.ReadAllLines(dockerignorePath);
+
+        var requiredDockerExcludes = new[]
+        {
+            "**/App_Data/**",
+            "**/DataProtectionKeys/**",
+            "**/publish/**",
+            "**/*.db",
+            "**/*.sqlite",
+            "**/*.sqlite3",
+            "**/*.db-shm",
+            "**/*.db-wal"
+        };
+
+        var missingDockerExcludes = requiredDockerExcludes
+            .Where(pattern => !dockerignore.Contains(pattern, StringComparer.Ordinal))
+            .ToList();
+        Assert.Empty(missingDockerExcludes);
+
+        var trackedRuntimeFiles = GitLsFiles(root)
+            .Where(IsRuntimeStatePath)
+            .ToList();
+
+        Assert.Empty(trackedRuntimeFiles);
+    }
+
     [Fact]
     public void RuntimeCode_DoesNotExposeLegacyContentPathContracts()
     {
@@ -99,20 +131,54 @@ public class RuntimePurityTests
         var root = FindRepositoryRoot();
         var apiTypesPath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "api", "types.ts");
         var agentPagePath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "pages", "AgentPage.tsx");
+        var runtimeEventsPath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "pages", "agent", "runtimeEvents.ts");
 
         var apiTypes = File.ReadAllText(apiTypesPath);
         var agentPage = File.ReadAllText(agentPagePath);
+        var runtimeEvents = File.Exists(runtimeEventsPath) ? File.ReadAllText(runtimeEventsPath) : agentPage;
 
         Assert.Contains("stage?: string", apiTypes, StringComparison.Ordinal);
         Assert.Contains("status?: string", apiTypes, StringComparison.Ordinal);
         Assert.Contains("displaySurface?: string", apiTypes, StringComparison.Ordinal);
-        Assert.Contains("production_progress", agentPage, StringComparison.Ordinal);
-        Assert.Contains("productionStageLabel", agentPage, StringComparison.Ordinal);
-        Assert.Contains("productionStatusLabel", agentPage, StringComparison.Ordinal);
-        Assert.Contains("构建章节上下文包", agentPage, StringComparison.Ordinal);
-        Assert.Contains("生成章节正文", agentPage, StringComparison.Ordinal);
-        Assert.Contains("提交书城", agentPage, StringComparison.Ordinal);
-        Assert.Contains("'production_progress'", agentPage, StringComparison.Ordinal);
+        Assert.Contains("production_progress", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("productionStageLabel", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("productionStatusLabel", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("构建章节上下文包", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("生成章节正文", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("提交书城", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("'production_progress'", runtimeEvents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FrontendAgentRuntimeEventView_UsesStableIds()
+    {
+        var root = FindRepositoryRoot();
+        var agentPagePath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "pages", "AgentPage.tsx");
+        var runtimeEventsPath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "pages", "agent", "runtimeEvents.ts");
+        var agentPage = File.ReadAllText(agentPagePath);
+        var runtimeEvents = File.Exists(runtimeEventsPath) ? File.ReadAllText(runtimeEventsPath) : agentPage;
+
+        Assert.DoesNotContain("Math.random()", agentPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("Math.random()", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("runtimeEventViewId", runtimeEvents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FrontendAgentRuntimeEventHelpers_LiveOutsideAgentPage()
+    {
+        var root = FindRepositoryRoot();
+        var frontendPath = Path.Combine(root, "Web", "NovelAgentWeb.Frontend", "src", "pages");
+        var agentPagePath = Path.Combine(frontendPath, "AgentPage.tsx");
+        var runtimeEventsPath = Path.Combine(frontendPath, "agent", "runtimeEvents.ts");
+        var agentPage = File.ReadAllText(agentPagePath);
+
+        Assert.True(File.Exists(runtimeEventsPath), "Runtime event helpers should live in src/pages/agent/runtimeEvents.ts.");
+        var runtimeEvents = File.ReadAllText(runtimeEventsPath);
+
+        Assert.DoesNotContain("function toRuntimeEventView", agentPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("function productionStageTrackGroups", agentPage, StringComparison.Ordinal);
+        Assert.Contains("export function toRuntimeEventView", runtimeEvents, StringComparison.Ordinal);
+        Assert.Contains("export function productionStageTrackGroups", runtimeEvents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1168,6 +1234,24 @@ public class RuntimePurityTests
     }
 
     [Fact]
+    public void AgentToolRegistry_ToolSearchLivesInDedicatedPartial()
+    {
+        var root = FindRepositoryRoot();
+        var supportPath = Path.Combine(root, "Web", "NovelAgentWeb", "Support");
+        var registryPath = Path.Combine(supportPath, "AgentToolRegistry.cs");
+        var toolSearchPath = Path.Combine(supportPath, "AgentToolRegistry.ToolSearch.cs");
+        var registryText = File.ReadAllText(registryPath);
+
+        Assert.True(File.Exists(toolSearchPath), "tool_search logic should live in AgentToolRegistry.ToolSearch.cs.");
+        var toolSearchText = File.ReadAllText(toolSearchPath);
+
+        Assert.DoesNotContain("private async Task<AgentToolExecutionResult> ToolSearchAsync", registryText, StringComparison.Ordinal);
+        Assert.Contains("ToolSearchAsync", toolSearchText, StringComparison.Ordinal);
+        Assert.Contains("SearchToolDefinitions", toolSearchText, StringComparison.Ordinal);
+        Assert.Contains("BuildToolSearchScopeKey", toolSearchText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AgentMemoryService_HydratesAndPersistsProjectlessMemory()
     {
         var root = FindRepositoryRoot();
@@ -1300,6 +1384,42 @@ public class RuntimePurityTests
                 yield return file;
             }
         }
+    }
+
+    private static IReadOnlyList<string> GitLsFiles(string root)
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "git",
+            ArgumentList = { "-C", root, "ls-files" },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        }) ?? throw new InvalidOperationException("Failed to start git ls-files.");
+
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        Assert.True(process.ExitCode == 0, $"git ls-files failed: {error}");
+
+        return output
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+
+    private static bool IsRuntimeStatePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        return normalized.Contains("/App_Data/", StringComparison.Ordinal) ||
+               normalized.StartsWith("App_Data/", StringComparison.Ordinal) ||
+               normalized.Contains("/DataProtectionKeys/", StringComparison.Ordinal) ||
+               normalized.Contains("/publish/", StringComparison.Ordinal) ||
+               normalized.EndsWith(".db", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith(".sqlite", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith(".sqlite3", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith(".db-shm", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith(".db-wal", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FindRepositoryRoot()

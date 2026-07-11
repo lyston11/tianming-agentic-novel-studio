@@ -54,8 +54,8 @@ public sealed class LlmConnectionHealthService : ILlmConnectionHealthService
                 return LlmConnectionHealthResult.AuthenticationFailed(
                     normalized,
                     (int)response.StatusCode,
-                    $"模型接口认证失败：{TrimBody(Sanitize(body, normalized.ApiKey))}",
-                    "请在用户设置中检查 API Key、Provider、Base URL 和模型名称是否匹配。");
+                    "模型 API Key 不可用，可能已经过期、失效，或需要重新保存。",
+                    "请在用户设置中重新粘贴并保存 API Key，然后重新检测模型连接。");
             }
 
             return LlmConnectionHealthResult.ProviderError(
@@ -252,6 +252,21 @@ public sealed record LlmConnectionHealthResult
         string recommendedAction) => From(
         input,
         status: "missing_config",
+        configured: false,
+        reachable: false,
+        authenticated: false,
+        requiresUserAction: true,
+        statusCode: null,
+        failureStage: "config",
+        message: message,
+        recommendedAction: recommendedAction);
+
+    public static LlmConnectionHealthResult ApiKeyUnavailable(
+        LlmConnectionHealthInput input,
+        string message,
+        string recommendedAction) => From(
+        input,
+        status: "api_key_unavailable",
         configured: false,
         reachable: false,
         authenticated: false,

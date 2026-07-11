@@ -823,6 +823,9 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
         if (events.Any(IsBlockedProductionEvent))
             return "blocked";
 
+        if (events.Any(IsBookValidationProductionEvent))
+            return "completed";
+
         if (events.Any(evt =>
                 evt.Status.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
                 evt.Status.Contains("executed", StringComparison.OrdinalIgnoreCase)))
@@ -861,6 +864,14 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
     {
         if (IsRevisionPlanProductionEvent(evt))
             return "revision_plan";
+        if (IsKnowledgeResolvedProductionEvent(evt))
+            return "knowledge_resolved";
+        if (IsKnowledgeClassifiedProductionEvent(evt))
+            return "knowledge_classified";
+        if (IsStoryDesignProductionEvent(evt))
+            return "story_design";
+        if (IsChapterBlueprintProductionEvent(evt))
+            return "chapter_blueprint";
         if (IsContextProductionEvent(evt))
             return "context";
         if (IsDraftProductionEvent(evt))
@@ -871,6 +882,8 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
             return "gate";
         if (IsRepairProductionEvent(evt))
             return "repair";
+        if (IsBookValidationProductionEvent(evt))
+            return "book_validation";
         if (IsQualityProductionEvent(evt))
             return "quality";
         if (IsLibraryProductionEvent(evt))
@@ -879,6 +892,8 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
             return "facts";
         if (IsIndexProductionEvent(evt))
             return "outbox";
+        if (IsRunCompletedProductionEvent(evt))
+            return "completed";
         return FirstNonEmpty(evt.Stage, evt.EventType, "event");
     }
 
@@ -886,17 +901,39 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
         ResolveProductionChainStepKey(evt) switch
         {
             "revision_plan" => "修订计划",
+            "knowledge_resolved" => "知识绑定",
+            "knowledge_classified" => "知识分类",
+            "story_design" => "故事规则",
+            "chapter_blueprint" => "章节蓝图",
             "context" => "上下文包",
             "draft" => "正文草稿",
             "changes" => "CHANGES",
             "gate" => "结构门禁",
             "repair" => "自动修订",
+            "book_validation" => "整书校验",
             "quality" => "质量评审",
             "commit" => "书城入库",
             "facts" => "事实沉淀",
             "outbox" => "后台处理",
+            "completed" => "生产完成",
             _ => "生产事件"
         };
+
+    private static bool IsKnowledgeResolvedProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "chapter_knowledge_resolved", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.KnowledgeResolved, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsKnowledgeClassifiedProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "chapter_knowledge_classified", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.KnowledgeClassified, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsStoryDesignProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "chapter_story_design_built", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.StoryDesignBuilt, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsChapterBlueprintProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "chapter_blueprint_built", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.ChapterBlueprintBuilt, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsContextProductionEvent(ProductionChainEventSnapshot evt) =>
         evt.EventType is "build_package" or "chapter_context_package_built" ||
@@ -923,6 +960,10 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
         evt.EventType is "chapter_quality_reviewed" ||
         string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.ReviewCompleted, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsBookValidationProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "book_validation_completed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(evt.ArtifactType, "book_validation_report", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsLibraryProductionEvent(ProductionChainEventSnapshot evt) =>
         !IsRevisionPlanProductionEvent(evt) &&
         (evt.EventType is "chapter_committed" ||
@@ -936,6 +977,10 @@ public sealed class ProductionChainProjectionService : IProductionChainProjectio
         evt.EventType.StartsWith("outbox_", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(evt.Stage, "index_outbox", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.IndexUpdated, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRunCompletedProductionEvent(ProductionChainEventSnapshot evt) =>
+        string.Equals(evt.EventType, "chapter_production_completed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(NovelAgentProductionStages.ToCanonicalStage(evt.Stage), NovelAgentProductionStages.RunCompleted, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsRevisionPlanProductionEvent(ProductionChainEventSnapshot evt) =>
         evt.EventType.StartsWith("revision_plan_", StringComparison.OrdinalIgnoreCase) ||

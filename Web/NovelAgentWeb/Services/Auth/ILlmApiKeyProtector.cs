@@ -7,6 +7,7 @@ public interface ILlmApiKeyProtector
 {
     string Protect(string? plaintext);
     string Unprotect(string? protectedValue);
+    bool TryUnprotect(string? protectedValue, out string plaintext);
 }
 
 public sealed class DataProtectionLlmApiKeyProtector : ILlmApiKeyProtector
@@ -29,16 +30,26 @@ public sealed class DataProtectionLlmApiKeyProtector : ILlmApiKeyProtector
 
     public string Unprotect(string? protectedValue)
     {
+        return TryUnprotect(protectedValue, out var plaintext) ? plaintext : string.Empty;
+    }
+
+    public bool TryUnprotect(string? protectedValue, out string plaintext)
+    {
         if (string.IsNullOrWhiteSpace(protectedValue))
-            return string.Empty;
+        {
+            plaintext = string.Empty;
+            return true;
+        }
 
         try
         {
-            return _protector.Unprotect(protectedValue.Trim());
+            plaintext = _protector.Unprotect(protectedValue.Trim());
+            return true;
         }
         catch (CryptographicException)
         {
-            return string.Empty;
+            plaintext = string.Empty;
+            return false;
         }
     }
 }

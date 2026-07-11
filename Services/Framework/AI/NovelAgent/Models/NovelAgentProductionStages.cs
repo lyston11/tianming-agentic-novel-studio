@@ -62,6 +62,9 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
             QualityReview => ReviewCompleted,
             ChapterCommit => ChapterCommitted,
             GateValidationOrRepair => GateValidated,
+            "post_commit_facts" => FactsPersisted,
+            "post_commit_metadata" => FactsPersisted,
+            "index_outbox" => IndexUpdated,
             _ => stageId
         };
 

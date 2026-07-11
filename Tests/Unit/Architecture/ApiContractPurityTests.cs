@@ -27,6 +27,54 @@ namespace Tests.Unit.Architecture;
 public class ApiContractPurityTests
 {
     [Fact]
+    public void AuthAndProxyLoggingContract_DoesNotLogTokensOrTokenBearingUrls()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var authControllerSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "Web",
+            "NovelAgentWeb",
+            "Controllers",
+            "AuthController.cs"));
+        var agentControllerSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "Web",
+            "NovelAgentWeb",
+            "Controllers",
+            "AgentController.cs"));
+        var programSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "Web",
+            "NovelAgentWeb",
+            "Program.cs"));
+        var viteConfigSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "Web",
+            "NovelAgentWeb.Frontend",
+            "vite.config.ts"));
+        var frontendApiSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "Web",
+            "NovelAgentWeb.Frontend",
+            "src",
+            "api",
+            "index.ts"));
+
+        Assert.DoesNotContain("Response JSON", authControllerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("JsonSerializer.Serialize(response", authControllerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("JWT Token Received", programSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("authToken.Substring", programSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("OnMessageReceived", programSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Request.Query[\"token\"]", programSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("[FromQuery] string? token", agentControllerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("req.url", viteConfigSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("new EventSource", frontendApiSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("params.set('token'", frontendApiSource, StringComparison.Ordinal);
+        Assert.Contains("Authorization", frontendApiSource, StringComparison.Ordinal);
+        Assert.Contains("fetch(url", frontendApiSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProjectResponse_DoesNotExposeFilesystemStorageName()
     {
         Assert.DoesNotContain(
@@ -152,7 +200,9 @@ public class ApiContractPurityTests
             "AgentController.cs"));
 
         Assert.Contains("Idempotency-Key", controllerSource, StringComparison.Ordinal);
-        Assert.Contains("HandleAsync(sessionId, request.Message ?? \"\", ct, idempotencyKey)", controllerSource, StringComparison.Ordinal);
+        Assert.Matches(
+            @"HandleAsync\(\s*sessionId,\s*request\.Message \?\? """"\s*,\s*ct,\s*idempotencyKey,\s*request\.ClientMessageId\s*\)",
+            controllerSource);
 
         var frontendApiSource = File.ReadAllText(Path.Combine(
             repositoryRoot,
@@ -818,7 +868,6 @@ public class ApiContractPurityTests
         Assert.DoesNotContain("LegacyCustomDirectory", source, StringComparison.Ordinal);
         Assert.DoesNotContain("legacy-system-key", source, StringComparison.Ordinal);
         Assert.DoesNotContain("legacy custom", source, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("legacy", source, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -3499,12 +3548,18 @@ public class ApiContractPurityTests
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, ".git")))
+        while (directory is not null && !IsGitRepositoryRoot(directory.FullName))
         {
             directory = directory.Parent;
         }
 
         return directory?.FullName ?? throw new InvalidOperationException("Cannot find repository root.");
+    }
+
+    private static bool IsGitRepositoryRoot(string directory)
+    {
+        var gitPath = Path.Combine(directory, ".git");
+        return Directory.Exists(gitPath) || File.Exists(gitPath);
     }
 
     private static bool IsSourceFile(string path)

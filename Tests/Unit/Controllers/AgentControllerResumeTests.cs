@@ -438,12 +438,16 @@ public class AgentControllerResumeTests
             Type: "production_progress",
             Message: "第二步"));
         var fanout = new Mock<IAgentRuntimeEventFanout>();
-        fanout.Setup(x => x.ReplayAsync("session-1", first.Id, 100, It.IsAny<CancellationToken>()))
+        fanout.Setup(x => x.ReplayAsync("user-1", "session-1", first.Id, 100, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentSseEvent>());
+        var sessionService = new Mock<IAgentSessionService>();
+        sessionService
+            .Setup(x => x.GetSessionByIdAsync("session-1", "user-1", false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentSessionResponse { SessionId = "session-1" });
         var controller = new AgentController(
             coordinator: null!,
             sessionManager: sessions,
-            agentSessionService: null!,
+            agentSessionService: sessionService.Object,
             currentUserService: currentUser.Object,
             resumeService: null!,
             runtimeEventFanout: fanout.Object,
@@ -458,12 +462,44 @@ public class AgentControllerResumeTests
         controller.Response.Body = body;
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        await controller.StreamEvents("session-1", null, first.Id, cts.Token);
+        await controller.StreamEvents("session-1", first.Id, cts.Token);
 
         body.Position = 0;
         var output = await new StreamReader(body).ReadToEndAsync();
         Assert.DoesNotContain(first.Id, output);
         Assert.Contains(second.Id, output);
+    }
+
+    [Fact]
+    public async Task StreamEvents_WhenSessionDoesNotBelongToUserStopsBeforeReplay()
+    {
+        var currentUser = CurrentUser("user-1");
+        var sessionService = new Mock<IAgentSessionService>(MockBehavior.Strict);
+        sessionService
+            .Setup(x => x.GetSessionByIdAsync("session-owned-by-user-2", "user-1", false, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new KeyNotFoundException("Session not found"));
+        var fanout = new Mock<IAgentRuntimeEventFanout>(MockBehavior.Strict);
+        var controller = new AgentController(
+            coordinator: null!,
+            sessionManager: null!,
+            agentSessionService: sessionService.Object,
+            currentUserService: currentUser.Object,
+            resumeService: null!,
+            runtimeEventFanout: fanout.Object,
+            runtimeEvents: null)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+        await using var body = new MemoryStream();
+        controller.Response.Body = body;
+
+        await controller.StreamEvents("session-owned-by-user-2", null, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        fanout.VerifyNoOtherCalls();
     }
 
     private static NovelAgentDbContext CreateDb()

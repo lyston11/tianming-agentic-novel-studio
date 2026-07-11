@@ -1148,11 +1148,13 @@ public class WorkflowService : IWorkflowService
             || evidence.ChapterChangeCount > 0
             || evidence.ChapterChangeArtifactIds.Count > 0;
         var traceItems = BuildChapterProductionTraceItems(chain, evidence, matchedRevisionPlans);
+        var summaryStatus = ResolveChapterProductionSummaryStatus(chain, evidence);
+        var summaryText = ResolveChapterProductionSummaryText(chain, evidence);
 
         return new WorkflowChapterProductionSummary(
             chain.Id,
-            chain.Status,
-            chain.Summary,
+            summaryStatus,
+            summaryText,
             chain.RuntimeRunId,
             chain.PackageId,
             chain.UpdatedAt,
@@ -1161,7 +1163,7 @@ public class WorkflowService : IWorkflowService
             chain.FactSnapshotId,
             chain.FactSnapshotVersion,
             evidence.FactSnapshot?.EndingState ?? string.Empty,
-            evidence.Gate?.Status ?? string.Empty,
+            ResolveChapterProductionGateStatus(chain, evidence),
             evidence.AgentReview?.OverallResult ?? string.Empty,
             evidence.AgentReview?.RecommendedAction ?? string.Empty,
             evidence.ChapterChangeCount,
@@ -1174,6 +1176,53 @@ public class WorkflowService : IWorkflowService
             traceItems,
             hasCanonicalEvidence);
     }
+
+    private static string ResolveChapterProductionSummaryStatus(
+        WorkflowProductionChain chain,
+        WorkflowProductionChainEvidence evidence)
+    {
+        var gateStatus = evidence.Gate?.Status ?? string.Empty;
+        if (IsGateFailureStatus(gateStatus) && !IsCommittedProductionChain(chain))
+            return gateStatus;
+
+        return chain.Status;
+    }
+
+    private static string ResolveChapterProductionGateStatus(
+        WorkflowProductionChain chain,
+        WorkflowProductionChainEvidence evidence)
+    {
+        if (IsCommittedProductionChain(chain))
+            return "validated";
+
+        return evidence.Gate?.Status ?? string.Empty;
+    }
+
+    private static string ResolveChapterProductionSummaryText(
+        WorkflowProductionChain chain,
+        WorkflowProductionChainEvidence evidence)
+    {
+        var gateStatus = evidence.Gate?.Status ?? string.Empty;
+        if (!IsGateFailureStatus(gateStatus) || IsCommittedProductionChain(chain))
+            return chain.Summary;
+
+        var issue = evidence.Gate?.Issues.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+        return string.IsNullOrWhiteSpace(issue)
+            ? "章节门禁证据显示未通过，需要修订后复检。"
+            : $"章节门禁证据显示未通过：{issue}";
+    }
+
+    private static bool IsGateFailureStatus(string status) =>
+        string.Equals(status, "gate_failed", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCommittedProductionChain(WorkflowProductionChain chain) =>
+        string.Equals(chain.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
+        (!string.IsNullOrWhiteSpace(chain.ChapterVersionId) ||
+         chain.Steps.Any(step =>
+             string.Equals(step.Key, "commit", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(step.EventType, "chapter_committed", StringComparison.OrdinalIgnoreCase)));
 
     private static IReadOnlyList<WorkflowChapterProductionTraceItem> BuildChapterProductionTraceItems(
         WorkflowProductionChain chain,
@@ -1218,21 +1267,36 @@ public class WorkflowService : IWorkflowService
 
         if (!string.IsNullOrWhiteSpace(chain.PackageId))
         {
+            var packageStatus = ResolveChapterProductionSummaryStatus(chain, evidence);
+            var packageDescription = ResolveChapterProductionSummaryText(chain, evidence);
             items.Add(new WorkflowChapterProductionTraceItem(
                 $"package:{chain.PackageId}",
                 "当前生产包",
-                FirstNonEmpty(chain.Status, "recorded"),
+                FirstNonEmpty(packageStatus, "recorded"),
                 "TianmingPackage",
                 chain.PackageId,
-                FirstNonEmpty(chain.Summary, chain.RuntimeRunId),
+                FirstNonEmpty(packageDescription, chain.RuntimeRunId),
                 RelatedIds(chain.RuntimeRunId, chain.ChapterId, chain.ChapterLogicalId)));
         }
 
-        foreach (var step in chain.Steps.Where(IsDraftTraceStep).Take(3))
+        var draftSteps = chain.Steps
+            .Where(IsDraftTraceStep)
+            .Take(3)
+            .ToList();
+        var duplicateDraftArtifactIds = draftSteps
+            .GroupBy(step => FirstNonEmpty(step.ArtifactId, step.EventId), StringComparer.OrdinalIgnoreCase)
+            .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var step in draftSteps)
         {
             var artifactId = FirstNonEmpty(step.ArtifactId, step.EventId);
+            var key = duplicateDraftArtifactIds.Contains(artifactId)
+                ? $"draft:{artifactId}:{FirstNonEmpty(step.EventId, step.Status, step.CreatedAt)}"
+                : $"draft:{artifactId}";
             items.Add(new WorkflowChapterProductionTraceItem(
-                $"draft:{artifactId}",
+                key,
                 "正文草稿",
                 FirstNonEmpty(step.Status, "generated"),
                 FirstNonEmpty(step.ArtifactType, "chapter_draft"),
@@ -1320,6 +1384,24 @@ public class WorkflowService : IWorkflowService
                 outboxIds[0],
                 $"已记录 {outboxIds.Count} 个后台任务。",
                 outboxIds));
+        }
+
+        var completedStep = chain.Steps
+            .LastOrDefault(step =>
+                string.Equals(step.Key, "completed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(step.EventType, "chapter_production_completed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(NovelAgentProductionStages.ToCanonicalStage(step.Stage), NovelAgentProductionStages.RunCompleted, StringComparison.OrdinalIgnoreCase));
+        if (completedStep != null)
+        {
+            var artifactId = FirstNonEmpty(completedStep.ArtifactId, completedStep.EventId, chain.RuntimeRunId, chain.Id);
+            items.Add(new WorkflowChapterProductionTraceItem(
+                $"completed:{artifactId}",
+                "生产完成",
+                FirstNonEmpty(completedStep.Status, chain.Status, "completed"),
+                FirstNonEmpty(completedStep.ArtifactType, "chapter_production_run"),
+                artifactId,
+                FirstNonEmpty(completedStep.Message, chain.Summary, "本轮章节生产已完成。"),
+                RelatedIds(completedStep.EventId, chain.ChapterVersionId, chain.FactSnapshotId, chain.PackageId, chain.RuntimeRunId)));
         }
 
         return items

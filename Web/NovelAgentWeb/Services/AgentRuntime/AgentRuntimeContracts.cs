@@ -169,6 +169,7 @@ public interface IAgentRuntimeRunService
     Task<AgentRuntimeRun?> TryGetActiveAsync(string userId, string sessionId, CancellationToken ct = default);
     Task<AgentRuntimeActiveRunState?> TryGetActiveStateAsync(string userId, string sessionId, CancellationToken ct = default);
     Task<IReadOnlyList<AgentRuntimeActiveSessionCursor>> ListActiveSessionCursorsAsync(int limit = 100, CancellationToken ct = default);
+    Task<IReadOnlyList<AgentRuntimeRun>> ListQueuedAsync(int limit = 500, CancellationToken ct = default);
     Task<AgentRuntimeRun> MarkRunningAsync(string runtimeRunId, CancellationToken ct = default);
     Task<AgentRuntimeRun> UpdateProgressAsync(string runtimeRunId, string phase, string message, string? activeTool = null, int? currentStep = null, CancellationToken ct = default);
     Task<AgentRuntimeRun> MarkCompletedAsync(string runtimeRunId, object? result, CancellationToken ct = default);

@@ -27,6 +27,36 @@ public sealed class ChapterContextPackageRecorderTests
             WorldRules = { "黑雨会腐蚀记忆标签" },
             CharacterStates = { "陈默持有银蓝邮徽" },
             HardContinuityFacts = { "邮徽只能识别邮路，不能攻击" },
+            ChapterBlueprints = { "第一幕：陈默在废弃邮局发现银蓝邮徽。", "结尾：黑雨逼近，必须逃入旧邮路。" },
+            DesignRules =
+            {
+                new DesignRuleSnapshot
+                {
+                    RuleId = "rule-blue-badge-boundary",
+                    RuleType = "ItemBoundary",
+                    RuleContent = "银蓝邮徽不能攻击、治愈或升级。",
+                    ConstraintLevel = "HardConstraint",
+                    Scope = "ProjectWide",
+                    Priority = 90,
+                    SourceKnowledgeIds = { "hardfact-1" }
+                }
+            },
+            PersistedBlueprint = new PersistedChapterBlueprintSnapshot
+            {
+                BlueprintId = "blueprint-chapter-001",
+                ChapterId = "chapter-001",
+                ChapterIndex = 1,
+                Title = "第一章：银蓝邮徽",
+                Intent = "建立银蓝邮徽能力边界和黑雨危机。",
+                KeyEvents = { "陈默发现银蓝邮徽", "黑雨逼近" },
+                Characters = { "陈默" },
+                EndingNote = "陈默带着银蓝邮徽逃入旧邮路。",
+                RequiredKnowledgeIds = { "hardfact-1" },
+                AppliedDesignRuleIds = { "rule-blue-badge-boundary" },
+                Version = 2,
+                Status = "Accepted",
+                TargetWordCount = 3200
+            },
             KnowledgeBindings =
             {
                 new BoundKnowledgeSnapshot
@@ -158,6 +188,28 @@ public sealed class ChapterContextPackageRecorderTests
                 .Select(item => item.GetString())
                 .ToArray());
 
+        var events = await db.ProductionEvents.OrderBy(e => e.CreatedAt).ToListAsync();
+        Assert.Contains(events, e =>
+            e.EventType == "chapter_knowledge_resolved" &&
+            e.Stage == NovelAgentProductionStages.KnowledgeResolved &&
+            e.PackageId == createdPackage.Id &&
+            e.DataJson!.Contains("\"knowledgeBindingCount\":2", StringComparison.Ordinal));
+        Assert.Contains(events, e =>
+            e.EventType == "chapter_knowledge_classified" &&
+            e.Stage == NovelAgentProductionStages.KnowledgeClassified &&
+            e.PackageId == createdPackage.Id &&
+            e.DataJson!.Contains("\"classifiedCount\":1", StringComparison.Ordinal));
+        Assert.Contains(events, e =>
+            e.EventType == "chapter_story_design_built" &&
+            e.Stage == NovelAgentProductionStages.StoryDesignBuilt &&
+            e.PackageId == createdPackage.Id &&
+            e.DataJson!.Contains("\"designRuleCount\":1", StringComparison.Ordinal));
+        Assert.Contains(events, e =>
+            e.EventType == "chapter_blueprint_built" &&
+            e.Stage == NovelAgentProductionStages.ChapterBlueprintBuilt &&
+            e.PackageId == createdPackage.Id &&
+            e.DataJson!.Contains("\"blueprintId\":\"blueprint-chapter-001\"", StringComparison.Ordinal));
+
         var evt = await db.ProductionEvents.SingleAsync(e => e.EventType == "chapter_context_package_built");
         Assert.Equal(createdPackage.Id, evt.PackageId);
         Assert.Equal(NovelAgentProductionStages.PackageBuilt, evt.Stage);
@@ -165,9 +217,18 @@ public sealed class ChapterContextPackageRecorderTests
         Assert.Contains("\"acceptedCreativeIntentCount\":1", evt.DataJson);
         Assert.Contains("\"rebuiltFromPackageIds\":[\"pkg-old-1\",\"pkg-old-2\"]", evt.DataJson);
 
-        var runtimeEvt = await db.AgentRuntimeEvents.SingleAsync(e => e.Type == "production_progress");
+        var runtimeEventRows = await db.AgentRuntimeEvents
+            .Where(e => e.Type == "production_progress")
+            .OrderBy(e => e.CreatedAt)
+            .ToListAsync();
+        Assert.Contains(runtimeEventRows, e => e.Stage == NovelAgentProductionStages.KnowledgeResolved);
+        Assert.Contains(runtimeEventRows, e => e.Stage == NovelAgentProductionStages.KnowledgeClassified);
+        Assert.Contains(runtimeEventRows, e => e.Stage == NovelAgentProductionStages.StoryDesignBuilt);
+        Assert.Contains(runtimeEventRows, e => e.Stage == NovelAgentProductionStages.ChapterBlueprintBuilt);
+        var runtimeEvt = await db.AgentRuntimeEvents.SingleAsync(e =>
+            e.Type == "production_progress" &&
+            e.Stage == NovelAgentProductionStages.PackageBuilt);
         Assert.Equal("session-1", runtimeEvt.SessionId);
-        Assert.Equal(NovelAgentProductionStages.PackageBuilt, runtimeEvt.Stage);
         Assert.Equal("completed", runtimeEvt.Status);
         Assert.Equal(AgentRuntimeEventSurface.Workflow, runtimeEvt.DisplaySurface);
         Assert.Equal(AgentRuntimeEventDisplayPolicy.Timeline, runtimeEvt.DisplayPolicy);

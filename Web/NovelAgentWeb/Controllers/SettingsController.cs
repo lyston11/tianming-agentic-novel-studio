@@ -57,12 +57,22 @@ public class SettingsController : ControllerBase
             return NotFound(ApiErrors.NotFound("用户设置未找到"));
         }
 
-        var result = await _llmConnectionHealth.CheckAsync(new LlmConnectionHealthInput(
-                Provider: settings.LlmProvider ?? string.Empty,
-                BaseUrl: settings.LlmBaseUrl ?? string.Empty,
-                Model: settings.LlmModel ?? string.Empty,
-                ApiKey: _apiKeyProtector.Unprotect(settings.LlmApiKeyEncrypted)),
-            ct);
+        var canReadApiKey = _apiKeyProtector.TryUnprotect(settings.LlmApiKeyEncrypted, out var apiKey);
+        var input = new LlmConnectionHealthInput(
+            Provider: settings.LlmProvider ?? string.Empty,
+            BaseUrl: settings.LlmBaseUrl ?? string.Empty,
+            Model: settings.LlmModel ?? string.Empty,
+            ApiKey: apiKey);
+
+        if (!canReadApiKey && !string.IsNullOrWhiteSpace(settings.LlmApiKeyEncrypted))
+        {
+            return Ok(LlmConnectionHealthResult.ApiKeyUnavailable(
+                input.Normalize(),
+                "模型 API Key 不可用，可能已经过期、失效，或需要重新保存。",
+                "请在用户设置中重新粘贴并保存 API Key，然后重新检测模型连接。"));
+        }
+
+        var result = await _llmConnectionHealth.CheckAsync(input, ct);
         return Ok(result);
     }
 
@@ -181,6 +191,8 @@ public class SettingsController : ControllerBase
                 statusCode = (int)response.StatusCode,
                 message = response.IsSuccessStatusCode
                     ? "连接成功，模型接口可用。"
+                    : response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden
+                    ? "模型 API Key 不可用，可能已经过期、失效，或需要重新保存。"
                     : $"模型接口返回 {(int)response.StatusCode}: {TrimBody(body)}",
             });
         }

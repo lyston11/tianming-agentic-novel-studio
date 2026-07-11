@@ -31,6 +31,7 @@ public sealed class AgentRuntimeWorker : BackgroundService
     {
         await CloseStaleToolExecutionsAsync(stoppingToken).ConfigureAwait(false);
         await CloseStaleRuntimeRunsAsync(stoppingToken).ConfigureAwait(false);
+        await RecoverQueuedRunsAsync(stoppingToken).ConfigureAwait(false);
         await foreach (var runtimeRunId in _queue.DequeueAllAsync(stoppingToken).ConfigureAwait(false))
         {
             try
@@ -59,6 +60,31 @@ public sealed class AgentRuntimeWorker : BackgroundService
 
         lease.StartAutoRenewal(RuntimeRunLeaseRenewalInterval, RuntimeRunLeaseTtl, ct);
         await ExecuteRunAsync(runtimeRunId, ct).ConfigureAwait(false);
+    }
+
+    internal async Task<int> RecoverQueuedRunsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var runs = scope.ServiceProvider.GetRequiredService<IAgentRuntimeRunService>();
+            var queued = await runs.ListQueuedAsync(500, ct).ConfigureAwait(false);
+            foreach (var run in queued)
+                await _queue.EnqueueAsync(run.Id, ct).ConfigureAwait(false);
+
+            if (queued.Count > 0)
+                _logger.LogWarning("Re-enqueued {Count} queued Agent runtime run records on startup.", queued.Count);
+            return queued.Count;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to re-enqueue queued Agent runtime run records on startup.");
+            return 0;
+        }
     }
 
     private async Task CloseStaleRuntimeRunsAsync(CancellationToken ct)

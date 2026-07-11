@@ -51,7 +51,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Distributed cache GET failed for key {Key}, treating as cache miss", key);
+            _logger.LogWarning(ex, "Redis cache GET failed for key {Key}; returning cache miss and relying on SQLite truth source.", key);
             return null;
         }
     }
@@ -70,7 +70,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Distributed cache SET failed for key {Key}, continuing without cache", key);
+            _logger.LogWarning(ex, "Redis cache SET failed for key {Key}; SQLite truth source remains authoritative.", key);
         }
     }
 
@@ -82,7 +82,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Distributed cache REMOVE failed for key {Key}", key);
+            _logger.LogWarning(ex, "Redis cache REMOVE failed for key {Key}; cache may be stale until TTL expiry.", key);
         }
     }
 
@@ -124,7 +124,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Distributed cache prefix REMOVE failed for prefix {KeyPrefix}", keyPrefix);
+            _logger.LogWarning(ex, "Redis cache prefix REMOVE failed for prefix {KeyPrefix}; cache may be stale until TTL expiry.", keyPrefix);
         }
     }
 
@@ -137,7 +137,7 @@ public class RedisCacheService : IDistributedCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Distributed cache EXISTS check failed for key {Key}, returning false", key);
+            _logger.LogWarning(ex, "Redis cache EXISTS check failed for key {Key}; returning false and relying on SQLite truth source.", key);
             return false;
         }
     }

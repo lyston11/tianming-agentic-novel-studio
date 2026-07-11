@@ -167,6 +167,7 @@
 
 .llm-health-card.ready .llm-health-dot { background: var(--jade); }
 .llm-health-card.authentication_failed .llm-health-dot,
+.llm-health-card.api_key_unavailable .llm-health-dot,
 .llm-health-card.missing_config .llm-health-dot { background: var(--red); }
 .llm-health-card.connection_failed .llm-health-dot,
 .llm-health-card.provider_error .llm-health-dot { background: var(--gold); }

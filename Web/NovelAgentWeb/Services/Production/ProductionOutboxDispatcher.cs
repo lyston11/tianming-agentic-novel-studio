@@ -5,6 +5,7 @@ using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 
@@ -22,6 +23,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
     private readonly IProductionEventWriter? _events;
     private readonly IChapterFactOutboxProcessor? _chapterFactProcessor;
     private readonly IChapterCommitPostCommitFinalizer? _chapterCommitFinalizer;
+    private readonly IAgentRuntimeEventService? _runtimeEvents;
+    private readonly string _processingOwner = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public ProductionOutboxDispatcher(
         NovelAgentDbContext db,
@@ -31,7 +34,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         ILogger<ProductionOutboxDispatcher> logger,
         IProductionEventWriter? events = null,
         IChapterFactOutboxProcessor? chapterFactProcessor = null,
-        IChapterCommitPostCommitFinalizer? chapterCommitFinalizer = null)
+        IChapterCommitPostCommitFinalizer? chapterCommitFinalizer = null,
+        IAgentRuntimeEventService? runtimeEvents = null)
     {
         _db = db;
         _vectorStore = vectorStore;
@@ -41,6 +45,7 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         _events = events;
         _chapterFactProcessor = chapterFactProcessor;
         _chapterCommitFinalizer = chapterCommitFinalizer;
+        _runtimeEvents = runtimeEvents;
     }
 
     public async Task<int> DispatchPendingAsync(
@@ -49,27 +54,28 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
     {
         var now = DateTime.UtcNow;
         var staleProcessingCutoff = now.Subtract(ProcessingLeaseTimeout);
-        var events = await _db.OutboxEvents
+        var candidateIds = await _db.OutboxEvents
+            .AsNoTracking()
             .Where(e =>
                 e.Status == "pending" ||
                 (e.Status == "retryable_failed" &&
                  (e.NextAttemptAt == null || e.NextAttemptAt <= now)) ||
                 (e.Status == "processing" &&
-                 e.UpdatedAt <= staleProcessingCutoff))
+                 ((e.ProcessingLeaseExpiresAt == null && e.UpdatedAt <= staleProcessingCutoff) ||
+                  e.ProcessingLeaseExpiresAt <= now)))
             .OrderBy(e => e.CreatedAt)
             .Take(Math.Clamp(maxItems, 1, 100))
+            .Select(e => e.Id)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
         var dispatched = 0;
-        foreach (var evt in events)
+        foreach (var eventId in candidateIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            evt.Status = "processing";
-            evt.LastError = null;
-            evt.NextAttemptAt = null;
-            evt.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var evt = await TryClaimAsync(eventId, cancellationToken).ConfigureAwait(false);
+            if (evt == null)
+                continue;
 
             try
             {
@@ -80,8 +86,12 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                 evt.CompletedAt = DateTime.UtcNow;
                 evt.LastError = null;
                 evt.NextAttemptAt = null;
+                evt.ProcessingOwner = null;
+                evt.ProcessingLeaseExpiresAt = null;
                 evt.UpdatedAt = DateTime.UtcNow;
                 await AppendOutboxProductionEventAsync(evt, "outbox_completed", "completed", "后台 outbox 处理完成。", null, cancellationToken)
+                    .ConfigureAwait(false);
+                await TryAppendRunCompletedAsync(evt, cancellationToken)
                     .ConfigureAwait(false);
                 dispatched++;
             }
@@ -91,6 +101,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                 evt.Status = "retryable_failed";
                 evt.LastError = ex.Message;
                 evt.NextAttemptAt = DateTime.UtcNow.Add(ComputeRetryDelay(evt.Attempts));
+                evt.ProcessingOwner = null;
+                evt.ProcessingLeaseExpiresAt = null;
                 evt.UpdatedAt = DateTime.UtcNow;
                 await AppendOutboxProductionEventAsync(evt, "outbox_failed", "retryable_failed", "后台 outbox 处理失败，已排队重试。", ex.Message, cancellationToken)
                     .ConfigureAwait(false);
@@ -101,6 +113,66 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         }
 
         return dispatched;
+    }
+
+    private async Task<OutboxEvent?> TryClaimAsync(string eventId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var leaseExpiresAt = now.Add(ProcessingLeaseTimeout);
+        var staleProcessingCutoff = now.Subtract(ProcessingLeaseTimeout);
+
+        if (_db.Database.IsRelational())
+        {
+            var affected = await _db.OutboxEvents
+                .Where(e =>
+                    e.Id == eventId &&
+                    (e.Status == "pending" ||
+                     (e.Status == "retryable_failed" &&
+                      (e.NextAttemptAt == null || e.NextAttemptAt <= now)) ||
+                     (e.Status == "processing" &&
+                      ((e.ProcessingLeaseExpiresAt == null && e.UpdatedAt <= staleProcessingCutoff) ||
+                       e.ProcessingLeaseExpiresAt <= now))))
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(e => e.Status, "processing")
+                        .SetProperty(e => e.LastError, (string?)null)
+                        .SetProperty(e => e.NextAttemptAt, (DateTime?)null)
+                        .SetProperty(e => e.ProcessingOwner, _processingOwner)
+                        .SetProperty(e => e.ProcessingLeaseExpiresAt, leaseExpiresAt)
+                        .SetProperty(e => e.UpdatedAt, now),
+                    ct)
+                .ConfigureAwait(false);
+            if (affected == 0)
+                return null;
+
+            return await _db.OutboxEvents.SingleAsync(e => e.Id == eventId, ct).ConfigureAwait(false);
+        }
+
+        var evt = await _db.OutboxEvents.SingleOrDefaultAsync(e => e.Id == eventId, ct).ConfigureAwait(false);
+        if (evt == null || !CanClaim(evt, now, staleProcessingCutoff))
+            return null;
+
+        evt.Status = "processing";
+        evt.LastError = null;
+        evt.NextAttemptAt = null;
+        evt.ProcessingOwner = _processingOwner;
+        evt.ProcessingLeaseExpiresAt = leaseExpiresAt;
+        evt.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return evt;
+    }
+
+    private static bool CanClaim(OutboxEvent evt, DateTime now, DateTime staleProcessingCutoff)
+    {
+        if (evt.Status == "pending")
+            return true;
+        if (evt.Status == "retryable_failed")
+            return evt.NextAttemptAt == null || evt.NextAttemptAt <= now;
+        if (evt.Status != "processing")
+            return false;
+
+        return evt.ProcessingLeaseExpiresAt == null
+            ? evt.UpdatedAt <= staleProcessingCutoff
+            : evt.ProcessingLeaseExpiresAt <= now;
     }
 
     private async Task DispatchOneAsync(OutboxEvent evt, CancellationToken ct)
@@ -616,6 +688,172 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                     }),
                 ct)
             .ConfigureAwait(false);
+        await AppendRuntimeProgressEventAsync(
+                evt.RuntimeRunId,
+                evt.UserId,
+                evt.ProjectId,
+                NovelAgentProductionStages.ToCanonicalStage(ResolveOutboxStage(evt)),
+                status,
+                $"{message} {evt.EventType}/{evt.AggregateType}",
+                "outbox_event",
+                evt.Id,
+                new
+                {
+                    outboxEventId = evt.Id,
+                    evt.EventType,
+                    evt.AggregateType,
+                    evt.AggregateId,
+                    evt.Attempts,
+                    error
+                },
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task TryAppendRunCompletedAsync(OutboxEvent completedOutbox, CancellationToken ct)
+    {
+        if (_events == null ||
+            string.IsNullOrWhiteSpace(completedOutbox.RuntimeRunId) ||
+            string.IsNullOrWhiteSpace(completedOutbox.ProjectId))
+        {
+            return;
+        }
+
+        var runtimeRunId = completedOutbox.RuntimeRunId.Trim();
+        var projectId = completedOutbox.ProjectId.Trim();
+        var hasPendingRunOutbox = await _db.OutboxEvents
+            .AsNoTracking()
+            .AnyAsync(evt =>
+                evt.RuntimeRunId == runtimeRunId &&
+                evt.ProjectId == projectId &&
+                evt.Status != "completed",
+                ct)
+            .ConfigureAwait(false);
+        if (hasPendingRunOutbox)
+            return;
+
+        var existingCompletion = await _db.ProductionEvents
+            .AsNoTracking()
+            .AnyAsync(evt =>
+                evt.RuntimeRunId == runtimeRunId &&
+                evt.ProjectId == projectId &&
+                evt.EventType == "chapter_production_completed",
+                ct)
+            .ConfigureAwait(false);
+        if (existingCompletion)
+            return;
+
+        var commitEvent = await _db.ProductionEvents
+            .AsNoTracking()
+            .Where(evt =>
+                evt.RuntimeRunId == runtimeRunId &&
+                evt.ProjectId == projectId &&
+                evt.EventType == "chapter_committed")
+            .OrderByDescending(evt => evt.CreatedAt)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (commitEvent == null)
+            return;
+
+        var context = await ResolveOutboxEventContextAsync(completedOutbox, ct).ConfigureAwait(false);
+        var completedOutboxCount = await _db.OutboxEvents
+            .AsNoTracking()
+            .CountAsync(evt =>
+                evt.RuntimeRunId == runtimeRunId &&
+                evt.ProjectId == projectId &&
+                evt.Status == "completed",
+                ct)
+            .ConfigureAwait(false);
+
+        await _events.AppendChapterStageAsync(
+                new AppendChapterProductionEventRequest(
+                    RuntimeRunId: runtimeRunId,
+                    UserId: completedOutbox.UserId,
+                    ProjectId: projectId,
+                    ChapterId: FirstNonEmpty(commitEvent.ChapterId, context.ChapterId, completedOutbox.AggregateId),
+                    PackageId: FirstNonEmpty(commitEvent.PackageId, context.PackageId),
+                    EventType: "chapter_production_completed",
+                    Stage: NovelAgentProductionStages.RunCompleted,
+                    Status: "completed",
+                    Message: "本轮章节生产的提交、事实沉淀和后台索引已全部完成。",
+                    ArtifactType: "chapter_production_run",
+                    ArtifactId: runtimeRunId,
+                    Data: new
+                    {
+                        runtimeRunId,
+                        completedOutboxCount,
+                        finalOutboxEventId = completedOutbox.Id,
+                        chapterId = FirstNonEmpty(commitEvent.ChapterId, context.ChapterId, completedOutbox.AggregateId),
+                        packageId = FirstNonEmpty(commitEvent.PackageId, context.PackageId)
+                    }),
+                ct)
+            .ConfigureAwait(false);
+        await AppendRuntimeProgressEventAsync(
+                runtimeRunId,
+                completedOutbox.UserId,
+                projectId,
+                NovelAgentProductionStages.RunCompleted,
+                "completed",
+                "本轮章节生产的提交、事实沉淀和后台索引已全部完成。",
+                "chapter_production_run",
+                runtimeRunId,
+                new
+                {
+                    runtimeRunId,
+                    completedOutboxCount,
+                    finalOutboxEventId = completedOutbox.Id,
+                    chapterId = FirstNonEmpty(commitEvent.ChapterId, context.ChapterId, completedOutbox.AggregateId),
+                    packageId = FirstNonEmpty(commitEvent.PackageId, context.PackageId)
+                },
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task AppendRuntimeProgressEventAsync(
+        string? runtimeRunId,
+        string userId,
+        string? projectId,
+        string stage,
+        string status,
+        string message,
+        string artifactType,
+        string artifactId,
+        object data,
+        CancellationToken ct)
+    {
+        if (_runtimeEvents == null ||
+            string.IsNullOrWhiteSpace(runtimeRunId) ||
+            string.IsNullOrWhiteSpace(userId))
+        {
+            return;
+        }
+
+        var runId = runtimeRunId.Trim();
+        var runtimeRun = await _db.AgentRuntimeRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(run => run.Id == runId, ct)
+            .ConfigureAwait(false);
+        if (runtimeRun == null || string.IsNullOrWhiteSpace(runtimeRun.SessionId))
+            return;
+
+        await _runtimeEvents.AppendAsync(
+                new CreateAgentRuntimeEventRequest(
+                    RuntimeRunId: runId,
+                    UserId: userId,
+                    SessionId: runtimeRun.SessionId,
+                    ProjectId: FirstNonEmpty(runtimeRun.ProjectId, runtimeRun.LockedProjectId, projectId),
+                    Type: "production_progress",
+                    Message: message,
+                    Data: data,
+                    Stage: NovelAgentProductionStages.ToCanonicalStage(stage),
+                    Status: status,
+                    ArtifactType: artifactType,
+                    ArtifactId: artifactId,
+                    DisplaySurface: AgentRuntimeEventSurface.Workflow,
+                    DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline,
+                    PublishToSse: true),
+                ct)
+            .ConfigureAwait(false);
     }
 
     private static string ResolveOutboxStage(OutboxEvent evt)
@@ -629,6 +867,9 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
             _ => "outbox"
         };
     }
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
     private async Task<OutboxEventContext> ResolveOutboxEventContextAsync(OutboxEvent evt, CancellationToken ct)
     {

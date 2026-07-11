@@ -953,6 +953,59 @@ public sealed class ProductionWorkflowBridgeTests
     }
 
     [Fact]
+    public async Task LoadProjectEventsAsync_MapsQueuedOutboxEvidenceBeforeProcessing()
+    {
+        await using var db = CreateDb();
+        SeedProjectChapterAndDocuments(db);
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = "outbox-pending-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            RuntimeRunId = "run-1",
+            EventType = "finalize_chapter_commit_metadata",
+            AggregateType = "chapter",
+            AggregateId = "chapter-001",
+            PayloadJson = "{}",
+            Status = "pending",
+            Attempts = 0,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-2),
+            UpdatedAt = DateTime.UtcNow.AddMinutes(-2)
+        });
+        db.ProductionEvents.Add(new ProductionEvent
+        {
+            Id = "evt-outbox-queued",
+            RuntimeRunId = "run-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            ChapterId = "chapter-001",
+            PackageId = string.Empty,
+            EventType = "outbox_queued",
+            Stage = NovelAgentProductionStages.FactsPersisted,
+            Status = "pending",
+            Message = "后台 outbox 已排队：finalize_chapter_commit_metadata/chapter。",
+            ArtifactType = "outbox_event",
+            ArtifactId = "outbox-pending-1",
+            DataJson = "{\"outboxEventId\":\"outbox-pending-1\",\"eventType\":\"finalize_chapter_commit_metadata\",\"aggregateType\":\"chapter\",\"status\":\"pending\"}",
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        IProductionWorkflowBridge bridge = new ProductionWorkflowBridge(db);
+
+        var events = await bridge.LoadProjectEventsAsync("project-1");
+
+        var evt = Assert.Single(events, item => item.Id == "evt-outbox-queued");
+        Assert.NotNull(evt.Evidence);
+        Assert.NotNull(evt.Evidence!.Outbox);
+        Assert.Equal("outbox-pending-1", evt.Evidence.Outbox!.OutboxEventId);
+        Assert.Equal("finalize_chapter_commit_metadata", evt.Evidence.Outbox.EventType);
+        Assert.Equal("chapter", evt.Evidence.Outbox.AggregateType);
+        Assert.Equal("chapter-001", evt.Evidence.Outbox.AggregateId);
+        Assert.Equal("pending", evt.Evidence.Outbox.Status);
+        Assert.Equal(0, evt.Evidence.Outbox.Attempts);
+    }
+
+    [Fact]
     public async Task LoadProjectEventsAsync_MapsMemoryReadAndPromotionEvidenceForRun()
     {
         await using var db = CreateDb();

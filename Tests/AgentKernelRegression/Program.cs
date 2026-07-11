@@ -10,6 +10,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Diagnostics;
+using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Services.Framework.AI.NovelAgent.Services;
 using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
@@ -22,6 +23,7 @@ using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Support;
 using DbKnowledgeBase = TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase;
 using DbNovelProject = TM.Web.NovelAgentWeb.Data.Entities.NovelProject;
@@ -83,6 +85,7 @@ internal static class Program
         ("Tool registry declares side effects for every tool", ToolRegistryDeclaresSideEffectsForEveryTool),
         ("Tool registry scoped workspace overrides stale ambient workspace", ToolRegistryScopedWorkspaceOverridesStaleAmbientWorkspace),
         ("SearchCreativeKnowledge returns DB-created knowledge", SearchCreativeKnowledgeReturnsDbKnowledge),
+        ("SearchCreativeKnowledge returns project material chunks", SearchCreativeKnowledgeReturnsProjectMaterialChunks),
         ("Knowledge usage remains project-scoped", KnowledgeUsageRemainsProjectScoped),
         ("ResolveNovelProject is idempotent while awaiting foundation", ResolveNovelProjectIsIdempotentWhileAwaitingFoundation),
         ("ResolveNovelProject create_new does not bind active old project", ResolveNovelProjectCreateNewDoesNotBindActiveOldProject),
@@ -2623,6 +2626,79 @@ internal static class Program
         }
     }
 
+    private static async Task SearchCreativeKnowledgeReturnsProjectMaterialChunks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-material-knowledge-" + Guid.NewGuid().ToString("N"));
+        var settings = CreateDbBackedSettingsManager();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["NovelAgent:ProjectName"] = "AgentKernelRegression",
+                ["NovelAgent:StorageRoot"] = root,
+            })
+            .Build();
+        var workspace = WithTestProductionKernel(new NovelAgentWorkspace(new TestWebHostEnvironment { ContentRootPath = root, WebRootPath = root }, config, settings, new WorkspaceProductionRuntimeBuilder(),
+            CreateWorkspaceScopeFactory(),
+            "regression-user",
+            ""
+            ), new UnsupportedProductionKernel());
+        var catalog = CreateDbBackedCatalog(workspace);
+        var vectorStore = new RecordingProjectVectorStore(new SearchResult
+        {
+            Id = "vector-material-001",
+            ProjectId = "project-material-knowledge",
+            SourceType = "material",
+            SourceId = "material-001",
+            Content = "潮汐墨印只能标记潮湿墙面的隐藏门，不能攻击、治疗或升级。",
+            Score = 0.96f
+        });
+        var semanticSearch = new SemanticSearchService(
+            vectorStore,
+            new AgentKernelFixedEmbeddingService(),
+            NullLogger<SemanticSearchService>.Instance);
+        var registry = new AgentToolRegistry(
+            settings,
+            CreateToolServiceProvider(new FixedKnowledgeService(), semanticSearch),
+            NullLogger<AgentToolRegistry>.Instance);
+        var session = new AgentSession
+        {
+            UserId = "regression-user",
+            SessionId = "session-material-knowledge",
+            ActiveProjectId = "project-material-knowledge"
+        };
+
+        AgentToolRegistry.SetWorkspace(workspace, catalog);
+        workspace.SetRequestContext();
+        try
+        {
+            var result = await registry.ExecuteAsync(
+                new AgentToolCall
+                {
+                    Name = "SearchCreativeKnowledge",
+                    Arguments = { ["query"] = "潮汐墨印隐藏门" }
+                },
+                session,
+                new StoryBibleDocument(),
+                confirmed: false,
+                CancellationToken.None);
+
+            Check.True(result.Success, "SearchCreativeKnowledge should succeed when project material vectors are available.");
+            Check.Contains("项目素材", result.Message, "Agent tool message should label project material hits.");
+            Check.Contains("潮汐墨印", result.Message, "Agent tool message should include material chunk content.");
+            Check.Equal("project-material-knowledge", vectorStore.LastFilters?["project_id"]?.ToString() ?? string.Empty,
+                "Project material search must stay scoped to the active project id.");
+
+            var data = result.Data as CreativeKnowledgeRetrievalResult;
+            Check.True(data?.Hits.Any(h => h.Entry.Id == "material-001" && h.Entry.Source == "ProjectMaterial") == true,
+                "Agent tool data should merge project material chunks into creative knowledge hits.");
+        }
+        finally
+        {
+            workspace.ClearRequestContext();
+            AgentToolRegistry.ClearWorkspace();
+        }
+    }
+
     private static async Task ResolveNovelProjectIsIdempotentWhileAwaitingFoundation()
     {
         var root = Path.Combine(Path.GetTempPath(), "agent-kernel-regression-start-project-" + Guid.NewGuid().ToString("N"));
@@ -3073,12 +3149,16 @@ internal static class Program
         return workspace;
     }
 
-    private static ServiceProvider CreateToolServiceProvider(IKnowledgeService? knowledgeService = null)
+    private static ServiceProvider CreateToolServiceProvider(
+        IKnowledgeService? knowledgeService = null,
+        SemanticSearchService? semanticSearchService = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IAgentToolExecutionLedger, RecordingAgentToolExecutionLedger>();
         if (knowledgeService != null)
             services.AddSingleton(knowledgeService);
+        if (semanticSearchService != null)
+            services.AddSingleton(semanticSearchService);
 
         return services.BuildServiceProvider();
     }
@@ -3171,11 +3251,11 @@ internal sealed class FixedBackgroundUserContext : IBackgroundUserContext
 
 internal sealed class FixedKnowledgeService : IKnowledgeService
 {
-    private readonly KnowledgeSearchResult _result;
+    private readonly IReadOnlyList<KnowledgeSearchResult> _results;
 
-    public FixedKnowledgeService(KnowledgeSearchResult result)
+    public FixedKnowledgeService(params KnowledgeSearchResult[] results)
     {
-        _result = result;
+        _results = results;
     }
 
     public SearchKnowledgeRequest? LastRequest { get; private set; }
@@ -3213,7 +3293,7 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
     public Task<List<KnowledgeSearchResult>> SearchKnowledgeAsync(SearchKnowledgeRequest request, CancellationToken ct = default)
     {
         LastRequest = request;
-        return Task.FromResult(new List<KnowledgeSearchResult> { _result });
+        return Task.FromResult(_results.ToList());
     }
 
     public Task IncrementUsageAsync(
@@ -3222,6 +3302,65 @@ internal sealed class FixedKnowledgeService : IKnowledgeService
         string? sessionId = null,
         string? runId = null,
         string? idempotencyKey = null,
+        CancellationToken ct = default) =>
+        Task.CompletedTask;
+}
+
+internal sealed class AgentKernelFixedEmbeddingService : IMicroEmbeddingService
+{
+    public int Dimension => 3;
+
+    public Task<float[]> EncodeAsync(string text, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(new[] { 0.1f, 0.2f, 0.3f });
+
+    public Task<float[][]> EncodeBatchAsync(IReadOnlyList<string> texts, EmbeddingMode mode = EmbeddingMode.Passage, CancellationToken ct = default) =>
+        Task.FromResult(texts.Select(_ => new[] { 0.1f, 0.2f, 0.3f }).ToArray());
+
+    public void ReleaseSession()
+    {
+    }
+
+    public bool IsModelReady() => true;
+}
+
+internal sealed class RecordingProjectVectorStore : IVectorStore
+{
+    private readonly SearchResult _result;
+
+    public RecordingProjectVectorStore(SearchResult result)
+    {
+        _result = result;
+    }
+
+    public Dictionary<string, object>? LastFilters { get; private set; }
+
+    public Task InitializeUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<List<SearchResult>> SearchSimilarAsync(
+        string userId,
+        float[] queryVector,
+        int topK = 10,
+        Dictionary<string, object>? filters = null,
+        CancellationToken ct = default)
+    {
+        LastFilters = filters == null
+            ? null
+            : new Dictionary<string, object>(filters, StringComparer.OrdinalIgnoreCase);
+        return Task.FromResult(new List<SearchResult> { _result });
+    }
+
+    public Task DeleteUserCollectionAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<bool> CollectionExistsAsync(string userId, CancellationToken ct = default) => Task.FromResult(true);
+
+    public Task<CollectionInfo?> GetCollectionInfoAsync(string userId, CancellationToken ct = default) =>
+        Task.FromResult<CollectionInfo?>(null);
+
+    public Task DeleteVectorsByFilterAsync(
+        string userId,
+        Dictionary<string, object> filters,
         CancellationToken ct = default) =>
         Task.CompletedTask;
 }

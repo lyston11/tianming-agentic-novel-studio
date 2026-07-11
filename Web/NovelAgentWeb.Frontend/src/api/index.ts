@@ -321,14 +321,76 @@ export const cancelRuntimeRun = (runId: string) =>
     method: 'POST',
   });
 
-export const createSseConnection = (sessionId: string, afterEventId?: string | null): EventSource => {
+export interface SseStreamConnection {
+  onopen?: () => void;
+  onmessage?: (event: MessageEvent<string>) => void;
+  onerror?: () => void;
+  close: () => void;
+}
+
+const dispatchSseBlock = (connection: SseStreamConnection, block: string) => {
+  const data = block
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
+  if (!data) return;
+  connection.onmessage?.(new MessageEvent('message', { data }));
+};
+
+export const createSseConnection = (sessionId: string, afterEventId?: string | null): SseStreamConnection => {
   const token = readStoredAuthToken();
   const params = new URLSearchParams();
-  if (token) params.set('token', token);
   if (afterEventId) params.set('afterEventId', afterEventId);
   const query = params.toString();
   const url = `${API_BASE_URL}/agent/sse/${sessionId}${query ? `?${query}` : ''}`;
-  return new EventSource(url);
+  const controller = new AbortController();
+  const connection: SseStreamConnection = {
+    close: () => controller.abort(),
+  };
+
+  void (async () => {
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const response = await fetch(url, {
+        headers,
+        signal: controller.signal,
+        credentials: 'same-origin',
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`SSE connection failed with status ${response.status}`);
+      }
+
+      connection.onopen?.();
+
+      const reader = response.body
+        .pipeThrough(new TextDecoderStream())
+        .getReader();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer = (buffer + value).replace(/\r\n/g, '\n');
+        let delimiter = buffer.indexOf('\n\n');
+        while (delimiter >= 0) {
+          const block = buffer.slice(0, delimiter);
+          buffer = buffer.slice(delimiter + 2);
+          dispatchSseBlock(connection, block);
+          delimiter = buffer.indexOf('\n\n');
+        }
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        connection.onerror?.();
+      }
+    }
+  })();
+
+  return connection;
 };
 
 // Novel Projects

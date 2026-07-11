@@ -199,7 +199,7 @@ public sealed class NovelProductionStateQueryServiceTests
         Assert.NotNull(state);
         Assert.Contains(state!.ProductionEvents, e =>
             e.EventType == "outbox_completed" &&
-            e.Stage == "index_outbox" &&
+            e.Stage == NovelAgentProductionStages.IndexUpdated &&
             e.Status == "completed" &&
             e.ArtifactType == "outbox_event" &&
             e.ArtifactId == "outbox-1");
@@ -928,7 +928,7 @@ public sealed class NovelProductionStateQueryServiceTests
         var evt = Assert.Single(state!.ProductionEvents, e => e.EventType == "outbox_failed");
         Assert.NotNull(evt.Failure);
         Assert.Equal("INDEX_FAILED", evt.Failure!.Code);
-        Assert.Equal("index_outbox", evt.Failure.Stage);
+        Assert.Equal(NovelAgentProductionStages.IndexUpdated, evt.Failure.Stage);
         Assert.True(evt.Failure.Recoverable);
         Assert.Equal("Qdrant timeout", evt.Failure.Message);
         Assert.Equal("RetryOutboxEvent(outbox-1)", evt.Failure.RecommendedAction);
@@ -1022,13 +1022,21 @@ public sealed class NovelProductionStateQueryServiceTests
             ChapterId = "project-1-chapter-002",
             PackageId = "pkg-chapter-002",
             ArtifactId = "gate-artifact-002",
-            Status = "validated",
+            Status = "gate_failed",
             ProtocolPassed = true,
             ChangesDetected = true,
-            FactSnapshotPassed = true,
+            FactSnapshotPassed = false,
             BlueprintPassed = true,
             RagPassed = true,
-            ReportJson = "{\"status\":\"validated\"}",
+            IssueCount = 1,
+            RepairHintCount = 1,
+            ReportJson = """
+                {
+                  "status": "gate_failed",
+                  "issues": ["第二章没有承接第一章结尾的银蓝邮徽状态。"],
+                  "repairHints": ["重写开场，明确男主带着银蓝邮徽进入旧邮路。"]
+                }
+                """,
             ValidatedAt = DateTime.UtcNow.AddSeconds(4),
             CreatedAt = DateTime.UtcNow.AddSeconds(4)
         });
@@ -1100,7 +1108,10 @@ public sealed class NovelProductionStateQueryServiceTests
         Assert.Equal("fact-record-002", chain.FactSnapshotId);
         Assert.Equal(2, chain.FactSnapshotVersion);
         Assert.NotNull(chain.Evidence.Gate);
-        Assert.Equal("validated", chain.Evidence.Gate!.Status);
+        Assert.Equal("gate_failed", chain.Evidence.Gate!.Status);
+        Assert.False(chain.Evidence.Gate.FactSnapshotPassed);
+        Assert.Contains("第二章没有承接第一章结尾的银蓝邮徽状态。", chain.Evidence.Gate.Issues);
+        Assert.Contains("重写开场，明确男主带着银蓝邮徽进入旧邮路。", chain.Evidence.Gate.RepairHints);
         Assert.NotNull(chain.Evidence.AgentReview);
         Assert.Equal("Pass", chain.Evidence.AgentReview!.OverallResult);
         Assert.False(chain.Evidence.AgentReview.MeetsAcceptedCreativeIntents);

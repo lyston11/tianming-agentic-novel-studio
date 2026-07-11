@@ -35,12 +35,10 @@ public class AgentMemoryUpdateTests
     {
         var projectUpdate = new ProjectMemoryUpdate
         {
-            NewConstraints = new List<string> { "不要出现现代科技元素" },
-            UnresolvedThreads = new List<string> { "主角身世之谜（第15章揭示）" }
+            NewConstraints = new List<string> { "不要出现现代科技元素" }
         };
 
         Assert.Single(projectUpdate.NewConstraints);
-        Assert.Single(projectUpdate.UnresolvedThreads);
     }
 
     [Fact]
@@ -93,8 +91,7 @@ public class AgentMemoryUpdateTests
             },
             ProjectMemory = new ProjectMemoryUpdate
             {
-                NewConstraints = new List<string> { "约束1" },
-                UnresolvedThreads = new List<string> { "伏笔1" }
+                NewConstraints = new List<string> { "约束1" }
             },
             AuthorMemory = new AuthorMemoryUpdate
             {
@@ -179,8 +176,7 @@ public class AgentMemoryUpdateTests
                 "extracted_preferences": ["避免长段说明"]
               },
               "project_memory": {
-                "new_constraints": ["只使用近未来科技"],
-                "unresolved_threads": []
+                "new_constraints": ["只使用近未来科技"]
               },
               "author_memory": {
                 "display_name": "lyston",

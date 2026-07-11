@@ -10,6 +10,8 @@ public sealed class UserSettings
     // LLM Configuration
     public string LlmProvider { get; set; } = "openai";
     public string LlmApiKey { get; set; } = string.Empty;
+    public bool LlmApiKeyEncryptedValuePresent { get; set; }
+    public bool LlmApiKeyReadable { get; set; } = true;
     public string LlmBaseUrl { get; set; } = string.Empty;
     public string LlmModel { get; set; } = "gpt-4o";
     public double LlmTemperature { get; set; } = 0.7;
@@ -128,10 +130,13 @@ public sealed class UserSettingsManager
             throw new InvalidOperationException("Database-backed user settings were not found for the current user.");
         }
 
+        var apiKeyReadable = _apiKeyProtector.TryUnprotect(entity.LlmApiKeyEncrypted, out var apiKey);
         var settings = new UserSettings
         {
             LlmProvider = entity.LlmProvider ?? string.Empty,
-            LlmApiKey = _apiKeyProtector.Unprotect(entity.LlmApiKeyEncrypted),
+            LlmApiKey = apiKey,
+            LlmApiKeyEncryptedValuePresent = !string.IsNullOrWhiteSpace(entity.LlmApiKeyEncrypted),
+            LlmApiKeyReadable = apiKeyReadable,
             LlmBaseUrl = entity.LlmBaseUrl ?? string.Empty,
             LlmModel = entity.LlmModel ?? string.Empty,
             LlmTemperature = entity.LlmTemperature,

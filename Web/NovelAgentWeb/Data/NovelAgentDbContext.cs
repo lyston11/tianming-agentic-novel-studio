@@ -942,12 +942,16 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Attempts).HasColumnName("attempts").HasDefaultValue(0);
             entity.Property(e => e.LastError).HasColumnName("last_error");
             entity.Property(e => e.NextAttemptAt).HasColumnName("next_attempt_at");
+            entity.Property(e => e.ProcessingOwner).HasColumnName("processing_owner");
+            entity.Property(e => e.ProcessingLeaseExpiresAt).HasColumnName("processing_lease_expires_at");
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => new { e.Status, e.NextAttemptAt, e.CreatedAt })
                 .HasDatabaseName("idx_outbox_status_retry");
+            entity.HasIndex(e => new { e.Status, e.ProcessingLeaseExpiresAt })
+                .HasDatabaseName("idx_outbox_processing_lease");
             entity.HasIndex(e => new { e.AggregateType, e.AggregateId })
                 .HasDatabaseName("idx_outbox_aggregate");
         });

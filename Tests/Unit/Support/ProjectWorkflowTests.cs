@@ -82,7 +82,7 @@ public class ProjectWorkflowTests
             Array.Empty<AgentScheduledTask>(),
             events);
 
-        var artifact = Assert.Single(timeline, item => item.Id == "output-artifact:draft-chapter-002-v1");
+        var artifact = Assert.Single(timeline, item => item.Id == "output-artifact:evt-output-artifact:draft-chapter-002-v1");
         Assert.Equal("chapter_draft", artifact.Kind);
         Assert.Equal("过程产物", artifact.Label);
         Assert.Equal("创作工作流", artifact.Surface);
@@ -93,6 +93,71 @@ public class ProjectWorkflowTests
         Assert.False(artifact.IsFinal);
         Assert.True(artifact.IsUserVisible);
         Assert.Equal("OutputArtifactRecorder:chapter_draft_generated", artifact.Source);
+    }
+
+    [Fact]
+    public void BuildArtifactTimeline_UsesEventScopedIdsForRepeatedOutputArtifacts()
+    {
+        var library = BuildLibrary(Chapter(visibleInWorkflow: true, visibleInLibrary: false, hasGeneratedContent: true));
+        var events = new[]
+        {
+            new WorkflowProductionEventSummary(
+                "evt-gate-failed-1",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "tool_output_artifact_recorded",
+                NovelAgentProductionStages.GateValidation,
+                "failed",
+                "第一次门禁未通过。",
+                "generation_gate_report",
+                "gate_failed",
+                """
+                {
+                  "outputKind":"ProcessArtifact",
+                  "visibleInWorkflow":true,
+                  "sourceEventType":"chapter_gate_validated",
+                  "summary":"第一次门禁未通过。"
+                }
+                """,
+                DateTime.UtcNow.AddSeconds(-2).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-gate-failed-2",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "tool_output_artifact_recorded",
+                NovelAgentProductionStages.GateValidation,
+                "failed",
+                "第二次门禁未通过。",
+                "generation_gate_report",
+                "gate_failed",
+                """
+                {
+                  "outputKind":"ProcessArtifact",
+                  "visibleInWorkflow":true,
+                  "sourceEventType":"chapter_gate_validated",
+                  "summary":"第二次门禁未通过。"
+                }
+                """,
+                DateTime.UtcNow.AddSeconds(-1).ToString("O"))
+        };
+
+        var timeline = ProjectWorkflow.BuildArtifactTimeline(
+            library,
+            new StoryBibleDocument(),
+            Array.Empty<WorkflowChapterArtifactSummary>(),
+            Array.Empty<AgentScheduledTask>(),
+            events);
+
+        var gateArtifacts = timeline
+            .Where(item => item.Kind == "generation_gate_report")
+            .ToList();
+
+        Assert.Equal(2, gateArtifacts.Count);
+        Assert.Equal(gateArtifacts.Count, gateArtifacts.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains(gateArtifacts, item => item.Id == "output-artifact:evt-gate-failed-1:gate_failed");
+        Assert.Contains(gateArtifacts, item => item.Id == "output-artifact:evt-gate-failed-2:gate_failed");
     }
 
     [Fact]
@@ -266,6 +331,261 @@ public class ProjectWorkflowTests
         var evt = Assert.Single(libraryStage.ProductionEvents, item => item.Id == "evt-knowledge-used");
         var binding = Assert.Single(evt.Evidence!.KnowledgeBindings);
         Assert.Equal("used", binding.ProjectUsageStatus);
+    }
+
+    [Fact]
+    public void BuildProductionStages_DoesNotKeepStageBlockedAfterLaterSuccessfulEvent()
+    {
+        var now = DateTime.UtcNow;
+        var library = BuildLibrary(Chapter(visibleInWorkflow: true, visibleInLibrary: true, hasGeneratedContent: true));
+        var events = new[]
+        {
+            new WorkflowProductionEventSummary(
+                "evt-gate-failed",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_gate_validated",
+                NovelAgentProductionStages.GateValidation,
+                "failed",
+                "第一次门禁未通过。",
+                "generation_gate_report",
+                "gate-001-a",
+                "{}",
+                now.AddMinutes(-3).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-gate-passed",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_gate_validated",
+                NovelAgentProductionStages.GateValidation,
+                "completed",
+                "修订后门禁通过。",
+                "generation_gate_report",
+                "gate-001-b",
+                "{}",
+                now.AddMinutes(-2).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-commit",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_committed",
+                NovelAgentProductionStages.ChapterCommit,
+                "completed",
+                "章节已提交书城。",
+                "chapter_version",
+                "version-001",
+                "{}",
+                now.AddMinutes(-1).ToString("O"))
+        };
+
+        var stages = ProjectWorkflow.BuildProductionStages(
+            library,
+            Array.Empty<WorkflowArtifactTimelineItem>(),
+            Array.Empty<AgentScheduledTask>(),
+            events);
+
+        var gateStage = Assert.Single(stages, stage => stage.Key == "gate");
+
+        Assert.Equal("ready", gateStage.Status);
+        Assert.Equal("修订后门禁通过。", gateStage.Summary);
+        Assert.Equal("gate-001-b", gateStage.PrimaryArtifactId);
+        Assert.Equal(2, gateStage.ProductionEvents.Count);
+    }
+
+    [Fact]
+    public void BuildProductionStages_DoesNotKeepGateBlockedAfterRepairAndCommit()
+    {
+        var now = DateTime.UtcNow;
+        var library = BuildLibrary(Chapter(visibleInWorkflow: true, visibleInLibrary: true, hasGeneratedContent: true));
+        var events = new[]
+        {
+            new WorkflowProductionEventSummary(
+                "evt-gate-failed",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_gate_validated",
+                NovelAgentProductionStages.GateValidation,
+                "failed",
+                "门禁未通过。",
+                "generation_gate_report",
+                "gate-001",
+                "{}",
+                now.AddMinutes(-4).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-repair-completed",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_draft_repaired",
+                NovelAgentProductionStages.DraftRepair,
+                "completed",
+                "草稿已修复并通过门禁。",
+                "chapter_draft",
+                "draft-001-v2",
+                "{}",
+                now.AddMinutes(-3).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-review",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_quality_reviewed",
+                NovelAgentProductionStages.QualityReview,
+                "completed",
+                "质量评审通过。",
+                "agent_review",
+                "review-001",
+                "{}",
+                now.AddMinutes(-2).ToString("O")),
+            new WorkflowProductionEventSummary(
+                "evt-commit",
+                "run-001",
+                "chapter-001",
+                "package-001",
+                "chapter_committed",
+                NovelAgentProductionStages.ChapterCommit,
+                "completed",
+                "章节已提交书城。",
+                "chapter_version",
+                "version-001",
+                "{}",
+                now.AddMinutes(-1).ToString("O"))
+        };
+
+        var stages = ProjectWorkflow.BuildProductionStages(
+            library,
+            Array.Empty<WorkflowArtifactTimelineItem>(),
+            Array.Empty<AgentScheduledTask>(),
+            events);
+
+        var gateStage = Assert.Single(stages, stage => stage.Key == "gate");
+
+        Assert.Equal("ready", gateStage.Status);
+        Assert.Contains("已恢复", gateStage.Summary);
+        Assert.Equal("version-001", gateStage.PrimaryArtifactId);
+    }
+
+    [Fact]
+    public void BuildProductionStages_DoesNotKeepDraftBlockedAfterLaterSuccessfulToolExecution()
+    {
+        var now = DateTime.UtcNow;
+        var library = BuildLibrary(Chapter(visibleInWorkflow: true, visibleInLibrary: true, hasGeneratedContent: true));
+        var events = new[]
+        {
+            new WorkflowProductionEventSummary(
+                "evt-draft",
+                "run-002",
+                "chapter-002",
+                "package-002",
+                "chapter_draft_generated",
+                NovelAgentProductionStages.DraftGeneration,
+                "completed",
+                "章节草稿已生成。",
+                "chapter_draft",
+                "draft-002",
+                "{}",
+                now.AddMinutes(-1).ToString("O"))
+        };
+        var tools = new[]
+        {
+            new WorkflowToolExecutionSummary
+            {
+                Id = "tool-produce-failed",
+                RunId = "run-001",
+                ToolName = "ProduceChapter",
+                Phase = "candidate_selected",
+                Status = "failed",
+                StartedAt = now.AddMinutes(-4).ToString("O"),
+                CompletedAt = now.AddMinutes(-3).ToString("O")
+            },
+            new WorkflowToolExecutionSummary
+            {
+                Id = "tool-produce-succeeded",
+                RunId = "run-002",
+                ToolName = "ProduceChapter",
+                Phase = "committed",
+                Status = "succeeded",
+                StartedAt = now.AddMinutes(-2).ToString("O"),
+                CompletedAt = now.AddMinutes(-1).ToString("O")
+            }
+        };
+
+        var stages = ProjectWorkflow.BuildProductionStages(
+            library,
+            Array.Empty<WorkflowArtifactTimelineItem>(),
+            Array.Empty<AgentScheduledTask>(),
+            events,
+            tools);
+
+        var draftStage = Assert.Single(stages, stage => stage.Key == "draft");
+        var tool = Assert.Single(draftStage.ToolExecutions);
+
+        Assert.Equal("ready", draftStage.Status);
+        Assert.Equal("tool-produce-succeeded", tool.Id);
+        Assert.Equal("succeeded", tool.Status);
+    }
+
+    [Fact]
+    public void BuildProductionStages_KeepsDraftBlockedWhenLatestToolFailureIsAfterReadyEvidence()
+    {
+        var now = DateTime.UtcNow;
+        var library = BuildLibrary(Chapter(visibleInWorkflow: true, visibleInLibrary: false, hasGeneratedContent: true));
+        var events = new[]
+        {
+            new WorkflowProductionEventSummary(
+                "evt-draft",
+                "run-001",
+                "chapter-002",
+                "package-002",
+                "chapter_draft_generated",
+                NovelAgentProductionStages.DraftGeneration,
+                "completed",
+                "章节草稿已生成。",
+                "chapter_draft",
+                "draft-002",
+                "{}",
+                now.AddMinutes(-3).ToString("O"))
+        };
+        var tools = new[]
+        {
+            new WorkflowToolExecutionSummary
+            {
+                Id = "tool-produce-succeeded",
+                RunId = "run-001",
+                ToolName = "ProduceChapter",
+                Phase = "committed",
+                Status = "succeeded",
+                StartedAt = now.AddMinutes(-4).ToString("O"),
+                CompletedAt = now.AddMinutes(-3).ToString("O")
+            },
+            new WorkflowToolExecutionSummary
+            {
+                Id = "tool-produce-failed",
+                RunId = "run-002",
+                ToolName = "ProduceChapter",
+                Phase = "candidate_selected",
+                Status = "failed",
+                StartedAt = now.AddMinutes(-2).ToString("O"),
+                CompletedAt = now.AddMinutes(-1).ToString("O")
+            }
+        };
+
+        var stages = ProjectWorkflow.BuildProductionStages(
+            library,
+            Array.Empty<WorkflowArtifactTimelineItem>(),
+            Array.Empty<AgentScheduledTask>(),
+            events,
+            tools);
+
+        var draftStage = Assert.Single(stages, stage => stage.Key == "draft");
+        var tool = Assert.Single(draftStage.ToolExecutions);
+
+        Assert.Equal("blocked", draftStage.Status);
+        Assert.Equal("tool-produce-failed", tool.Id);
     }
 
     [Fact]
