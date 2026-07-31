@@ -10,11 +10,19 @@ Thumbs.db
 *.sln.docstates
 *.sw?
 
-# Local assistant and mission state
+# Local assistant, mission, and brainstorm state
 .claude/
 .mission/
+.superpowers/
 .worktrees/
 backups/
+
+# Local-only project materials and legacy runtime state
+Storage/
+天命PPT/
+IMPLEMENTATION_SUMMARY.md
+PHASE1_COMPLETION_REPORT.md
+v2.8.7-升级说明.txt
 
 # .NET build output
 bin/
