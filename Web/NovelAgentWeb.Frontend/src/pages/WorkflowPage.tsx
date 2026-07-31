@@ -1477,7 +1477,7 @@ function isCompletionOnlyArtifact(artifact: WorkflowArtifactTimelineItem) {
     status === 'committed';
 }
 
-function buildMissionOnlyCards(_sessions: AgentSessionSummary[], _books: NovelBookView[]) {
+function buildMissionOnlyCards() {
   return [] as { session: AgentSessionSummary; plan: AgentMissionPlan; projectId: string }[];
 }
 
@@ -1653,11 +1653,14 @@ export default function WorkflowPage() {
     retry: 3,
   });
 
-  const books = workspaceData?.projects ?? [];
-  const archivedBooks = books.filter(isArchivedProject);
-  const workflowBooks = showArchivedWorkflows ? books : books.filter((book) => !isArchivedProject(book));
-  const activeBook = books.find((book) => book.isActive) ?? books[0] ?? null;
-  const missionOnlyCards = buildMissionOnlyCards(agentSessions ?? [], books);
+  const books = useMemo(() => workspaceData?.projects ?? [], [workspaceData?.projects]);
+  const archivedBooks = useMemo(() => books.filter(isArchivedProject), [books]);
+  const workflowBooks = useMemo(
+    () => showArchivedWorkflows ? books : books.filter((book) => !isArchivedProject(book)),
+    [books, showArchivedWorkflows],
+  );
+  const activeBook = useMemo(() => books.find((book) => book.isActive) ?? books[0] ?? null, [books]);
+  const missionOnlyCards = useMemo(() => buildMissionOnlyCards(), []);
 
   const fallbackProjectId = useMemo(() => {
     const sessions = agentSessions ?? [];
@@ -1688,13 +1691,13 @@ export default function WorkflowPage() {
   const selectedBook = workflow?.project
     ?? books.find((book) => book.projectId === currentProjectId)
     ?? (isDetailView ? null : activeBook);
-  const volumes = workflow?.library?.volumes ?? [];
-  const chapters = volumes.flatMap((volume) => volume.chapters);
+  const volumes = useMemo(() => workflow?.library?.volumes ?? [], [workflow?.library?.volumes]);
+  const chapters = useMemo(() => volumes.flatMap((volume) => volume.chapters), [volumes]);
   const selectedPlan = workflow?.missionPlans?.[0]
     ?? workflow?.sessions?.[0]?.missionPlan
     ?? null;
-  const timeline = workflow?.artifactTimeline ?? [];
-  const visibleTimeline = timeline.filter((artifact) => artifact.isUserVisible);
+  const timeline = useMemo(() => workflow?.artifactTimeline ?? [], [workflow?.artifactTimeline]);
+  const visibleTimeline = useMemo(() => timeline.filter((artifact) => artifact.isUserVisible), [timeline]);
   const selectedChapter = chapters.find((chapter) => chapter.chapterId === selectedChapterId)
     ?? chapters.find(isLibraryChapter)
     ?? firstRealChapter(volumes)
@@ -1870,29 +1873,38 @@ export default function WorkflowPage() {
   }, [books, routeProjectId, setCurrentProject, setCurrentProjectId]);
 
   useEffect(() => {
-    setSelectedArtifactId(null);
-    setSelectedChapterId(null);
-    setSelectedProgressStepKey(null);
-    setChapterDetailTab('manuscript');
-    setWorkflowLeftVersionId('');
-    setWorkflowRightVersionId('');
+    const timer = window.setTimeout(() => {
+      setSelectedArtifactId(null);
+      setSelectedChapterId(null);
+      setSelectedProgressStepKey(null);
+      setChapterDetailTab('manuscript');
+      setWorkflowLeftVersionId('');
+      setWorkflowRightVersionId('');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [currentProjectId]);
 
   useEffect(() => {
-    setWorkflowLeftVersionId('');
-    setWorkflowRightVersionId('');
-    setSelectedProgressStepKey(null);
+    const timer = window.setTimeout(() => {
+      setWorkflowLeftVersionId('');
+      setWorkflowRightVersionId('');
+      setSelectedProgressStepKey(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [selectedChapter?.chapterId]);
 
   useEffect(() => {
     if (chapterVersions.length === 0) return;
     const current = chapterVersions.find((version) => version.isCurrent) ?? chapterVersions[0];
     const previous = chapterVersions.find((version) => version.id !== current.id);
-    setWorkflowRightVersionId((value) => (value && chapterVersions.some((version) => version.id === value) ? value : current.id));
-    setWorkflowLeftVersionId((value) => {
-      if (value && chapterVersions.some((version) => version.id === value)) return value;
-      return previous?.id ?? current.id;
-    });
+    const timer = window.setTimeout(() => {
+      setWorkflowRightVersionId((value) => (value && chapterVersions.some((version) => version.id === value) ? value : current.id));
+      setWorkflowLeftVersionId((value) => {
+        if (value && chapterVersions.some((version) => version.id === value)) return value;
+        return previous?.id ?? current.id;
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [chapterVersions]);
 
   useEffect(() => {

@@ -13,9 +13,7 @@ using TM.Web.NovelAgentWeb.Filters;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
-using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Auth;
-using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
@@ -38,15 +36,6 @@ public class AgentControllerResumeTests
             .ReturnsAsync(Array.Empty<ChatHistoryTurnDto>());
         var sessions = new AgentSessionManager(db, currentUser.Object, chat.Object);
         var coordinator = new AgentTurnCoordinator(
-            sessions,
-            new AgentToolExecutionLedger(
-                db,
-                Mock.Of<IDistributedCacheService>(),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolExecutionLedger>.Instance),
-            currentUser.Object,
-            new AgentRuntimeRunService(db),
-            new AgentInterruptService(db),
-            new RecordingRuntimeQueue(),
             new StubForegroundTurnRunner(AgentForegroundTurnResult.Reply(new AgentChatResponse(
                 "当然认识你，lyston。",
                 Array.Empty<string>(),
@@ -85,15 +74,6 @@ public class AgentControllerResumeTests
             .ReturnsAsync(Array.Empty<ChatHistoryTurnDto>());
         var sessions = new AgentSessionManager(db, currentUser.Object, chat.Object);
         var coordinator = new AgentTurnCoordinator(
-            sessions,
-            new AgentToolExecutionLedger(
-                db,
-                Mock.Of<IDistributedCacheService>(),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolExecutionLedger>.Instance),
-            currentUser.Object,
-            new AgentRuntimeRunService(db),
-            new AgentInterruptService(db),
-            new RecordingRuntimeQueue(),
             new StubForegroundTurnRunner(AgentForegroundTurnResult.Reply(new AgentChatResponse(
                 "我读取了你的作者偏好。",
                 Array.Empty<string>(),
@@ -145,56 +125,6 @@ public class AgentControllerResumeTests
         });
         Assert.Contains("memoryAudit", json);
         Assert.DoesNotContain("不应公开的项目记忆正文", json);
-    }
-
-    [Fact]
-    public async Task Chat_WhenStartingBackgroundRun_StoresIdempotencyKeyAndClientMessageIdSeparately()
-    {
-        await using var db = CreateDb();
-        var currentUser = CurrentUser("user-1");
-        var chat = new Mock<IChatHistoryRepository>();
-        chat.Setup(x => x.GetHotWindowAsync(
-                It.IsAny<string>(),
-                It.IsAny<string?>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ChatHistoryTurnDto>());
-        var sessions = new AgentSessionManager(db, currentUser.Object, chat.Object);
-        var coordinator = new AgentTurnCoordinator(
-            sessions,
-            new AgentToolExecutionLedger(
-                db,
-                Mock.Of<IDistributedCacheService>(),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolExecutionLedger>.Instance),
-            currentUser.Object,
-            new AgentRuntimeRunService(db),
-            new AgentInterruptService(db),
-            new RecordingRuntimeQueue(),
-            new StubForegroundTurnRunner(AgentForegroundTurnResult.Background()));
-        var controller = new AgentController(
-            coordinator,
-            sessionManager: null!,
-            agentSessionService: null!,
-            currentUserService: currentUser.Object,
-            resumeService: null!)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            }
-        };
-        controller.Request.Headers["Idempotency-Key"] = "message-42";
-
-        var result = await controller.Chat(
-            new AgentChatRequest("开一本新小说", "session-1", "user-message-42"),
-            CancellationToken.None);
-
-        var envelope = await ApplyEnvelopeAsync(result);
-        var data = Assert.IsType<AgentChatResponse>(envelope.Data);
-        Assert.Equal("queued", data.Phase);
-        var run = Assert.Single(await db.AgentRuntimeRuns.ToListAsync());
-        Assert.Equal("message-42", run.IdempotencyKey);
-        Assert.Equal("user-message-42", run.SourceMessageId);
     }
 
     [Fact]
@@ -542,18 +472,6 @@ public class AgentControllerResumeTests
 
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result);
         return Assert.IsType<ApiEnvelope<object>>(objectResult.Value);
-    }
-
-    private sealed class RecordingRuntimeQueue : IAgentRuntimeQueue
-    {
-        public ValueTask EnqueueAsync(string runtimeRunId, CancellationToken ct = default) => ValueTask.CompletedTask;
-
-        public async IAsyncEnumerable<string> DequeueAllAsync(
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
     }
 
     private sealed class StubForegroundTurnRunner : IAgentForegroundTurnRunner

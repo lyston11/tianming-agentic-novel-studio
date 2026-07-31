@@ -29,6 +29,7 @@ namespace TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel
             <chapter_changes> 内部必须直接是上述顶级字段对象，禁止再包一层 changes、CHANGES、chapter_changes、chapterChanges 或任何解释字段。
             正确结构示例：<chapter_changes>{"CharacterStateChanges":[],"ConflictProgress":[],"NewPlotPoints":[],"ForeshadowingActions":[],"LocationStateChanges":[],"FactionStateChanges":[],"TimeProgression":null,"CharacterMovements":[],"ItemTransfers":[],"SecretRevealChanges":[],"PledgeConstraintChanges":[],"DeadlineConstraintChanges":[]}</chapter_changes>
             正文必须严格遵守上下文包、事实快照、蓝图、长距离召回，不得发明关键实体。
+            当 contextPackage.directedRework 存在时，只允许修改 mayChange 指定范围，必须保留 preserve，绝不能改动 mustNotChange；selection 范围外正文必须保持不变。
             如果上下文包声明某个道具/能力只能观察、辨认、溯源或提示方向，正文不得把它写成激活、释放、攻击、治愈、修复、腐蚀、干扰、封闭、摧毁、杀伤或新增功能。
             """;
 

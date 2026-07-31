@@ -460,6 +460,29 @@ public class ProductionTruthStoreTests
     }
 
     [Fact]
+    public async Task EnqueueOutboxAsync_ReusesEventWithSameIdempotencyKey()
+    {
+        await using var db = CreateDb();
+        SeedProjectChapterAndDocuments(db);
+        var store = new ProductionTruthStore(db);
+        var request = new EnqueueOutboxEventRequest(
+            UserId: "user-1",
+            ProjectId: "project-1",
+            RuntimeRunId: "run-1",
+            EventType: "finalize_chapter_commit_metadata",
+            AggregateType: "chapter",
+            AggregateId: "chapter-001",
+            PayloadJson: "{\"version\":1}",
+            IdempotencyKey: "chapter-001:run-1:finalize");
+
+        var first = await store.EnqueueOutboxAsync(request);
+        var second = await store.EnqueueOutboxAsync(request with { PayloadJson = "{\"version\":2}" });
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(await db.OutboxEvents.ToListAsync());
+    }
+
+    [Fact]
     public async Task AttachLatestChapterVersionToRunAsync_LinksLatestVersionAndOutboxToRuntimeRun()
     {
         await using var db = CreateDb();

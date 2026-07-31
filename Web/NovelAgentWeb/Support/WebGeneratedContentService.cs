@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Services.Modules.ProjectData.Models.Generated;
 using TM.Web.NovelAgentWeb.Data;
@@ -10,7 +12,7 @@ using TM.Web.NovelAgentWeb.Services.Production;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
-public sealed class WebGeneratedContentService : IGeneratedContentService, IGeneratedChapterMetadataWriter
+public sealed class WebGeneratedContentService : IGeneratedContentService, IAtomicGeneratedChapterCommitService
 {
     private const string SourceType = "chapter";
     private const string DocumentRole = "chapter_body";
@@ -30,42 +32,76 @@ public sealed class WebGeneratedContentService : IGeneratedContentService, IGene
     }
 
     public Task SaveChapterAsync(string chapterId, string content) =>
-        SaveChapterAsync(chapterId, content, title: null);
+        SaveChapterCoreAsync(chapterId, content, title: null, Array.Empty<GeneratedChapterOutboxWrite>());
 
-    public async Task SaveChapterAsync(string chapterId, string content, string? title)
+    public Task SaveChapterAsync(string chapterId, string content, string? title) =>
+        SaveChapterCoreAsync(chapterId, content, title, Array.Empty<GeneratedChapterOutboxWrite>());
+
+    public Task SaveChapterAtomicallyAsync(
+        string chapterId,
+        string content,
+        string? title,
+        IReadOnlyList<GeneratedChapterOutboxWrite> outboxWrites) =>
+        SaveChapterCoreAsync(chapterId, content, title, outboxWrites);
+
+    private async Task SaveChapterCoreAsync(
+        string chapterId,
+        string content,
+        string? title,
+        IReadOnlyList<GeneratedChapterOutboxWrite> outboxWrites)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
-        var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
-        var (userId, project) = await ResolveUserAndProjectAsync(db, chapterId).ConfigureAwait(false);
-        var chapter = await ResolveChapterAsync(db, chapterId, project, content, title).ConfigureAwait(false);
+        IDbContextTransaction? transaction = null;
+        if (db.Database.IsRelational())
+            transaction = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
 
-        var document = await contentDocuments.SaveOrReplaceTextAsync(
-            userId,
-            chapter.ProjectId,
-            SourceType,
-            chapter.Id,
-            DocumentRole,
-            chapter.Title,
-            content,
-            CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var contentDocuments = scope.ServiceProvider.GetRequiredService<IContentDocumentService>();
+            var (userId, project) = await ResolveUserAndProjectAsync(db, chapterId).ConfigureAwait(false);
+            var chapter = await ResolveChapterAsync(db, chapterId, project, content, title).ConfigureAwait(false);
 
-        chapter.CurrentDocumentId = document.Id;
-        chapter.WordCount = CountWords(content);
-        chapter.Status = "committed";
-        chapter.UpdatedAt = DateTime.UtcNow;
-        var otherChapterWordCount = await db.Chapters
-            .AsNoTracking()
-            .Where(c => c.ProjectId == project.Id && c.Id != chapter.Id)
-            .SumAsync(c => c.WordCount)
-            .ConfigureAwait(false);
-        project.WordCount = otherChapterWordCount + chapter.WordCount;
-        project.Status = ResolveProjectStatusAfterChapterCommit(project.Status);
-        project.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync().ConfigureAwait(false);
-        await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
+            var document = await contentDocuments.SaveOrReplaceTextAsync(
+                userId,
+                chapter.ProjectId,
+                SourceType,
+                chapter.Id,
+                DocumentRole,
+                chapter.Title,
+                content,
+                CancellationToken.None).ConfigureAwait(false);
 
-        await PersistProductionTruthAsync(scope.ServiceProvider, userId, project, chapter, document).ConfigureAwait(false);
+            chapter.CurrentDocumentId = document.Id;
+            chapter.WordCount = CountWords(content);
+            chapter.Status = "committed";
+            chapter.UpdatedAt = DateTime.UtcNow;
+            var otherChapterWordCount = await db.Chapters
+                .AsNoTracking()
+                .Where(c => c.ProjectId == project.Id && c.Id != chapter.Id)
+                .SumAsync(c => c.WordCount)
+                .ConfigureAwait(false);
+            project.WordCount = otherChapterWordCount + chapter.WordCount;
+            project.Status = ResolveProjectStatusAfterChapterCommit(project.Status);
+            project.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync().ConfigureAwait(false);
+            await SynchronizeVolumeArcCurrentChaptersAsync(db, project, chapter.VolumeId).ConfigureAwait(false);
+
+            await PersistProductionTruthAsync(scope.ServiceProvider, userId, project, chapter, document, outboxWrites).ConfigureAwait(false);
+            if (transaction != null)
+                await transaction.CommitAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            if (transaction != null)
+                await transaction.RollbackAsync().ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            if (transaction != null)
+                await transaction.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     public async Task<string?> GetChapterAsync(string chapterId)
@@ -223,7 +259,8 @@ public sealed class WebGeneratedContentService : IGeneratedContentService, IGene
         string userId,
         NovelProject project,
         Chapter chapter,
-        ContentDocument document)
+        ContentDocument document,
+        IReadOnlyList<GeneratedChapterOutboxWrite> outboxWrites)
     {
         var truthStore = services.GetRequiredService<IProductionTruthStore>();
 
@@ -263,6 +300,38 @@ public sealed class WebGeneratedContentService : IGeneratedContentService, IGene
                     AggregateId: version.Id,
                     PayloadJson: payloadJson))
             .ConfigureAwait(false);
+
+        foreach (var outbox in outboxWrites)
+        {
+            await truthStore.EnqueueOutboxAsync(
+                    new EnqueueOutboxEventRequest(
+                        userId,
+                        project.Id,
+                        outbox.RuntimeRunId,
+                        outbox.EventType,
+                        outbox.AggregateType,
+                        outbox.AggregateId,
+                        NormalizeOutboxPayload(outbox, userId, project.Id),
+                        outbox.IdempotencyKey),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static string NormalizeOutboxPayload(
+        GeneratedChapterOutboxWrite outbox,
+        string userId,
+        string projectId)
+    {
+        if (!string.Equals(outbox.EventType, "finalize_chapter_commit_metadata", StringComparison.Ordinal))
+            return outbox.PayloadJson;
+
+        var payload = JsonNode.Parse(string.IsNullOrWhiteSpace(outbox.PayloadJson) ? "{}" : outbox.PayloadJson)
+            as JsonObject ?? new JsonObject();
+        payload["userId"] = userId;
+        payload["projectId"] = projectId;
+        payload["runtimeRunId"] = outbox.RuntimeRunId;
+        return payload.ToJsonString();
     }
 
     private static async Task<Chapter> ResolveChapterAsync(

@@ -81,11 +81,9 @@ public class CachingPerformanceTests : IClassFixture<TestWebApplicationFactory>
         _output.WriteLine($"First request:  {sw1.ElapsedMilliseconds}ms (cache miss)");
         _output.WriteLine($"Second request: {sw2.ElapsedMilliseconds}ms (cache hit)");
 
-        // Second request should be faster due to caching
-        Assert.True(sw2.ElapsedMilliseconds <= sw1.ElapsedMilliseconds,
-            $"Cached request ({sw2.ElapsedMilliseconds}ms) should be <= uncached request ({sw1.ElapsedMilliseconds}ms)");
-
-        // Both should be under 100ms
+        // Wall-clock ordering is not stable below the timer resolution. The contract is
+        // that both requests meet the latency target while cache behavior is covered by
+        // deterministic cache service tests.
         Assert.True(sw1.ElapsedMilliseconds < 100,
             $"First request took {sw1.ElapsedMilliseconds}ms, expected < 100ms");
         Assert.True(sw2.ElapsedMilliseconds < 100,

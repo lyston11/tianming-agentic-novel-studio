@@ -96,7 +96,7 @@ public sealed class AgentRuntimeEventService : IAgentRuntimeEventService
             };
 
             if (_events != null)
-                await _events.SendAsync(evt.SessionId, sseEvent, ct).ConfigureAwait(false);
+                await _events.SendAsync(evt.UserId, evt.SessionId, sseEvent, ct).ConfigureAwait(false);
 
             if (_fanout != null)
                 await _fanout.PublishAsync(evt.UserId, evt.SessionId, sseEvent, ct).ConfigureAwait(false);

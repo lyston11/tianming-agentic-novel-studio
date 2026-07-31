@@ -19,10 +19,10 @@ public class AgentRuntimeEventStreamConsumerTests
         redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(database.Object);
         var consumer = CreateConsumer(redis.Object);
 
-        await consumer.EnsureConsumerGroupAsync("session-1", "sse-workers");
+        await consumer.EnsureConsumerGroupAsync("user-1", "session-1", "sse-workers");
 
         database.Verify(x => x.StreamCreateConsumerGroupAsync(
-            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+            It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
             "sse-workers",
             "0-0",
             true,
@@ -34,7 +34,7 @@ public class AgentRuntimeEventStreamConsumerTests
     {
         var database = new Mock<IDatabase>();
         database.Setup(x => x.StreamReadGroupAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
                 "sse-workers",
                 "instance-a",
                 ">",
@@ -48,7 +48,7 @@ public class AgentRuntimeEventStreamConsumerTests
         redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(database.Object);
         var consumer = CreateConsumer(redis.Object);
 
-        var events = await consumer.ReadGroupAsync("session-1", "sse-workers", "instance-a", 10);
+        var events = await consumer.ReadGroupAsync("user-1", "session-1", "sse-workers", "instance-a", 10);
 
         var evt = Assert.Single(events);
         Assert.Equal("1-0", evt.StreamId);
@@ -61,7 +61,7 @@ public class AgentRuntimeEventStreamConsumerTests
     {
         var database = new Mock<IDatabase>();
         database.Setup(x => x.StreamAcknowledgeAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
                 "sse-workers",
                 "1-0",
                 CommandFlags.None))
@@ -70,7 +70,7 @@ public class AgentRuntimeEventStreamConsumerTests
         redis.Setup(x => x.GetDatabase(It.IsAny<int>(), It.IsAny<object>())).Returns(database.Object);
         var consumer = CreateConsumer(redis.Object);
 
-        var acknowledged = await consumer.AcknowledgeAsync("session-1", "sse-workers", "1-0");
+        var acknowledged = await consumer.AcknowledgeAsync("user-1", "session-1", "sse-workers", "1-0");
 
         Assert.True(acknowledged);
     }
@@ -80,7 +80,7 @@ public class AgentRuntimeEventStreamConsumerTests
     {
         var database = new Mock<IDatabase>();
         database.Setup(x => x.StreamPendingMessagesAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
                 "sse-workers",
                 10,
                 RedisValue.Null,
@@ -92,7 +92,7 @@ public class AgentRuntimeEventStreamConsumerTests
                 CreatePendingMessage("1-0", "old-instance", 60_000, 1)
             });
         database.Setup(x => x.StreamClaimAsync(
-                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:session-1"),
+                It.Is<RedisKey>(key => key.ToString() == "Test:agent_runtime:events:stream:user-1:session-1"),
                 "sse-workers",
                 "instance-a",
                 30_000,
@@ -107,6 +107,7 @@ public class AgentRuntimeEventStreamConsumerTests
         var consumer = CreateConsumer(redis.Object);
 
         var events = await consumer.ClaimPendingAsync(
+            "user-1",
             "session-1",
             "sse-workers",
             "instance-a",

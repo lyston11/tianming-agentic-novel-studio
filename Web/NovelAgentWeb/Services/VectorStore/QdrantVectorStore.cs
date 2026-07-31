@@ -67,6 +67,11 @@ public class QdrantVectorStore : IVectorStore
         await _client.CreatePayloadIndexAsync(collectionName, "user_id", PayloadSchemaType.Keyword, cancellationToken: ct);
         await _client.CreatePayloadIndexAsync(collectionName, "project_id", PayloadSchemaType.Keyword, cancellationToken: ct);
         await _client.CreatePayloadIndexAsync(collectionName, "source_type", PayloadSchemaType.Keyword, cancellationToken: ct);
+        await _client.CreatePayloadIndexAsync(collectionName, "source_id", PayloadSchemaType.Keyword, cancellationToken: ct);
+        await _client.CreatePayloadIndexAsync(collectionName, "branch_id", PayloadSchemaType.Keyword, cancellationToken: ct);
+        await _client.CreatePayloadIndexAsync(collectionName, "document_blob_id", PayloadSchemaType.Keyword, cancellationToken: ct);
+        await _client.CreatePayloadIndexAsync(collectionName, "embedding_version", PayloadSchemaType.Keyword, cancellationToken: ct);
+        await _client.CreatePayloadIndexAsync(collectionName, "knowledge_version", PayloadSchemaType.Integer, cancellationToken: ct);
     }
 
     public async Task UpsertVectorsAsync(string userId, List<VectorData> vectors, CancellationToken ct = default)
@@ -212,8 +217,21 @@ public class QdrantVectorStore : IVectorStore
         string s => new Condition { Field = new FieldCondition { Key = key, Match = new Match { Keyword = s } } },
         int i => new Condition { Field = new FieldCondition { Key = key, Match = new Match { Integer = i } } },
         long l => new Condition { Field = new FieldCondition { Key = key, Match = new Match { Integer = l } } },
+        VectorNumericRange range => CreateRangeCondition(key, range),
         _ => throw new ArgumentException($"Unsupported filter type for {key}: {value.GetType()}")
     };
+
+    private static Condition CreateRangeCondition(string key, VectorNumericRange value)
+    {
+        if (!value.GreaterThanOrEqual.HasValue && !value.LessThanOrEqual.HasValue)
+            throw new ArgumentException($"Numeric range for {key} must define at least one boundary.");
+        var range = new Qdrant.Client.Grpc.Range();
+        if (value.GreaterThanOrEqual.HasValue)
+            range.Gte = value.GreaterThanOrEqual.Value;
+        if (value.LessThanOrEqual.HasValue)
+            range.Lte = value.LessThanOrEqual.Value;
+        return new Condition { Field = new FieldCondition { Key = key, Range = range } };
+    }
 
     private static string? GetPayloadString(Google.Protobuf.Collections.MapField<string, Value> payload, string key)
         => payload.TryGetValue(key, out var v) ? v.StringValue : null;

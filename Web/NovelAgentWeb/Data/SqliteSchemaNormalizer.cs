@@ -32,6 +32,7 @@ public static class SqliteSchemaNormalizer
     [
         new("processing_owner", "TEXT NULL"),
         new("processing_lease_expires_at", "TEXT NULL"),
+        new("idempotency_key", "TEXT NOT NULL DEFAULT ''"),
     ];
 
     private static readonly MissingColumn[] RevisionPlanDisplayIdentityColumns =
@@ -87,8 +88,15 @@ public static class SqliteSchemaNormalizer
             return;
 
         EnsureMissingColumns(connection, "outbox_events", OutboxProcessingLeaseColumns);
+        using (var populate = connection.CreateCommand())
+        {
+            populate.CommandText = "UPDATE outbox_events SET idempotency_key = id WHERE idempotency_key = ''";
+            populate.ExecuteNonQuery();
+        }
         EnsureIndex(connection, "idx_outbox_processing_lease",
             "CREATE INDEX idx_outbox_processing_lease ON outbox_events (status, processing_lease_expires_at)");
+        EnsureIndex(connection, "ux_outbox_idempotency",
+            "CREATE UNIQUE INDEX ux_outbox_idempotency ON outbox_events (user_id, idempotency_key) WHERE idempotency_key <> ''");
     }
 
     private static void EnsureProductionTruthTables(IDbConnection connection)

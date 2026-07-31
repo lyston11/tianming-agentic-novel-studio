@@ -51,6 +51,8 @@ public interface IVectorStore
         CancellationToken ct = default);
 }
 
+public sealed record VectorNumericRange(long? GreaterThanOrEqual = null, long? LessThanOrEqual = null);
+
 /// <summary>
 /// Vector data with payload for storage.
 /// </summary>

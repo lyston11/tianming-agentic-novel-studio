@@ -119,6 +119,160 @@ export type CreativeKnowledgeCategory =
   | 'EmotionArc'
   | 'RelationshipDynamic';
 
+export type GoalCancellationStrategy =
+  | 'PreserveCandidateBranch'
+  | 'MergeAcceptedPrefix'
+  | 'DiscardCandidateBranch';
+
+export interface CreativeGoalContract {
+  goalType: string;
+  collaborationMode: string;
+  humanReadableObjective: string;
+  targetChapterRangeJson: string;
+  successCriteria: string[];
+  mustPreserve: string[];
+  mustHappen: string[];
+  mustNotChange: string[];
+  acceptancePolicyJson: string;
+  reworkPolicyJson: string;
+}
+
+export interface DirectorTurnView {
+  projectId: string;
+  state: 'Exploring' | 'Proposed' | 'Committed' | 'Revising' | 'Cancelled';
+  authorization: 'None' | 'UnambiguousLanguage' | 'ConfirmedContract' | 'ExplicitAction';
+  requiresConfirmation: boolean;
+  rationale: string;
+  proposedContract?: CreativeGoalContract | null;
+}
+
+export interface GoalWorkflowConfirmationView {
+  submission: {
+    status: string;
+    goalId?: string | null;
+  };
+  graph: unknown;
+}
+
+export interface CreativeGoalView {
+  id: string;
+  projectId: string;
+  sourceSessionId: string;
+  humanReadableObjective: string;
+  status: string;
+  totalCostLimit: number;
+  reservedCost: number;
+  actualCost: number;
+  aggregateVersion: number;
+  targetChapterRangeJson: string;
+}
+
+export interface GoalTaskGraphView {
+  id: string;
+  version: number;
+  status: string;
+  contentHash: string;
+}
+
+export interface GoalKernelTaskView {
+  id: string;
+  branchId?: string | null;
+  kernelName: string;
+  taskType: string;
+  status: string;
+  attempt: number;
+  maxAttempts: number;
+  outputArtifactIdsJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoalCanonBranchView {
+  id: string;
+  status: string;
+  startChapterNumber: number;
+  endChapterNumber: number;
+  canonBaselineVersion: string;
+}
+
+export interface GoalChapterSummaryView {
+  id: string;
+  chapterId: string;
+  chapterNumber: number;
+  version: number;
+  status: string;
+  authorship: string;
+  isProtected: boolean;
+  currentArtifactId: string;
+  branchId: string;
+}
+
+export interface GoalWorkflowStatusView {
+  goal: CreativeGoalView;
+  graph?: GoalTaskGraphView | null;
+  tasks: GoalKernelTaskView[];
+  branches: GoalCanonBranchView[];
+  candidates: GoalChapterSummaryView[];
+  candidateChapterCount: number;
+}
+
+export interface GoalKernelArtifactView {
+  id: string;
+  artifactType: string;
+  contentJson: string;
+  contentHash: string;
+  status: string;
+  authorship: string;
+  isProtected: boolean;
+  createdAt: string;
+}
+
+export interface GoalKnowledgeCitationView {
+  id: string;
+  knowledgeEntryId: string;
+  knowledgeVersion: number;
+  purpose: string;
+  sourceArtifactId: string;
+}
+
+export interface GoalChapterDetailView {
+  candidate: GoalChapterSummaryView;
+  draftArtifact: GoalKernelArtifactView;
+  reviewArtifacts: GoalKernelArtifactView[];
+  citations: GoalKnowledgeCitationView[];
+}
+
+export interface GoalChapterReworkRequest {
+  candidateChapterId: string;
+  candidateVersion: number;
+  sessionId: string;
+  userDescription: string;
+  selectionStart?: number | null;
+  selectionEnd?: number | null;
+  selectedText: string;
+  idempotencyKey: string;
+}
+
+export interface GoalChapterReworkResponse {
+  taskId: string;
+  intentArtifactId?: string | null;
+  status: string;
+}
+
+export interface GoalChapterManualEditRequest {
+  candidateChapterId: string;
+  candidateVersion: number;
+  content: string;
+}
+
+export interface GoalChapterManualEditResponse {
+  candidateChapterId: string;
+  candidateVersion: number;
+  artifactId: string;
+  authorship: string;
+  isProtected: boolean;
+}
+
 // ============================================================
 // Core Models
 // ============================================================
@@ -1678,6 +1832,7 @@ export interface AgentChatResponse {
   pendingConfirmation?: AgentPendingConfirmation | null;
   memoryAudit?: AgentMemoryAuditSummary | null;
   activeProjectId?: string;
+  director?: DirectorTurnView | null;
 }
 
 export interface AgentDecisionTrace {

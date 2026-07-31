@@ -54,7 +54,46 @@ public class ContentDocumentService : IContentDocumentService
             title,
             content,
             version,
+            publishCache: true,
             ct).ConfigureAwait(false);
+    }
+
+    public async Task<ContentDocument> SaveTextDeferredAsync(
+        string userId,
+        string? projectId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        string title,
+        string content,
+        CancellationToken ct = default)
+    {
+        var normalizedProjectId = NormalizeProjectId(projectId);
+        var version = await GetNextVersionAsync(userId, normalizedProjectId, sourceType, sourceId, documentRole, ct)
+            .ConfigureAwait(false);
+        return await SaveTextCoreAsync(
+            userId,
+            normalizedProjectId,
+            sourceType,
+            sourceId,
+            documentRole,
+            title,
+            content,
+            version,
+            publishCache: false,
+            ct).ConfigureAwait(false);
+    }
+
+    public async Task PublishCommittedProjectChangesAsync(
+        string userId,
+        string projectId,
+        CancellationToken ct = default)
+    {
+        var prefix = $"content:text:{userId}:{NormalizeProjectId(projectId)}:";
+        _memoryCache?.RemoveByPrefix(prefix);
+        if (_redisCache != null)
+            await _redisCache.RemoveByPrefixAsync(prefix, ct).ConfigureAwait(false);
+        await BumpContentVersionAsync(userId, projectId, ct).ConfigureAwait(false);
     }
 
     private async Task<ContentDocument> SaveTextCoreAsync(
@@ -66,6 +105,7 @@ public class ContentDocumentService : IContentDocumentService
         string title,
         string content,
         int version,
+        bool publishCache,
         CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -117,8 +157,11 @@ public class ContentDocumentService : IContentDocumentService
         }
 
         await _db.SaveChangesAsync(ct);
-        await RefreshHotTextCacheAsync(userId, document.ProjectId, sourceType, sourceId, documentRole, content, ct);
-        await BumpContentVersionAsync(userId, document.ProjectId, ct).ConfigureAwait(false);
+        if (publishCache)
+        {
+            await RefreshHotTextCacheAsync(userId, document.ProjectId, sourceType, sourceId, documentRole, content, ct);
+            await BumpContentVersionAsync(userId, document.ProjectId, ct).ConfigureAwait(false);
+        }
         return document;
     }
 
@@ -160,6 +203,7 @@ public class ContentDocumentService : IContentDocumentService
             title,
             content,
             nextVersion,
+            publishCache: true,
             ct).ConfigureAwait(false);
     }
 

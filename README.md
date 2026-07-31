@@ -172,7 +172,6 @@ tianming-agentic-novel-studio/
 │   │   ├── Models/                 # 数据模型
 │   │   └── App_Data/               # 应用数据目录
 │   │       ├── Database/           # SQLite 数据库
-│   │       ├── Qdrant/             # Qdrant 向量存储
 │   │       └── Projects/           # 项目文件
 │   └── NovelAgentWeb.Frontend/     # React + TypeScript 前端
 │       ├── src/
@@ -211,7 +210,7 @@ tianming-agentic-novel-studio/
 | ASP.NET Core | 8.0 | Web 框架 |
 | Entity Framework Core | 8.0 | ORM 数据访问 |
 | SQLite | 3.x | 关系数据库 |
-| Qdrant | 1.8.0 | 向量数据库 |
+| Qdrant | 1.18.1 | 向量数据库 |
 | JWT | - | 身份认证 |
 
 ### 前端

@@ -70,6 +70,26 @@ public interface IAgentMemoryRepository
     /// Record an auditable promotion from one memory scope into another.
     /// </summary>
     Task RecordMemoryPromotionAsync(MemoryPromotionRecord record, CancellationToken ct = default);
+
+    async Task PromoteMemoryAsync(
+        IReadOnlyList<MemoryPromotionRecord> records,
+        IReadOnlyList<string> projectConstraints,
+        CancellationToken ct = default)
+    {
+        foreach (var record in records)
+            await RecordMemoryPromotionAsync(record, ct);
+        if (records.Count > 0 && projectConstraints.Count > 0)
+        {
+            await UnionMemoryAsync(
+                records[0].UserId,
+                records[0].ProjectId,
+                new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["project.constraints"] = projectConstraints
+                },
+                ct);
+        }
+    }
 }
 
 public sealed record MemoryPromotionRecord(

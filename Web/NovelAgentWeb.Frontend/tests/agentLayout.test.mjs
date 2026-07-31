@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const agentPage = readFileSync(join(__dirname, '../src/pages/AgentPage.tsx'), 'utf8');
+const runtimeEvents = readFileSync(join(__dirname, '../src/pages/agent/runtimeEvents.ts'), 'utf8');
 const agentCss = readFileSync(join(__dirname, '../src/styles/agent.css'), 'utf8');
 const chatStore = readFileSync(join(__dirname, '../src/stores/useChatStore.ts'), 'utf8');
 
@@ -111,9 +112,15 @@ assert.match(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /function latestUserMessageIdFromTurns[\s\S]*turns\[index\]\.turnId\?\.trim\(\)/,
   'execution anchors rebuilt from chat history must use persisted turnId instead of role-createdAt-index fallback keys',
+);
+
+assert.match(
+  agentPage,
+  /latestUserMessageIdFromTurns\(detail\.messages\)/,
+  'session resume must rebuild the latest execution anchor through the stable turnId helper',
 );
 
 assert.doesNotMatch(
@@ -141,37 +148,37 @@ assert.match(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /compactExecutionEvents/,
   'expanded task cards must compact repeated heartbeat/stage events instead of rendering every duplicate production update',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /productionStageTrackItems/,
   'ProduceChapter progress must render as one ordered closed-loop stage track instead of loose event cards',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /interface ProductionStageTrackGroup/,
   'ProduceChapter progress must preserve separate chapter/production chains inside one runtime turn',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /function productionStageTrackGroups/,
   'production progress grouping must be keyed by productionRunId/chapterId/packageId instead of one global track',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /productionKey\?: string/,
   'runtime production events must retain productionKey metadata so multiple chapter chains do not get merged',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /const productionKey = productionRunId \|\| chapterId \|\| packageId \|\| '';/,
   'production progress grouping must prefer the stable production run or chapter id before package id so rebuild/commit package changes do not split one chapter chain',
 );
@@ -201,7 +208,7 @@ assert.match(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /event\.type === 'production_progress'\) return false/,
   'raw production_progress heartbeat events must be removed from the expanded generic event list',
 );
@@ -225,7 +232,7 @@ assert.doesNotMatch(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /isProductionClosureComplete/,
   'a ProduceChapter block may say the whole closed loop is complete only after the final post-commit stages are recorded',
 );
@@ -237,43 +244,43 @@ assert.match(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /terminalState\?: 'completed' \| 'failed' \| 'cancelled'/,
   'runtime events must preserve terminal run state so cancelled production runs can be shown as stopped instead of still running',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /function hasCancelledRuntimeUpdate/,
   'execution block status resolution needs an explicit cancelled-run detector',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /function isTerminalRuntimeMessage/,
   'SSE run_update events sometimes replay without structured data, so terminal Chinese runtime messages must still close the task block',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /isTerminalRuntimeMessage\(message\)/,
   'terminal runtime detection must inspect the run_update message when event data/status is missing',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /if \(hasCancelledRuntimeUpdate\(events\)\) return 'done';/,
   'cancelled runtime runs must close their execution block even when an older production stage heartbeat is still running',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /if \(hasCancelledRuntimeUpdate\(events\)\) return '后台执行已取消';/,
   'cancelled runtime runs must render a clear cancelled title instead of a generic running production title',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /block\.status = resolveExecutionBlockStatus\(block\.events,\s*status,\s*block\.status\)/,
   'runtime-event replay must use the same production closure status resolver as live SSE events',
 );
@@ -297,9 +304,9 @@ assert.match(
 );
 
 {
-  const outputLabelStart = agentPage.indexOf('function executionBlockOutputLabel');
-  const productionLabelIndex = agentPage.indexOf('block.events.some(isProductionProgressEvent)', outputLabelStart);
-  const chatReplyLabelIndex = agentPage.indexOf("block.events.some((event) => event.type === 'agent_reply')", outputLabelStart);
+  const outputLabelStart = runtimeEvents.indexOf('function executionBlockOutputLabel');
+  const productionLabelIndex = runtimeEvents.indexOf('block.events.some(isProductionProgressEvent)', outputLabelStart);
+  const chatReplyLabelIndex = runtimeEvents.indexOf("block.events.some((event) => event.type === 'agent_reply')", outputLabelStart);
   assert.ok(
     outputLabelStart >= 0 && productionLabelIndex >= 0 && chatReplyLabelIndex >= 0 && productionLabelIndex < chatReplyLabelIndex,
     'execution block output labels must prioritize production/library destinations over generic chat replies',
@@ -313,19 +320,19 @@ assert.doesNotMatch(
 );
 
 assert.doesNotMatch(
-  agentPage,
+  runtimeEvents,
   /if \(status === 'done'\) return '章节生产闭环已完成';/,
   'a terminal runtime update alone must not relabel a committed chapter as a fully completed production closed loop',
 );
 
 assert.doesNotMatch(
-  agentPage,
+  runtimeEvents,
   /event\.stage === 'chaptercommitted'/,
   'execution destinations must normalize production stage names before deciding that a chapter has entered the bookstore',
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /normalizeProductionStageKey\(event\.stage\) === 'chaptercommitted'/,
   'chapter commit destination detection must work for both ChapterCommitted and chaptercommitted stage spellings',
 );
@@ -337,7 +344,7 @@ assert.match(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /isProductionToolProgressEvent/,
   'expanded production blocks must hide generic ProduceChapter tool progress cards once the ordered stage track is available',
 );
@@ -349,7 +356,7 @@ assert.doesNotMatch(
 );
 
 assert.match(
-  agentPage,
+  runtimeEvents,
   /后台推进|会回复你|需要确认/,
   'task cards must distinguish background work from user-facing replies',
 );
@@ -398,7 +405,7 @@ const expectedProductionStages = [
 
 for (const [stage, label] of expectedProductionStages) {
   assert.match(
-    agentPage,
+    runtimeEvents,
     new RegExp(`${stage}:\\s*'${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`),
     `production progress stage ${stage} must render as a readable chat label`,
   );

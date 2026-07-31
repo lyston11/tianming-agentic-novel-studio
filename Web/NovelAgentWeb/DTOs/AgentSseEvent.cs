@@ -39,4 +39,13 @@ public static class AgentSseEventType
     public const string ConfirmationRequired = "confirmation_required";
     public const string AgentReplyDelta = "agent_reply_delta";
     public const string AgentReply = "agent_reply";
+    public const string GoalCommitted = "goal_committed";
+    public const string GoalRevised = "goal_revised";
+    public const string GoalTaskStarted = "goal_task_started";
+    public const string GoalTaskCompleted = "goal_task_completed";
+    public const string GoalTaskFailed = "goal_task_failed";
+    public const string GoalStateChanged = "goal_state_changed";
+    public const string GoalCandidateChanged = "goal_candidate_changed";
+    public const string GoalCandidateAccepted = "goal_candidate_accepted";
+    public const string GoalPrefixMerged = "goal_prefix_merged";
 }

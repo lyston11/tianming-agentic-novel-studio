@@ -68,7 +68,6 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
   const {
@@ -82,15 +81,12 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    if (settings) setForm(settings);
+    if (!settings) return;
+    const timer = window.setTimeout(() => setForm(settings), 0);
+    return () => window.clearTimeout(timer);
   }, [settings]);
 
-  // Detect unsaved changes
-  useEffect(() => {
-    if (!settings) return;
-    const changed = JSON.stringify(form) !== JSON.stringify(settings);
-    setHasUnsavedChanges(changed);
-  }, [form, settings]);
+  const hasUnsavedChanges = !!settings && JSON.stringify(form) !== JSON.stringify(settings);
 
   // Warn before leaving with unsaved changes
   useEffect(() => {
@@ -118,7 +114,6 @@ export default function SettingsPage() {
       queryClient.setQueryData(['settings'], res);
       queryClient.invalidateQueries({ queryKey: ['settings', 'llm-health'] });
       setSaveStatus({ success: true, message: '设置已保存' });
-      setHasUnsavedChanges(false);
     },
     onError: (err) => setSaveStatus({ success: false, message: `${err}` }),
   });

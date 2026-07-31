@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using TM.Services.Framework.AI.Embedding;
@@ -13,6 +14,7 @@ using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
+using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
@@ -22,6 +24,82 @@ namespace Tests.Unit.Services.Production;
 
 public class ProductionOutboxDispatcherTests
 {
+    [Fact]
+    public async Task DispatchPendingAsync_ProjectDomainEvent_ValidatesAuthoritativeEventAndCompletesOutbox()
+    {
+        await using var db = CreateDb();
+        var backgroundUsers = new RecordingBackgroundUserContext();
+        db.DomainEvents.Add(new DomainEvent
+        {
+            Id = "domain-event-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            AggregateType = "candidate_chapter",
+            AggregateId = "chapter-1",
+            AggregateVersion = 1,
+            EventType = "CandidateChapterDraftProduced",
+            CorrelationId = "goal-1",
+            IdempotencyKey = "domain-event-idempotency-1"
+        });
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = "outbox-domain-event-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            EventType = "project_domain_event",
+            AggregateType = "domain_event",
+            AggregateId = "domain-event-1",
+            IdempotencyKey = "outbox-domain-event-idempotency-1"
+        });
+        await db.SaveChangesAsync();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance,
+            backgroundUsers: backgroundUsers);
+
+        var dispatched = await dispatcher.DispatchPendingAsync();
+
+        var completed = await db.OutboxEvents.SingleAsync();
+        Assert.Equal(1, dispatched);
+        Assert.Equal("completed", completed.Status);
+        Assert.NotNull(completed.CompletedAt);
+        Assert.Equal(["user-1"], backgroundUsers.PushedUserIds);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_ProjectDomainEventWithoutAuthoritativeEvent_RemainsRetryable()
+    {
+        await using var db = CreateDb();
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = "outbox-missing-domain-event",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            EventType = "project_domain_event",
+            AggregateType = "domain_event",
+            AggregateId = "missing-domain-event",
+            IdempotencyKey = "outbox-missing-domain-event-idempotency"
+        });
+        await db.SaveChangesAsync();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance);
+
+        var dispatched = await dispatcher.DispatchPendingAsync();
+
+        var failed = await db.OutboxEvents.SingleAsync();
+        Assert.Equal(0, dispatched);
+        Assert.Equal("retryable_failed", failed.Status);
+        Assert.Contains("missing-domain-event", failed.LastError);
+    }
+
     [Fact]
     public async Task DispatchPendingAsync_IndexChapterContent_UpsertsVectorsAndMarksOutboxCompleted()
     {
@@ -315,6 +393,213 @@ public class ProductionOutboxDispatcherTests
         Assert.Equal("processing", leased.Status);
         Assert.Equal("worker-a", leased.ProcessingOwner);
         Assert.Null(processor.ProcessedEvent);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenHandlerOutlivesLease_RenewsOwnedProcessingLease()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbRoot = new InMemoryDatabaseRoot();
+        await using var db = CreateDb(dbName, dbRoot);
+        await using var observerDb = CreateDb(dbName, dbRoot);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-long-handler");
+        var processor = new BlockingChapterFactOutboxProcessor();
+        var leaseTimeout = TimeSpan.FromMilliseconds(180);
+        var logger = new RecordingLogger<ProductionOutboxDispatcher>();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            logger,
+            chapterFactProcessor: processor,
+            processingLeaseTimeout: leaseTimeout);
+
+        var dispatchTask = dispatcher.DispatchPendingAsync();
+        await processor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        observerDb.ChangeTracker.Clear();
+        var initiallyClaimed = await observerDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        var initialLeaseExpiry = Assert.IsType<DateTime>(initiallyClaimed.ProcessingLeaseExpiresAt);
+
+        try
+        {
+            await WaitUntilAsync(async () =>
+            {
+                observerDb.ChangeTracker.Clear();
+                var current = await observerDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+                return current.Status == "processing" &&
+                       current.ProcessingOwner == initiallyClaimed.ProcessingOwner &&
+                       current.ProcessingLeaseExpiresAt > initialLeaseExpiry;
+            });
+        }
+        catch (TaskCanceledException)
+        {
+            processor.Release();
+            await dispatchTask;
+            Assert.True(false, string.Join(Environment.NewLine, logger.Messages));
+        }
+
+        processor.Release();
+        var dispatched = await dispatchTask;
+
+        Assert.Equal(1, dispatched);
+        observerDb.ChangeTracker.Clear();
+        Assert.Equal("completed", (await observerDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id)).Status);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenOwnershipChangesBeforeCompletion_DoesNotOverwriteNewOwner()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbRoot = new InMemoryDatabaseRoot();
+        await using var db = CreateDb(dbName, dbRoot);
+        await using var takeoverDb = CreateDb(dbName, dbRoot);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-completion-cas");
+        var processor = new BlockingChapterFactOutboxProcessor();
+        var dispatcher = CreateDispatcher(db, processor);
+
+        var dispatchTask = dispatcher.DispatchPendingAsync();
+        await processor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TransferLeaseAsync(takeoverDb, outbox.Id, "worker-new");
+        processor.Release();
+
+        Assert.Equal(0, await dispatchTask);
+        takeoverDb.ChangeTracker.Clear();
+        var current = await takeoverDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("processing", current.Status);
+        Assert.Equal("worker-new", current.ProcessingOwner);
+        Assert.Null(current.CompletedAt);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenOwnershipChangesBeforeRetryableFailure_DoesNotOverwriteNewOwner()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbRoot = new InMemoryDatabaseRoot();
+        await using var db = CreateDb(dbName, dbRoot);
+        await using var takeoverDb = CreateDb(dbName, dbRoot);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-failure-cas");
+        var processor = new BlockingChapterFactOutboxProcessor(new InvalidOperationException("handler failed"));
+        var dispatcher = CreateDispatcher(db, processor);
+
+        var dispatchTask = dispatcher.DispatchPendingAsync();
+        await processor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TransferLeaseAsync(takeoverDb, outbox.Id, "worker-new");
+        processor.Release();
+
+        Assert.Equal(0, await dispatchTask);
+        takeoverDb.ChangeTracker.Clear();
+        var current = await takeoverDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("processing", current.Status);
+        Assert.Equal("worker-new", current.ProcessingOwner);
+        Assert.Equal(0, current.Attempts);
+        Assert.Null(current.LastError);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenOwnershipChangesBeforeTerminalFailure_DoesNotOverwriteNewOwner()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbRoot = new InMemoryDatabaseRoot();
+        await using var db = CreateDb(dbName, dbRoot);
+        await using var takeoverDb = CreateDb(dbName, dbRoot);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-terminal-cas");
+        outbox.Attempts = 4;
+        await db.SaveChangesAsync();
+        var processor = new BlockingChapterFactOutboxProcessor(new InvalidOperationException("terminal failure"));
+        var dispatcher = CreateDispatcher(db, processor);
+
+        var dispatchTask = dispatcher.DispatchPendingAsync();
+        await processor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TransferLeaseAsync(takeoverDb, outbox.Id, "worker-new");
+        processor.Release();
+
+        Assert.Equal(0, await dispatchTask);
+        takeoverDb.ChangeTracker.Clear();
+        var current = await takeoverDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("processing", current.Status);
+        Assert.Equal("worker-new", current.ProcessingOwner);
+        Assert.Equal(4, current.Attempts);
+        Assert.Null(current.LastError);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenCancelledAfterOwnershipChanges_DoesNotFailNewOwner()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbRoot = new InMemoryDatabaseRoot();
+        await using var db = CreateDb(dbName, dbRoot);
+        await using var takeoverDb = CreateDb(dbName, dbRoot);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-cancel-cas");
+        var processor = new BlockingChapterFactOutboxProcessor(observeCancellation: false);
+        var dispatcher = CreateDispatcher(db, processor);
+        using var cancellation = new CancellationTokenSource();
+
+        var dispatchTask = dispatcher.DispatchPendingAsync(cancellationToken: cancellation.Token);
+        await processor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await TransferLeaseAsync(takeoverDb, outbox.Id, "worker-new");
+        cancellation.Cancel();
+        processor.Release();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => dispatchTask);
+        takeoverDb.ChangeTracker.Clear();
+        var current = await takeoverDb.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("processing", current.Status);
+        Assert.Equal("worker-new", current.ProcessingOwner);
+        Assert.Equal(0, current.Attempts);
+        Assert.Null(current.LastError);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenRetryBudgetIsExhausted_MarksOwnedOutboxFailed()
+    {
+        await using var db = CreateDb();
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-terminal-failure");
+        outbox.Attempts = 4;
+        await db.SaveChangesAsync();
+        var processor = new RecordingChapterFactOutboxProcessor
+        {
+            Error = new InvalidOperationException("permanent handler failure")
+        };
+        var dispatcher = CreateDispatcher(db, processor);
+
+        Assert.Equal(0, await dispatcher.DispatchPendingAsync());
+
+        var failed = await db.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal(5, failed.Attempts);
+        Assert.Null(failed.NextAttemptAt);
+        Assert.Null(failed.ProcessingOwner);
+        Assert.Null(failed.ProcessingLeaseExpiresAt);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenRequestedBatchIsLarge_ClaimsOnlySmallSerialBatch()
+    {
+        await using var db = CreateDb();
+        await SeedProjectAndChapterAsync(db);
+        for (var index = 0; index < 12; index++)
+        {
+            db.OutboxEvents.Add(new OutboxEvent
+            {
+                Id = $"outbox-batch-{index:D2}",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                EventType = "extract_chapter_continuity_facts",
+                AggregateType = "chapter",
+                AggregateId = "project-1-chapter-001",
+                IdempotencyKey = $"outbox-batch-idempotency-{index:D2}",
+                CreatedAt = DateTime.UtcNow.AddSeconds(index)
+            });
+        }
+        await db.SaveChangesAsync();
+        var dispatcher = CreateDispatcher(db, new RecordingChapterFactOutboxProcessor());
+
+        var dispatched = await dispatcher.DispatchPendingAsync(100);
+
+        Assert.Equal(5, dispatched);
+        Assert.Equal(5, await db.OutboxEvents.CountAsync(e => e.Status == "completed"));
+        Assert.Equal(7, await db.OutboxEvents.CountAsync(e => e.Status == "pending"));
     }
 
     [Fact]
@@ -927,6 +1212,61 @@ public class ProductionOutboxDispatcherTests
         return new NovelAgentDbContext(options);
     }
 
+    private static ProductionOutboxDispatcher CreateDispatcher(
+        NovelAgentDbContext db,
+        IChapterFactOutboxProcessor processor) =>
+        new(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance,
+            chapterFactProcessor: processor);
+
+    private static async Task<OutboxEvent> SeedChapterFactOutboxAsync(
+        NovelAgentDbContext db,
+        string eventId)
+    {
+        await SeedProjectAndChapterAsync(db);
+        var outbox = new OutboxEvent
+        {
+            Id = eventId,
+            UserId = "user-1",
+            ProjectId = "project-1",
+            RuntimeRunId = "run-1",
+            EventType = "extract_chapter_continuity_facts",
+            AggregateType = "chapter",
+            AggregateId = "project-1-chapter-001",
+            IdempotencyKey = $"{eventId}-idempotency"
+        };
+        db.OutboxEvents.Add(outbox);
+        await db.SaveChangesAsync();
+        return outbox;
+    }
+
+    private static async Task TransferLeaseAsync(
+        NovelAgentDbContext db,
+        string eventId,
+        string newOwner)
+    {
+        db.ChangeTracker.Clear();
+        var outbox = await db.OutboxEvents.SingleAsync(e => e.Id == eventId);
+        outbox.Status = "processing";
+        outbox.ProcessingOwner = newOwner;
+        outbox.ProcessingLeaseExpiresAt = DateTime.UtcNow.AddMinutes(15);
+        outbox.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!await condition())
+        {
+            await Task.Delay(20, timeout.Token);
+        }
+    }
+
     private static async Task<(ChapterVersion Version, OutboxEvent Outbox)> SeedChapterVersionOutboxAsync(
         NovelAgentDbContext db)
     {
@@ -1028,6 +1368,28 @@ public class ProductionOutboxDispatcherTests
         }
     }
 
+    private sealed class RecordingBackgroundUserContext : IBackgroundUserContext
+    {
+        public List<string> PushedUserIds { get; } = [];
+        public BackgroundUserSnapshot? Current { get; private set; }
+
+        public IDisposable Push(
+            string userId,
+            string username = "background-agent",
+            string email = "",
+            string role = "author")
+        {
+            PushedUserIds.Add(userId);
+            Current = new BackgroundUserSnapshot(userId, username, email, role);
+            return new Scope(() => Current = null);
+        }
+
+        private sealed class Scope(Action dispose) : IDisposable
+        {
+            public void Dispose() => dispose();
+        }
+    }
+
     private sealed class RecordingChapterFactOutboxProcessor : IChapterFactOutboxProcessor
     {
         public Exception? Error { get; init; }
@@ -1040,6 +1402,45 @@ public class ProductionOutboxDispatcherTests
 
             ProcessedEvent = evt;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingChapterFactOutboxProcessor(
+        Exception? errorAfterRelease = null,
+        bool observeCancellation = true)
+        : IChapterFactOutboxProcessor
+    {
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Started => _started;
+
+        public async Task ProcessAsync(OutboxEvent evt, CancellationToken ct = default)
+        {
+            _started.TrySetResult();
+            await _release.Task.WaitAsync(observeCancellation ? ct : CancellationToken.None);
+            if (errorAfterRelease != null)
+                throw errorAfterRelease;
+        }
+
+        public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add($"{formatter(state, exception)} {exception}");
         }
     }
 

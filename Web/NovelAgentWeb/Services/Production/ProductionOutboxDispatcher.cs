@@ -1,11 +1,14 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Npgsql;
 using TM.Framework.Common.Helpers;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
+using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
 
@@ -13,7 +16,10 @@ namespace TM.Web.NovelAgentWeb.Services.Production;
 
 public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
 {
-    private static readonly TimeSpan ProcessingLeaseTimeout = TimeSpan.FromMinutes(15);
+    private const int MaxSerialClaimBatchSize = 5;
+    private const int MaxAttempts = 5;
+    private static readonly TimeSpan DefaultProcessingLeaseTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan MinimumLeaseRenewalInterval = TimeSpan.FromMilliseconds(20);
 
     private readonly NovelAgentDbContext _db;
     private readonly IVectorStore _vectorStore;
@@ -24,6 +30,9 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
     private readonly IChapterFactOutboxProcessor? _chapterFactProcessor;
     private readonly IChapterCommitPostCommitFinalizer? _chapterCommitFinalizer;
     private readonly IAgentRuntimeEventService? _runtimeEvents;
+    private readonly IBackgroundUserContext? _backgroundUsers;
+    private readonly IBackgroundClaimConnectionFactory? _claimConnections;
+    private readonly TimeSpan _processingLeaseTimeout;
     private readonly string _processingOwner = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public ProductionOutboxDispatcher(
@@ -35,7 +44,10 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         IProductionEventWriter? events = null,
         IChapterFactOutboxProcessor? chapterFactProcessor = null,
         IChapterCommitPostCommitFinalizer? chapterCommitFinalizer = null,
-        IAgentRuntimeEventService? runtimeEvents = null)
+        IAgentRuntimeEventService? runtimeEvents = null,
+        IBackgroundUserContext? backgroundUsers = null,
+        IBackgroundClaimConnectionFactory? claimConnections = null,
+        TimeSpan? processingLeaseTimeout = null)
     {
         _db = db;
         _vectorStore = vectorStore;
@@ -46,80 +58,201 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         _chapterFactProcessor = chapterFactProcessor;
         _chapterCommitFinalizer = chapterCommitFinalizer;
         _runtimeEvents = runtimeEvents;
+        _backgroundUsers = backgroundUsers;
+        _claimConnections = claimConnections;
+        _processingLeaseTimeout = processingLeaseTimeout ?? DefaultProcessingLeaseTimeout;
+        if (_processingLeaseTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(processingLeaseTimeout));
     }
 
     public async Task<int> DispatchPendingAsync(
         int maxItems = 20,
         CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
-        var staleProcessingCutoff = now.Subtract(ProcessingLeaseTimeout);
-        var candidateIds = await _db.OutboxEvents
-            .AsNoTracking()
-            .Where(e =>
-                e.Status == "pending" ||
-                (e.Status == "retryable_failed" &&
-                 (e.NextAttemptAt == null || e.NextAttemptAt <= now)) ||
-                (e.Status == "processing" &&
-                 ((e.ProcessingLeaseExpiresAt == null && e.UpdatedAt <= staleProcessingCutoff) ||
-                  e.ProcessingLeaseExpiresAt <= now)))
-            .OrderBy(e => e.CreatedAt)
-            .Take(Math.Clamp(maxItems, 1, 100))
-            .Select(e => e.Id)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        var batchSize = Math.Clamp(maxItems, 1, MaxSerialClaimBatchSize);
+        var usePostgresClaims = _db.Database.IsRelational() &&
+            _db.Database.GetDbConnection() is NpgsqlConnection;
+        IReadOnlyList<string> candidateIds = [];
+        if (!usePostgresClaims)
+        {
+            var now = DateTime.UtcNow;
+            var staleProcessingCutoff = now.Subtract(_processingLeaseTimeout);
+            candidateIds = await _db.OutboxEvents
+                .AsNoTracking()
+                .Where(e =>
+                    e.Status == "pending" ||
+                    (e.Status == "retryable_failed" &&
+                     (e.NextAttemptAt == null || e.NextAttemptAt <= now)) ||
+                    (e.Status == "processing" &&
+                     ((e.ProcessingLeaseExpiresAt == null && e.UpdatedAt <= staleProcessingCutoff) ||
+                      e.ProcessingLeaseExpiresAt <= now)))
+                .OrderBy(e => e.CreatedAt)
+                .Take(batchSize)
+                .Select(e => e.Id)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         var dispatched = 0;
-        foreach (var eventId in candidateIds)
+        for (var itemIndex = 0; itemIndex < batchSize; itemIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var evt = await TryClaimAsync(eventId, cancellationToken).ConfigureAwait(false);
-            if (evt == null)
-                continue;
-
-            try
+            ClaimedOutboxEvent? workItem;
+            if (usePostgresClaims)
             {
-                await AppendOutboxProductionEventAsync(evt, "outbox_processing", "running", "后台 outbox 开始处理。", null, cancellationToken)
+                workItem = (await ClaimPostgresAsync(1, cancellationToken).ConfigureAwait(false))
+                    .SingleOrDefault();
+                if (workItem == null)
+                    break;
+            }
+            else
+            {
+                if (itemIndex >= candidateIds.Count)
+                    break;
+                workItem = new ClaimedOutboxEvent(candidateIds[itemIndex], null);
+            }
+
+            IDisposable? backgroundUserScope = null;
+            OutboxEvent? evt;
+            if (workItem.UserId != null)
+            {
+                if (_backgroundUsers == null)
+                    throw new InvalidOperationException("PostgreSQL Outbox 后台处理必须提供用户作用域。");
+                backgroundUserScope = _backgroundUsers.Push(workItem.UserId);
+                _db.ChangeTracker.Clear();
+                evt = await _db.OutboxEvents.SingleOrDefaultAsync(item =>
+                    item.Id == workItem.EventId &&
+                    item.UserId == workItem.UserId &&
+                    item.Status == "processing" &&
+                    item.ProcessingOwner == _processingOwner,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                evt = await TryClaimAsync(workItem.EventId, cancellationToken).ConfigureAwait(false);
+                if (evt != null)
+                    backgroundUserScope = _backgroundUsers?.Push(evt.UserId);
+            }
+            if (evt == null)
+            {
+                backgroundUserScope?.Dispose();
+                continue;
+            }
+
+            using (backgroundUserScope)
+            {
+                using var heartbeatStop = new CancellationTokenSource();
+                var heartbeatTask = RenewProcessingLeaseUntilStoppedAsync(
+                    evt.Id,
+                    evt.UserId,
+                    heartbeatStop.Token);
+                try
+                {
+                    await AppendOutboxProductionEventAsync(evt, "outbox_processing", "running", "后台 outbox 开始处理。", null, cancellationToken)
+                        .ConfigureAwait(false);
+                    await DispatchOneAsync(evt, cancellationToken).ConfigureAwait(false);
+                    await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    await StopLeaseRenewalAsync(heartbeatStop, heartbeatTask).ConfigureAwait(false);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    await StopLeaseRenewalAsync(heartbeatStop, heartbeatTask).ConfigureAwait(false);
+                    await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                    var attempts = checked(evt.Attempts + 1);
+                    var status = attempts >= MaxAttempts ? "failed" : "retryable_failed";
+                    DateTime? nextAttemptAt = status == "retryable_failed"
+                        ? DateTime.UtcNow.Add(ComputeRetryDelay(attempts))
+                        : null;
+                    var transitioned = await TryTransitionOwnedAsync(
+                            evt,
+                            status,
+                            attempts,
+                            ex.Message,
+                            nextAttemptAt,
+                            completedAt: null,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (transitioned)
+                    {
+                        var message = status == "failed"
+                            ? "后台 outbox 重试耗尽，已终止处理。"
+                            : "后台 outbox 处理失败，已排队重试。";
+                        await AppendOutboxProductionEventAsync(evt, "outbox_failed", status, message, ex.Message, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    _logger.LogWarning(
+                        ex,
+                        transitioned
+                            ? "Production outbox event {EventId} failed at attempt {Attempt} with status {Status}"
+                            : "Production outbox event {EventId} lost lease before failure could be recorded",
+                        evt.Id,
+                        attempts,
+                        status);
+                    continue;
+                }
+
+                await StopLeaseRenewalAsync(heartbeatStop, heartbeatTask).ConfigureAwait(false);
+                var completed = await TryTransitionOwnedAsync(
+                        evt,
+                        "completed",
+                        evt.Attempts,
+                        lastError: null,
+                        nextAttemptAt: null,
+                        completedAt: DateTime.UtcNow,
+                        cancellationToken)
                     .ConfigureAwait(false);
-                await DispatchOneAsync(evt, cancellationToken).ConfigureAwait(false);
-                evt.Status = "completed";
-                evt.CompletedAt = DateTime.UtcNow;
-                evt.LastError = null;
-                evt.NextAttemptAt = null;
-                evt.ProcessingOwner = null;
-                evt.ProcessingLeaseExpiresAt = null;
-                evt.UpdatedAt = DateTime.UtcNow;
+                if (!completed)
+                {
+                    _logger.LogWarning(
+                        "Production outbox event {EventId} lost lease before completion could be recorded",
+                        evt.Id);
+                    continue;
+                }
+
                 await AppendOutboxProductionEventAsync(evt, "outbox_completed", "completed", "后台 outbox 处理完成。", null, cancellationToken)
                     .ConfigureAwait(false);
                 await TryAppendRunCompletedAsync(evt, cancellationToken)
                     .ConfigureAwait(false);
                 dispatched++;
             }
-            catch (Exception ex)
-            {
-                evt.Attempts += 1;
-                evt.Status = "retryable_failed";
-                evt.LastError = ex.Message;
-                evt.NextAttemptAt = DateTime.UtcNow.Add(ComputeRetryDelay(evt.Attempts));
-                evt.ProcessingOwner = null;
-                evt.ProcessingLeaseExpiresAt = null;
-                evt.UpdatedAt = DateTime.UtcNow;
-                await AppendOutboxProductionEventAsync(evt, "outbox_failed", "retryable_failed", "后台 outbox 处理失败，已排队重试。", ex.Message, cancellationToken)
-                    .ConfigureAwait(false);
-                _logger.LogWarning(ex, "Production outbox event {EventId} failed at attempt {Attempt}", evt.Id, evt.Attempts);
-            }
-
-            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return dispatched;
     }
 
+    private async Task<IReadOnlyList<ClaimedOutboxEvent>> ClaimPostgresAsync(
+        int maxItems,
+        CancellationToken cancellationToken)
+    {
+        if (_claimConnections == null)
+            throw new InvalidOperationException("PostgreSQL Outbox claim 必须使用专用 worker 数据库连接。");
+        await using var connection = await _claimConnections.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT event_id, user_id FROM claim_outbox_events(@owner, @lease_seconds, @max_items)";
+        command.Parameters.Add(new NpgsqlParameter("owner", _processingOwner));
+        command.Parameters.Add(new NpgsqlParameter("lease_seconds", checked((int)_processingLeaseTimeout.TotalSeconds)));
+        command.Parameters.Add(new NpgsqlParameter("max_items", maxItems));
+        var claims = new List<ClaimedOutboxEvent>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            claims.Add(new ClaimedOutboxEvent(
+                reader.GetString(reader.GetOrdinal("event_id")),
+                reader.GetString(reader.GetOrdinal("user_id"))));
+        }
+        return claims;
+    }
+
     private async Task<OutboxEvent?> TryClaimAsync(string eventId, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var leaseExpiresAt = now.Add(ProcessingLeaseTimeout);
-        var staleProcessingCutoff = now.Subtract(ProcessingLeaseTimeout);
+        var leaseExpiresAt = now.Add(_processingLeaseTimeout);
+        var staleProcessingCutoff = now.Subtract(_processingLeaseTimeout);
 
         if (_db.Database.IsRelational())
         {
@@ -175,8 +308,170 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
             : evt.ProcessingLeaseExpiresAt <= now;
     }
 
+    private async Task RenewProcessingLeaseUntilStoppedAsync(
+        string eventId,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var renewalInterval = TimeSpan.FromTicks(Math.Max(
+            MinimumLeaseRenewalInterval.Ticks,
+            _processingLeaseTimeout.Ticks / 3));
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(renewalInterval, cancellationToken).ConfigureAwait(false);
+                var renewed = await TryRenewProcessingLeaseAsync(eventId, userId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!renewed)
+                {
+                    _logger.LogWarning(
+                        "Production outbox event {EventId} lease renewal stopped because ownership changed",
+                        eventId);
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Production outbox event {EventId} lease renewal failed", eventId);
+        }
+    }
+
+    private async Task<bool> TryRenewProcessingLeaseAsync(
+        string eventId,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var options = _db.GetService<IDbContextOptions>() as DbContextOptions<NovelAgentDbContext>
+            ?? throw new InvalidOperationException("Outbox lease renewal requires configured NovelAgent DbContext options.");
+        await using var leaseDb = new NovelAgentDbContext(options);
+        var now = DateTime.UtcNow;
+        var leaseExpiresAt = now.Add(_processingLeaseTimeout);
+        if (leaseDb.Database.IsRelational())
+        {
+            return await leaseDb.OutboxEvents
+                    .Where(evt =>
+                        evt.Id == eventId &&
+                        evt.UserId == userId &&
+                        evt.Status == "processing" &&
+                        evt.ProcessingOwner == _processingOwner)
+                    .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(evt => evt.ProcessingLeaseExpiresAt, leaseExpiresAt)
+                            .SetProperty(evt => evt.UpdatedAt, now),
+                        cancellationToken)
+                    .ConfigureAwait(false) == 1;
+        }
+
+        var outbox = await leaseDb.OutboxEvents.SingleOrDefaultAsync(
+                evt => evt.Id == eventId && evt.UserId == userId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (outbox == null ||
+            outbox.Status != "processing" ||
+            !string.Equals(outbox.ProcessingOwner, _processingOwner, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        outbox.ProcessingLeaseExpiresAt = leaseExpiresAt;
+        outbox.UpdatedAt = now;
+        await leaseDb.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> TryTransitionOwnedAsync(
+        OutboxEvent evt,
+        string status,
+        int attempts,
+        string? lastError,
+        DateTime? nextAttemptAt,
+        DateTime? completedAt,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        if (_db.Database.IsRelational())
+        {
+            var affected = await _db.OutboxEvents
+                .Where(current =>
+                    current.Id == evt.Id &&
+                    current.UserId == evt.UserId &&
+                    current.Status == "processing" &&
+                    current.ProcessingOwner == _processingOwner)
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(current => current.Status, status)
+                        .SetProperty(current => current.Attempts, attempts)
+                        .SetProperty(current => current.LastError, lastError)
+                        .SetProperty(current => current.NextAttemptAt, nextAttemptAt)
+                        .SetProperty(current => current.CompletedAt, completedAt)
+                        .SetProperty(current => current.ProcessingOwner, (string?)null)
+                        .SetProperty(current => current.ProcessingLeaseExpiresAt, (DateTime?)null)
+                        .SetProperty(current => current.UpdatedAt, now),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (affected != 1)
+                return false;
+
+            _db.Entry(evt).State = EntityState.Detached;
+        }
+        else
+        {
+            await _db.Entry(evt).ReloadAsync(cancellationToken).ConfigureAwait(false);
+            if (evt.Status != "processing" ||
+                !string.Equals(evt.ProcessingOwner, _processingOwner, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            ApplyTransition(evt, status, attempts, lastError, nextAttemptAt, completedAt, now);
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        ApplyTransition(evt, status, attempts, lastError, nextAttemptAt, completedAt, now);
+        return true;
+    }
+
+    private static void ApplyTransition(
+        OutboxEvent evt,
+        string status,
+        int attempts,
+        string? lastError,
+        DateTime? nextAttemptAt,
+        DateTime? completedAt,
+        DateTime updatedAt)
+    {
+        evt.Status = status;
+        evt.Attempts = attempts;
+        evt.LastError = lastError;
+        evt.NextAttemptAt = nextAttemptAt;
+        evt.CompletedAt = completedAt;
+        evt.ProcessingOwner = null;
+        evt.ProcessingLeaseExpiresAt = null;
+        evt.UpdatedAt = updatedAt;
+    }
+
+    private static async Task StopLeaseRenewalAsync(
+        CancellationTokenSource heartbeatStop,
+        Task heartbeatTask)
+    {
+        heartbeatStop.Cancel();
+        await heartbeatTask.ConfigureAwait(false);
+    }
+
+    private sealed record ClaimedOutboxEvent(string EventId, string? UserId);
+
     private async Task DispatchOneAsync(OutboxEvent evt, CancellationToken ct)
     {
+        if (evt.EventType == "project_domain_event" && evt.AggregateType == "domain_event")
+        {
+            await ValidateProjectDomainEventAsync(evt, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (evt.EventType == "index_chapter_content" && evt.AggregateType == "chapter_version")
         {
             await IndexChapterVersionAsync(evt, ct).ConfigureAwait(false);
@@ -250,6 +545,18 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         }
 
         throw new NotSupportedException($"Unsupported production outbox event {evt.EventType}/{evt.AggregateType}");
+    }
+
+    private async Task ValidateProjectDomainEventAsync(OutboxEvent evt, CancellationToken ct)
+    {
+        var exists = await _db.DomainEvents.AsNoTracking().AnyAsync(domainEvent =>
+                domainEvent.Id == evt.AggregateId &&
+                domainEvent.UserId == evt.UserId &&
+                domainEvent.ProjectId == evt.ProjectId,
+            ct).ConfigureAwait(false);
+        if (!exists)
+            throw new KeyNotFoundException(
+                $"Domain event {evt.AggregateId} was not found in the authoritative user/project scope.");
     }
 
     private async Task DeleteChapterContentVectorsAsync(OutboxEvent evt, CancellationToken ct)

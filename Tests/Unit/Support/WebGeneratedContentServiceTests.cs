@@ -1,12 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Support;
+using TM.Services.Modules.ProjectData.Interfaces;
 using Xunit;
 
 namespace Tests.Unit.Support;
@@ -825,6 +827,98 @@ public class WebGeneratedContentServiceTests
             Assert.Equal("pending", evt.Status);
         });
         Assert.Equal(versions.Select(v => v.Id).ToArray(), outboxEvents.Select(e => e.AggregateId).ToArray());
+    }
+
+    [Fact]
+    public async Task SaveChapterAsync_RollsBackChapterDocumentAndVersionWhenOutboxInsertFails()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options => options.UseSqlite(connection));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            db.Users.Add(new User
+            {
+                Id = "user-1", Username = "author", Email = "author@example.com", PasswordHash = "hash", Role = "author"
+            });
+            db.NovelProjects.Add(new NovelProject
+            {
+                Id = "project-1", UserId = "user-1", Title = "测试项目", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlRawAsync(
+                "CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox_events BEGIN SELECT RAISE(ABORT, 'forced outbox failure'); END;");
+        }
+
+        var service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            service.SaveChapterAsync("chapter-001", "第一章：事务测试\n正文不应部分提交。"));
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        Assert.Empty(await verifyDb.Chapters.ToListAsync());
+        Assert.Empty(await verifyDb.ContentDocuments.ToListAsync());
+        Assert.Empty(await verifyDb.ChapterVersions.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AtomicCommit_WritesChapterVersionAndPostCommitOutboxesTogether()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var services = new ServiceCollection();
+        services.AddDbContext<NovelAgentDbContext>(options => options.UseSqlite(connection));
+        services.AddScoped<IContentDocumentService, ContentDocumentService>();
+        services.AddScoped<IProductionTruthStore, ProductionTruthStore>();
+        services.AddSingleton<ICurrentUserService>(new FixedCurrentUserService("user-1"));
+        await using var provider = services.BuildServiceProvider();
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            db.Users.Add(new User { Id = "user-1", Username = "author", Email = "author@example.com", PasswordHash = "hash", Role = "author" });
+            db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "测试项目" });
+            await db.SaveChangesAsync();
+        }
+
+        IAtomicGeneratedChapterCommitService service = new WebGeneratedContentService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ICurrentUserService>(),
+            "project-1");
+        await service.SaveChapterAtomicallyAsync(
+            "chapter-001",
+            "第一章：黑雨\n正文。",
+            "第一章：黑雨",
+            new[]
+            {
+                new GeneratedChapterOutboxWrite("run-1", "extract_chapter_continuity_facts", "chapter", "chapter-001", "{}"),
+                new GeneratedChapterOutboxWrite("run-1", "finalize_chapter_commit_metadata", "chapter", "chapter-001", "{}"),
+            });
+
+        await using var verifyScope = provider.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
+        Assert.Single(await verifyDb.ChapterVersions.ToListAsync());
+        var outboxes = await verifyDb.OutboxEvents.OrderBy(evt => evt.EventType).ToListAsync();
+        Assert.Equal(3, outboxes.Count);
+        Assert.Contains(outboxes, evt => evt.EventType == "index_chapter_content");
+        Assert.Contains(outboxes, evt => evt.EventType == "extract_chapter_continuity_facts");
+        Assert.Contains(outboxes, evt => evt.EventType == "finalize_chapter_commit_metadata");
+        var metadataOutbox = outboxes.Single(evt => evt.EventType == "finalize_chapter_commit_metadata");
+        using var payload = JsonDocument.Parse(metadataOutbox.PayloadJson);
+        Assert.Equal("user-1", payload.RootElement.GetProperty("userId").GetString());
+        Assert.Equal("project-1", payload.RootElement.GetProperty("projectId").GetString());
     }
 
     private sealed class FixedCurrentUserService : ICurrentUserService

@@ -51,7 +51,7 @@ public sealed class RedisAgentRuntimeEventFanout : IAgentRuntimeEventFanout
             var scopeKey = BuildScopeKey(userId, sessionId);
             evt.SessionId = sessionId;
             var payload = JsonSerializer.Serialize(
-                new AgentRuntimeEventFanoutEnvelope(AgentRuntimeEventFanoutInstance.Id, evt),
+                new AgentRuntimeEventFanoutEnvelope(AgentRuntimeEventFanoutInstance.Id, userId, evt),
                 _jsonOptions);
             var database = _redis.GetDatabase();
             var replayKey = BuildReplayKey(scopeKey);
@@ -237,11 +237,15 @@ public sealed class RedisAgentRuntimeEventFanoutBridge : BackgroundService
                 {
                     try
                     {
-                        var evt = DeserializeEvent(value);
-                        if (evt == null || string.IsNullOrWhiteSpace(evt.SessionId))
+                        var scopedEvent = DeserializeScopedEvent(value);
+                        if (scopedEvent == null || string.IsNullOrWhiteSpace(scopedEvent.Event.SessionId))
                             return;
 
-                        await _events.SendAsync(evt.SessionId, evt, stoppingToken).ConfigureAwait(false);
+                        await _events.SendAsync(
+                            scopedEvent.UserId,
+                            scopedEvent.Event.SessionId,
+                            scopedEvent.Event,
+                            stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -283,22 +287,19 @@ public sealed class RedisAgentRuntimeEventFanoutBridge : BackgroundService
         }
     }
 
-    private AgentSseEvent? DeserializeEvent(RedisValue value)
+    private AgentRuntimeEventFanoutEnvelope? DeserializeScopedEvent(RedisValue value)
     {
         var payload = value.ToString();
         if (string.IsNullOrWhiteSpace(payload))
             return null;
 
         var envelope = JsonSerializer.Deserialize<AgentRuntimeEventFanoutEnvelope>(payload, _jsonOptions);
-        if (envelope?.Event != null)
-        {
-            return envelope.OriginId == AgentRuntimeEventFanoutInstance.Id
-                ? null
-                : envelope.Event;
-        }
-
-        return JsonSerializer.Deserialize<AgentSseEvent>(payload, _jsonOptions);
+        if (envelope?.Event == null ||
+            envelope.OriginId == AgentRuntimeEventFanoutInstance.Id ||
+            string.IsNullOrWhiteSpace(envelope.UserId))
+            return null;
+        return envelope;
     }
 }
 
-internal sealed record AgentRuntimeEventFanoutEnvelope(string OriginId, AgentSseEvent Event);
+internal sealed record AgentRuntimeEventFanoutEnvelope(string OriginId, string UserId, AgentSseEvent Event);

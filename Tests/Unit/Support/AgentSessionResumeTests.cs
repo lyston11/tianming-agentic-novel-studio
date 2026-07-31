@@ -1,14 +1,13 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
-using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
+using AgentSession = TM.Web.NovelAgentWeb.Support.AgentSession;
 
 namespace Tests.Unit.Support;
 
@@ -68,7 +67,7 @@ public class AgentSessionResumeTests
     }
 
     [Fact]
-    public async Task ResumeAsync_ReturnsToolCacheSnapshotAndPendingConfirmation()
+    public async Task ResumeAsync_ReturnsReadOnlyLegacyAuditWithoutRestoringExecutionState()
     {
         await using var db = CreateDb();
         var manager = new AgentSessionManager(db, FixedUser("user-1"));
@@ -108,51 +107,34 @@ public class AgentSessionResumeTests
         };
         await manager.SaveSessionAsync(session);
 
-        var toolCache = new Mock<IToolSearchCacheService>();
-        toolCache
-            .Setup(x => x.GetAsync(
-                It.Is<AgentSession>(s => s.SessionId == "session-1"),
-                "Planning",
-                It.Is<string>(signature => !string.IsNullOrWhiteSpace(signature)),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ToolSearchCacheLookup(
-                new List<ToolSchema>
-                {
-                    new()
-                    {
-                        Name = "PlanChapter",
-                        Description = "规划章节",
-                        Risk = "Medium",
-                        Parameters = new Dictionary<string, string> { ["creativeBrief"] = "string" }
-                    }
-                },
-                "sqlite-snapshot"));
+        db.AgentToolExecutions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution
+        {
+            Id = "tool-execution-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SessionId = "session-1",
+            ToolName = "PlanChapter",
+            Status = "succeeded",
+            Phase = "Planning",
+            ResultPhase = "chapter_candidates",
+            ResultMessage = "章节候选已生成",
+            StartedAt = DateTime.UtcNow.AddSeconds(-2),
+            CompletedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
 
-        var toolLedger = new Mock<IAgentToolExecutionLedger>();
-        toolLedger
-            .Setup(x => x.GetRecentAsync("user-1", "session-1", "project-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[]
-            {
-                new AgentToolExecutionSnapshot
-                {
-                    Id = "tool-execution-1",
-                    ToolName = "PlanChapter",
-                    Status = "succeeded",
-                    Phase = "Planning",
-                    ResultPhase = "chapter_candidates",
-                    ResultMessage = "章节候选已生成",
-                    StartedAt = DateTime.UtcNow.AddSeconds(-2),
-                    CompletedAt = DateTime.UtcNow
-                }
-            });
-
-        var runtimeRuns = new AgentRuntimeRunService(db);
         var runtimeEvents = new AgentRuntimeEventService(db);
-        var activeRun = await runtimeRuns.CreateQueuedAsync(new CreateAgentRuntimeRunRequest(
-            UserId: "user-1",
-            SessionId: "session-1",
-            ProjectId: "project-1",
-            UserMessage: "继续生成章节候选"));
+        var activeRun = new TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeRun
+        {
+            Id = "legacy-run-1",
+            UserId = "user-1",
+            SessionId = "session-1",
+            ProjectId = "project-1",
+            UserMessage = "继续生成章节候选",
+            Status = AgentRuntimeRunStatus.Running
+        };
+        db.AgentRuntimeRuns.Add(activeRun);
+        await db.SaveChangesAsync();
         await runtimeEvents.AppendAsync(new CreateAgentRuntimeEventRequest(
             activeRun.Id,
             "user-1",
@@ -167,25 +149,19 @@ public class AgentSessionResumeTests
             ArtifactId: "chapter-002",
             DisplaySurface: AgentRuntimeEventSurface.Workflow,
             DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline));
-        var registry = new AgentToolRegistry(
-            UserSettingsTestFactory.CreateDbBacked(),
-            new ServiceCollection().BuildServiceProvider(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentToolRegistry>.Instance);
-        var service = new AgentSessionResumeService(manager, toolCache.Object, toolLedger.Object, runtimeRuns, runtimeEvents, registry);
+        var service = new AgentSessionResumeService(manager, db, runtimeEvents);
 
         var response = await service.ResumeAsync("session-1");
 
         Assert.Equal("session-1", response.SessionId);
         Assert.Equal("project-1", response.ActiveProjectId);
-        Assert.Equal(activeRun.Id, response.ActiveRunId);
-        Assert.True(response.ToolSearchCacheFresh);
-        Assert.Equal("sqlite-snapshot", response.ToolSearchCacheSource);
+        Assert.Null(response.ActiveRunId);
+        Assert.False(response.ToolSearchCacheFresh);
+        Assert.Equal("legacy_retired", response.ToolSearchCacheSource);
         Assert.Equal("Planning", response.DiscoveredPhase);
-        Assert.Single(response.DiscoveredTools);
-        Assert.Equal("PlanChapter", response.DiscoveredTools[0].Name);
-        Assert.True(response.HasPendingConfirmation);
-        Assert.NotNull(response.PendingConfirmation);
-        Assert.Equal("ProduceChapter", response.PendingConfirmation!.ToolCall!.Name);
+        Assert.Empty(response.DiscoveredTools);
+        Assert.False(response.HasPendingConfirmation);
+        Assert.Null(response.PendingConfirmation);
         Assert.Single(response.RecentToolExecutions);
         Assert.Equal("PlanChapter", response.RecentToolExecutions[0].ToolName);
         Assert.Equal("chapter_candidates", response.RecentToolExecutions[0].ResultPhase);

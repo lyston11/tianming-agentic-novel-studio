@@ -1599,6 +1599,104 @@
   line-height: 1.25;
 }
 
+.agent-goal-proposal {
+  width: min(760px, 100%);
+  margin: 4px 0 18px;
+  padding: 16px;
+  border: 1px solid rgba(190, 151, 88, 0.45);
+  border-left: 3px solid var(--gold);
+  background: rgba(20, 19, 17, 0.96);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+}
+
+.agent-goal-proposal header,
+.agent-goal-confirm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-goal-proposal header > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.agent-goal-proposal header span,
+.agent-goal-contract-grid span,
+.agent-goal-confirm-row label > span:first-child {
+  color: var(--ink-4);
+  font-size: 11px;
+}
+
+.agent-goal-proposal header strong {
+  color: var(--paper);
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.agent-goal-proposal header small {
+  flex: 0 0 auto;
+  color: var(--jade);
+}
+
+.agent-goal-contract-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0;
+  background: rgba(244, 236, 217, 0.1);
+}
+
+.agent-goal-contract-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  background: rgba(20, 19, 17, 0.98);
+}
+
+.agent-goal-contract-grid strong {
+  color: var(--paper-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.agent-goal-confirm-row label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-goal-money-input {
+  display: grid;
+  grid-template-columns: auto minmax(72px, 110px);
+  align-items: center;
+  border-bottom: 1px solid rgba(190, 151, 88, 0.5);
+}
+
+.agent-goal-money-input b {
+  color: var(--gold);
+  font-weight: 500;
+}
+
+.agent-goal-money-input input {
+  width: 100%;
+  padding: 7px 6px;
+  border: 0;
+  outline: 0;
+  color: var(--paper);
+  background: transparent;
+}
+
+.agent-goal-confirm-error {
+  margin-top: 10px;
+  color: #d68175;
+  font-size: 12px;
+}
+
 .empty.slim {
   padding: 18px 12px;
   min-height: 0;
@@ -1645,23 +1743,6 @@
 }
 
 @media (max-width: 620px) {
-  .agent-stage-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .agent-project-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .project-stat {
-    border-right: 0;
-    border-bottom: 1px solid rgba(244, 236, 217, 0.1);
-  }
-
-  .project-stat:last-child {
-    border-bottom: 0;
-  }
 
   .chat-form {
     grid-template-columns: 1fr 42px;
@@ -1696,5 +1777,31 @@
 
   .agent-production-stage-track {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .agent-goal-contract-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-goal-confirm-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .agent-stage-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-project-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .project-stat {
+    border-right: 0;
+    border-bottom: 1px solid rgba(244, 236, 217, 0.1);
+  }
+
+  .project-stat:last-child {
+    border-bottom: 0;
   }
 }

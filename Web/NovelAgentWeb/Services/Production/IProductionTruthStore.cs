@@ -158,4 +158,5 @@ public sealed record EnqueueOutboxEventRequest(
     string EventType,
     string AggregateType,
     string AggregateId,
-    string PayloadJson);
+    string PayloadJson,
+    string? IdempotencyKey = null);

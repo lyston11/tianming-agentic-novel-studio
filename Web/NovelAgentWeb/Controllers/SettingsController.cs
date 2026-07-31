@@ -7,6 +7,7 @@ using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Settings;
+using TM.Web.NovelAgentWeb.Services.Models;
 
 namespace TM.Web.NovelAgentWeb.Controllers;
 
@@ -19,17 +20,20 @@ public class SettingsController : ControllerBase
     private readonly ICurrentUserService _currentUserService;
     private readonly ILlmApiKeyProtector _apiKeyProtector;
     private readonly ILlmConnectionHealthService _llmConnectionHealth;
+    private readonly IKernelModelConfigurationService _kernelModels;
 
     public SettingsController(
         IAuthService authService,
         ICurrentUserService currentUserService,
         ILlmApiKeyProtector apiKeyProtector,
-        ILlmConnectionHealthService llmConnectionHealth)
+        ILlmConnectionHealthService llmConnectionHealth,
+        IKernelModelConfigurationService kernelModels)
     {
         _authService = authService;
         _currentUserService = currentUserService;
         _apiKeyProtector = apiKeyProtector;
         _llmConnectionHealth = llmConnectionHealth;
+        _kernelModels = kernelModels;
     }
 
     [HttpGet("settings")]
@@ -202,6 +206,65 @@ public class SettingsController : ControllerBase
         }
     }
 
+    [HttpGet("settings/projects/{projectId}/kernel-models")]
+    public async Task<IActionResult> GetKernelModels(
+        string projectId,
+        CancellationToken ct)
+    {
+        var result = await _kernelModels.ListProjectConfigurationsAsync(
+            _currentUserService.GetUserId(),
+            projectId,
+            ct);
+        return Ok(result);
+    }
+
+    [HttpGet("settings/projects/{projectId}/kernel-models/{kernelName}")]
+    public async Task<IActionResult> GetResolvedKernelModel(
+        string projectId,
+        string kernelName,
+        [FromQuery] string preset = "balanced",
+        [FromQuery] string? goalId = null,
+        CancellationToken ct = default)
+    {
+        var result = await _kernelModels.ResolveAsync(
+            _currentUserService.GetUserId(),
+            projectId,
+            kernelName,
+            preset,
+            goalId,
+            ct);
+        return Ok(result);
+    }
+
+    [HttpPut("settings/projects/{projectId}/kernel-models/{kernelName}")]
+    public async Task<IActionResult> SaveKernelModel(
+        string projectId,
+        string kernelName,
+        [FromBody] KernelModelConfigurationDto dto,
+        CancellationToken ct)
+    {
+        var saved = await _kernelModels.SaveProjectConfigurationAsync(
+            new KernelModelConfigurationCommand(
+                _currentUserService.GetUserId(),
+                projectId,
+                kernelName,
+                dto.PresetName,
+                dto.Provider,
+                dto.BaseUrl,
+                dto.CredentialReference,
+                dto.Model,
+                dto.Temperature,
+                dto.MaxOutputTokens,
+                dto.TimeoutSeconds,
+                dto.Fallbacks ?? [],
+                dto.CustomInstructions,
+                dto.AdvancedSettingsEnabled,
+                dto.InputPricePerMillion,
+                dto.OutputPricePerMillion),
+            ct);
+        return Ok(saved);
+    }
+
     private static string MaskKey(string? key)
     {
         if (string.IsNullOrWhiteSpace(key)) return string.Empty;
@@ -329,3 +392,18 @@ public sealed record UserSettingsDto
     public string Theme { get; set; } = "dark";
     public string Language { get; set; } = "zh-CN";
 }
+
+public sealed record KernelModelConfigurationDto(
+    string PresetName = "balanced",
+    string Provider = "",
+    string? BaseUrl = null,
+    string CredentialReference = "user-settings:llm",
+    string Model = "",
+    float? Temperature = null,
+    int? MaxOutputTokens = null,
+    int? TimeoutSeconds = null,
+    IReadOnlyList<KernelModelFallback>? Fallbacks = null,
+    string CustomInstructions = "",
+    bool AdvancedSettingsEnabled = false,
+    decimal InputPricePerMillion = 0,
+    decimal OutputPricePerMillion = 0);

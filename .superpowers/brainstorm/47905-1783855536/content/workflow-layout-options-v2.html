@@ -1,0 +1,37 @@
+<style>
+  #workflow-layout-options .cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+  #workflow-layout-options .card-image { min-height:310px; padding:10px; display:flex; flex-direction:column; gap:8px; background:var(--muted); color:var(--foreground); }
+  #workflow-layout-options .bar { height:26px; padding:5px 8px; border-bottom:1px solid var(--border); color:var(--muted-foreground); }
+  #workflow-layout-options .layout { display:grid; gap:7px; flex:1; }
+  #workflow-layout-options .chapter-layout { grid-template-columns:.7fr 1.5fr .9fr; }
+  #workflow-layout-options .task-layout { grid-template-columns:1fr; grid-template-rows:auto 1fr auto; }
+  #workflow-layout-options .hybrid-layout { grid-template-columns:.55fr 1.45fr; }
+  #workflow-layout-options .pane { padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--card-foreground); }
+  #workflow-layout-options .pane strong { display:block; margin-bottom:6px; font-weight:500; }
+  #workflow-layout-options .line { height:8px; margin:6px 0; border-radius:3px; background:var(--border); }
+  #workflow-layout-options .line.short { width:62%; }
+  #workflow-layout-options .chapter { padding:6px; margin:5px 0; border-left:3px solid var(--viz-series-1); background:color-mix(in srgb,var(--viz-series-1) 8%,var(--card)); }
+  #workflow-layout-options .node-row { display:flex; gap:6px; flex-wrap:wrap; }
+  #workflow-layout-options .task-node { padding:6px 8px; border:1px solid var(--border); border-radius:5px; background:var(--card); }
+  #workflow-layout-options .recommended { color:var(--foreground); }
+  @media (max-width:800px) { #workflow-layout-options .cards { grid-template-columns:1fr; } }
+</style>
+
+<div id="workflow-layout-options">
+  <h2>工作流主界面以什么为中心？</h2>
+  <p class="subtitle">三种方案都能查看正文、版本、知识引用、审稿与返工，区别是第一视觉焦点</p>
+  <div class="cards">
+    <div class="card" data-choice="chapter-centric" onclick="toggleSelect(this)">
+      <div class="card-image"><div class="bar">批次：第 21–25 章候选分支</div><div class="layout chapter-layout"><div class="pane"><strong>章节</strong><div class="chapter">21 已通过</div><div class="chapter">22 待审</div><div class="chapter">23 返工中</div><div class="chapter">24 等待</div></div><div class="pane"><strong>第 23 章正文</strong><div class="line"></div><div class="line"></div><div class="line short"></div><div class="line"></div><div class="line"></div><div class="line short"></div></div><div class="pane"><strong>证据与操作</strong><div class="line"></div><div class="line short"></div><div class="chapter">审稿问题 2</div><div class="chapter">知识引用 6</div><div class="chapter">版本比较</div></div></div></div>
+      <div class="card-body"><h3>A. 章节中心 <span class="recommended">推荐</span></h3><p>像编辑工作台。先选章节，再看正文、审稿、引用、版本和定向返工；任务图是辅助视图。</p></div>
+    </div>
+    <div class="card" data-choice="task-centric" onclick="toggleSelect(this)">
+      <div class="card-image"><div class="bar">CreativeGoal 执行图</div><div class="layout task-layout"><div class="pane"><strong>目标与预算</strong><div class="line"></div></div><div class="pane"><strong>任务图</strong><div class="node-row"><div class="task-node">冻结基线</div><div class="task-node">章节规划</div><div class="task-node">知识编译</div><div class="task-node">写作</div><div class="task-node">连续性审校</div><div class="task-node">审美审稿</div><div class="task-node">候选事实</div></div></div><div class="pane"><strong>事件时间线</strong><div class="line"></div><div class="line short"></div></div></div></div>
+      <div class="card-body"><h3>B. 任务图中心</h3><p>工程透明度最高，但用户需要先理解 Goal、内核任务和领域事件，正文查看路径更深。</p></div>
+    </div>
+    <div class="card" data-choice="hybrid" onclick="toggleSelect(this)">
+      <div class="card-image"><div class="bar">创作批次 + 执行状态</div><div class="layout hybrid-layout"><div class="pane"><strong>批次导航</strong><div class="chapter">21 已通过</div><div class="chapter">22 待审</div><div class="chapter">23 返工中</div><strong>内核</strong><div class="line"></div><div class="line short"></div></div><div class="pane"><strong>章节与任务双视图</strong><div class="node-row"><div class="task-node">正文</div><div class="task-node">审稿</div><div class="task-node">任务图</div><div class="task-node">事件</div></div><div class="line"></div><div class="line"></div><div class="line short"></div><div class="line"></div></div></div></div>
+      <div class="card-body"><h3>C. 混合控制台</h3><p>章节和任务状态同时常驻，信息密度高；适合高级用户，但日常写作可能显得嘈杂。</p></div>
+    </div>
+  </div>
+</div>

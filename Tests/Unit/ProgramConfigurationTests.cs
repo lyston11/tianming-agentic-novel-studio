@@ -10,6 +10,125 @@ namespace Tests.Unit;
 public class ProgramConfigurationTests
 {
     [Fact]
+    public void ProductionProject_IncludesPostgresProvider()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var projectFile = File.ReadAllText(
+            Path.Combine(repoRoot, "Web/NovelAgentWeb/NovelAgentWeb.csproj"));
+
+        Assert.Contains("Npgsql.EntityFrameworkCore.PostgreSQL", projectFile);
+    }
+
+    [Fact]
+    public void Program_UsesNpgsqlForTheAuthoritativeDatabase()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+
+        Assert.Contains(".UseNpgsql", programSource);
+        Assert.DoesNotContain("options.UseSqlite", programSource);
+    }
+
+    [Fact]
+    public void Program_UsesDedicatedPostgresMigrationContext()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+
+        Assert.Contains("AddDbContext<PostgresNovelAgentDbContext>", programSource);
+        Assert.Contains(
+            "AddScoped<NovelAgentDbContext>(sp => sp.GetRequiredService<PostgresNovelAgentDbContext>())",
+            programSource);
+        Assert.Contains("GetConnectionString(\"NovelAgentMigrationDb\")", programSource);
+        Assert.DoesNotContain("chapterIdentityMigration.NormalizeAsync()", programSource);
+    }
+
+    [Fact]
+    public void Program_VerifiesWorkerRoleBeforeMigrationAndPermissionsAfterMigration()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+
+        var rolePreflight = programSource.IndexOf("VerifyRoleAsync", StringComparison.Ordinal);
+        var migrate = programSource.IndexOf("migrationDb.Database.MigrateAsync", StringComparison.Ordinal);
+        var permissionPreflight = programSource.IndexOf("VerifyPermissionsAsync", StringComparison.Ordinal);
+        Assert.True(rolePreflight >= 0 && rolePreflight < migrate);
+        Assert.True(permissionPreflight > migrate);
+    }
+
+    [Fact]
+    public void BackgroundClaimConnectionFactory_RejectsApplicationRoleConfiguration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:NovelAgentWorkerDb"] =
+                    "Host=localhost;Database=novelagent;Username=novelagent_app;Password=secret"
+            })
+            .Build();
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => new BackgroundClaimConnectionFactory(configuration));
+
+        Assert.Contains("novelagent_worker", error.Message);
+    }
+
+    [Fact]
+    public void StandardConfiguration_DoesNotStoreDatabaseCredentials()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var config = new ConfigurationBuilder()
+            .SetBasePath(repoRoot)
+            .AddJsonFile("Web/NovelAgentWeb/appsettings.json", optional: false)
+            .Build();
+
+        Assert.Null(config.GetConnectionString("NovelAgentDb"));
+        Assert.Null(config.GetConnectionString("NovelAgentWorkerDb"));
+        Assert.Null(config.GetConnectionString("NovelAgentMigrationDb"));
+    }
+
+    [Fact]
+    public void DockerCompose_ProvidesHealthyPostgresToTheApi()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
+
+        Assert.Contains("postgres:16-alpine", compose);
+        Assert.Contains("pg_isready", compose);
+        Assert.Contains("ConnectionStrings__NovelAgentDb=Host=postgres;Port=5432;Database=novelagent", compose);
+        Assert.Contains("POSTGRES_USER=novelagent_admin", compose);
+        Assert.Contains("Username=novelagent_app", compose);
+        Assert.Contains("ConnectionStrings__NovelAgentWorkerDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_worker", compose);
+        Assert.Contains("ConnectionStrings__NovelAgentMigrationDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_admin", compose);
+        Assert.DoesNotContain("ConnectionStrings__NovelAgentDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_admin", compose);
+        Assert.Contains("001-create-app-users.sh:/docker-entrypoint-initdb.d/001-create-app-users.sh:ro", compose);
+        Assert.Contains("postgres-data:/var/lib/postgresql/data", compose);
+        Assert.Contains("condition: service_healthy", compose);
+    }
+
+    [Fact]
+    public void DockerCompose_RequiresExternalSecretsAndDoesNotPublishPostgresPort()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
+        var settings = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/appsettings.json"));
+
+        Assert.Contains("${NOVELAGENT_ADMIN_PASSWORD:?", compose);
+        Assert.Contains("${NOVELAGENT_APP_PASSWORD:?", compose);
+        Assert.Contains("${NOVELAGENT_WORKER_PASSWORD:?", compose);
+        Assert.Contains("${NOVELAGENT_JWT_SECRET:?", compose);
+        Assert.DoesNotContain("POSTGRES_PASSWORD=novelagent_admin", compose);
+        Assert.DoesNotContain("Password=novelagent_app", compose);
+        Assert.DoesNotContain("Password=novelagent_worker", compose);
+        Assert.DoesNotContain("Password=novelagent_admin", compose);
+        Assert.DoesNotContain("\"5432:5432\"", compose);
+        Assert.Contains("postgres-role-bootstrap:", compose);
+        Assert.Contains("condition: service_completed_successfully", compose);
+        Assert.DoesNotContain("YourSuperSecretKeyForJWTTokenGeneration", settings);
+        Assert.DoesNotContain("Password=novelagent_", settings);
+    }
+
+    [Fact]
     public void StandardConfiguration_UsesRequiredRuntimePortsAndRedis()
     {
         var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
@@ -75,20 +194,37 @@ public class ProgramConfigurationTests
     }
 
     [Fact]
-    public void Program_UsesAgentRuntimeForForegroundTurnDecisions()
+    public void Program_UsesTargetArchitectureDirectorForForegroundTurns()
     {
         var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
         var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
 
-        Assert.Contains("AddScoped<AgentRuntime>()", programSource);
+        Assert.Contains("AddScoped<TargetArchitectureDirector>()", programSource);
         Assert.Contains(
-            "AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<AgentRuntime>())",
+            "AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<TargetArchitectureDirector>())",
             programSource);
-        Assert.DoesNotContain("AddScoped<IAgentForegroundTurnRunner, AgentForegroundTurnRunner>", programSource);
+        Assert.DoesNotContain("AddScoped<AgentRuntime>()", programSource);
+        Assert.DoesNotContain("AddSingleton<AgentPlanner>()", programSource);
+        Assert.DoesNotContain("AddSingleton<ReflectionEngine>()", programSource);
     }
 
     [Fact]
-    public void Program_MigratesSqliteDatabaseBeforeApplicationRun()
+    public void TargetArchitectureDirector_DoesNotCallPeerBusinessToolsOrKernels()
+    {
+        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var directorSource = File.ReadAllText(Path.Combine(
+            repoRoot,
+            "Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs"));
+
+        Assert.DoesNotContain("AgentToolRegistry", directorSource);
+        Assert.DoesNotContain("IKernel", directorSource);
+        Assert.DoesNotContain("KernelRegistry", directorSource);
+        Assert.DoesNotContain("AgentPlanner", directorSource);
+        Assert.DoesNotContain("ReflectionEngine", directorSource);
+    }
+
+    [Fact]
+    public void Program_UsesEfMigrationsAsTheOnlyStartupSchemaMutation()
     {
         var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
         var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
@@ -98,7 +234,7 @@ public class ProgramConfigurationTests
         var runIndex = programSource.IndexOf("app.Run()", StringComparison.Ordinal);
 
         Assert.True(migrateIndex >= 0, "Program must apply EF migrations before hosted services query new tables.");
-        Assert.True(normalizeIndex > migrateIndex, "Program must normalize SQLite legacy schema after EF migrations.");
+        Assert.Equal(-1, normalizeIndex);
         Assert.True(runIndex > migrateIndex, "Database migration must happen before app.Run starts hosted services.");
     }
 

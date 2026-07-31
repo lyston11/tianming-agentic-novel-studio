@@ -12,11 +12,12 @@ namespace Tests.Unit.Services.Health;
 public sealed class RuntimeHealthServiceTests
 {
     [Fact]
-    public async Task CheckAsync_ReturnsRedisQdrantAndEmbeddingEntries()
+    public async Task CheckAsync_ReturnsPostgresRedisQdrantAndEmbeddingEntries()
     {
         var redis = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         var service = new RuntimeHealthService(
             redis,
+            new StubPostgresHealthProbe(true),
             new StubQdrantHealthProbe(true),
             new EmbeddingRuntimeStatus(),
             NullLogger<RuntimeHealthService>.Instance);
@@ -24,6 +25,7 @@ public sealed class RuntimeHealthServiceTests
         var report = await service.CheckAsync();
 
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Status);
+        Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["postgresql"].Status);
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["redis"].Status);
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["qdrant"].Status);
         Assert.Equal(RuntimeHealthStatuses.Healthy, report.Entries["embedding"].Status);
@@ -36,6 +38,7 @@ public sealed class RuntimeHealthServiceTests
         var redis = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         var service = new RuntimeHealthService(
             redis,
+            new StubPostgresHealthProbe(true),
             new StubQdrantHealthProbe(false),
             new EmbeddingRuntimeStatus(),
             NullLogger<RuntimeHealthService>.Instance);
@@ -44,6 +47,39 @@ public sealed class RuntimeHealthServiceTests
 
         Assert.Equal(RuntimeHealthStatuses.Degraded, report.Entries["qdrant"].Status);
         Assert.Contains("Qdrant", report.Entries["qdrant"].Reason);
+    }
+
+    [Fact]
+    public async Task CheckAsync_ReportsPostgresReasonWhenProbeFails()
+    {
+        var redis = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var service = new RuntimeHealthService(
+            redis,
+            new StubPostgresHealthProbe(false),
+            new StubQdrantHealthProbe(true),
+            new EmbeddingRuntimeStatus(),
+            NullLogger<RuntimeHealthService>.Instance);
+
+        var report = await service.CheckAsync();
+
+        Assert.Equal(RuntimeHealthStatuses.Degraded, report.Status);
+        Assert.Equal(RuntimeHealthStatuses.Degraded, report.Entries["postgresql"].Status);
+        Assert.Contains("PostgreSQL", report.Entries["postgresql"].Reason);
+    }
+
+    private sealed class StubPostgresHealthProbe : IPostgresHealthProbe
+    {
+        private readonly bool _healthy;
+
+        public StubPostgresHealthProbe(bool healthy)
+        {
+            _healthy = healthy;
+        }
+
+        public Task<PostgresHealthProbeResult> CheckAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(_healthy
+                ? PostgresHealthProbeResult.Healthy()
+                : PostgresHealthProbeResult.Degraded("PostgreSQL test probe failed."));
     }
 
     private sealed class StubQdrantHealthProbe : IQdrantHealthProbe

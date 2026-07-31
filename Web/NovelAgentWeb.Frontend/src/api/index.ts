@@ -30,13 +30,21 @@ import type {
   ProjectWorkflowDocument,
   RuntimeActiveRunDto,
   AgentRuntimeEventView,
-  RuntimeRunDto,
   StoryBibleResponse,
   StoryConstitutionResponse,
   UploadMaterialResponse,
   UserSettings,
   VolumeArcResponse,
   WorkspaceResponse,
+  GoalCancellationStrategy,
+  GoalChapterDetailView,
+  GoalChapterReworkRequest,
+  GoalChapterReworkResponse,
+  GoalChapterManualEditRequest,
+  GoalChapterManualEditResponse,
+  GoalWorkflowConfirmationView,
+  GoalWorkflowStatusView,
+  DirectorTurnView,
 } from './types';
 
 export { API_BASE_URL, ApiError };
@@ -268,6 +276,89 @@ export const updateVolumeArc = (id: string, req: { volumeTitle?: string; volumeT
 export const deleteVolumeArc = (id: string) =>
   api<void>(`/workflow/volumes/${id}`, { method: 'DELETE' });
 
+// Goal production workflow
+export const confirmGoalWorkflow = (
+  director: DirectorTurnView,
+  sessionId: string,
+  totalCostLimit: number,
+) => {
+  if (!director.proposedContract) {
+    throw new Error('当前导演回复没有可确认的 Goal 合同');
+  }
+  const command = {
+    projectId: director.projectId,
+    sourceSessionId: sessionId,
+    idempotencyKey: buildStableIdempotencyKey('creative-goal', {
+      projectId: director.projectId,
+      sessionId,
+      totalCostLimit,
+      contract: director.proposedContract,
+    }),
+    totalCostLimit,
+    contract: director.proposedContract,
+  };
+  return post<GoalWorkflowConfirmationView>('/goals/workflow/confirm', {
+    assessment: {
+      projectId: director.projectId,
+      collaborationMode: director.proposedContract.collaborationMode,
+      dialogue: [],
+      acceptedDecisionsJson: '[]',
+      projectStateJson: '{}',
+      explicitExecutionAction: true,
+      proposedContract: director.proposedContract,
+    },
+    command,
+  });
+};
+
+export const getGoalWorkflowStatus = (goalId: string) =>
+  get<GoalWorkflowStatusView>(`/goals/${encodeURIComponent(goalId)}/workflow`);
+
+export const getGoalChapter = (goalId: string, chapterNumber: number) =>
+  get<GoalChapterDetailView>(
+    `/goals/${encodeURIComponent(goalId)}/workflow/chapters/${chapterNumber}`,
+  );
+
+export const reworkGoalChapter = (
+  goalId: string,
+  chapterNumber: number,
+  request: GoalChapterReworkRequest,
+) => api<GoalChapterReworkResponse>(
+  `/goals/${encodeURIComponent(goalId)}/workflow/chapters/${chapterNumber}/rework`,
+  { method: 'POST', body: JSON.stringify(request) },
+);
+
+export const saveGoalChapterManualEdit = (
+  goalId: string,
+  chapterNumber: number,
+  request: GoalChapterManualEditRequest,
+) => post<GoalChapterManualEditResponse>(
+  `/goals/${encodeURIComponent(goalId)}/workflow/chapters/${chapterNumber}/manual-edit`,
+  request,
+);
+
+export const acceptGoalChapter = (
+  goalId: string,
+  chapterNumber: number,
+  candidateChapterId: string,
+  candidateVersion: number,
+) => post(
+  `/goals/${encodeURIComponent(goalId)}/workflow/chapters/${chapterNumber}/accept`,
+  { candidateChapterId, candidateVersion },
+);
+
+export const mergeGoalPrefix = (goalId: string, branchId: string) =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/merge-prefix`, { branchId });
+
+export const pauseGoal = (goalId: string) =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/pause`);
+
+export const resumeGoal = (goalId: string) =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/resume`);
+
+export const cancelGoal = (goalId: string, strategy: GoalCancellationStrategy) =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/cancel`, { strategy });
+
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
   api<AgentChatResponse>('/agent/chat', {
@@ -315,11 +406,6 @@ export const listRuntimeEvents = (req: {
   if (req.afterEventId) params.set('afterEventId', req.afterEventId);
   return get<AgentRuntimeEventView[]>(`/runtime/events?${params.toString()}`);
 };
-
-export const cancelRuntimeRun = (runId: string) =>
-  api<RuntimeRunDto>(`/runtime/runs/${encodeURIComponent(runId)}/cancel`, {
-    method: 'POST',
-  });
 
 export interface SseStreamConnection {
   onopen?: () => void;
@@ -382,6 +468,9 @@ export const createSseConnection = (sessionId: string, afterEventId?: string | n
           dispatchSseBlock(connection, block);
           delimiter = buffer.indexOf('\n\n');
         }
+      }
+      if (!controller.signal.aborted) {
+        connection.onerror?.();
       }
     } catch {
       if (!controller.signal.aborted) {

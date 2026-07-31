@@ -1,5 +1,6 @@
 using TM.Services.Framework.AI.NovelAgent.Services;
 using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
+using TM.Web.NovelAgentWeb.Services.Kernels;
 
 namespace TM.Web.NovelAgentWeb.Services.Production;
 
@@ -10,6 +11,7 @@ public static class ProductionKernelServiceCollectionExtensions
         services.AddSingleton<IRepositoryBoundaryGuard, RepositoryBoundaryGuard>();
         services.AddSingleton<IProductionKernelAssemblyGuard, ProductionKernelAssemblyGuard>();
         services.AddSingleton<IWorkspaceProductionRuntimeBuilder, WorkspaceProductionRuntimeBuilder>();
+        services.AddSingleton<ITianmingWritingGateway, WorkspaceTianmingWritingGateway>();
         services.AddSingleton<IChapterDirectiveBuilder, ChapterDirectiveBuilder>();
         services.AddSingleton<IChapterPromptBuilder, ChapterPromptBuilder>();
         services.AddSingleton<IChapterGatekeeper, ChapterGatekeeper>();

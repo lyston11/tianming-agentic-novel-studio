@@ -22,6 +22,15 @@ public sealed class GlobalExceptionMiddleware
         {
             await _next(context);
         }
+        catch (KeyNotFoundException ex)
+        {
+            await WriteFailureAsync(
+                context,
+                StatusCodes.Status404NotFound,
+                "HTTP_404",
+                ex.Message,
+                recoverable: true);
+        }
         catch (InvalidOperationException ex)
         {
             await WriteFailureAsync(

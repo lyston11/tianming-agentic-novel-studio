@@ -4,6 +4,7 @@ using System.Text.Json;
 using TM.Framework.Common.Services;
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Services;
+using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
@@ -201,6 +202,7 @@ namespace TM.Web.NovelAgentWeb.Support
         public StoryBibleService StoryBibleService { get; }
         public CreativeKnowledgeBaseService CreativeKnowledgeBaseService { get; }
         public NovelAgentOrchestrator Orchestrator { get; }
+        public ITianmingProductionKernel ProductionKernel { get; }
         internal IServiceScopeFactory ScopeFactory { get; }
 
         // Per-workspace service registrations (populated in constructor, applied per-request)
@@ -260,6 +262,7 @@ namespace TM.Web.NovelAgentWeb.Support
                 validationService,
                 GeneratedContentService: generatedContentService));
             Orchestrator = productionRuntime.Orchestrator;
+            ProductionKernel = productionRuntime.ProductionKernel;
             _serviceRegistrations.AddRange(
                 productionRuntime.ServiceRegistrations.Select(item => (item.Type, item.Instance)));
         }

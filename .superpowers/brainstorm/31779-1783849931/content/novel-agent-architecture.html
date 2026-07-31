@@ -1,0 +1,73 @@
+<style>
+  #novel-architecture .arch-grid { display:grid; grid-template-columns:minmax(0, .82fr) 36px minmax(0, 1.35fr); gap:16px; align-items:stretch; }
+  #novel-architecture .lane { display:flex; flex-direction:column; gap:10px; min-width:0; }
+  #novel-architecture .node { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--card-foreground); }
+  #novel-architecture .node strong { display:block; margin-bottom:4px; font-weight:500; }
+  #novel-architecture .node span { color:var(--muted-foreground); }
+  #novel-architecture .old-loop { border-color:var(--destructive); }
+  #novel-architecture .director { background:color-mix(in srgb, var(--viz-series-1) 12%, var(--card)); }
+  #novel-architecture .kernel-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  #novel-architecture .kernel { background:color-mix(in srgb, var(--viz-series-2) 10%, var(--card)); }
+  #novel-architecture .canon { background:color-mix(in srgb, var(--viz-series-3) 12%, var(--card)); }
+  #novel-architecture .arrow { text-align:center; color:var(--muted-foreground); }
+  #novel-architecture .divider { display:flex; align-items:center; justify-content:center; color:var(--muted-foreground); }
+  #novel-architecture .divider span { writing-mode:vertical-rl; }
+  #novel-architecture .control-note { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:18px; }
+  #novel-architecture .control-note > div { padding-top:10px; border-top:2px solid var(--border); }
+  #novel-architecture .control-note strong { display:block; margin-bottom:4px; font-weight:500; }
+  #novel-architecture .control-note span { color:var(--muted-foreground); }
+  @media (max-width:700px) {
+    #novel-architecture .arch-grid { grid-template-columns:1fr; }
+    #novel-architecture .divider { min-height:28px; }
+    #novel-architecture .divider span { writing-mode:horizontal-tb; }
+    #novel-architecture .kernel-grid, #novel-architecture .control-note { grid-template-columns:1fr; }
+  }
+</style>
+
+<div id="novel-architecture">
+  <h2>小说 Agent 控制权重构</h2>
+  <p class="subtitle">从逐工具 ReAct，转向目标—任务—事件驱动的专业创作系统</p>
+
+  <div class="arch-grid">
+    <section class="lane" aria-label="当前架构">
+      <div class="label">当前：通用 Agent 驱动工具</div>
+      <div class="node old-loop"><strong>用户消息</strong><span>每轮都重新解释任务</span></div>
+      <div class="arrow">↓</div>
+      <div class="node old-loop"><strong>Observe → Plan → Tool → Reflect</strong><span>每调用一次工具就重新决策</span></div>
+      <div class="arrow">↓</div>
+      <div class="node old-loop"><strong>几十个平级工具</strong><span>查询、规划、写作、提交、记忆混在同一选择面</span></div>
+      <div class="arrow">↓</div>
+      <div class="node old-loop"><strong>ProduceChapter 内部循环</strong><span>上下文 → 生成 → 门禁 → 修复 → 审稿 → 改写</span></div>
+      <div class="arrow">↓</div>
+      <div class="node old-loop"><strong>多份重叠状态</strong><span>MissionPlan / WorkingMemory / ProjectMemory / Story Bible</span></div>
+    </section>
+
+    <div class="divider"><span>控制权迁移 →</span></div>
+
+    <section class="lane" aria-label="目标架构">
+      <div class="label">目标：导演 Agent + 专业内核</div>
+      <div class="node director"><strong>导演 Agent</strong><span>理解对话、协作模式与创作目标；不微操写作步骤</span></div>
+      <div class="arrow">CreativeIntent → CreativeGoal → Task Graph</div>
+      <div class="node"><strong>确定性任务调度器</strong><span>依赖、权限、预算、事件归约、暂停与恢复</span></div>
+      <div class="arrow">只派发已满足依赖的领域任务</div>
+      <div class="kernel-grid">
+        <div class="node kernel"><strong>设定内核</strong><span>世界、人物、规则、一致性</span></div>
+        <div class="node kernel"><strong>叙事规划内核</strong><span>全书、卷弧、章节、伏笔、节奏</span></div>
+        <div class="node kernel"><strong>天命写作内核</strong><span>上下文编译、正文创作、局部改写</span></div>
+        <div class="node kernel"><strong>审稿内核</strong><span>质量裁决、证据、修订建议</span></div>
+        <div class="node kernel"><strong>记忆内核</strong><span>偏好、经验、检索包；不覆盖作品事实</span></div>
+        <div class="node kernel"><strong>争议协议</strong><span>主张、证据、影响、备选方案</span></div>
+      </div>
+      <div class="arrow">Produced / Blocked / Conflict / NeedsDecision</div>
+      <div class="node canon"><strong>候选正史分支 CanonBranch</strong><span>3–5 章批次；逐章版本、候选事实、依赖图、局部返工</span></div>
+      <div class="arrow">用户逐章或整批验收</div>
+      <div class="node canon"><strong>正式作品状态</strong><span>Story Bible、叙事计划、章节版本、连续性事实是唯一真相源</span></div>
+    </section>
+  </div>
+
+  <div class="control-note">
+    <div><strong>导演何时重新决策</strong><span>新用户意图、跨领域争议、授权需求、目标完成</span></div>
+    <div><strong>内核何时内部循环</strong><span>领域任务内部生成、验证、修复；不回到导演逐步选择工具</span></div>
+    <div><strong>记忆保存什么</strong><span>作者偏好、会话协商、执行经验；作品事实只存在权威状态</span></div>
+  </div>
+</div>

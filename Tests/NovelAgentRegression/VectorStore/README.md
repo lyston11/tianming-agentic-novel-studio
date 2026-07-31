@@ -111,9 +111,9 @@ Keep the Qdrant server image, .NET client, test container image, and vector payl
 
 | Component | Current value | Source of truth | Compatibility notes |
 | --- | --- | --- | --- |
-| Qdrant server | `qdrant/qdrant:v1.8.0` | `docker-compose.yml`; `QdrantTestFixture.cs`; `VectorizationIntegrationTests.cs` | Production and regression tests should use the same server image before changing vector serialization or payload indexes. |
+| Qdrant server | `qdrant/qdrant:v1.18.1` | `docker-compose.yml`; `QdrantTestFixture.cs`; `VectorizationIntegrationTests.cs` | Production and regression tests use the same server image before changing vector serialization or payload indexes. |
 | .NET client | `Qdrant.Client` `1.18.1` | `Web/NovelAgentWeb/NovelAgentWeb.csproj` | `QdrantVectorStore` intentionally writes unnamed dense vectors through `Vector.Data` for the current server image. Run the integration suite before upgrading the client or server. |
-| Testcontainers adapter | `Testcontainers.Qdrant` `4.12.0` | `Tests/NovelAgentRegression/NovelAgentRegression.csproj` | The adapter launches the same `qdrant/qdrant:v1.8.0` image used by local compose. |
+| Testcontainers adapter | `Testcontainers.Qdrant` `4.12.0` | `Tests/NovelAgentRegression/NovelAgentRegression.csproj` | The adapter launches the same `qdrant/qdrant:v1.18.1` image used by local compose. |
 | Transport | HTTP `6333`; gRPC `6334` | `docker-compose.yml`; `ProgramConfigurationTests` | Health checks use HTTP `Qdrant:BaseUrl`; vector operations use gRPC `Qdrant:Host` and `Qdrant:Port`. |
 | Vector dimension | `512` | app configuration; test fixtures | Matches `bge-small-zh-v1.5`. Changing the embedding model requires rebuilding affected user collections. |
 | Collection boundary | per-user collection `novel_agent_{userId}` | `QdrantVectorStore.GetCollectionName` | Project isolation is enforced by payload filters inside each user collection. User isolation must never rely only on project filters. |
@@ -178,14 +178,18 @@ docker compose stop api
 2. Snapshot current Qdrant storage for rollback:
 
 ```bash
-tar -czf App_Data/qdrant-backup-$(date +%Y%m%d%H%M%S).tgz App_Data/Qdrant
+docker run --rm \
+  -v tianming-agentic-novel-studio_qdrant-data:/from:ro \
+  -v "$PWD:/backup" alpine:3.20 \
+  tar -czf /backup/qdrant-backup-$(date +%Y%m%d%H%M%S).tgz -C /from .
 ```
 
-3. Stop Qdrant and clear or replace `App_Data/Qdrant` only after the snapshot exists:
+3. Stop Qdrant and recreate its named volume only after the snapshot exists:
 
 ```bash
 docker compose stop qdrant
-rm -rf App_Data/Qdrant
+docker compose rm -sf qdrant
+docker volume rm tianming-agentic-novel-studio_qdrant-data
 docker compose up -d qdrant
 ```
 
@@ -216,7 +220,7 @@ The production dispatcher currently indexes or deletes these Qdrant payload sour
 | `index_story_bible_canon` | `story_bible` | `story_bible_canon` |
 
 ### Qdrant Container
-- **Image**: `qdrant/qdrant:v1.8.0`
+- **Image**: `qdrant/qdrant:v1.18.1`
 - **Port**: 6334 (gRPC)
 - **Vector Dimension**: 512 (bge-small-zh-v1.5 model)
 - **Distance Metric**: Cosine

@@ -14,6 +14,21 @@ public interface IContentDocumentService
         string content,
         CancellationToken ct = default);
 
+    Task<ContentDocument> SaveTextDeferredAsync(
+        string userId,
+        string? projectId,
+        string sourceType,
+        string sourceId,
+        string documentRole,
+        string title,
+        string content,
+        CancellationToken ct = default);
+
+    Task PublishCommittedProjectChangesAsync(
+        string userId,
+        string projectId,
+        CancellationToken ct = default);
+
     Task<ContentDocument> SaveOrReplaceTextAsync(
         string userId,
         string? projectId,

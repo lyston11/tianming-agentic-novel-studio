@@ -60,8 +60,44 @@ namespace TM.Services.Framework.AI.NovelAgent.Models
         [JsonPropertyName("warnings")]
         public List<string> Warnings { get; set; } = new();
 
+        [JsonPropertyName("directedRework")]
+        public DirectedReworkContract? DirectedRework { get; set; }
+
         [JsonPropertyName("builtAt")]
         public DateTime BuiltAt { get; set; } = DateTime.Now;
+    }
+
+    public sealed class DirectedReworkContract
+    {
+        [JsonPropertyName("intentId")]
+        public string IntentId { get; set; } = string.Empty;
+
+        [JsonPropertyName("targetScope")]
+        public string TargetScope { get; set; } = "chapter";
+
+        [JsonPropertyName("selectionStart")]
+        public int? SelectionStart { get; set; }
+
+        [JsonPropertyName("selectionEnd")]
+        public int? SelectionEnd { get; set; }
+
+        [JsonPropertyName("problem")]
+        public string Problem { get; set; } = string.Empty;
+
+        [JsonPropertyName("desiredEffect")]
+        public string DesiredEffect { get; set; } = string.Empty;
+
+        [JsonPropertyName("preserve")]
+        public List<string> Preserve { get; set; } = new();
+
+        [JsonPropertyName("mayChange")]
+        public List<string> MayChange { get; set; } = new();
+
+        [JsonPropertyName("mustNotChange")]
+        public List<string> MustNotChange { get; set; } = new();
+
+        [JsonPropertyName("acceptanceCriteria")]
+        public List<string> AcceptanceCriteria { get; set; } = new();
     }
 
     public sealed class AcceptedCreativeIntentSnapshot

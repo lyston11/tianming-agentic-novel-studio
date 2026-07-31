@@ -7,7 +7,9 @@ interface AccountTabProps {
   update: (_key: keyof UserSettings, _value: unknown) => void;
 }
 
-export default function AccountTab({ form: _form, update: _update }: AccountTabProps) {
+export default function AccountTab({ form, update }: AccountTabProps) {
+  void form;
+  void update;
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 

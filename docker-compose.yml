@@ -1,12 +1,49 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: novelagent-postgres
+    environment:
+      - POSTGRES_DB=novelagent
+      - POSTGRES_USER=novelagent_admin
+      - POSTGRES_PASSWORD=${NOVELAGENT_ADMIN_PASSWORD:?Set NOVELAGENT_ADMIN_PASSWORD}
+      - NOVELAGENT_APP_PASSWORD=${NOVELAGENT_APP_PASSWORD:?Set NOVELAGENT_APP_PASSWORD}
+      - NOVELAGENT_WORKER_PASSWORD=${NOVELAGENT_WORKER_PASSWORD:?Set NOVELAGENT_WORKER_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/001-create-app-users.sh:/docker-entrypoint-initdb.d/001-create-app-users.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novelagent_admin -d novelagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  postgres-role-bootstrap:
+    image: postgres:16-alpine
+    container_name: novelagent-postgres-role-bootstrap
+    environment:
+      - PGHOST=postgres
+      - PGDATABASE=novelagent
+      - PGUSER=novelagent_admin
+      - PGPASSWORD=${NOVELAGENT_ADMIN_PASSWORD:?Set NOVELAGENT_ADMIN_PASSWORD}
+      - NOVELAGENT_APP_PASSWORD=${NOVELAGENT_APP_PASSWORD:?Set NOVELAGENT_APP_PASSWORD}
+      - NOVELAGENT_WORKER_PASSWORD=${NOVELAGENT_WORKER_PASSWORD:?Set NOVELAGENT_WORKER_PASSWORD}
+    volumes:
+      - ./deploy/postgres/001-create-app-users.sh:/opt/novelagent/001-create-app-users.sh:ro
+    command: ["/bin/sh", "/opt/novelagent/001-create-app-users.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   qdrant:
-    image: qdrant/qdrant:v1.8.0
+    image: qdrant/qdrant:v1.18.1
     container_name: novelagent-qdrant
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - ./App_Data/Qdrant:/qdrant/storage
+      - qdrant-data:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__LOG_LEVEL=INFO
@@ -32,17 +69,29 @@ services:
     volumes:
       - ./Web/NovelAgentWeb/App_Data:/app/App_Data
     environment:
-      - ASPNETCORE_URLS=http://+:5002
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=5002
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__NovelAgentDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_app;Password=${NOVELAGENT_APP_PASSWORD:?Set NOVELAGENT_APP_PASSWORD}
+      - ConnectionStrings__NovelAgentWorkerDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_worker;Password=${NOVELAGENT_WORKER_PASSWORD:?Set NOVELAGENT_WORKER_PASSWORD}
+      - ConnectionStrings__NovelAgentMigrationDb=Host=postgres;Port=5432;Database=novelagent;Username=novelagent_admin;Password=${NOVELAGENT_ADMIN_PASSWORD:?Set NOVELAGENT_ADMIN_PASSWORD}
+      - JwtSettings__SecretKey=${NOVELAGENT_JWT_SECRET:?Set NOVELAGENT_JWT_SECRET}
       - Qdrant__BaseUrl=http://qdrant:6333
       - Qdrant__Host=qdrant
       - Qdrant__Port=6334
       - Redis__Enabled=true
       - Redis__ConnectionString=redis:6379
     depends_on:
-      - qdrant
-      - redis
+      postgres:
+        condition: service_healthy
+      postgres-role-bootstrap:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
+  postgres-data:
+  qdrant-data:
   redis-data:

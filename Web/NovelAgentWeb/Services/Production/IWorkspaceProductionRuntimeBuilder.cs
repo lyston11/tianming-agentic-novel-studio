@@ -1,5 +1,6 @@
 using TM.Services.Framework.AI.Embedding;
 using TM.Services.Framework.AI.NovelAgent.Services;
+using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
 using TM.Services.Modules.ProjectData.Interfaces;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -31,6 +32,7 @@ public sealed record WorkspaceProductionRuntimeRequest(
 
 public sealed record WorkspaceProductionRuntime(
     NovelAgentOrchestrator Orchestrator,
+    ITianmingProductionKernel ProductionKernel,
     IReadOnlyList<WorkspaceServiceRegistration> ServiceRegistrations);
 
 public sealed record WorkspaceServiceRegistration(Type Type, object Instance);

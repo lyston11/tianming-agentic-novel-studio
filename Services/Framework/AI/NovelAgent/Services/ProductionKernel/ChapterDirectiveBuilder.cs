@@ -154,6 +154,15 @@ namespace TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel
                 if (HasText(requirement))
                     yield return requirement;
             }
+
+            if (contextPackage.DirectedRework == null)
+                yield break;
+            yield return $"定向返工问题：{contextPackage.DirectedRework.Problem}";
+            yield return $"定向返工目标：{contextPackage.DirectedRework.DesiredEffect}";
+            foreach (var item in contextPackage.DirectedRework.AcceptanceCriteria.Where(HasText))
+                yield return $"定向返工验收：{item}";
+            foreach (var item in contextPackage.DirectedRework.MustNotChange.Where(HasText))
+                yield return $"定向返工禁止修改：{item}";
         }
 
         private static IEnumerable<string> FormatKnowledgeBindingsForDirective(

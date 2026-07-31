@@ -54,9 +54,8 @@ public class UserContextMiddleware
         }
         else
         {
-            _logger.LogWarning("✗ User not authenticated. Identity={Identity}, IsAuthenticated={IsAuth}",
-                context.User?.Identity?.Name ?? "null",
-                context.User?.Identity?.IsAuthenticated ?? false);
+            _logger.LogDebug("User context is unavailable for anonymous request. Path={Path}",
+                context.Request.Path);
         }
 
         await _next(context);

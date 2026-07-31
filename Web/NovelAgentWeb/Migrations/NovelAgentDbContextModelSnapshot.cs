@@ -73,17 +73,17 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("SessionId");
 
-                    b.HasIndex("UserId", "ProjectId", "SessionId", "SummaryType", "StartTurn", "EndTurn")
-                        .IsUnique()
-                        .HasDatabaseName("IX_agent_chat_summaries_range_project")
-                        .HasFilter("project_id IS NOT NULL");
+                    b.HasIndex("UserId");
 
                     b.HasIndex("UserId", "SessionId", "SummaryType", "StartTurn", "EndTurn")
                         .IsUnique()
                         .HasDatabaseName("IX_agent_chat_summaries_range_global")
                         .HasFilter("project_id IS NULL");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "ProjectId", "SessionId", "SummaryType", "StartTurn", "EndTurn")
+                        .IsUnique()
+                        .HasDatabaseName("IX_agent_chat_summaries_range_project")
+                        .HasFilter("project_id IS NOT NULL");
 
                     b.ToTable("agent_chat_summaries", (string)null);
                 });
@@ -108,11 +108,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                    b.Property<string>("IdempotencyKey")
-                        .HasMaxLength(160)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("ProjectId")
                         .HasColumnType("TEXT")
@@ -151,6 +146,83 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsUnique();
 
                     b.ToTable("agent_chat_turns", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentInterrupt", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("consumed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DecisionJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("decision_json");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("priority");
+
+                    b.Property<string>("ProjectId")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RuntimeRunId", "Status", "Priority", "CreatedAt")
+                        .HasDatabaseName("idx_agent_interrupts_run_pending");
+
+                    b.HasIndex("UserId", "SessionId", "Status", "CreatedAt")
+                        .HasDatabaseName("idx_agent_interrupts_session_pending");
+
+                    b.ToTable("agent_interrupts", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemory", b =>
@@ -205,13 +277,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId");
 
-                    b.HasIndex("UserId", "ProjectId")
-                        .HasDatabaseName("idx_memories_user_project");
-
                     b.HasIndex("UserId", "MemoryType")
                         .IsUnique()
                         .HasDatabaseName("IX_agent_memories_user_type_global")
                         .HasFilter("project_id IS NULL AND session_id IS NULL");
+
+                    b.HasIndex("UserId", "ProjectId")
+                        .HasDatabaseName("idx_memories_user_project");
 
                     b.HasIndex("UserId", "ProjectId", "MemoryType")
                         .IsUnique()
@@ -295,6 +367,154 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("agent_memory_events", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryPromotion", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("payload_json");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("PromotionReason")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("promotion_reason");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourceMemoryKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_memory_key");
+
+                    b.Property<string>("SourceScope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_scope");
+
+                    b.Property<string>("TargetMemoryKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_memory_key");
+
+                    b.Property<string>("TargetScope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_scope");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId")
+                        .HasDatabaseName("idx_agent_memory_promotions_run");
+
+                    b.HasIndex("SessionId")
+                        .HasDatabaseName("idx_agent_memory_promotions_session");
+
+                    b.HasIndex("ProjectId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_memory_promotions_project_created");
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_memory_promotions_user_created");
+
+                    b.ToTable("agent_memory_promotions", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryRead", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Consumer")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("consumer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("MemoryKeysJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("memory_keys_json");
+
+                    b.Property<string>("MemoryScope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("memory_scope");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("run_id");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("memory_repository")
+                        .HasColumnName("source_type");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId")
+                        .HasDatabaseName("idx_agent_memory_reads_run");
+
+                    b.HasIndex("SessionId")
+                        .HasDatabaseName("idx_agent_memory_reads_session");
+
+                    b.HasIndex("ProjectId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_memory_reads_project_created");
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_memory_reads_user_created");
+
+                    b.ToTable("agent_memory_reads", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryVersion", b =>
                 {
                     b.Property<long>("Id")
@@ -355,6 +575,132 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasFilter("project_id IS NOT NULL AND session_id IS NOT NULL");
 
                     b.ToTable("agent_memory_versions", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentReviewRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<string>("ChapterPacing")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("chapter_pacing");
+
+                    b.Property<int>("CheckCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("check_count");
+
+                    b.Property<int>("ContentLength")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("content_length");
+
+                    b.Property<string>("ContinuityRisk")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("continuity_risk");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<bool>("MeetsAcceptedCreativeIntents")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true)
+                        .HasColumnName("meets_accepted_creative_intents");
+
+                    b.Property<string>("OverallResult")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Unknown")
+                        .HasColumnName("overall_result");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<int>("QualityScore")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quality_score");
+
+                    b.Property<string>("RecommendedAction")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("recommended_action");
+
+                    b.Property<bool>("RequiresRewrite")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("requires_rewrite");
+
+                    b.Property<string>("ReviewId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("review_id");
+
+                    b.Property<string>("ReviewJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("review_json");
+
+                    b.Property<DateTime>("ReviewedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reviewed_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("summary");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("ValidationOverallResult")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("validation_overall_result");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "OverallResult")
+                        .HasDatabaseName("idx_agent_reviews_project_result");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_reviews_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_reviews_project_chapter_created");
+
+                    b.ToTable("agent_reviews", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentRun", b =>
@@ -451,6 +797,262 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("agent_runs", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArtifactId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_id");
+
+                    b.Property<string>("ArtifactType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_type");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("data_json");
+
+                    b.Property<string>("DisplayPolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("collapsible")
+                        .HasColumnName("display_policy");
+
+                    b.Property<string>("DisplaySurface")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("chat")
+                        .HasColumnName("display_surface");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message");
+
+                    b.Property<string>("ProjectId")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("stage");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("type");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_runtime_events_run_recent");
+
+                    b.HasIndex("UserId", "SessionId", "CreatedAt")
+                        .HasDatabaseName("idx_agent_runtime_events_session_recent");
+
+                    b.ToTable("agent_runtime_events", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentRuntimeRun", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActiveTool")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("active_tool");
+
+                    b.Property<string>("BudgetJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("budget_json");
+
+                    b.Property<bool>("CancelRequested")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("cancel_requested");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("CurrentPhase")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("current_phase");
+
+                    b.Property<int>("CurrentStep")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("current_step");
+
+                    b.Property<string>("ErrorMessage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("ExecutedToolsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("executed_tools_json");
+
+                    b.Property<string>("FailureJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("failure_json");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("LastMessage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_message");
+
+                    b.Property<string>("LockedProjectId")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("locked_project_id");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("inspect")
+                        .HasColumnName("mode");
+
+                    b.Property<string>("ProjectId")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("result_json");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourceMessageId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_message_id");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("UserMessage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_message");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "SessionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_agent_runtime_runs_active_session")
+                        .HasFilter("status IN ('queued', 'running')");
+
+                    b.HasIndex("UserId", "SessionId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_agent_runtime_runs_idempotency")
+                        .HasFilter("idempotency_key <> ''");
+
+                    b.HasIndex("UserId", "ProjectId", "Status", "UpdatedAt")
+                        .HasDatabaseName("idx_agent_runtime_runs_project_status");
+
+                    b.HasIndex("UserId", "SessionId", "Status", "UpdatedAt")
+                        .HasDatabaseName("idx_agent_runtime_runs_session_status");
+
+                    b.ToTable("agent_runtime_runs", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", b =>
                 {
                     b.Property<string>("Id")
@@ -504,8 +1106,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("UserId", "IdempotencyKey")
                         .IsUnique()
                         .HasDatabaseName("idx_agent_sessions_idempotency");
@@ -516,11 +1116,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentToolExecution", b =>
                 {
                     b.Property<string>("Id")
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
                     b.Property<string>("ArgumentsHash")
                         .IsRequired()
+                        .HasMaxLength(64)
                         .HasColumnType("TEXT")
                         .HasColumnName("arguments_hash");
 
@@ -528,6 +1130,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("arguments_json");
+
+                    b.Property<string>("ArtifactJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_json");
 
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("TEXT")
@@ -544,25 +1151,35 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.Property<string>("ErrorType")
                         .IsRequired()
+                        .HasMaxLength(80)
                         .HasColumnType("TEXT")
                         .HasColumnName("error_type");
 
+                    b.Property<string>("FailureJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("failure_json");
+
                     b.Property<string>("MissingPrerequisite")
                         .IsRequired()
+                        .HasMaxLength(120)
                         .HasColumnType("TEXT")
                         .HasColumnName("missing_prerequisite");
 
                     b.Property<string>("Phase")
                         .IsRequired()
+                        .HasMaxLength(80)
                         .HasColumnType("TEXT")
                         .HasColumnName("phase");
 
                     b.Property<string>("ProjectId")
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
                     b.Property<string>("RecommendedNextTool")
                         .IsRequired()
+                        .HasMaxLength(120)
                         .HasColumnType("TEXT")
                         .HasColumnName("recommended_next_tool");
 
@@ -573,20 +1190,29 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.Property<string>("ResultPhase")
                         .IsRequired()
+                        .HasMaxLength(80)
                         .HasColumnType("TEXT")
                         .HasColumnName("result_phase");
 
                     b.Property<string>("Risk")
                         .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT")
                         .HasColumnName("risk");
 
                     b.Property<string>("RunId")
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("run_id");
 
+                    b.Property<string>("SemanticContractJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("semantic_contract_json");
+
                     b.Property<string>("SessionId")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("session_id");
 
@@ -595,37 +1221,35 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("side_effects_json");
 
-                    b.Property<string>("SemanticContractJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("semantic_contract_json");
-
                     b.Property<DateTime>("StartedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("started_at");
 
                     b.Property<string>("Status")
                         .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT")
                         .HasColumnName("status");
 
                     b.Property<string>("ToolName")
                         .IsRequired()
+                        .HasMaxLength(120)
                         .HasColumnType("TEXT")
                         .HasColumnName("tool_name");
 
                     b.Property<string>("UserId")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "ProjectId", "ToolName", "ArgumentsHash")
-                        .HasDatabaseName("idx_agent_tool_executions_dedupe");
-
                     b.HasIndex("UserId", "ProjectId", "SessionId", "StartedAt")
                         .HasDatabaseName("idx_agent_tool_executions_scope_recent");
+
+                    b.HasIndex("UserId", "ProjectId", "ToolName", "ArgumentsHash")
+                        .HasDatabaseName("idx_agent_tool_executions_dedupe");
 
                     b.ToTable("agent_tool_executions", (string)null);
                 });
@@ -633,6 +1257,7 @@ namespace TM.Web.NovelAgentWeb.Migrations
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentToolSearchSnapshot", b =>
                 {
                     b.Property<string>("Id")
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
@@ -646,20 +1271,24 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.Property<string>("Phase")
                         .IsRequired()
+                        .HasMaxLength(80)
                         .HasColumnType("TEXT")
                         .HasColumnName("phase");
 
                     b.Property<string>("ProjectId")
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
                     b.Property<string>("SessionId")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("session_id");
 
                     b.Property<string>("SourceExecutionId")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("source_execution_id");
 
@@ -670,11 +1299,13 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.Property<string>("UserId")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
                     b.Property<string>("Version")
                         .IsRequired()
+                        .HasMaxLength(500)
                         .HasColumnType("TEXT")
                         .HasColumnName("version");
 
@@ -756,17 +1387,412 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_chapters_project");
 
-                    b.HasIndex("ProjectId", "IdempotencyKey")
-                        .IsUnique()
-                        .HasDatabaseName("idx_chapters_idempotency");
-
                     b.HasIndex("Status")
                         .HasDatabaseName("idx_chapters_status");
 
                     b.HasIndex("VolumeId")
                         .HasDatabaseName("idx_chapters_volume");
 
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_chapters_idempotency");
+
                     b.ToTable("chapters", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterBlueprint", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AppliedDesignRuleIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("applied_design_rule_ids_json");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<int>("ChapterIndex")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("chapter_index");
+
+                    b.Property<string>("CharactersJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("characters_json");
+
+                    b.Property<string>("ConflictNote")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("conflict_note");
+
+                    b.Property<string>("ContextPackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("context_package_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DependencyChapterIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("dependency_chapter_ids_json");
+
+                    b.Property<string>("EndingNote")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ending_note");
+
+                    b.Property<string>("Intent")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("intent");
+
+                    b.Property<string>("KeyEventsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("key_events_json");
+
+                    b.Property<string>("PreviousVersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("previous_version_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RequiredKnowledgeIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("required_knowledge_ids_json");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Draft")
+                        .HasColumnName("status");
+
+                    b.Property<int?>("TargetWordCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("target_word_count");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
+
+                    b.Property<string>("VolumeId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("volume_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ChapterIndex")
+                        .HasDatabaseName("ix_chapter_blueprints_chapter_index");
+
+                    b.HasIndex("ProjectId", "ChapterId", "Status")
+                        .HasDatabaseName("ix_chapter_blueprints_project_chapter_status");
+
+                    b.HasIndex("ProjectId", "ChapterId", "Version")
+                        .HasDatabaseName("ix_chapter_blueprints_version");
+
+                    b.HasIndex("UserId", "ProjectId", "CreatedAt")
+                        .HasDatabaseName("ix_chapter_blueprints_user_project_created");
+
+                    b.ToTable("chapter_blueprints", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterChange", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("AppliedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("applied_at");
+
+                    b.Property<bool>("AppliedToFactSnapshot")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("applied_to_fact_snapshot");
+
+                    b.Property<string>("CanonicalChangesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("canonical_changes_json");
+
+                    b.Property<string>("ChangesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("changes_json");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ParseError")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("parse_error");
+
+                    b.Property<string>("ParseStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("unknown")
+                        .HasColumnName("parse_status");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "ParseStatus")
+                        .HasDatabaseName("idx_chapter_changes_project_parse_status");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_chapter_changes_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_chapter_changes_project_chapter_created");
+
+                    b.ToTable("chapter_changes", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterDraft", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArtifactId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_id");
+
+                    b.Property<string>("ChangesJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("changes_json");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<int>("ContentLength")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("content_length");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DraftContent")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("draft_content");
+
+                    b.Property<DateTime>("GeneratedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<bool>("HasChanges")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("has_changes");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<int>("RepairAttemptCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("repair_attempt_count");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("draft_generated")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Status")
+                        .HasDatabaseName("idx_chapter_drafts_project_status");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_chapter_drafts_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_chapter_drafts_project_chapter_created");
+
+                    b.ToTable("chapter_drafts", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterVersion", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AgentReviewJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_review_json");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<string>("ContentDocumentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_document_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("GateReportJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("gate_report_json");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("draft")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version_number");
+
+                    b.Property<int>("WordCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("word_count");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentDocumentId")
+                        .HasDatabaseName("idx_chapter_versions_document");
+
+                    b.HasIndex("ChapterId", "VersionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("idx_chapter_versions_chapter_version");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_chapter_versions_project_chapter_created");
+
+                    b.ToTable("chapter_versions", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Character", b =>
@@ -820,6 +1846,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("gender");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("InitialPowerLevel")
                         .HasMaxLength(200)
                         .HasColumnType("TEXT")
@@ -851,11 +1882,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
-
-                    b.Property<string>("IdempotencyKey")
-                        .HasMaxLength(160)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("Relationships")
                         .HasColumnType("TEXT")
@@ -894,14 +1920,18 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FirstAppearChapter");
+
+                    b.HasIndex("LastAppearChapter");
+
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_characters_project");
+
+                    b.HasIndex("UserId");
 
                     b.HasIndex("ProjectId", "IdempotencyKey")
                         .IsUnique()
                         .HasDatabaseName("idx_characters_idempotency");
-
-                    b.HasIndex("UserId");
 
                     b.ToTable("characters", (string)null);
                 });
@@ -1034,6 +2064,65 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("content_documents", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ChunkId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chunk_id");
+
+                    b.Property<string>("DocumentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("document_id");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_message");
+
+                    b.Property<string>("IndexStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("pending")
+                        .HasColumnName("index_status");
+
+                    b.Property<DateTime?>("IndexedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("indexed_at");
+
+                    b.Property<string>("QdrantCollection")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("qdrant_collection");
+
+                    b.Property<string>("QdrantPointId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("qdrant_point_id");
+
+                    b.Property<string>("VectorModel")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("vector_model");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChunkId");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("ChunkId", "DocumentId");
+
+                    b.HasIndex("QdrantCollection", "QdrantPointId")
+                        .IsUnique();
+
+                    b.ToTable("content_vector_points", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.CreativeIntent", b =>
                 {
                     b.Property<string>("Id")
@@ -1065,16 +2154,16 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("executed_at");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("ImpactLevel")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasDefaultValue("future_carry")
                         .HasColumnName("impact_level");
-
-                    b.Property<string>("IdempotencyKey")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("MetadataJson")
                         .IsRequired()
@@ -1158,11 +2247,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("UserId", "ProjectId", "IdempotencyKey")
-                        .IsUnique()
-                        .HasDatabaseName("idx_creative_intents_idempotency");
+                    b.HasIndex("SessionId", "CreatedAt")
+                        .HasDatabaseName("idx_creative_intents_session_created");
 
                     b.HasIndex("ProjectId", "Status", "CreatedAt")
                         .HasDatabaseName("idx_creative_intents_project_status_created");
@@ -1170,69 +2256,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId", "TargetChapterId", "Status")
                         .HasDatabaseName("idx_creative_intents_project_chapter_status");
 
-                    b.HasIndex("SessionId", "CreatedAt")
-                        .HasDatabaseName("idx_creative_intents_session_created");
+                    b.HasIndex("UserId", "ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_creative_intents_idempotency");
 
                     b.ToTable("creative_intents", (string)null);
-                });
-
-            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ChunkId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("chunk_id");
-
-                    b.Property<string>("DocumentId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("document_id");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("error_message");
-
-                    b.Property<string>("IndexStatus")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("pending")
-                        .HasColumnName("index_status");
-
-                    b.Property<DateTime?>("IndexedAt")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("indexed_at");
-
-                    b.Property<string>("QdrantCollection")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("qdrant_collection");
-
-                    b.Property<string>("QdrantPointId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("qdrant_point_id");
-
-                    b.Property<string>("VectorModel")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("vector_model");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ChunkId");
-
-                    b.HasIndex("ChunkId", "DocumentId");
-
-                    b.HasIndex("DocumentId");
-
-                    b.HasIndex("QdrantCollection", "QdrantPointId")
-                        .IsUnique();
-
-                    b.ToTable("content_vector_points", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Foreshadow", b =>
@@ -1399,6 +2427,107 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("foreshadow_ledger", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.GenerationGateReportRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArtifactId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_id");
+
+                    b.Property<bool>("BlueprintPassed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("blueprint_passed");
+
+                    b.Property<bool>("ChangesDetected")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("changes_detected");
+
+                    b.Property<string>("ChapterId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<bool>("FactSnapshotPassed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("fact_snapshot_passed");
+
+                    b.Property<int>("IssueCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("issue_count");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<bool>("ProtocolPassed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("protocol_passed");
+
+                    b.Property<bool>("RagPassed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("rag_passed");
+
+                    b.Property<int>("RepairHintCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("repair_hint_count");
+
+                    b.Property<string>("ReportJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("report_json");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("pending")
+                        .HasColumnName("status");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<DateTime>("ValidatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("validated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Status")
+                        .HasDatabaseName("idx_generation_gate_reports_project_status");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_generation_gate_reports_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_generation_gate_reports_project_chapter_created");
+
+                    b.ToTable("generation_gate_reports", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase", b =>
                 {
                     b.Property<string>("Id")
@@ -1443,16 +2572,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
 
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("user_id");
-
-                    b.Property<string>("SourceUploadTaskId")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("source_upload_task_id");
-
                     b.Property<string>("SourceType")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1460,6 +2579,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasDefaultValue("manual")
                         .HasColumnName("source_type");
+
+                    b.Property<string>("SourceUploadTaskId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_upload_task_id");
 
                     b.Property<string>("Tags")
                         .HasColumnType("TEXT")
@@ -1475,6 +2599,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(0)
                         .HasColumnName("usage_count");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
 
                     b.Property<string>("VectorId")
                         .HasMaxLength(100)
@@ -1596,8 +2725,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasIndex("ProjectId");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("UserId", "ProjectId", "KnowledgeId", "CreatedAt")
                         .HasDatabaseName("idx_knowledge_classifications_project_knowledge");
 
@@ -1672,6 +2799,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("requires_user_decision");
 
+                    b.Property<string>("ResolutionNote")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resolution_note");
+
                     b.Property<DateTime?>("ResolvedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("resolved_at");
@@ -1683,10 +2814,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<string>("ResolvedBySessionId")
                         .HasColumnType("TEXT")
                         .HasColumnName("resolved_by_session_id");
-
-                    b.Property<string>("ResolutionNote")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("resolution_note");
 
                     b.Property<string>("Severity")
                         .IsRequired()
@@ -1718,10 +2845,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("KnowledgeId");
-
-                    b.HasIndex("ProjectId");
-
-                    b.HasIndex("UserId");
 
                     b.HasIndex("ProjectId", "KnowledgeId")
                         .HasDatabaseName("idx_knowledge_conflict_reports_knowledge");
@@ -1820,6 +2943,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("file_size");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<int>("ProcessedChunks")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
@@ -1840,10 +2968,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("started_at");
 
-                    b.Property<string>("UploadDocumentId")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("upload_document_id");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1862,6 +2986,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("total_chunks");
 
+                    b.Property<string>("UploadDocumentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("upload_document_id");
+
                     b.Property<string>("UserId")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -1876,6 +3004,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("UploadDocumentId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_knowledge_processing_tasks_idempotency");
 
                     b.ToTable("knowledge_processing_tasks", (string)null);
                 });
@@ -1899,6 +3031,11 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("ProjectId")
                         .HasColumnType("TEXT")
@@ -1933,15 +3070,15 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("idx_materials_project");
 
-                    b.HasIndex("ProjectId", "IdempotencyKey")
-                        .IsUnique()
-                        .HasDatabaseName("idx_materials_idempotency");
-
                     b.HasIndex("RawDocumentId")
                         .HasDatabaseName("idx_materials_raw_document");
 
                     b.HasIndex("UserId")
                         .HasDatabaseName("idx_materials_user");
+
+                    b.HasIndex("ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_materials_idempotency");
 
                     b.ToTable("materials", (string)null);
                 });
@@ -2010,8 +3147,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("UserId", "IdempotencyKey")
                         .IsUnique()
                         .HasDatabaseName("idx_novel_projects_idempotency");
@@ -2019,11 +3154,371 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.ToTable("novel_projects", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.OutboxEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AggregateId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("aggregate_id");
+
+                    b.Property<string>("AggregateType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("aggregate_type");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_type");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payload_json");
+
+                    b.Property<DateTime?>("ProcessingLeaseExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("processing_lease_expires_at");
+
+                    b.Property<string>("ProcessingOwner")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("processing_owner");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("pending")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AggregateType", "AggregateId")
+                        .HasDatabaseName("idx_outbox_aggregate");
+
+                    b.HasIndex("Status", "ProcessingLeaseExpiresAt")
+                        .HasDatabaseName("idx_outbox_processing_lease");
+
+                    b.HasIndex("UserId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_outbox_idempotency")
+                        .HasFilter("idempotency_key <> ''");
+
+                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt")
+                        .HasDatabaseName("idx_outbox_status_retry");
+
+                    b.ToTable("outbox_events", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProductionEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArtifactId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_id");
+
+                    b.Property<string>("ArtifactType")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artifact_type");
+
+                    b.Property<string>("ChapterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DataJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("data_json");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_type");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message");
+
+                    b.Property<string>("PackageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("package_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuntimeRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("stage");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_production_events_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_production_events_project_chapter_created");
+
+                    b.ToTable("production_events", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectDesignRule", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ConstraintLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Reference")
+                        .HasColumnName("constraint_level");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("PreviousVersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("previous_version_id");
+
+                    b.Property<int>("Priority")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(50)
+                        .HasColumnName("priority");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RuleContent")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("rule_content");
+
+                    b.Property<string>("RuleType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("rule_type");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("ProjectWide")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("ScopeTarget")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope_target");
+
+                    b.Property<string>("SourceKnowledgeIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("source_knowledge_ids_json");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Active")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("Version")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "RuleType", "Status")
+                        .HasDatabaseName("ix_project_design_rules_project_rule_type_status");
+
+                    b.HasIndex("ProjectId", "RuleType", "Version")
+                        .HasDatabaseName("ix_project_design_rules_version");
+
+                    b.HasIndex("UserId", "ProjectId", "CreatedAt")
+                        .HasDatabaseName("ix_project_design_rules_user_project_created");
+
+                    b.ToTable("project_design_rules", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectFactSnapshot", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ChapterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<string>("ChapterVersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_version_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("snapshot_json");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("unknown")
+                        .HasColumnName("source");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("version_number");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChapterId");
+
+                    b.HasIndex("ChapterVersionId");
+
+                    b.HasIndex("ProjectId", "CreatedAt")
+                        .HasDatabaseName("idx_fact_snapshots_project_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "VersionNumber")
+                        .HasDatabaseName("idx_fact_snapshots_project_chapter_version");
+
+                    b.ToTable("project_fact_snapshots", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectKnowledgeUsage", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
+
+                    b.Property<string>("BoundVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("bound_version");
+
+                    b.Property<string>("ConstraintLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Reference")
+                        .HasColumnName("constraint_level");
 
                     b.Property<DateTime>("FirstSeenAt")
                         .ValueGeneratedOnAdd()
@@ -2043,17 +3538,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Property<string>("Note")
                         .HasColumnType("TEXT")
                         .HasColumnName("note");
-
-                    b.Property<string>("BoundVersion")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("bound_version");
-
-                    b.Property<string>("ConstraintLevel")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("Reference")
-                        .HasColumnName("constraint_level");
 
                     b.Property<string>("PackagePolicy")
                         .IsRequired()
@@ -2106,6 +3590,10 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("usage_count");
 
+                    b.Property<string>("UsageIdempotencyKeysJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("usage_idempotency_keys_json");
+
                     b.Property<string>("UsedByChaptersJson")
                         .HasColumnType("TEXT")
                         .HasColumnName("used_by_chapters_json");
@@ -2125,6 +3613,166 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsUnique();
 
                     b.ToTable("project_knowledge_usages", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.RevisionPlan", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AffectedChapterIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("affected_chapter_ids_json");
+
+                    b.Property<string>("ContinuityRequirementsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("continuity_requirements_json");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("CreativeIntentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("creative_intent_id");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("ImpactAnalysisJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("impact_analysis_json");
+
+                    b.Property<string>("InvalidatedPackageIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("invalidated_package_ids_json");
+
+                    b.Property<string>("KnowledgeConflictReportId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("knowledge_conflict_report_id");
+
+                    b.Property<string>("PlanType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("future_carry")
+                        .HasColumnName("plan_type");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Recommendation")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("recommendation");
+
+                    b.Property<string>("RequirementsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("requirements_json");
+
+                    b.Property<string>("RiskLevel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("medium")
+                        .HasColumnName("risk_level");
+
+                    b.Property<string>("RuntimeRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("creative_intent")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("draft")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TargetChapterDisplayName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_chapter_display_name");
+
+                    b.Property<string>("TargetChapterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_chapter_id");
+
+                    b.Property<string>("TargetChapterLogicalId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_chapter_logical_id");
+
+                    b.Property<string>("TargetScope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("project")
+                        .HasColumnName("target_scope");
+
+                    b.Property<string>("TargetVolumeId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_volume_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreativeIntentId")
+                        .HasDatabaseName("idx_revision_plans_creative_intent");
+
+                    b.HasIndex("KnowledgeConflictReportId")
+                        .HasDatabaseName("idx_revision_plans_conflict_report");
+
+                    b.HasIndex("ProjectId", "Status", "CreatedAt")
+                        .HasDatabaseName("idx_revision_plans_project_status_created");
+
+                    b.HasIndex("ProjectId", "TargetChapterId", "Status")
+                        .HasDatabaseName("idx_revision_plans_project_chapter_status");
+
+                    b.HasIndex("UserId", "ProjectId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_revision_plans_idempotency");
+
+                    b.ToTable("revision_plans", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.StoryConstitution", b =>
@@ -2156,16 +3804,16 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("genre_profile");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("ProjectId")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("TEXT")
                         .HasColumnName("project_id");
-
-                    b.Property<string>("IdempotencyKey")
-                        .HasMaxLength(160)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("idempotency_key");
 
                     b.Property<string>("ReaderPromise")
                         .HasMaxLength(1000)
@@ -2203,13 +3851,99 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.HasIndex("ProjectId")
                         .IsUnique();
 
+                    b.HasIndex("UserId");
+
                     b.HasIndex("ProjectId", "IdempotencyKey")
                         .IsUnique()
                         .HasDatabaseName("idx_story_constitutions_idempotency");
 
-                    b.HasIndex("UserId");
-
                     b.ToTable("story_constitutions", (string)null);
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.TianmingPackage", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ChapterId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("chapter_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DependencyVersionsJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("dependency_versions_json");
+
+                    b.Property<string>("FactSnapshotJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("fact_snapshot_json");
+
+                    b.Property<string>("InputJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("input_json");
+
+                    b.Property<string>("KernelVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kernel_version");
+
+                    b.Property<string>("KnowledgeSnapshotJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("knowledge_snapshot_json");
+
+                    b.Property<string>("PackageKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("chapter_generation")
+                        .HasColumnName("package_kind");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("PromptVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("prompt_version");
+
+                    b.Property<string>("RuntimeRunId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("runtime_run_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("pending")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RuntimeRunId", "CreatedAt")
+                        .HasDatabaseName("idx_tianming_packages_run_created");
+
+                    b.HasIndex("ProjectId", "ChapterId", "CreatedAt")
+                        .HasDatabaseName("idx_tianming_packages_project_chapter");
+
+                    b.ToTable("tianming_packages", (string)null);
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.User", b =>
@@ -2283,18 +4017,18 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("user_id");
 
-                    b.Property<bool>("AgentLoopAutoProceed")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(true)
-                        .HasColumnName("agent_loop_auto_proceed");
-
                     b.Property<string>("AgentDefaultRisk")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasDefaultValue("Medium")
                         .HasColumnName("agent_default_risk");
+
+                    b.Property<bool>("AgentLoopAutoProceed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true)
+                        .HasColumnName("agent_loop_auto_proceed");
 
                     b.Property<int>("AgentLoopMaxSteps")
                         .ValueGeneratedOnAdd()
@@ -2689,6 +4423,34 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryPromotion", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryRead", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentMemoryVersion", b =>
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", null)
@@ -2701,6 +4463,17 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentReviewRecord", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.AgentRun", b =>
@@ -2768,8 +4541,67 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("Volume");
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterChange", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterDraft", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ChapterVersion", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.Chapter", "Chapter")
+                        .WithMany("Versions")
+                        .HasForeignKey("ChapterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "ContentDocument")
+                        .WithMany()
+                        .HasForeignKey("ContentDocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Chapter");
+
+                    b.Navigation("ContentDocument");
+
+                    b.Navigation("Project");
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Character", b =>
                 {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.Chapter", null)
+                        .WithMany()
+                        .HasForeignKey("FirstAppearChapter")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.Chapter", null)
+                        .WithMany()
+                        .HasForeignKey("LastAppearChapter")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany("Characters")
                         .HasForeignKey("ProjectId")
@@ -2812,6 +4644,23 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentChunk", null)
+                        .WithMany()
+                        .HasForeignKey("ChunkId", "DocumentId")
+                        .HasPrincipalKey("Id", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Document");
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.CreativeIntent", b =>
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
@@ -2829,23 +4678,6 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("Project");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentVectorPoint", b =>
-                {
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", "Document")
-                        .WithMany()
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentChunk", null)
-                        .WithMany()
-                        .HasForeignKey("ChunkId", "DocumentId")
-                        .HasPrincipalKey("Id", "DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("Document");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Foreshadow", b =>
@@ -2890,6 +4722,17 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("Project");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.GenerationGateReportRecord", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeBase", b =>
@@ -2977,15 +4820,15 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeProcessingTask", b =>
                 {
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
-                        .WithMany()
-                        .HasForeignKey("UploadDocumentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany()
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("UploadDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
                         .WithMany()
@@ -3000,15 +4843,15 @@ namespace TM.Web.NovelAgentWeb.Migrations
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Material", b =>
                 {
-                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
-                        .WithMany()
-                        .HasForeignKey("RawDocumentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
                         .WithMany("Materials")
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", null)
+                        .WithMany()
+                        .HasForeignKey("RawDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
                         .WithMany("Materials")
@@ -3030,6 +4873,42 @@ namespace TM.Web.NovelAgentWeb.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProductionEvent", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectFactSnapshot", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.Chapter", "Chapter")
+                        .WithMany()
+                        .HasForeignKey("ChapterId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.ChapterVersion", "ChapterVersion")
+                        .WithMany()
+                        .HasForeignKey("ChapterVersionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Chapter");
+
+                    b.Navigation("ChapterVersion");
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectKnowledgeUsage", b =>
@@ -3057,6 +4936,39 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.RevisionPlan", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.CreativeIntent", "CreativeIntent")
+                        .WithMany()
+                        .HasForeignKey("CreativeIntentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.KnowledgeConflictReport", "KnowledgeConflictReport")
+                        .WithMany()
+                        .HasForeignKey("KnowledgeConflictReportId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreativeIntent");
+
+                    b.Navigation("KnowledgeConflictReport");
+
+                    b.Navigation("Project");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.StoryConstitution", b =>
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
@@ -3074,6 +4986,17 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("Project");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.TianmingPackage", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.NovelProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.UserSettings", b =>
@@ -3148,6 +5071,8 @@ namespace TM.Web.NovelAgentWeb.Migrations
                     b.Navigation("ForeshadowsPayoff");
 
                     b.Navigation("ForeshadowsSetup");
+
+                    b.Navigation("Versions");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ContentDocument", b =>

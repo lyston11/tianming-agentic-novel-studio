@@ -9,6 +9,7 @@ using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using System.Text.Json;
+using AuthorMemory = TM.Web.NovelAgentWeb.Services.Memory.AuthorMemory;
 
 namespace Tests.Unit.Services.Memory;
 
@@ -515,7 +516,7 @@ public class AgentMemoryRepositoryTests
     }
 
     [Fact]
-    public async Task UpdateMemoryAsync_EnqueuesProjectGoalMemoryIndexOutbox()
+    public async Task UpdateMemoryAsync_EnqueuesSemanticProjectMemoryIndexOutbox()
     {
         await _repository.UpdateMemoryAsync(
             "user-1",
@@ -523,7 +524,14 @@ public class AgentMemoryRepositoryTests
             new Dictionary<string, object>
             {
                 ["project.long_term_goal"] = "新目标",
-                ["project.reader_promise"] = "读者承诺"
+                ["project.reader_promise"] = "读者承诺",
+                ["project.constraints"] = new List<string> { "不要现代科技" },
+                ["project.knowledge_inventory"] = new List<KnowledgeInventoryItem>
+                {
+                    new() { KnowledgeId = "knowledge-1", Title = "灵气规则" }
+                },
+                ["project.used_trope_patterns"] = new List<string> { "身份反转" },
+                ["project.referenced_knowledge_ids"] = new List<string> { "knowledge-1" }
             });
 
         var memoryRows = await _dbContext.AgentMemories
@@ -534,7 +542,7 @@ public class AgentMemoryRepositoryTests
             .OrderBy(e => e.AggregateId)
             .ToListAsync();
 
-        Assert.Equal(2, outbox.Count);
+        Assert.Equal(5, outbox.Count);
         Assert.All(outbox, evt =>
         {
             Assert.Equal("memory", evt.AggregateType);
@@ -543,6 +551,37 @@ public class AgentMemoryRepositoryTests
         });
         Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.long_term_goal"]);
         Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.reader_promise"]);
+        Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.constraints"]);
+        Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.knowledge_inventory"]);
+        Assert.Contains(outbox, e => e.AggregateId == memoryRows["project.used_trope_patterns"]);
+        Assert.DoesNotContain(outbox, e => e.AggregateId == memoryRows["project.referenced_knowledge_ids"]);
+    }
+
+    [Fact]
+    public async Task PromoteMemoryAsync_RollsBackConstraintWhenPromotionAuditInsertFails()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync(
+            "CREATE TRIGGER fail_memory_promotion BEFORE INSERT ON agent_memory_promotions BEGIN SELECT RAISE(ABORT, 'forced promotion failure'); END;");
+        var repository = CreateRepository(db);
+        var record = new MemoryPromotionRecord(
+            "user-1", "project-1", "session-1", "run-1", "session", "project",
+            "session.short_term_preferences", "project.constraints",
+            "preference_sedimentation_threshold", "{}");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => repository.PromoteMemoryAsync(
+            new[] { record },
+            new[] { "章节要打怪升级" }));
+
+        db.ChangeTracker.Clear();
+        Assert.Empty(await db.AgentMemories.ToListAsync());
+        Assert.Empty(await db.AgentMemoryPromotions.ToListAsync());
     }
 
     [Fact]
@@ -611,6 +650,38 @@ public class AgentMemoryRepositoryTests
 
         Assert.Equal(new[] { "agent_memory:user-1:project-1" }, locks.AcquiredKeys);
         Assert.Single(locks.ReleasedLeases);
+    }
+
+    [Fact]
+    public async Task ScalarAndSessionMemoryWritesUseScopedDistributedLocks()
+    {
+        await using var connection = await CreateOpenSqliteConnectionAsync();
+        var options = CreateSqliteOptions(connection.ConnectionString);
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+        db.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
+        await db.SaveChangesAsync();
+        var locks = new RecordingDistributedLockService();
+        var repository = CreateRepository(db, locks);
+
+        await repository.UpdateFieldAsync("user-1", "project-1", "project.long_term_goal", "完成第一卷");
+        await repository.UpdateMemoryAsync("user-1", null, new Dictionary<string, object>
+        {
+            ["author.display_name"] = "作者"
+        });
+        await repository.UpdateSessionMemoryAsync("user-1", "project-1", "session-1", new Dictionary<string, object>
+        {
+            ["session.current_goal"] = "写第一章"
+        });
+
+        Assert.Equal(new[]
+        {
+            "agent_memory:user-1:project-1",
+            "agent_memory:user-1:<global>",
+            "agent_memory:user-1:session_session-1"
+        }, locks.AcquiredKeys);
+        Assert.Equal(3, locks.ReleasedLeases.Count);
     }
 
     [Fact]

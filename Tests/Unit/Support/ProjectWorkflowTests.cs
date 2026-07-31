@@ -1632,7 +1632,7 @@ public class ProjectWorkflowTests
     [Fact]
     public void WebReviewer_UsesDraftContentWhenChapterDocumentIsNotCommittedYet()
     {
-        var reviewerType = typeof(AgentRuntime).Assembly.GetType(
+        var reviewerType = typeof(NovelAgentRun).Assembly.GetType(
             "TM.Services.Framework.AI.NovelAgent.Services.ChapterPostGenerationReviewer");
         Assert.NotNull(reviewerType);
 

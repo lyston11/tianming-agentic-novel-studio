@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   ApiError,
-  cancelRuntimeRun,
+  confirmGoalWorkflow,
   createAgentSession,
-  createSseConnection,
   getSessionActiveRuntimeRun,
-  listRuntimeEvents,
   listAgentSessions,
   resumeAgentSession,
   sendChat,
@@ -19,6 +18,7 @@ import type {
   AgentSessionSummary,
   AgentRuntimeEventView,
   AgentSseEvent,
+  DirectorTurnView,
 } from '../api/types';
 import { useAgentStore } from '../stores/useAgentStore';
 import { useAppStore } from '../stores/useAppStore';
@@ -47,7 +47,6 @@ import {
   productionStageTrackGroups,
   resolveExecutionBlockStatus,
   runtimeEventTerminalState,
-  runtimeEventToSseEvent,
   runtimeRunIdFromEvent,
   runtimeRunToEvent,
   runtimeSourceMessageIdFromEvent,
@@ -56,6 +55,7 @@ import {
   toRuntimeEventView,
 } from './agent/runtimeEvents';
 import type { ExecutionBlockView, RuntimeEventView, StreamingReplyView } from './agent/runtimeEvents';
+import { useAgentRuntimeStream } from './agent/useAgentRuntimeStream';
 
 function formatSessionTime(value: string) {
   const date = new Date(value);
@@ -112,6 +112,7 @@ function isMissingSessionError(err: unknown) {
 
 export default function AgentPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [input, setInput] = useState('');
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -122,10 +123,13 @@ export default function AgentPage() {
     y: number;
   } | null>(null);
   const [activeRuntimeRunId, setActiveRuntimeRunId] = useState<string | null>(null);
-  const [cancellingRuntimeRunId, setCancellingRuntimeRunId] = useState<string | null>(null);
   const [executionBlocks, setExecutionBlocks] = useState<ExecutionBlockView[]>([]);
   const [streamingReply, setStreamingReply] = useState<StreamingReplyView | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [directorProposal, setDirectorProposal] = useState<DirectorTurnView | null>(null);
+  const [goalBudgetLimit, setGoalBudgetLimit] = useState('10');
+  const [goalConfirmError, setGoalConfirmError] = useState('');
+  const [isConfirmingGoal, setIsConfirmingGoal] = useState(false);
   const inFlightCountRef = useRef(0);
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -336,7 +340,6 @@ export default function AgentPage() {
       if (!state.hasActiveRun || !state.run) {
         if (activeRuntimeRunId) {
           setActiveRuntimeRunId(null);
-          setCancellingRuntimeRunId(null);
           inFlightCountRef.current = 0;
           setSending(false);
         }
@@ -345,13 +348,11 @@ export default function AgentPage() {
 
       const run = state.run;
       setActiveRuntimeRunId(run.runId);
-      setCancellingRuntimeRunId(run.cancelRequested ? run.runId : null);
       appendExecutionEvent(runtimeRunToEvent(run, state.heartbeatAt));
       const status = run.status.toLowerCase();
       if (status === 'completed' || status === 'failed' || status === 'cancelled') {
         markExecutionBlockDone(run.runId, status === 'failed');
         setActiveRuntimeRunId(null);
-        setCancellingRuntimeRunId(null);
         inFlightCountRef.current = 0;
         setSending(false);
         void reloadSessions();
@@ -370,7 +371,6 @@ export default function AgentPage() {
     setCurrentProjectId(detail.activeProjectId || null);
     setActiveRun(null);
     setActiveRuntimeRunId(detail.activeRunId ?? null);
-    setCancellingRuntimeRunId(null);
     clearEvents();
     const recentRuntimeEvents = detail.recentRuntimeEvents ?? [];
     resetRuntimeEventReplayState(detail.sessionId, recentRuntimeEvents);
@@ -378,6 +378,8 @@ export default function AgentPage() {
     latestTurnAnchorMessageIdRef.current = latestUserMessageIdFromTurns(detail.messages) || '';
     setExecutionBlocks(buildExecutionBlocksFromRuntimeEvents(recentRuntimeEvents, latestTurnAnchorMessageIdRef.current || undefined));
     setStreamingReply(null);
+    setDirectorProposal(null);
+    setGoalConfirmError('');
     setResumeState({
       pendingToolCall: detail.pendingToolCall ?? null,
       pendingConfirmation: detail.pendingConfirmation ?? memory.pendingConfirmation ?? null,
@@ -400,7 +402,6 @@ export default function AgentPage() {
     setSessionId('');
     setActiveRun(null);
     setActiveRuntimeRunId(null);
-    setCancellingRuntimeRunId(null);
     resetRuntimeEventReplayState(id, []);
     runAnchorMessageIdsRef.current = {};
     latestTurnAnchorMessageIdRef.current = '';
@@ -408,6 +409,8 @@ export default function AgentPage() {
     clearEvents();
     setExecutionBlocks([]);
     setStreamingReply(null);
+    setDirectorProposal(null);
+    setGoalConfirmError('');
     setCurrentSessionMessages('');
   }, [clearEvents, clearResumeState, resetRuntimeEventReplayState, setActiveRun, setCurrentSessionMessages, setSessionId]);
 
@@ -451,7 +454,6 @@ export default function AgentPage() {
       setCurrentProjectId(detail.activeProjectId || null);
       setActiveRun(null);
       setActiveRuntimeRunId(detail.activeRunId ?? null);
-      setCancellingRuntimeRunId(null);
       resetRuntimeEventReplayState(detail.sessionId, []);
       runAnchorMessageIdsRef.current = {};
       latestTurnAnchorMessageIdRef.current = latestUserMessageIdFromTurns(detail.messages) || '';
@@ -459,12 +461,14 @@ export default function AgentPage() {
       clearEvents();
       setExecutionBlocks([]);
       setStreamingReply(null);
+      setDirectorProposal(null);
+      setGoalConfirmError('');
       loadSessionMessages(detail.sessionId, detail.messages, detail.memory);
       await reloadSessions();
     } catch (err) {
       setSessionLoadError(err instanceof Error ? err.message : '新建会话失败');
     }
-  }, [clearEvents, clearResumeState, loadSessionMessages, reloadSessions, resetRuntimeEventReplayState, setActiveRun, setSessionId]);
+  }, [clearEvents, clearResumeState, loadSessionMessages, reloadSessions, resetRuntimeEventReplayState, setActiveRun, setCurrentProjectId, setSessionId]);
 
   const renameSession = useCallback(async (target: AgentSessionSummary) => {
     setSessionMenu(null);
@@ -500,19 +504,23 @@ export default function AgentPage() {
   }, [createNewSession, reloadSessions, selectSession, sessionId]);
 
   useEffect(() => {
-    void reloadSessions();
+    const timer = window.setTimeout(() => void reloadSessions(), 0);
+    return () => window.clearTimeout(timer);
   }, [reloadSessions]);
 
   useEffect(() => {
     if (!sessionId) return;
     if (!sessionsLoaded) return;
     if (lastResumedSessionIdRef.current === sessionId) return;
-    if (!sessions.some((item) => item.sessionId === sessionId)) {
-      clearMissingSession(sessionId);
-      return;
-    }
-    lastResumedSessionIdRef.current = sessionId;
-    void resumeCurrentSession(sessionId);
+    const timer = window.setTimeout(() => {
+      if (!sessions.some((item) => item.sessionId === sessionId)) {
+        clearMissingSession(sessionId);
+        return;
+      }
+      lastResumedSessionIdRef.current = sessionId;
+      void resumeCurrentSession(sessionId);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [clearMissingSession, resumeCurrentSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
@@ -531,11 +539,14 @@ export default function AgentPage() {
   useEffect(() => {
     if (sessionId) return;
     if (!sessionsLoaded) return;
-    if (sessions.length > 0) {
-      void selectSession(sessions[0].sessionId);
-      return;
-    }
-    void createNewSession();
+    const timer = window.setTimeout(() => {
+      if (sessions.length > 0) {
+        void selectSession(sessions[0].sessionId);
+        return;
+      }
+      void createNewSession();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [createNewSession, selectSession, sessionId, sessions, sessionsLoaded]);
 
   useEffect(() => {
@@ -625,7 +636,6 @@ export default function AgentPage() {
           const terminalState = runtimeEventTerminalState(evt.data, evt.message);
           if (terminalState) {
             markExecutionBlockDone(effectiveRunId, terminalState === 'failed');
-            setCancellingRuntimeRunId(null);
             if (!eventRunId || eventRunId === activeRuntimeRunId) {
               setActiveRuntimeRunId(null);
             }
@@ -642,7 +652,6 @@ export default function AgentPage() {
           if (isTerminalRuntimeUpdate(evt.data, evt.message)) {
             const status = (candidate.status || candidate.phase || '').toLowerCase();
             markExecutionBlockDone(effectiveRunId, status === 'failed');
-            setCancellingRuntimeRunId(null);
             if (!eventRunId || eventRunId === activeRuntimeRunId) {
               setActiveRuntimeRunId(null);
             }
@@ -657,7 +666,6 @@ export default function AgentPage() {
       case 'step_fail':
         if (evt.type === 'step_fail') {
           markExecutionBlockDone(effectiveRunId, true);
-          setCancellingRuntimeRunId(null);
           setSending(false);
         }
         invalidateAgentState();
@@ -726,7 +734,6 @@ export default function AgentPage() {
         };
         appendExecutionEvent(replyDoneEvent, eventSourceMessageId || undefined);
         markExecutionBlockDone(effectiveRunId || response?.runId || null);
-        setCancellingRuntimeRunId(null);
         if (!eventRunId || eventRunId === activeRuntimeRunId) {
           setActiveRuntimeRunId(null);
         }
@@ -737,49 +744,15 @@ export default function AgentPage() {
         break;
       }
     }
-  }, [activeRuntimeRunId, addAgentMessage, appendExecutionEvent, appendExecutionPreview, invalidateAgentState, markExecutionBlockDone, rememberRuntimeEventId, sessionId, setActiveRun, setCurrentProjectId, setSending]);
+  }, [activeRuntimeRunId, addAgentMessage, appendExecutionEvent, appendExecutionPreview, invalidateAgentState, markExecutionBlockDone, reloadSessions, rememberRuntimeEventId, sessionId, setActiveRun, setCurrentProjectId, setSending]);
 
-  const replayRuntimeEvents = useCallback(async (targetSessionId: string, afterEventId?: string | null) => {
-    try {
-      const events = await listRuntimeEvents({
-        sessionId: targetSessionId,
-        limit: 80,
-        afterEventId,
-      });
-      events.forEach((evt) => {
-        handleSseEvent(runtimeEventToSseEvent(evt, targetSessionId));
-      });
-    } catch {
-      // Live SSE and active-run polling remain available; replay failures should not break chat input.
-    }
-  }, [handleSseEvent]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    setConnected(false);
-    const afterEventId = lastRuntimeEventIdRef.current[sessionId] || null;
-    const es = createSseConnection(sessionId, afterEventId);
-
-    es.onopen = () => {
-      setConnected(true);
-      void replayRuntimeEvents(sessionId, afterEventId);
-    };
-    es.onmessage = (event) => {
-      try {
-        const evt: AgentSseEvent = JSON.parse(event.data);
-        addSseEvent(evt);
-        handleSseEvent(evt);
-      } catch {
-        /* ignore malformed event */
-      }
-    };
-    es.onerror = () => setConnected(false);
-
-    return () => {
-      es.close();
-      setConnected(false);
-    };
-  }, [addSseEvent, handleSseEvent, replayRuntimeEvents, sessionId, setConnected]);
+  useAgentRuntimeStream({
+    sessionId,
+    lastRuntimeEventIdRef,
+    addSseEvent,
+    handleSseEvent,
+    setConnected,
+  });
 
   const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const thread = chatThreadRef.current;
@@ -846,7 +819,6 @@ export default function AgentPage() {
           runAnchorMessageIdsRef.current[runId] = userMessageId;
         }
         setActiveRuntimeRunId(runId);
-        setCancellingRuntimeRunId(null);
         appendExecutionEvent({
           id: `runtime-ack-${runId || Date.now()}`,
           type: 'run_update',
@@ -859,8 +831,9 @@ export default function AgentPage() {
       }
       if (!isRuntimeAck) {
         setActiveRuntimeRunId(null);
-        setCancellingRuntimeRunId(null);
         addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace, res.memoryAudit);
+        setDirectorProposal(res.director?.proposedContract ? res.director : null);
+        setGoalConfirmError('');
         setExecutionBlocks((prev) => prev.filter((block) => (
           block.id !== pendingBlockId || block.events.length > 0 || block.previews.length > 0
         )));
@@ -897,7 +870,6 @@ export default function AgentPage() {
         timestamp: new Date(),
       }, userMessageId);
       setActiveRuntimeRunId(null);
-      setCancellingRuntimeRunId(null);
       inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1);
       setSending(inFlightCountRef.current > 0);
     }
@@ -906,6 +878,29 @@ export default function AgentPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     void submitMessage(input);
+  };
+
+  const handleConfirmGoal = async () => {
+    if (!directorProposal?.proposedContract || !sessionId) return;
+    const totalCostLimit = Number(goalBudgetLimit);
+    if (!Number.isFinite(totalCostLimit) || totalCostLimit <= 0) {
+      setGoalConfirmError('请输入大于 0 的金额上限');
+      return;
+    }
+
+    setIsConfirmingGoal(true);
+    setGoalConfirmError('');
+    try {
+      const result = await confirmGoalWorkflow(directorProposal, sessionId, totalCostLimit);
+      const goalId = result.submission.goalId;
+      if (!goalId) throw new Error('Goal 已确认，但服务端没有返回 Goal ID');
+      setDirectorProposal(null);
+      navigate(`/goal/${encodeURIComponent(goalId)}`);
+    } catch (err) {
+      setGoalConfirmError(err instanceof Error ? err.message : 'Goal 确认失败');
+    } finally {
+      setIsConfirmingGoal(false);
+    }
   };
 
   const conversationItems: Array<
@@ -927,49 +922,15 @@ export default function AgentPage() {
   ].sort((left, right) => left.at - right.at);
   const messageExecutionBlocks = useMemo(() => {
     return executionBlocks.reduce<Record<string, ExecutionBlockView[]>>((groups, block) => {
-      const anchorMessageId = block.anchorMessageId
-        || (block.runId ? runAnchorMessageIdsRef.current[block.runId] : '');
+      const anchorMessageId = block.anchorMessageId;
       if (!anchorMessageId) return groups;
       return {
         ...groups,
         [anchorMessageId]: [...(groups[anchorMessageId] ?? []), block],
       };
     }, {});
-  }, [executionBlocks, messages]);
+  }, [executionBlocks]);
   const hasRunningExecutionBlock = executionBlocks.some((block) => block.status === 'running');
-
-  const handleCancelRuntimeRun = useCallback(async (runId: string) => {
-    if (!runId || cancellingRuntimeRunId === runId) return;
-    setCancellingRuntimeRunId(runId);
-    appendExecutionEvent({
-      id: `cancel-request-${runId}-${Date.now()}`,
-      type: 'run_update',
-      title: '正在请求取消',
-      detail: '已发送取消请求，Agent 会在安全边界停止后台执行。',
-      status: 'running',
-      runId,
-      timestamp: new Date(),
-    });
-
-    try {
-      const run = await cancelRuntimeRun(runId);
-      appendExecutionEvent(runtimeRunToEvent(run));
-      setActiveRuntimeRunId(run.runId);
-      invalidateAgentState();
-      void refreshActiveRuntimeRun(run.sessionId);
-    } catch (err) {
-      setCancellingRuntimeRunId(null);
-      appendExecutionEvent({
-        id: `cancel-failed-${runId}-${Date.now()}`,
-        type: 'step_fail',
-        title: '取消请求失败',
-        detail: err instanceof Error ? err.message : '无法取消当前后台任务',
-        status: 'failed',
-        runId,
-        timestamp: new Date(),
-      });
-    }
-  }, [appendExecutionEvent, cancellingRuntimeRunId, invalidateAgentState, refreshActiveRuntimeRun]);
 
   const renderExecutionBlock = (block: ExecutionBlockView) => {
     const productionTracks = productionStageTrackGroups(block.events);
@@ -998,19 +959,6 @@ export default function AgentPage() {
           <span className="agent-execution-duration">{duration}</span>
           <span className="agent-execution-chevron">{block.expanded ? '⌃' : '›'}</span>
         </button>
-
-        {block.status === 'running' && block.runId && (
-          <div className="agent-execution-actions">
-            <button
-              type="button"
-              className="agent-runtime-cancel"
-              disabled={cancellingRuntimeRunId === block.runId}
-              onClick={() => void handleCancelRuntimeRun(block.runId!)}
-            >
-              {cancellingRuntimeRunId === block.runId ? '取消中' : '取消任务'}
-            </button>
-          </div>
-        )}
 
         {block.expanded && detailCount > 0 && (
           <div className="agent-execution-details">
@@ -1193,6 +1141,60 @@ export default function AgentPage() {
                 </div>
               );
             })}
+            {directorProposal?.proposedContract && (
+              <section className="agent-goal-proposal" aria-label="Creative Goal 提案">
+                <header>
+                  <div>
+                    <span>Creative Goal</span>
+                    <strong>{directorProposal.proposedContract.humanReadableObjective}</strong>
+                  </div>
+                  <small>{directorProposal.proposedContract.collaborationMode}</small>
+                </header>
+                <div className="agent-goal-contract-grid">
+                  <div>
+                    <span>章节范围</span>
+                    <strong>{directorProposal.proposedContract.targetChapterRangeJson}</strong>
+                  </div>
+                  <div>
+                    <span>成功条件</span>
+                    <strong>{directorProposal.proposedContract.successCriteria.length} 项</strong>
+                  </div>
+                  <div>
+                    <span>必须保留</span>
+                    <strong>{directorProposal.proposedContract.mustPreserve.length} 项</strong>
+                  </div>
+                  <div>
+                    <span>禁止改动</span>
+                    <strong>{directorProposal.proposedContract.mustNotChange.length} 项</strong>
+                  </div>
+                </div>
+                <div className="agent-goal-confirm-row">
+                  <label>
+                    <span>金额上限（USD）</span>
+                    <span className="agent-goal-money-input">
+                      <b>$</b>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={goalBudgetLimit}
+                        onChange={(event) => setGoalBudgetLimit(event.target.value)}
+                        disabled={isConfirmingGoal}
+                      />
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="ink-button"
+                    onClick={() => void handleConfirmGoal()}
+                    disabled={isConfirmingGoal}
+                  >
+                    {isConfirmingGoal ? '正在确认' : '确认并执行'}
+                  </button>
+                </div>
+                {goalConfirmError && <div className="agent-goal-confirm-error">{goalConfirmError}</div>}
+              </section>
+            )}
             {isSending && !hasRunningExecutionBlock && !streamingReply && (
               <div className="agent-message agent thinking">
                 <div className="message-meta">Agent</div>

@@ -6,9 +6,10 @@ namespace TM.Web.NovelAgentWeb.Services.AgentRuntime;
 
 public interface IAgentRuntimeEventStreamConsumer
 {
-    Task EnsureConsumerGroupAsync(string sessionId, string groupName, CancellationToken ct = default);
+    Task EnsureConsumerGroupAsync(string userId, string sessionId, string groupName, CancellationToken ct = default);
 
     Task<IReadOnlyList<AgentRuntimeStreamEvent>> ReadGroupAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -16,6 +17,7 @@ public interface IAgentRuntimeEventStreamConsumer
         CancellationToken ct = default);
 
     Task<IReadOnlyList<AgentRuntimeStreamEvent>> ClaimPendingAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -24,6 +26,7 @@ public interface IAgentRuntimeEventStreamConsumer
         CancellationToken ct = default);
 
     Task<bool> AcknowledgeAsync(
+        string userId,
         string sessionId,
         string groupName,
         string streamId,
@@ -53,7 +56,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         _logger = logger;
     }
 
-    public async Task EnsureConsumerGroupAsync(string sessionId, string groupName, CancellationToken ct = default)
+    public async Task EnsureConsumerGroupAsync(string userId, string sessionId, string groupName, CancellationToken ct = default)
     {
         if (_redis == null)
             return;
@@ -63,7 +66,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         {
             await _redis.GetDatabase()
                 .StreamCreateConsumerGroupAsync(
-                    BuildStreamKey(sessionId),
+                    BuildStreamKey(userId, sessionId),
                     groupName,
                     "0-0",
                     createStream: true,
@@ -81,6 +84,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
     }
 
     public async Task<IReadOnlyList<AgentRuntimeStreamEvent>> ReadGroupAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -95,7 +99,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         {
             var entries = await _redis.GetDatabase()
                 .StreamReadGroupAsync(
-                    BuildStreamKey(sessionId),
+                    BuildStreamKey(userId, sessionId),
                     groupName,
                     consumerName,
                     ">",
@@ -124,6 +128,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
     }
 
     public async Task<IReadOnlyList<AgentRuntimeStreamEvent>> ClaimPendingAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -137,7 +142,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         ct.ThrowIfCancellationRequested();
         try
         {
-            var streamKey = BuildStreamKey(sessionId);
+            var streamKey = BuildStreamKey(userId, sessionId);
             var requestedCount = Math.Clamp(count, 1, 200);
             var pending = await _redis.GetDatabase()
                 .StreamPendingMessagesAsync(
@@ -181,6 +186,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
     }
 
     public async Task<bool> AcknowledgeAsync(
+        string userId,
         string sessionId,
         string groupName,
         string streamId,
@@ -193,7 +199,7 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         try
         {
             var acknowledged = await _redis.GetDatabase()
-                .StreamAcknowledgeAsync(BuildStreamKey(sessionId), groupName, streamId, CommandFlags.None)
+                .StreamAcknowledgeAsync(BuildStreamKey(userId, sessionId), groupName, streamId, CommandFlags.None)
                 .ConfigureAwait(false);
             return acknowledged > 0;
         }
@@ -230,5 +236,14 @@ public sealed class RedisAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStr
         return events;
     }
 
-    private RedisKey BuildStreamKey(string sessionId) => $"{_instanceName}agent_runtime:events:stream:{sessionId}";
+    private RedisKey BuildStreamKey(string userId, string sessionId) =>
+        $"{_instanceName}agent_runtime:events:stream:{NormalizeScopePart(userId, nameof(userId))}:{NormalizeScopePart(sessionId, nameof(sessionId))}";
+
+    private static string NormalizeScopePart(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"{name} is required for runtime event stream scope.", name);
+
+        return value.Trim();
+    }
 }

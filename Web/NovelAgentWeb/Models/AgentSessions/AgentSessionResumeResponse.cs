@@ -1,5 +1,4 @@
 using TM.Web.NovelAgentWeb.Support;
-using TM.Web.NovelAgentWeb.Services.AgentTools;
 using System.Text.Json;
 
 namespace TM.Web.NovelAgentWeb.Models.AgentSessions;
@@ -30,6 +29,20 @@ public sealed class AgentSessionResumeResponse
     public IReadOnlyList<AgentToolExecutionSnapshot> RecentToolExecutions { get; set; } = Array.Empty<AgentToolExecutionSnapshot>();
     public IReadOnlyList<AgentRuntimeEventView> RecentRuntimeEvents { get; set; } = Array.Empty<AgentRuntimeEventView>();
     public IReadOnlyList<string> RunHistory { get; set; } = Array.Empty<string>();
+}
+
+public sealed class AgentToolExecutionSnapshot
+{
+    public string Id { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string? RunId { get; set; }
+    public string Phase { get; set; } = string.Empty;
+    public string ResultPhase { get; set; } = string.Empty;
+    public string ResultMessage { get; set; } = string.Empty;
+    public string RecommendedNextTool { get; set; } = string.Empty;
+    public DateTime StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
 }
 
 public sealed class AgentRuntimeEventView

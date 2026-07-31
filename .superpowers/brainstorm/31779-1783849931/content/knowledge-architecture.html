@@ -1,0 +1,59 @@
+<style>
+  #knowledge-architecture .flow { display:grid; grid-template-columns:minmax(0,1fr) 34px minmax(0,1.2fr) 34px minmax(0,1fr); gap:12px; align-items:center; }
+  #knowledge-architecture .stack { display:flex; flex-direction:column; gap:9px; min-width:0; }
+  #knowledge-architecture .node { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--card-foreground); }
+  #knowledge-architecture .node strong { display:block; margin-bottom:4px; font-weight:500; }
+  #knowledge-architecture .node span { color:var(--muted-foreground); }
+  #knowledge-architecture .knowledge { background:color-mix(in srgb, var(--viz-series-4) 12%, var(--card)); }
+  #knowledge-architecture .compiler { background:color-mix(in srgb, var(--viz-series-2) 12%, var(--card)); }
+  #knowledge-architecture .canon { background:color-mix(in srgb, var(--viz-series-3) 12%, var(--card)); }
+  #knowledge-architecture .arrow { text-align:center; color:var(--muted-foreground); }
+  #knowledge-architecture .rules { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:18px; }
+  #knowledge-architecture .rules > div { border-top:2px solid var(--border); padding-top:10px; }
+  #knowledge-architecture .rules strong { display:block; margin-bottom:4px; font-weight:500; }
+  #knowledge-architecture .rules span { color:var(--muted-foreground); }
+  @media (max-width:700px) {
+    #knowledge-architecture .flow { grid-template-columns:1fr; }
+    #knowledge-architecture .arrow { min-height:20px; }
+    #knowledge-architecture .rules { grid-template-columns:1fr; }
+  }
+</style>
+
+<div id="knowledge-architecture">
+  <h2>知识库在新 Agent 中的位置</h2>
+  <p class="subtitle">知识资产提供证据和创作约束，但不能成为记忆副本，也不能直接成为正史</p>
+
+  <div class="flow">
+    <section class="stack" aria-label="知识资产来源">
+      <div class="label">知识资产层</div>
+      <div class="node knowledge"><strong>个人知识库</strong><span>跨项目可复用的写作方法、资料、题材知识</span></div>
+      <div class="node knowledge"><strong>项目知识库</strong><span>本书研究材料、参考作品分析、术语与设定素材</span></div>
+      <div class="node knowledge"><strong>外部研究快照</strong><span>文件、网页、检索结果；保留来源、版本与引用证据</span></div>
+    </section>
+
+    <div class="arrow">→</div>
+
+    <section class="stack" aria-label="知识内核">
+      <div class="label">知识内核</div>
+      <div class="node compiler"><strong>摄取与结构化</strong><span>解析、切块、去重、分类、来源追踪</span></div>
+      <div class="node compiler"><strong>项目绑定与约束</strong><span>参考 / 灵感 / 软约束 / 硬约束 / 禁止使用</span></div>
+      <div class="node compiler"><strong>冲突与适用性分析</strong><span>检查资料之间、资料与正史之间的冲突</span></div>
+      <div class="node compiler"><strong>Knowledge Pack 编译</strong><span>按领域任务生成小而精确、带证据的知识包</span></div>
+    </section>
+
+    <div class="arrow">→</div>
+
+    <section class="stack" aria-label="知识消费者与权威状态">
+      <div class="label">消费与晋升</div>
+      <div class="node"><strong>设定 / 规划 / 写作 / 审稿内核</strong><span>只读取当前任务的 Knowledge Pack，不直接搜索整个库</span></div>
+      <div class="node canon"><strong>候选正史分支</strong><span>知识被采用后产生“候选事实”，记录来源与采用理由</span></div>
+      <div class="node canon"><strong>正式作品状态</strong><span>只有批次验收后，候选事实才晋升为正史</span></div>
+    </section>
+  </div>
+
+  <div class="rules">
+    <div><strong>知识库 ≠ 记忆</strong><span>知识资产有来源、版本、适用范围；记忆只保存偏好和经验</span></div>
+    <div><strong>检索 ≠ 决策</strong><span>Qdrant 找候选证据，知识内核负责筛选、冲突和任务打包</span></div>
+    <div><strong>引用 ≠ 正史</strong><span>任何资料都必须经过领域内核采用和用户验收才能进入作品事实</span></div>
+  </div>
+</div>

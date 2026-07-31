@@ -74,6 +74,8 @@ public class KnowledgeControllerTests
         var task = await db.KnowledgeProcessingTasks.SingleAsync();
         Assert.Equal("project-1", task.ProjectId);
         Assert.False(string.IsNullOrWhiteSpace(task.UploadDocumentId));
+        Assert.False(string.IsNullOrWhiteSpace(task.UploadBlobId));
+        Assert.Equal(Encoding.UTF8.GetBytes("知识原文"), (await db.KnowledgeDocumentBlobs.SingleAsync()).Data);
         var content = await new ContentDocumentService(db).GetTextAsync(
             "user-1",
             "project-1",
@@ -187,7 +189,8 @@ public class KnowledgeControllerTests
             db,
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
-            new ContentDocumentService(db));
+            new ContentDocumentService(db),
+            CreateIngestionService(db, currentUser.Object));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext()
@@ -219,7 +222,8 @@ public class KnowledgeControllerTests
             db,
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
-            new ContentDocumentService(db)));
+            new ContentDocumentService(db),
+            CreateIngestionService(db, currentUser.Object)));
     }
 
     private static KnowledgeController CreateRealController(NovelAgentDbContext db, string userId)
@@ -241,7 +245,21 @@ public class KnowledgeControllerTests
             db,
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
-            new ContentDocumentService(db)));
+            new ContentDocumentService(db),
+            CreateIngestionService(db, currentUser.Object)));
+    }
+
+    private static IKnowledgeDocumentIngestionService CreateIngestionService(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser) =>
+        new KnowledgeDocumentIngestionService(db, currentUser, new NeverCalledKnowledgeStructureModel());
+
+    private sealed class NeverCalledKnowledgeStructureModel : IKnowledgeStructureModelClient
+    {
+        public Task<KnowledgeStructureAnalysis> AnalyzeAsync(
+            KnowledgeStructureRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("上传测试不应执行文档结构分析。");
     }
 
     private static KnowledgeController WithHttpContext(KnowledgeController controller)
@@ -276,7 +294,11 @@ public class KnowledgeControllerTests
     private static IFormFile CreateFormFile(string content)
     {
         var bytes = Encoding.UTF8.GetBytes(content);
-        return new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "knowledge.txt");
+        return new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "knowledge.txt")
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = "text/plain"
+        };
     }
 
     private static string ReadTaskId(object? value)

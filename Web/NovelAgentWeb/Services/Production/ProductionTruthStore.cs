@@ -631,6 +631,15 @@ public class ProductionTruthStore : IProductionTruthStore
         EnqueueOutboxEventRequest request,
         CancellationToken cancellationToken = default)
     {
+        var idempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
+            ? $"{request.EventType}:{request.AggregateType}:{request.AggregateId}:{request.RuntimeRunId ?? "<none>"}"
+            : request.IdempotencyKey.Trim();
+        var existing = await _db.OutboxEvents.FirstOrDefaultAsync(evt =>
+            evt.UserId == request.UserId && evt.IdempotencyKey == idempotencyKey,
+            cancellationToken).ConfigureAwait(false);
+        if (existing != null)
+            return existing;
+
         var evt = new OutboxEvent
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -640,6 +649,7 @@ public class ProductionTruthStore : IProductionTruthStore
             EventType = request.EventType,
             AggregateType = request.AggregateType,
             AggregateId = request.AggregateId,
+            IdempotencyKey = idempotencyKey,
             PayloadJson = request.PayloadJson,
             Status = "pending",
             Attempts = 0,
@@ -648,8 +658,21 @@ public class ProductionTruthStore : IProductionTruthStore
         };
 
         _db.OutboxEvents.Add(evt);
-        await _db.SaveChangesAsync(cancellationToken);
-        return evt;
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+            return evt;
+        }
+        catch (DbUpdateException)
+        {
+            _db.Entry(evt).State = EntityState.Detached;
+            var winner = await _db.OutboxEvents.FirstOrDefaultAsync(candidate =>
+                candidate.UserId == request.UserId && candidate.IdempotencyKey == idempotencyKey,
+                cancellationToken).ConfigureAwait(false);
+            if (winner != null)
+                return winner;
+            throw;
+        }
     }
 
     public async Task MarkOutboxCompletedAsync(string outboxEventId, CancellationToken cancellationToken = default)

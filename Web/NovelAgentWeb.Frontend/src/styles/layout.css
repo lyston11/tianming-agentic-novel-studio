@@ -76,6 +76,8 @@
 .desk {
   --page-topbar-height: 38px;
   --page-content-gap: 12px;
+  min-width: 0;
+  width: 100%;
   padding: 20px 28px 28px;
   min-height: 100vh;
   display: flex;
@@ -138,7 +140,6 @@
   text-align: center;
 }
 
-/* Command Band */
 .command-band {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -157,6 +158,8 @@
   gap: 4px;
 }
 
+/* Command Band */
+
 .metric-card .value {
   font-size: 24px;
   font-weight: 700;
@@ -172,14 +175,62 @@
 
 /* Responsive */
 @media (max-width: 1180px) {
-  .studio-shell { grid-template-columns: 1fr; }
-  .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px 16px; }
-  .rail-nav { flex-direction: row; }
+  .studio-shell {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .rail { position: static; min-width: 0; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px 16px; }
+  .rail > nav { min-width: 0; flex: 1; flex-basis: 100%; overflow: hidden; }
+  .rail-nav { min-width: 0; flex-direction: row; overflow-x: auto; }
   .rail-footer { margin-top: 0; padding-top: 0; border-top: none; }
   .command-band { grid-template-columns: repeat(2, 1fr); }
+  .desk { min-height: 0; overflow: visible; }
 }
 
 @media (max-width: 760px) {
+  .rail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px 12px;
+    padding: 10px 12px;
+  }
+  .brand-mark { min-width: 0; padding-bottom: 0; }
+  .seal { width: 34px; height: 34px; font-size: 16px; }
+  .brand-mark small { display: none; }
+  .rail > nav { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+  .rail-nav > li { flex: 0 0 auto; }
+  .stage-item { white-space: nowrap; }
+  .rail-footer {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rail-footer > div:first-child { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-footer > div:nth-child(2) { display: none; }
+  .rail-footer button { width: auto !important; margin-top: 0 !important; padding: 6px 10px !important; white-space: nowrap; }
   .desk { padding: 16px; }
   .command-band { grid-template-columns: 1fr; }
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 12px;
+  }
+  .topbar-center {
+    position: static;
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
 }

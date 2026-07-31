@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -403,8 +403,11 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
 
   useEffect(() => {
     if (selectedDirectory !== 'All' && !directories.some((directory) => directory.key === selectedDirectory)) {
-      setSelectedDirectory('All');
-      setSelectedId(null);
+      const timer = window.setTimeout(() => {
+        setSelectedDirectory('All');
+        setSelectedId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [directories, selectedDirectory]);
 
@@ -624,7 +627,7 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     setDirectoryMenu(null);
   };
 
-  const moveEntryToDirectory = (entryId: string, directoryKey: string) => {
+  const moveEntryToDirectory = useCallback((entryId: string, directoryKey: string) => {
     const targetDirectory = normalizeCategory(directoryKey);
     if (targetDirectory === 'All' || moveEntryMutation.isPending) return;
     const entry = entries.find((item) => item.id === entryId);
@@ -634,7 +637,7 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     }
 
     moveEntryMutation.mutate({ id: entry.id, directoryKey: targetDirectory });
-  };
+  }, [entries, moveEntryMutation]);
 
   const openEntryActionDialog = (mode: EntryDialogState['mode'], entry: KnowledgeEntryView) => {
     setEntryMenu(null);
@@ -746,7 +749,7 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [entries, moveEntryMutation.isPending]);
+  }, [entries, moveEntryMutation.isPending, moveEntryToDirectory]);
 
   const isDetailMode = creatingEntry || !!selectedEntry;
   const isEditingDetail = creatingEntry || (!!selectedEntry && editingId === selectedEntry.id);

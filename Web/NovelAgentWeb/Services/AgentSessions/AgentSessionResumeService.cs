@@ -1,7 +1,8 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
-using TM.Web.NovelAgentWeb.Services.AgentTools;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
@@ -9,26 +10,17 @@ namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 public sealed class AgentSessionResumeService : IAgentSessionResumeService
 {
     private readonly AgentSessionManager _sessions;
-    private readonly IToolSearchCacheService _toolSearchCache;
-    private readonly IAgentToolExecutionLedger _toolExecutionLedger;
-    private readonly IAgentRuntimeRunService _runtimeRuns;
+    private readonly NovelAgentDbContext _db;
     private readonly IAgentRuntimeEventService _runtimeEvents;
-    private readonly AgentToolRegistry _toolRegistry;
 
     public AgentSessionResumeService(
         AgentSessionManager sessions,
-        IToolSearchCacheService toolSearchCache,
-        IAgentToolExecutionLedger toolExecutionLedger,
-        IAgentRuntimeRunService runtimeRuns,
-        IAgentRuntimeEventService runtimeEvents,
-        AgentToolRegistry toolRegistry)
+        NovelAgentDbContext db,
+        IAgentRuntimeEventService runtimeEvents)
     {
         _sessions = sessions;
-        _toolSearchCache = toolSearchCache;
-        _toolExecutionLedger = toolExecutionLedger;
-        _runtimeRuns = runtimeRuns;
+        _db = db;
         _runtimeEvents = runtimeEvents;
-        _toolRegistry = toolRegistry;
     }
 
     public async Task<AgentSessionResumeResponse> ResumeAsync(string sessionId, CancellationToken ct = default)
@@ -37,23 +29,25 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
         if (session == null)
             throw new KeyNotFoundException($"Session {sessionId} not found");
 
-        var phase = string.IsNullOrWhiteSpace(session.DiscoveredPhase)
-            ? session.Phase
-            : session.DiscoveredPhase;
-        if (string.IsNullOrWhiteSpace(phase))
-            phase = "Conversation";
-
-        var toolCatalogSignature = ToolCatalogSignature.Compute(_toolRegistry.ListToolSchemas());
-        var toolSearchLookup = await _toolSearchCache.GetAsync(session, phase, toolCatalogSignature, ct).ConfigureAwait(false);
-        var tools = toolSearchLookup.Tools?.ToList() ?? new List<ToolSchema>();
-        var recentToolExecutions = await _toolExecutionLedger
-            .GetRecentAsync(
-                session.UserId,
-                session.SessionId,
-                string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
-                ct)
+        var recentToolExecutions = await _db.AgentToolExecutions.AsNoTracking()
+            .Where(item => item.UserId == session.UserId && item.SessionId == session.SessionId)
+            .OrderByDescending(item => item.StartedAt)
+            .Take(20)
+            .Select(item => new AgentToolExecutionSnapshot
+            {
+                Id = item.Id,
+                ToolName = item.ToolName,
+                Status = item.Status,
+                RunId = item.RunId,
+                Phase = item.Phase,
+                ResultPhase = item.ResultPhase,
+                ResultMessage = item.ResultMessage,
+                RecommendedNextTool = item.RecommendedNextTool,
+                StartedAt = item.StartedAt,
+                CompletedAt = item.CompletedAt
+            })
+            .ToListAsync(ct)
             .ConfigureAwait(false);
-        var activeRuntimeRun = await _runtimeRuns.TryGetActiveAsync(session.UserId, session.SessionId, ct).ConfigureAwait(false);
         var recentRuntimeEvents = await _runtimeEvents
             .GetRecentAsync(session.UserId, session.SessionId, 12, ct)
             .ConfigureAwait(false);
@@ -64,23 +58,23 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
             Title = session.Title,
             Phase = session.Phase,
             ActiveProjectId = session.ActiveProjectId,
-            ActiveRunId = activeRuntimeRun?.Id,
+            ActiveRunId = null,
             IsArchived = session.IsArchived,
             CreatedAt = session.CreatedAt,
             UpdatedAt = session.UpdatedAt,
             Messages = session.ChatHistory.ToList(),
             Memory = AgentWorkingMemorySnapshot.From(session.WorkingMemory),
             MissionPlan = session.WorkingMemory.MissionPlan,
-            PendingToolCall = session.WorkingMemory.PendingToolCall,
-            PendingConfirmation = session.WorkingMemory.PendingConfirmation,
-            HasPendingTool = session.WorkingMemory.PendingToolCall != null,
-            HasPendingConfirmation = session.WorkingMemory.PendingConfirmation != null,
+            PendingToolCall = null,
+            PendingConfirmation = null,
+            HasPendingTool = false,
+            HasPendingConfirmation = false,
             DiscoveredPhase = session.DiscoveredPhase,
-            DiscoveredTools = tools,
-            ToolSearchCacheVersion = session.ToolSearchCacheVersion,
-            LastToolSearchAt = session.LastToolSearchAt,
-            ToolSearchCacheFresh = toolSearchLookup.Hit,
-            ToolSearchCacheSource = toolSearchLookup.Source,
+            DiscoveredTools = Array.Empty<ToolSchema>(),
+            ToolSearchCacheVersion = null,
+            LastToolSearchAt = null,
+            ToolSearchCacheFresh = false,
+            ToolSearchCacheSource = "legacy_retired",
             RecentToolExecutions = recentToolExecutions,
             RecentRuntimeEvents = recentRuntimeEvents.Select(ToRuntimeEventView).ToList(),
             RunHistory = session.RunHistory.ToList()

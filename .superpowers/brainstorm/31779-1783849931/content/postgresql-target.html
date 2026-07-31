@@ -1,0 +1,54 @@
+<style>
+  #postgres-target .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+  #postgres-target .column { display:flex; flex-direction:column; gap:9px; min-width:0; }
+  #postgres-target .node { padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--card-foreground); }
+  #postgres-target .node strong { display:block; margin-bottom:4px; font-weight:500; }
+  #postgres-target .node span { color:var(--muted-foreground); }
+  #postgres-target .primary { background:color-mix(in srgb,var(--viz-series-3) 11%,var(--card)); }
+  #postgres-target .native { background:color-mix(in srgb,var(--viz-series-2) 10%,var(--card)); }
+  #postgres-target .migration { background:color-mix(in srgb,var(--viz-series-4) 10%,var(--card)); }
+  #postgres-target .bottom { margin-top:18px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  #postgres-target .bottom > div { padding-top:10px; border-top:2px solid var(--border); }
+  #postgres-target .bottom strong { display:block; margin-bottom:4px; font-weight:500; }
+  #postgres-target .bottom span { color:var(--muted-foreground); }
+  @media (max-width:760px) {
+    #postgres-target .grid, #postgres-target .bottom { grid-template-columns:1fr; }
+  }
+</style>
+
+<div id="postgres-target">
+  <h2>PostgreSQL 目标数据架构</h2>
+  <p class="subtitle">生产唯一权威库；为候选分支、任务图和多内核并发提供原生事务语义</p>
+
+  <div class="grid">
+    <section class="column" aria-label="核心模型">
+      <div class="label">领域模型</div>
+      <div class="node primary"><strong>作品聚合</strong><span>projects、canon_snapshots、story_entities、chapter_versions、continuity_facts</span></div>
+      <div class="node primary"><strong>候选分支</strong><span>canon_branches、candidate_chapters、candidate_facts、fact_dependencies</span></div>
+      <div class="node primary"><strong>创作执行</strong><span>creative_goals、task_graphs、kernel_tasks、domain_events、revision_plans</span></div>
+      <div class="node primary"><strong>知识资产</strong><span>knowledge_documents、knowledge_entries、style_profiles、knowledge_usages、citations</span></div>
+    </section>
+
+    <section class="column" aria-label="PostgreSQL 原生能力">
+      <div class="label">并发与一致性</div>
+      <div class="node native"><strong>原子任务领取</strong><span><code>FOR UPDATE SKIP LOCKED</code>，多 worker 无重复执行</span></div>
+      <div class="node native"><strong>乐观并发</strong><span>聚合 version / xmin，返工和分支合并检测陈旧写入</span></div>
+      <div class="node native"><strong>部分唯一索引</strong><span>每会话 active goal、每章 active task、幂等键和未完成批次约束</span></div>
+      <div class="node native"><strong>JSONB + 关系字段</strong><span>可变报告与模型产物用 JSONB；身份、状态、依赖、权限必须关系化</span></div>
+      <div class="node native"><strong>事务 Outbox</strong><span>领域状态与待发布事件同事务提交，Redis/Qdrant 异步消费</span></div>
+    </section>
+
+    <section class="column" aria-label="迁移策略">
+      <div class="label">从 SQLite 迁移</div>
+      <div class="node migration"><strong>独立 PostgreSQL baseline</strong><span>不重放含 PRAGMA 的旧 SQLite migration</span></div>
+      <div class="node migration"><strong>离线导入器</strong><span>SQLite 只读导出 → 类型转换 → PostgreSQL staging → 校验 → 正式表</span></div>
+      <div class="node migration"><strong>双重核验</strong><span>行数、外键、哈希、章节版本、用户归属、知识向量引用</span></div>
+      <div class="node migration"><strong>切换与回滚</strong><span>短暂停写、最终增量、切换连接；原 SQLite 保持只读备份</span></div>
+    </section>
+  </div>
+
+  <div class="bottom">
+    <div><strong>生产环境</strong><span>只支持 PostgreSQL。任务调度、分支合并和 Outbox 按 PostgreSQL 语义实现并测试。</span></div>
+    <div><strong>开发环境</strong><span>优先使用容器 PostgreSQL；SQLite 仅用于纯领域单元测试或迁移源测试，不能证明生产并发正确性。</span></div>
+  </div>
+</div>

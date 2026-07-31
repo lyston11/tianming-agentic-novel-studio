@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/*.test.mjs tests/runtimeStreamRetry.test.ts",
     "build": "tsc -b && vite build",
     "postbuild": "npm run sync-to-backend",
     "sync-to-backend": "rm -rf ../NovelAgentWeb/wwwroot/* && cp -r dist/* ../NovelAgentWeb/wwwroot/",

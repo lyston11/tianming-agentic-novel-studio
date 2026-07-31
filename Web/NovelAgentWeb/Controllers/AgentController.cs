@@ -76,19 +76,28 @@ public class AgentController : ControllerBase
         Response.Headers.Append("Connection", "keep-alive");
 
         var replayAfterEventId = FirstNonEmpty(afterEventId, Request.Headers["Last-Event-ID"].ToString());
+        var isReplay = !string.IsNullOrWhiteSpace(replayAfterEventId);
+        await using var subscription = _sessionManager.SubscribeEvents(userId, sessionId, includeBacklog: !isReplay);
+        var seenEventIds = new HashSet<string>(StringComparer.Ordinal);
         if (!string.IsNullOrWhiteSpace(replayAfterEventId))
         {
             var replayed = await ReplayRuntimeEventsAsync(userId, sessionId, replayAfterEventId, 100, ct)
                 .ConfigureAwait(false);
             foreach (var evt in replayed)
+            {
+                if (!string.IsNullOrWhiteSpace(evt.EventId))
+                    seenEventIds.Add(evt.EventId);
                 await WriteSseEventAsync(evt, ct).ConfigureAwait(false);
+            }
         }
 
-        var reader = _sessionManager.GetEventReader(sessionId);
+        var reader = subscription.Reader;
         try
         {
             await foreach (var evt in reader.ReadAllAsync(ct))
             {
+                if (!string.IsNullOrWhiteSpace(evt.EventId) && !seenEventIds.Add(evt.EventId))
+                    continue;
                 await WriteSseEventAsync(evt, ct).ConfigureAwait(false);
             }
         }

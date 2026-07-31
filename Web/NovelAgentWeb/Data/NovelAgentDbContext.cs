@@ -10,6 +10,11 @@ public class NovelAgentDbContext : DbContext
     {
     }
 
+    protected NovelAgentDbContext(DbContextOptions options)
+        : base(options)
+    {
+    }
+
     public DbSet<User> Users { get; set; } = null!;
     public DbSet<UserSettings> UserSettings { get; set; } = null!;
     public DbSet<NovelProject> NovelProjects { get; set; } = null!;
@@ -58,6 +63,34 @@ public class NovelAgentDbContext : DbContext
     public DbSet<KnowledgeProcessingTask> KnowledgeProcessingTasks { get; set; } = null!;
     public DbSet<ProjectDesignRule> ProjectDesignRules { get; set; } = null!;
     public DbSet<ChapterBlueprint> ChapterBlueprints { get; set; } = null!;
+    public DbSet<CreativeGoal> CreativeGoals { get; set; } = null!;
+    public DbSet<GoalRevision> GoalRevisions { get; set; } = null!;
+    public DbSet<TaskGraphVersion> TaskGraphVersions { get; set; } = null!;
+    public DbSet<KernelTask> KernelTasks { get; set; } = null!;
+    public DbSet<KernelArtifact> KernelArtifacts { get; set; } = null!;
+    public DbSet<DomainEvent> DomainEvents { get; set; } = null!;
+    public DbSet<ModelExecution> ModelExecutions { get; set; } = null!;
+    public DbSet<CanonBranch> CanonBranches { get; set; } = null!;
+    public DbSet<CandidateChapter> CandidateChapters { get; set; } = null!;
+    public DbSet<CandidateAcceptance> CandidateAcceptances { get; set; } = null!;
+    public DbSet<BranchMergeRecord> BranchMergeRecords { get; set; } = null!;
+    public DbSet<ContinuitySummary> ContinuitySummaries { get; set; } = null!;
+    public DbSet<CanonChange> CanonChanges { get; set; } = null!;
+    public DbSet<GoalContextSnapshot> GoalContextSnapshots { get; set; } = null!;
+    public DbSet<ModelKernelConfiguration> ModelKernelConfigurations { get; set; } = null!;
+    public DbSet<ReworkIntent> ReworkIntents { get; set; } = null!;
+    public DbSet<KnowledgeDocumentBlob> KnowledgeDocumentBlobs { get; set; } = null!;
+    public DbSet<KnowledgeSection> KnowledgeSections { get; set; } = null!;
+    public DbSet<KnowledgeChunk> KnowledgeChunks { get; set; } = null!;
+    public DbSet<KnowledgeEntry> KnowledgeEntries { get; set; } = null!;
+    public DbSet<StyleProfile> StyleProfiles { get; set; } = null!;
+    public DbSet<KnowledgeCitation> KnowledgeCitations { get; set; } = null!;
+    public DbSet<VectorIndexRecord> VectorIndexRecords { get; set; } = null!;
+    public DbSet<AuthorMemory> AuthorMemories { get; set; } = null!;
+    public DbSet<ProjectCollaborationDecision> ProjectCollaborationDecisions { get; set; } = null!;
+    public DbSet<SessionDialogueState> SessionDialogueStates { get; set; } = null!;
+    public DbSet<ExperienceObservation> ExperienceObservations { get; set; } = null!;
+    public DbSet<ExperienceSuggestion> ExperienceSuggestions { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -67,6 +100,8 @@ public class NovelAgentDbContext : DbContext
         modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.ChatMessage>();
         modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.ChatSummary>();
         modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.LayeredChatHistory>();
+
+        modelBuilder.ConfigureTargetArchitecture();
 
         // User entity configuration
         modelBuilder.Entity<User>(entity =>
@@ -937,6 +972,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
             entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
             entity.Property(e => e.AggregateId).HasColumnName("aggregate_id").IsRequired();
+            entity.Property(e => e.IdempotencyKey).HasColumnName("idempotency_key").HasDefaultValue(string.Empty);
             entity.Property(e => e.PayloadJson).HasColumnName("payload_json").IsRequired();
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending");
             entity.Property(e => e.Attempts).HasColumnName("attempts").HasDefaultValue(0);
@@ -954,6 +990,10 @@ public class NovelAgentDbContext : DbContext
                 .HasDatabaseName("idx_outbox_processing_lease");
             entity.HasIndex(e => new { e.AggregateType, e.AggregateId })
                 .HasDatabaseName("idx_outbox_aggregate");
+            entity.HasIndex(e => new { e.UserId, e.IdempotencyKey })
+                .IsUnique()
+                .HasFilter("idempotency_key <> ''")
+                .HasDatabaseName("ux_outbox_idempotency");
         });
 
         // AgentChatTurn entity configuration
@@ -1388,7 +1428,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Act2Confrontation).HasColumnName("act2_confrontation");
             entity.Property(e => e.Act3Climax).HasColumnName("act3_climax");
             entity.Property(e => e.Act4Resolution).HasColumnName("act4_resolution");
-            entity.Property(e => e.KeyEvents).HasColumnName("key_events");
+            entity.Property(e => e.KeyEvents).HasColumnName("key_events").HasColumnType("text");
             entity.Property(e => e.MajorConflict).HasColumnName("major_conflict");
             entity.Property(e => e.ConflictEscalation).HasColumnName("conflict_escalation");
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("planned");
@@ -1619,7 +1659,13 @@ public class NovelAgentDbContext : DbContext
             entity.HasIndex(e => new { e.UserId, e.ProjectId, e.Status, e.UpdatedAt })
                 .HasDatabaseName("idx_agent_runtime_runs_project_status");
             entity.HasIndex(e => new { e.UserId, e.SessionId, e.IdempotencyKey })
-                .HasDatabaseName("idx_agent_runtime_runs_idempotency");
+                .IsUnique()
+                .HasFilter("idempotency_key <> ''")
+                .HasDatabaseName("ux_agent_runtime_runs_idempotency");
+            entity.HasIndex(e => new { e.UserId, e.SessionId })
+                .IsUnique()
+                .HasFilter("status IN ('queued', 'running')")
+                .HasDatabaseName("ux_agent_runtime_runs_active_session");
         });
 
         modelBuilder.Entity<AgentInterrupt>(entity =>
@@ -1683,6 +1729,11 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.FileName).HasColumnName("file_name").IsRequired();
             entity.Property(e => e.FileSize).HasColumnName("file_size");
             entity.Property(e => e.Status).HasColumnName("status").HasDefaultValue("pending");
+            entity.Property(e => e.ProcessingStage).HasColumnName("processing_stage").HasDefaultValue("extract");
+            entity.Property(e => e.ProcessingOwner).HasColumnName("processing_owner");
+            entity.Property(e => e.ProcessingLeaseExpiresAt).HasColumnName("processing_lease_expires_at");
+            entity.Property(e => e.Attempt).HasColumnName("attempt").HasDefaultValue(0);
+            entity.Property(e => e.MaxAttempts).HasColumnName("max_attempts").HasDefaultValue(3);
             entity.Property(e => e.Strategy).HasColumnName("strategy").HasDefaultValue("single_pass");
             entity.Property(e => e.Progress).HasColumnName("progress").HasDefaultValue(0);
             entity.Property(e => e.TotalChunks).HasColumnName("total_chunks");
@@ -1690,13 +1741,18 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.ExtractedEntriesCount).HasColumnName("extracted_entries_count").HasDefaultValue(0);
             entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
             entity.Property(e => e.UploadDocumentId).HasColumnName("upload_document_id");
+            entity.Property(e => e.UploadBlobId).HasColumnName("upload_blob_id");
             entity.Property(e => e.StartedAt).HasColumnName("started_at");
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.Status, e.ProcessingLeaseExpiresAt, e.CreatedAt })
+                .HasDatabaseName("idx_knowledge_processing_tasks_claim");
             entity.HasIndex(e => e.UploadDocumentId);
+            entity.HasIndex(e => e.UploadBlobId);
             entity.HasIndex(e => new { e.UserId, e.ProjectId, e.IdempotencyKey })
                 .IsUnique()
                 .HasDatabaseName("idx_knowledge_processing_tasks_idempotency");
@@ -1714,6 +1770,11 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne<ContentDocument>()
                 .WithMany()
                 .HasForeignKey(e => e.UploadDocumentId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne<KnowledgeDocumentBlob>()
+                .WithMany()
+                .HasForeignKey(e => e.UploadBlobId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

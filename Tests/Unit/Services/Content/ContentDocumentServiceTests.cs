@@ -232,6 +232,44 @@ public class ContentDocumentServiceTests
     }
 
     [Fact]
+    public async Task DeferredSave_PublishesNoCacheUntilCommittedChangesAreAnnounced()
+    {
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+        var redis = new Mock<IDistributedCacheService>(MockBehavior.Strict);
+        var memory = new Mock<IMemoryCacheService>(MockBehavior.Strict);
+        memory.Setup(x => x.RemoveByPrefix("content:text:user-1:project-1:"));
+        redis.Setup(x => x.RemoveByPrefixAsync(
+                "content:text:user-1:project-1:",
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var service = new ContentDocumentService(
+            db,
+            redis.Object,
+            memory.Object,
+            NullLogger<ContentDocumentService>.Instance);
+
+        await service.SaveTextDeferredAsync(
+            "user-1",
+            "project-1",
+            "chapter",
+            "chapter-1",
+            "chapter_body",
+            "第一章",
+            "事务内正文");
+
+        memory.Verify(x => x.Set(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>()), Times.Never);
+        redis.Verify(x => x.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        await service.PublishCommittedProjectChangesAsync("user-1", "project-1");
+
+        memory.Verify(x => x.RemoveByPrefix("content:text:user-1:project-1:"), Times.Once);
+        redis.Verify(x => x.RemoveByPrefixAsync("content:text:user-1:project-1:", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task DeleteBySourceAsync_RemovesHotTextCaches()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()

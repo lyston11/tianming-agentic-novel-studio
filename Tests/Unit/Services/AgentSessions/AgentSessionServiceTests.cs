@@ -291,5 +291,5 @@ public class AgentSessionServiceTests
     }
 
     private static AgentSessionService CreateService(NovelAgentDbContext db) =>
-        new(db, new AgentRuntimeRunService(db), NullLogger<AgentSessionService>.Instance);
+        new(db, NullLogger<AgentSessionService>.Instance);
 }

@@ -19,19 +19,22 @@ public class KnowledgeController : ControllerBase
     private readonly ICurrentUserService _currentUserService;
     private readonly IContentDocumentService _contentDocuments;
     private readonly ILogger<KnowledgeController> _logger;
+    private readonly IKnowledgeDocumentIngestionService _documentIngestion;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         ILogger<KnowledgeController> logger,
-        IContentDocumentService contentDocuments)
+        IContentDocumentService contentDocuments,
+        IKnowledgeDocumentIngestionService documentIngestion)
     {
         _knowledgeService = knowledgeService;
         _db = db;
         _currentUserService = currentUserService;
         _contentDocuments = contentDocuments;
         _logger = logger;
+        _documentIngestion = documentIngestion;
     }
 
     [HttpGet("directories")]
@@ -335,7 +338,13 @@ public class KnowledgeController : ControllerBase
             }
 
             var fileName = Path.GetFileName(file.FileName);
-            var text = await ReadFormFileTextAsync(file);
+            var bytes = await ReadFormFileBytesAsync(file);
+            var text = ReadUploadedText(bytes);
+            var uploadBlob = await _documentIngestion.StoreUploadAsync(
+                normalizedProjectId,
+                fileName,
+                file.ContentType,
+                bytes);
 
             var task = new Data.Entities.KnowledgeProcessingTask
             {
@@ -350,6 +359,7 @@ public class KnowledgeController : ControllerBase
                 Progress = 0,
                 CreatedAt = DateTime.UtcNow
             };
+            task.UploadBlobId = uploadBlob.Id;
 
             _db.KnowledgeProcessingTasks.Add(task);
             await _db.SaveChangesAsync();
@@ -422,10 +432,17 @@ public class KnowledgeController : ControllerBase
         }
     }
 
-    private static async Task<string> ReadFormFileTextAsync(IFormFile file)
+    private static async Task<byte[]> ReadFormFileBytesAsync(IFormFile file)
     {
-        using var reader = new StreamReader(file.OpenReadStream());
-        var text = await reader.ReadToEndAsync();
+        await using var stream = file.OpenReadStream();
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
+    }
+
+    private static string ReadUploadedText(byte[] data)
+    {
+        var text = System.Text.Encoding.UTF8.GetString(data);
         if (string.IsNullOrWhiteSpace(text))
             throw new InvalidOperationException("Uploaded knowledge content is empty.");
         return text;

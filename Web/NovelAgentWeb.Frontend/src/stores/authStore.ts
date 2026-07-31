@@ -26,7 +26,7 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'auth-storage',
       version: 1,
-      migrate: (persistedState: any, version: number) => {
+      migrate: (persistedState: unknown, version: number) => {
         if (version === 0) {
           // Clear old flat structure data
           return emptyAuthState();

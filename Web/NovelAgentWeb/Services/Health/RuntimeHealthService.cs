@@ -7,17 +7,20 @@ namespace TM.Web.NovelAgentWeb.Services.Health;
 public sealed class RuntimeHealthService
 {
     private readonly IDistributedCache _redis;
+    private readonly IPostgresHealthProbe _postgres;
     private readonly IQdrantHealthProbe _qdrant;
     private readonly EmbeddingRuntimeStatus _embedding;
     private readonly ILogger<RuntimeHealthService> _logger;
 
     public RuntimeHealthService(
         IDistributedCache redis,
+        IPostgresHealthProbe postgres,
         IQdrantHealthProbe qdrant,
         EmbeddingRuntimeStatus embedding,
         ILogger<RuntimeHealthService> logger)
     {
         _redis = redis;
+        _postgres = postgres;
         _qdrant = qdrant;
         _embedding = embedding;
         _logger = logger;
@@ -27,6 +30,7 @@ public sealed class RuntimeHealthService
     {
         var entries = new Dictionary<string, RuntimeHealthEntry>(StringComparer.Ordinal)
         {
+            ["postgresql"] = await CheckPostgresAsync(cancellationToken),
             ["redis"] = await CheckRedisAsync(cancellationToken),
             ["qdrant"] = await CheckQdrantAsync(cancellationToken),
             ["embedding"] = CheckEmbedding()
@@ -37,6 +41,14 @@ public sealed class RuntimeHealthService
             : RuntimeHealthStatuses.Healthy;
 
         return new RuntimeHealthReport(status, entries);
+    }
+
+    private async Task<RuntimeHealthEntry> CheckPostgresAsync(CancellationToken cancellationToken)
+    {
+        var result = await _postgres.CheckAsync(cancellationToken);
+        return result.IsHealthy
+            ? RuntimeHealthEntry.Healthy()
+            : RuntimeHealthEntry.Degraded(result.Reason ?? "PostgreSQL probe failed.");
     }
 
     private async Task<RuntimeHealthEntry> CheckRedisAsync(CancellationToken cancellationToken)

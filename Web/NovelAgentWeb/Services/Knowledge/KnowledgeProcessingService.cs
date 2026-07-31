@@ -34,6 +34,7 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
     private readonly IProjectKnowledgeUsageService? _projectKnowledgeUsage;
     private readonly IOutputArtifactRecorder? _outputArtifacts;
     private readonly IKnowledgeClassificationService? _classificationService;
+    private readonly IKnowledgeDocumentIngestionService? _documentIngestion;
 
     public KnowledgeProcessingService(
         NovelAgentDbContext db,
@@ -47,7 +48,8 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
         IAgentMemoryRepository? memoryRepository = null,
         IProjectKnowledgeUsageService? projectKnowledgeUsage = null,
         IOutputArtifactRecorder? outputArtifacts = null,
-        IKnowledgeClassificationService? classificationService = null)
+        IKnowledgeClassificationService? classificationService = null,
+        IKnowledgeDocumentIngestionService? documentIngestion = null)
     {
         _db = db;
         _knowledgeService = knowledgeService;
@@ -61,6 +63,7 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
         _projectKnowledgeUsage = projectKnowledgeUsage;
         _outputArtifacts = outputArtifacts;
         _classificationService = classificationService;
+        _documentIngestion = documentIngestion;
     }
 
     /// <summary>
@@ -135,6 +138,12 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
             await _db.SaveChangesAsync(ct);
             await ReportProgressAsync(progress, "save_entries", $"已抽取 {entries.Count} 条知识，正在写入知识库并绑定到项目。", task.Progress, new { taskId, entryCount = entries.Count }, ct);
             var createdIds = await SaveExtractedEntriesAsync(task, entries, ct);
+            if (_documentIngestion != null)
+            {
+                if (string.IsNullOrWhiteSpace(task.UploadBlobId))
+                    throw new InvalidOperationException("知识处理任务缺少数据库原件 UploadBlobId。");
+                await _documentIngestion.FinalizeProcessingAsync(task.UploadBlobId, content, createdIds, ct);
+            }
 
             task.Status = "completed";
             task.Progress = 100;

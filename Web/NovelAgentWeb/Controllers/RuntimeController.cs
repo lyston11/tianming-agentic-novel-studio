@@ -11,21 +11,18 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 [Authorize]
 public sealed class RuntimeController : ControllerBase
 {
-    private readonly IAgentRuntimeRunService _runs;
+    private readonly ILegacyRuntimeAuditReader _runs;
     private readonly IAgentRuntimeEventService _events;
     private readonly ICurrentUserService _currentUser;
-    private readonly IAgentInterruptService? _interrupts;
 
     public RuntimeController(
-        IAgentRuntimeRunService runs,
+        ILegacyRuntimeAuditReader runs,
         IAgentRuntimeEventService events,
-        ICurrentUserService currentUser,
-        IAgentInterruptService? interrupts = null)
+        ICurrentUserService currentUser)
     {
         _runs = runs;
         _events = events;
         _currentUser = currentUser;
-        _interrupts = interrupts;
     }
 
     [HttpGet("runs/{runId}")]
@@ -110,104 +107,6 @@ public sealed class RuntimeController : ControllerBase
         return Ok(payload);
     }
 
-    [HttpPost("runs/{runId}/cancel")]
-    public async Task<IActionResult> CancelRun(string runId, CancellationToken ct)
-    {
-        try
-        {
-            var existing = await _runs.TryGetAsync(runId, ct).ConfigureAwait(false);
-            if (existing == null)
-            {
-                return NotFound(Error("RUN_NOT_FOUND", "Runtime run not found.", recoverable: false));
-            }
-
-            if (!CanRead(existing.UserId))
-                return AccessDenied();
-
-            var run = await _runs.RequestCancelAsync(runId, ct).ConfigureAwait(false);
-            if (_interrupts != null)
-            {
-                await _interrupts.AddAsync(new CreateAgentInterruptRequest(
-                        run.Id,
-                        run.UserId,
-                        run.SessionId,
-                        run.ProjectId,
-                        "cancel",
-                        "用户通过运行控制接口请求取消本次后台执行。",
-                        100),
-                    ct).ConfigureAwait(false);
-            }
-
-            return Ok(RuntimeRunDto.FromEntity(run));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(Error("RUN_NOT_FOUND", "Runtime run not found.", recoverable: false));
-        }
-    }
-
-    [HttpPost("runs/{runId}/interrupt")]
-    public async Task<IActionResult> InterruptRun(
-        string runId,
-        [FromBody] RuntimeInterruptRequest request,
-        CancellationToken ct)
-    {
-        if (_interrupts == null)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, Error(
-                "INTERRUPT_SERVICE_UNAVAILABLE",
-                "运行中补充要求服务不可用。",
-                recoverable: true,
-                recommendedAction: "Retry"));
-        }
-
-        var existing = await _runs.TryGetAsync(runId, ct).ConfigureAwait(false);
-        if (existing == null)
-        {
-            return NotFound(Error("RUN_NOT_FOUND", "Runtime run not found.", recoverable: false));
-        }
-
-        if (!CanRead(existing.UserId))
-            return AccessDenied();
-
-        if (!AgentRuntimeRunStatus.Active.Contains(existing.Status))
-        {
-            return BadRequest(Error(
-                "RUN_NOT_ACTIVE",
-                "后台任务已经结束，不能再追加运行中补充要求。",
-                recoverable: true,
-                recommendedAction: "QueryRuntimeRun"));
-        }
-
-        var message = request.Message?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return BadRequest(Error(
-                "INVALID_INTERRUPT",
-                "补充要求不能为空。",
-                recoverable: true,
-                recommendedAction: "ProvideMessage"));
-        }
-
-        var kind = NormalizeInterruptKind(request.Kind);
-        if (string.Equals(kind, "cancel", StringComparison.OrdinalIgnoreCase))
-        {
-            existing = await _runs.RequestCancelAsync(existing.Id, ct).ConfigureAwait(false);
-        }
-
-        var interrupt = await _interrupts.AddAsync(new CreateAgentInterruptRequest(
-                existing.Id,
-                existing.UserId,
-                existing.SessionId,
-                existing.ProjectId,
-                kind,
-                message,
-                Math.Clamp(request.Priority, 0, 100)),
-            ct).ConfigureAwait(false);
-
-        return Ok(RuntimeInterruptDto.FromEntity(interrupt));
-    }
-
     private string? ResolveReadableUserId(string? requestedUserId)
     {
         var currentUserId = _currentUser.GetUserId();
@@ -245,13 +144,4 @@ public sealed class RuntimeController : ControllerBase
         string recommendedAction = "") =>
         new { code, message, recoverable, recommendedAction };
 
-    private static string NormalizeInterruptKind(string? kind) =>
-        kind?.Trim().ToLowerInvariant() switch
-        {
-            "soft_requirement" => "soft_requirement",
-            "direction_change" => "direction_change",
-            "cancel" => "cancel",
-            "freeform" => "freeform",
-            _ => "freeform"
-        };
 }

@@ -595,7 +595,16 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
 
             var committed = StripChanges(draft.DraftContent);
             var committedTitle = ResolveCommittedChapterTitle(run);
-            if (!string.IsNullOrWhiteSpace(committedTitle) &&
+            if (_generatedContentService is IAtomicGeneratedChapterCommitService atomicCommit)
+            {
+                await atomicCommit.SaveChapterAtomicallyAsync(
+                        run.TargetChapterId,
+                        committed,
+                        committedTitle,
+                        BuildChapterCommitOutboxes(run, contextPackage, draft, gate, committed))
+                    .ConfigureAwait(false);
+            }
+            else if (!string.IsNullOrWhiteSpace(committedTitle) &&
                 _generatedContentService is IGeneratedChapterMetadataWriter metadataWriter)
             {
                 await metadataWriter.SaveChapterAsync(run.TargetChapterId, committed, committedTitle).ConfigureAwait(false);
@@ -607,6 +616,48 @@ namespace TM.Services.Framework.AI.NovelAgent.Services
             await ScheduleOrExtractContinuityFactsAsync(run, contextPackage, committed, ct)
                 .ConfigureAwait(false);
             return RefreshIndexesAndAnalyzeImpact(run, draft);
+        }
+
+        private static IReadOnlyList<GeneratedChapterOutboxWrite> BuildChapterCommitOutboxes(
+            NovelAgentRun run,
+            ChapterContextPackageSummary contextPackage,
+            ChapterDraftArtifact draft,
+            GenerationGateReport gate,
+            string committedContent)
+        {
+            var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+            return new[]
+            {
+                new GeneratedChapterOutboxWrite(
+                    run.RunId,
+                    "extract_chapter_continuity_facts",
+                    "chapter",
+                    run.TargetChapterId,
+                    JsonSerializer.Serialize(new
+                    {
+                        run,
+                        contextPackage,
+                        committedContent
+                    }, jsonOptions)),
+                new GeneratedChapterOutboxWrite(
+                    run.RunId,
+                    "finalize_chapter_commit_metadata",
+                    "chapter",
+                    run.TargetChapterId,
+                    JsonSerializer.Serialize(new
+                    {
+                        runtimeRunId = run.RunId,
+                        userId = string.Empty,
+                        projectId = string.Empty,
+                        targetChapterId = run.TargetChapterId,
+                        message = "章节正文、版本和提交后任务已原子落库。",
+                        contextPackage,
+                        draftArtifact = draft,
+                        gateReport = gate,
+                        postGenerationReview = run.PostGenerationReview,
+                        continuityFacts = run.ContinuityFacts
+                    }, jsonOptions))
+            };
         }
 
         private static string ResolveCommittedChapterTitle(NovelAgentRun run)

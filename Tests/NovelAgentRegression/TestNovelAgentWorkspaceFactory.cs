@@ -46,16 +46,6 @@ internal static class TestNovelAgentWorkspaceFactory
         _ = workspace;
     }
 
-    public static void BindWorkspace(NovelAgentWorkspace workspace)
-    {
-        PhaseContextBuilder.SetWorkspace(workspace);
-    }
-
-    public static void ClearWorkspace()
-    {
-        PhaseContextBuilder.ClearWorkspace();
-    }
-
     private static IServiceScopeFactory CreateWorkspaceScopeFactory()
     {
         var services = new ServiceCollection();

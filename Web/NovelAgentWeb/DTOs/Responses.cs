@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TM.Services.Framework.AI.NovelAgent.Models;
+using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Support;
 
 namespace TM.Web.NovelAgentWeb.DTOs;
@@ -24,7 +25,9 @@ public sealed record AgentChatResponse(
     AgentPendingConfirmation? PendingConfirmation = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     AgentMemoryAuditSummary? MemoryAudit = null,
-    string ActiveProjectId = "");
+    string ActiveProjectId = "",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    DirectorTurnView? Director = null);
 
 public static class AgentChatResponsePublicProjection
 {
@@ -44,7 +47,8 @@ public static class AgentChatResponsePublicProjection
             response.Phase,
             PendingConfirmation: response.PendingConfirmation ?? response.Memory?.PendingConfirmation,
             MemoryAudit: response.MemoryAudit,
-            ActiveProjectId: activeProjectId);
+            ActiveProjectId: activeProjectId,
+            Director: response.Director);
     }
 }
 

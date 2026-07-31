@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Models.Auth;
@@ -70,6 +71,13 @@ public class AuthService : IAuthService
 
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
+
+            if (_context.Database.IsRelational() &&
+                _context.Database.GetDbConnection() is NpgsqlConnection)
+            {
+                await _context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT set_config('app.current_user_id', {user.Id}, true)");
+            }
 
             // Create default UserSettings
             var userSettings = new UserSettings

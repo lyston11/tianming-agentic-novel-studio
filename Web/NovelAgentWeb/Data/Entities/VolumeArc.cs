@@ -63,8 +63,7 @@ public sealed class VolumeArc
     [StringLength(5000)]
     public string? Act4Resolution { get; set; }
 
-    [Column("key_events")]
-    [StringLength(2000)]
+    [Column("key_events", TypeName = "text")]
     public string? KeyEvents { get; set; }
 
     [Column("major_conflict")]

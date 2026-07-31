@@ -4,7 +4,7 @@ public sealed class ApiEnvelope<T>
 {
     public const string CurrentApiVersion = "v1";
     public const string CurrentToolSchemaVersion = "agent-tools-v1";
-    public const string CurrentAgentLoopVersion = "agent-loop-v1";
+    public const string CurrentAgentLoopVersion = "novel-director-goal-v1";
     public const string CurrentKernelVersion = "agentic-tianming-v1";
 
     public bool Success { get; init; }

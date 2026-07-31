@@ -277,7 +277,7 @@ export default function LibraryPage() {
   const [rightVersionId, setRightVersionId] = useState('');
   const [rollbackDialog, setRollbackDialog] = useState<VersionRollbackDialogState | null>(null);
 
-  const projectsList = projects ?? [];
+  const projectsList = useMemo(() => projects ?? [], [projects]);
   const projectInfos = useMemo(
     () => projectsList.map(toNovelProjectInfo),
     [projectsList],
@@ -517,7 +517,7 @@ export default function LibraryPage() {
     [readerProductionChains],
   );
   const readerProductionEvidence = selectedChapterContent.data?.productionEvidence;
-  const chapterVersions = chapterVersionsQuery.data ?? [];
+  const chapterVersions = useMemo(() => chapterVersionsQuery.data ?? [], [chapterVersionsQuery.data]);
   const orderedVersions = useMemo(
     () => [...chapterVersions].sort((a, b) => b.versionNumber - a.versionNumber),
     [chapterVersions],
@@ -541,26 +541,38 @@ export default function LibraryPage() {
   const plannedChapters = selectedBook?.plannedChapterCount ?? 0;
 
   useEffect(() => {
-    if (projects) ensureProjectSelected(projectInfos);
-    if (projectsList.length === 0 && mode !== 'store') setMode('store');
+    const timer = window.setTimeout(() => {
+      if (projects) ensureProjectSelected(projectInfos);
+      if (projectsList.length === 0 && mode !== 'store') setMode('store');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [ensureProjectSelected, projectInfos, projects, projectsList.length, mode]);
 
   useEffect(() => {
-    setCoverDraftUrl(selectedBook?.coverImageUrl ?? '');
-    setIsCoverEditorOpen(false);
+    const timer = window.setTimeout(() => {
+      setCoverDraftUrl(selectedBook?.coverImageUrl ?? '');
+      setIsCoverEditorOpen(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [selectedBook?.projectId, selectedBook?.coverImageUrl]);
 
   useEffect(() => {
-    setLeftVersionId('');
-    setRightVersionId('');
+    const timer = window.setTimeout(() => {
+      setLeftVersionId('');
+      setRightVersionId('');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [selectedChapter?.chapterId]);
 
   useEffect(() => {
     if (orderedVersions.length < 2 || leftVersionId || rightVersionId) return;
     const current = orderedVersions.find((version) => version.isCurrent) ?? orderedVersions[0];
     const baseline = orderedVersions.find((version) => version.id !== current.id) ?? orderedVersions[1];
-    setLeftVersionId(baseline.id);
-    setRightVersionId(current.id);
+    const timer = window.setTimeout(() => {
+      setLeftVersionId(baseline.id);
+      setRightVersionId(current.id);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [leftVersionId, orderedVersions, rightVersionId]);
 
   useEffect(() => {

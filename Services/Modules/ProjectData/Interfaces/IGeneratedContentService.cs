@@ -29,4 +29,21 @@ namespace TM.Services.Modules.ProjectData.Interfaces
     {
         Task SaveChapterAsync(string chapterId, string content, string? title);
     }
+
+    public interface IAtomicGeneratedChapterCommitService : IGeneratedChapterMetadataWriter
+    {
+        Task SaveChapterAtomicallyAsync(
+            string chapterId,
+            string content,
+            string? title,
+            IReadOnlyList<GeneratedChapterOutboxWrite> outboxWrites);
+    }
+
+    public sealed record GeneratedChapterOutboxWrite(
+        string RuntimeRunId,
+        string EventType,
+        string AggregateType,
+        string AggregateId,
+        string PayloadJson,
+        string? IdempotencyKey = null);
 }

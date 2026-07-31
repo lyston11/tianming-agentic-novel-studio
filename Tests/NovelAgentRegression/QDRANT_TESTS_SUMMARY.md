@@ -79,7 +79,7 @@ Added to `NovelAgentRegression.csproj`:
 ## Test Configuration
 
 ### Qdrant Container
-- **Image**: `qdrant/qdrant:v1.8.0` (matches production)
+- **Image**: `qdrant/qdrant:v1.18.1` (matches production)
 - **Port**: 6334 (gRPC)
 - **Container Management**: Testcontainers automatically handles lifecycle
 

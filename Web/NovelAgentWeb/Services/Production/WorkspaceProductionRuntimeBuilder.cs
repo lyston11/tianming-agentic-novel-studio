@@ -115,7 +115,7 @@ public sealed class WorkspaceProductionRuntimeBuilder : IWorkspaceProductionRunt
             request.CreativeKnowledgeBaseService,
             productionKernel);
 
-        return new WorkspaceProductionRuntime(orchestrator, registrations);
+        return new WorkspaceProductionRuntime(orchestrator, productionKernel, registrations);
     }
 
     private static async Task<string> CompleteWritingWithCurrentUserAsync(

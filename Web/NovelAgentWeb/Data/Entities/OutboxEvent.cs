@@ -9,6 +9,7 @@ public class OutboxEvent
     public string EventType { get; set; } = null!;
     public string AggregateType { get; set; } = null!;
     public string AggregateId { get; set; } = null!;
+    public string IdempotencyKey { get; set; } = string.Empty;
     public string PayloadJson { get; set; } = "{}";
     public string Status { get; set; } = "pending";
     public int Attempts { get; set; }

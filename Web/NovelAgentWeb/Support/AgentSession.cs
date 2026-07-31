@@ -153,8 +153,12 @@ public sealed class AgentSessionManager
         await _db.SaveChangesAsync(ct);
     }
 
-    public async Task SendEventAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
-        => await _events.SendAsync(sessionId, evt, ct).ConfigureAwait(false);
+    public async Task SendEventAsync(
+        string userId,
+        string sessionId,
+        AgentSseEvent evt,
+        CancellationToken ct = default) =>
+        await _events.SendAsync(userId, sessionId, evt, ct).ConfigureAwait(false);
 
     public async Task<bool> ReplaceLastAssistantTurnAsync(
         AgentSession session,
@@ -191,8 +195,11 @@ public sealed class AgentSessionManager
         return true;
     }
 
-    public ChannelReader<AgentSseEvent> GetEventReader(string sessionId) =>
-        _events.GetReader(sessionId);
+    public AgentSseSubscription SubscribeEvents(
+        string userId,
+        string sessionId,
+        bool includeBacklog = true) =>
+        _events.Subscribe(userId, sessionId, includeBacklog);
 
     public async Task RemoveSessionAsync(string sessionId, CancellationToken ct = default)
     {
@@ -203,7 +210,7 @@ public sealed class AgentSessionManager
             _db.AgentSessions.Remove(entity);
             await _db.SaveChangesAsync(ct);
         }
-        _events.RemoveSession(sessionId);
+        _events.RemoveSession(userId, sessionId);
     }
 
     private static string SerializeSessionData(AgentSession session) =>
@@ -382,25 +389,148 @@ public sealed class AgentSessionManager
 
 public sealed class AgentSseEventBus
 {
-    private readonly ConcurrentDictionary<string, Channel<AgentSseEvent>> _channels = new();
+    private const int MaxBacklogEvents = 256;
+    private readonly ConcurrentDictionary<EventStreamScope, SessionEventStream> _streams = new();
 
-    public ChannelReader<AgentSseEvent> GetReader(string sessionId) =>
-        GetOrCreateChannel(sessionId).Reader;
-
-    public async Task SendAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default)
+    public AgentSseSubscription Subscribe(string userId, string sessionId, bool includeBacklog = true)
     {
+        var scope = EventStreamScope.Create(userId, sessionId);
+        var stream = _streams.GetOrAdd(scope, _ => new SessionEventStream());
+        var channel = Channel.CreateUnbounded<AgentSseEvent>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            AllowSynchronousContinuations = false
+        });
+        long subscriberId;
+
+        lock (stream.Sync)
+        {
+            subscriberId = ++stream.NextSubscriberId;
+            stream.Subscribers[subscriberId] = channel;
+            if (includeBacklog)
+            {
+                while (stream.Backlog.TryDequeue(out var evt))
+                    channel.Writer.TryWrite(evt);
+            }
+            else
+            {
+                stream.Backlog.Clear();
+            }
+        }
+
+        return new AgentSseSubscription(
+            channel.Reader,
+            () =>
+            {
+                RemoveSubscriber(scope, stream, subscriberId, channel);
+                return ValueTask.CompletedTask;
+            });
+    }
+
+    public Task SendAsync(
+        string userId,
+        string sessionId,
+        AgentSseEvent evt,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var scope = EventStreamScope.Create(userId, sessionId);
+        if (string.IsNullOrWhiteSpace(evt.EventId))
+            evt.EventId = Guid.NewGuid().ToString("N");
         evt.SessionId = sessionId;
         evt.Timestamp = DateTime.UtcNow;
-        var channel = GetOrCreateChannel(sessionId);
-        await channel.Writer.WriteAsync(evt, ct).ConfigureAwait(false);
+        var stream = _streams.GetOrAdd(scope, _ => new SessionEventStream());
+
+        lock (stream.Sync)
+        {
+            if (stream.Subscribers.Count == 0)
+            {
+                while (stream.Backlog.Count >= MaxBacklogEvents)
+                    stream.Backlog.Dequeue();
+                stream.Backlog.Enqueue(evt);
+            }
+            else
+            {
+                foreach (var channel in stream.Subscribers.Values)
+                    channel.Writer.TryWrite(evt);
+            }
+        }
+
+        return Task.CompletedTask;
     }
 
-    public void RemoveSession(string sessionId)
+    public void RemoveSession(string userId, string sessionId)
     {
-        if (_channels.TryRemove(sessionId, out var channel))
-            channel.Writer.TryComplete();
+        var scope = EventStreamScope.Create(userId, sessionId);
+        if (!_streams.TryRemove(scope, out var stream))
+            return;
+
+        lock (stream.Sync)
+        {
+            foreach (var channel in stream.Subscribers.Values)
+                channel.Writer.TryComplete();
+            stream.Subscribers.Clear();
+            stream.Backlog.Clear();
+        }
     }
 
-    private Channel<AgentSseEvent> GetOrCreateChannel(string sessionId) =>
-        _channels.GetOrAdd(sessionId, _ => Channel.CreateUnbounded<AgentSseEvent>());
+    private void RemoveSubscriber(
+        EventStreamScope scope,
+        SessionEventStream stream,
+        long subscriberId,
+        Channel<AgentSseEvent> channel)
+    {
+        var removeStream = false;
+        lock (stream.Sync)
+        {
+            stream.Subscribers.Remove(subscriberId);
+            channel.Writer.TryComplete();
+            removeStream = stream.Subscribers.Count == 0 && stream.Backlog.Count == 0;
+        }
+
+        if (removeStream)
+            ((ICollection<KeyValuePair<EventStreamScope, SessionEventStream>>)_streams)
+                .Remove(new KeyValuePair<EventStreamScope, SessionEventStream>(scope, stream));
+    }
+
+    private readonly record struct EventStreamScope(string UserId, string SessionId)
+    {
+        public static EventStreamScope Create(string userId, string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+                throw new ArgumentException("userId is required for SSE event scope.", nameof(userId));
+            if (string.IsNullOrWhiteSpace(sessionId))
+                throw new ArgumentException("sessionId is required for SSE event scope.", nameof(sessionId));
+            return new EventStreamScope(userId.Trim(), sessionId.Trim());
+        }
+    }
+
+    private sealed class SessionEventStream
+    {
+        public object Sync { get; } = new();
+        public Dictionary<long, Channel<AgentSseEvent>> Subscribers { get; } = new();
+        public Queue<AgentSseEvent> Backlog { get; } = new();
+        public long NextSubscriberId { get; set; }
+    }
+}
+
+public sealed class AgentSseSubscription : IAsyncDisposable
+{
+    private Func<ValueTask>? _dispose;
+
+    internal AgentSseSubscription(ChannelReader<AgentSseEvent> reader, Func<ValueTask> dispose)
+    {
+        Reader = reader;
+        _dispose = dispose;
+    }
+
+    public ChannelReader<AgentSseEvent> Reader { get; }
+
+    public async ValueTask DisposeAsync()
+    {
+        var dispose = Interlocked.Exchange(ref _dispose, null);
+        if (dispose != null)
+            await dispose().ConfigureAwait(false);
+    }
 }

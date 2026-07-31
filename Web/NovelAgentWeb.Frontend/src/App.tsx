@@ -8,6 +8,7 @@ import { useProjectStore } from './stores/useProjectStore';
 import Rail from './components/layout/Rail';
 import ProtectedRoute from './components/ProtectedRoute';
 import AgentPage from './pages/AgentPage';
+import GoalConsolePage from './pages/agent/GoalConsolePage';
 import MaterialsPage from './pages/MaterialsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import LibraryPage from './pages/LibraryPage';
@@ -51,6 +52,8 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<AgentPage />} />
           <Route path="/agent" element={<AgentPage />} />
+          <Route path="/goal" element={<GoalConsolePage />} />
+          <Route path="/goal/:goalId" element={<GoalConsolePage />} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/workflow" element={<WorkflowPage />} />
           <Route path="/workflow/:projectId" element={<WorkflowPage />} />

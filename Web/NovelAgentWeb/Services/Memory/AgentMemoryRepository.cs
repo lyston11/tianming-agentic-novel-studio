@@ -264,6 +264,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task UpdateFieldAsync(string userId, string? projectId, string memoryType, object value, CancellationToken ct = default)
     {
+        await using var writeLock = await AcquireMemoryWriteLockAsync(userId, projectId, ct).ConfigureAwait(false);
         var json = JsonSerializer.Serialize(value);
 
         var existing = await _context.AgentMemories
@@ -314,6 +315,10 @@ public class AgentMemoryRepository : IAgentMemoryRepository
 
     public async Task UpdateMemoryAsync(string userId, string? projectId, Dictionary<string, object> updates, CancellationToken ct = default)
     {
+        if (updates.Count == 0)
+            return;
+
+        await using var writeLock = await AcquireMemoryWriteLockAsync(userId, projectId, ct).ConfigureAwait(false);
         var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
         IDbContextTransaction? transaction = null;
 
@@ -561,6 +566,31 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         await _distributedLocks.ReleaseAsync(lease, ct).ConfigureAwait(false);
     }
 
+    private async Task<MemoryWriteLease> AcquireMemoryWriteLockAsync(
+        string userId,
+        string? scopeId,
+        CancellationToken ct)
+    {
+        var normalizedScope = string.IsNullOrWhiteSpace(scopeId) ? "<global>" : scopeId.Trim();
+        var localKey = $"{userId}:{normalizedScope}";
+        var localLock = MemoryLocks.GetOrAdd(localKey, _ => new SemaphoreSlim(1, 1));
+        var distributedLease = await AcquireMemoryDistributedLockAsync(
+                BuildMemoryDistributedLockKey(userId, normalizedScope),
+                ct)
+            .ConfigureAwait(false);
+        try
+        {
+            await localLock.WaitAsync(ct).ConfigureAwait(false);
+            return new MemoryWriteLease(localLock, () =>
+                ReleaseMemoryDistributedLockAsync(distributedLease, CancellationToken.None));
+        }
+        catch
+        {
+            await ReleaseMemoryDistributedLockAsync(distributedLease, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     private static string BuildMemoryDistributedLockKey(string userId, string? projectId) =>
         $"agent_memory:{NormalizeLockSegment(userId)}:{NormalizeLockSegment(projectId ?? "<global>")}";
 
@@ -575,6 +605,11 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         {
             throw new ArgumentException("Session memory updates must use session.* memory types.", nameof(updates));
         }
+
+        if (updates.Count == 0)
+            return;
+
+        await using var writeLock = await AcquireMemoryWriteLockAsync(userId, $"session_{sessionId}", ct).ConfigureAwait(false);
 
         var isInMemory = _context.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory";
         IDbContextTransaction? transaction = null;
@@ -676,6 +711,107 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         });
 
         await _context.SaveChangesAsync(ct);
+    }
+
+    public async Task PromoteMemoryAsync(
+        IReadOnlyList<MemoryPromotionRecord> records,
+        IReadOnlyList<string> projectConstraints,
+        CancellationToken ct = default)
+    {
+        if (records.Count == 0)
+            return;
+
+        var userId = records[0].UserId;
+        var projectId = records[0].ProjectId;
+        if (string.IsNullOrWhiteSpace(projectId) ||
+            records.Any(record =>
+                !string.Equals(record.UserId, userId, StringComparison.Ordinal) ||
+                !string.Equals(record.ProjectId, projectId, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Memory promotion batch must belong to one user and project.", nameof(records));
+        }
+
+        await using var writeLock = await AcquireMemoryWriteLockAsync(userId, projectId, ct).ConfigureAwait(false);
+        IDbContextTransaction? transaction = null;
+        if (_context.Database.IsRelational())
+            transaction = await _context.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var memory = await _context.AgentMemories.FirstOrDefaultAsync(item =>
+                item.UserId == userId &&
+                item.ProjectId == projectId &&
+                item.SessionId == null &&
+                item.MemoryType == "project.constraints", ct).ConfigureAwait(false);
+            var merged = ReadStringList(memory?.Content);
+            foreach (var value in projectConstraints.Select(value => value.Trim()).Where(value => value.Length > 0))
+            {
+                if (!merged.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    merged.Add(value);
+            }
+
+            var now = DateTime.UtcNow;
+            if (memory == null)
+            {
+                memory = new Data.Entities.AgentMemory
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    UserId = userId,
+                    ProjectId = projectId,
+                    MemoryType = "project.constraints",
+                    MemoryKey = "constraints",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+                _context.AgentMemories.Add(memory);
+            }
+            memory.Content = JsonSerializer.Serialize(merged);
+            memory.UpdatedAt = now;
+
+            foreach (var record in records)
+            {
+                _context.AgentMemoryPromotions.Add(new AgentMemoryPromotion
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    UserId = record.UserId,
+                    ProjectId = record.ProjectId,
+                    SessionId = record.SessionId,
+                    RunId = record.RunId,
+                    SourceScope = record.SourceScope,
+                    TargetScope = record.TargetScope,
+                    SourceMemoryKey = record.SourceMemoryKey,
+                    TargetMemoryKey = record.TargetMemoryKey,
+                    PromotionReason = record.PromotionReason,
+                    PayloadJson = string.IsNullOrWhiteSpace(record.PayloadJson) ? "{}" : record.PayloadJson,
+                    CreatedAt = now,
+                });
+            }
+
+            await _context.SaveChangesAsync(ct).ConfigureAwait(false);
+            if (transaction != null)
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (transaction != null)
+                await transaction.RollbackAsync(ct).ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            if (transaction != null)
+                await transaction.DisposeAsync().ConfigureAwait(false);
+        }
+
+        await InvalidateCacheAsync(userId, projectId, "project.constraints").ConfigureAwait(false);
+        await RecordMemoryWritesAsync(
+            userId,
+            projectId,
+            null,
+            new[] { "project.constraints" },
+            "memory_promotion",
+            new { records, projectConstraints },
+            ct).ConfigureAwait(false);
     }
 
     private static T? GetField<T>(List<Data.Entities.AgentMemory> rows, string memoryType)
@@ -831,10 +967,7 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         }
 
         var memoryTypes = updates
-            .Where(update =>
-                IsVectorizedProjectMemoryType(update.Key) &&
-                update.Value is string text &&
-                !string.IsNullOrWhiteSpace(text))
+            .Where(update => HasVectorizableProjectMemoryValue(update.Key, update.Value))
             .Select(update => update.Key)
             .ToList();
 
@@ -870,7 +1003,29 @@ public class AgentMemoryRepository : IAgentMemoryRepository
     }
 
     private static bool IsVectorizedProjectMemoryType(string memoryType) =>
-        memoryType is "project.long_term_goal" or "project.reader_promise";
+        memoryType is
+            "project.long_term_goal" or
+            "project.reader_promise" or
+            "project.constraints" or
+            "project.knowledge_inventory" or
+            "project.used_trope_patterns";
+
+    private static bool HasVectorizableProjectMemoryValue(string memoryType, object value)
+    {
+        if (!IsVectorizedProjectMemoryType(memoryType))
+            return false;
+
+        return memoryType switch
+        {
+            "project.long_term_goal" or "project.reader_promise" =>
+                value is string text && !string.IsNullOrWhiteSpace(text),
+            "project.constraints" or "project.used_trope_patterns" =>
+                value is IEnumerable<string> items && items.Any(item => !string.IsNullOrWhiteSpace(item)),
+            "project.knowledge_inventory" =>
+                value is IEnumerable<KnowledgeInventoryItem> items && items.Any(),
+            _ => false
+        };
+    }
 
     private static string BuildSessionCacheKey(string userId, string sessionId) =>
         $"memory:session:{userId}:{sessionId}";
@@ -926,5 +1081,27 @@ public class AgentMemoryRepository : IAgentMemoryRepository
         return separator >= 0 && separator < memoryType.Length - 1
             ? memoryType[(separator + 1)..]
             : memoryType;
+    }
+
+    private sealed class MemoryWriteLease : IAsyncDisposable
+    {
+        private readonly SemaphoreSlim _localLock;
+        private readonly Func<Task> _releaseDistributed;
+        private int _released;
+
+        public MemoryWriteLease(SemaphoreSlim localLock, Func<Task> releaseDistributed)
+        {
+            _localLock = localLock;
+            _releaseDistributed = releaseDistributed;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+
+            _localLock.Release();
+            await _releaseDistributed().ConfigureAwait(false);
+        }
     }
 }

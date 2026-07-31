@@ -38,7 +38,7 @@ public class VectorizationIntegrationTests : IAsyncLifetime
         await _db.Database.EnsureCreatedAsync();
 
         // Start Qdrant container
-        _qdrantContainer = new QdrantBuilder("qdrant/qdrant:v1.8.0")
+        _qdrantContainer = new QdrantBuilder("qdrant/qdrant:v1.18.1")
             .Build();
 
         await _qdrantContainer.StartAsync();

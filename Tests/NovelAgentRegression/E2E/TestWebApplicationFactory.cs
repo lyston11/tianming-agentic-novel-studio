@@ -15,6 +15,7 @@ using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Web.NovelAgentWeb.Services.Rework;
 using TM.Web.NovelAgentWeb.Services.Settings;
 using TM.Web.NovelAgentWeb.Support;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
@@ -45,13 +46,14 @@ public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgent
 
         builder.ConfigureServices(services =>
         {
-            // Remove the existing DbContext registration
-            var descriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(DbContextOptions<NovelAgentDbContext>));
-            if (descriptor != null)
-            {
-                services.Remove(descriptor);
-            }
+            // Replace both the concrete PostgreSQL context and its NovelAgentDbContext alias.
+            // The previous fixture only removed DbContextOptions<NovelAgentDbContext>,
+            // while production registers DbContextOptions<PostgresNovelAgentDbContext>;
+            // that silently connected E2E tests to the configured PostgreSQL instance.
+            services.RemoveAll<DbContextOptions<PostgresNovelAgentDbContext>>();
+            services.RemoveAll<PostgresNovelAgentDbContext>();
+            services.RemoveAll<DbContextOptions<NovelAgentDbContext>>();
+            services.RemoveAll<NovelAgentDbContext>();
 
             // Create in-memory SQLite connection that persists for the lifetime of the factory
             _connection = new SqliteConnection("Data Source=:memory:");
@@ -73,12 +75,12 @@ public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgent
             services.AddSingleton<IAgentRuntimeEventFanout, NoopAgentRuntimeEventFanout>();
             services.RemoveAll<IAgentRuntimeEventStreamConsumer>();
             services.AddSingleton<IAgentRuntimeEventStreamConsumer, NoopAgentRuntimeEventStreamConsumer>();
-            services.RemoveAll<ILlmToolCallingClient>();
-            services.AddSingleton<ILlmToolCallingClient, E2ELlmToolCallingClient>();
             services.RemoveAll<ILlmConnectionHealthService>();
             services.AddSingleton<ILlmConnectionHealthService, E2ELlmConnectionHealthService>();
             services.RemoveAll<IWritingModelCompletionService>();
             services.AddScoped<IWritingModelCompletionService, E2EWritingModelCompletionService>();
+            services.RemoveAll<IReworkIntentModelClient>();
+            services.AddScoped<IReworkIntentModelClient, E2EReworkIntentModelClient>();
             services.RemoveAll<IHostedService>();
 
             // Override JWT configuration for tests
@@ -123,216 +125,6 @@ internal sealed class E2ELlmConnectionHealthService : ILlmConnectionHealthServic
         LlmConnectionHealthInput input,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(LlmConnectionHealthResult.Ready(input.Normalize(), 200));
-}
-
-internal sealed class E2ELlmToolCallingClient : ILlmToolCallingClient
-{
-    public Task<AgentAction?> PlanToolActionAsync(
-        UserSettings settings,
-        AgentObservationContext context,
-        string systemPrompt,
-        CancellationToken ct)
-    {
-        var displayName = context.AuthorMemory.DisplayName;
-        if (!string.IsNullOrWhiteSpace(displayName) &&
-            context.UserMessage.Contains("名字", StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult<AgentAction?>(new AgentAction
-            {
-                Type = AgentActionType.FinalReply,
-                Intent = "answer_author_memory",
-                Reply = $"当然知道，你叫 {displayName}。",
-                Brief = "直接回答作者记忆短问",
-                Risk = "Low",
-                Confidence = 0.95,
-                Source = "e2e_fake_llm"
-            });
-        }
-
-        if (context.UserMessage.Contains("E2E_QUERY_CHAPTER_CONTENT", StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult<AgentAction?>(new AgentAction
-            {
-                Type = AgentActionType.ToolCall,
-                Intent = "query_project_content",
-                Brief = "E2E fake LLM chooses QueryProjectContent for a user chapter content question.",
-                Risk = "Low",
-                Confidence = 0.95,
-                Source = "e2e_fake_llm",
-                ToolCall = new AgentToolCall
-                {
-                    Name = "QueryProjectContent",
-                    Arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["chapterNumber"] = "1",
-                        ["includeBody"] = "true",
-                        ["includeFacts"] = "true"
-                    }
-                }
-            });
-        }
-
-        if (context.UserMessage.Contains("E2E_PRODUCE_CHAPTER", StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult<AgentAction?>(new AgentAction
-            {
-                Type = AgentActionType.ToolCall,
-                Intent = "produce_chapter",
-                Brief = "E2E fake LLM chooses ProduceChapter.",
-                Risk = "High",
-                Confidence = 0.95,
-                Source = "e2e_fake_llm",
-                ToolCall = new AgentToolCall
-                {
-                    Name = "ProduceChapter",
-                    Arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["targetChapterId"] = "chapter-001",
-                        ["commitPolicy"] = "draft_only"
-                    }
-                }
-            });
-        }
-
-        if (context.UserMessage.Contains("E2E_PLAN_THEN_PRODUCE", StringComparison.OrdinalIgnoreCase) ||
-            context.UserMessage.Contains("E2E_PLAN_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-            context.UserMessage.Contains("E2E_PLAN_SECOND_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-            context.UserMessage.Contains("E2E_PLAN_REVIEW_REWRITE_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-            context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase))
-        {
-            var targetChapterId = context.UserMessage.Contains("E2E_PLAN_SECOND_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                ? "chapter-002"
-                : "chapter-001";
-            var commitPolicy = context.UserMessage.Contains("E2E_PLAN_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-                               context.UserMessage.Contains("E2E_PLAN_SECOND_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-                               context.UserMessage.Contains("E2E_PLAN_REVIEW_REWRITE_THEN_COMMIT", StringComparison.OrdinalIgnoreCase) ||
-                               context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                ? "auto_commit"
-                : "draft_only";
-            var targetPlanRunIds = context.RecentObservations
-                .Where(observation =>
-                    string.Equals(observation.ToolName, "PlanChapter", StringComparison.OrdinalIgnoreCase) &&
-                    observation.Success &&
-                    string.Equals(observation.Artifact?.ArtifactId, targetChapterId, StringComparison.OrdinalIgnoreCase) &&
-                    !string.IsNullOrWhiteSpace(observation.RunId))
-                .Select(observation => observation.RunId)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var plannedRun = context.RecentObservations
-                .LastOrDefault(observation =>
-                    string.Equals(observation.ToolName, "PlanChapter", StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(observation.Artifact?.ArtifactId, targetChapterId, StringComparison.OrdinalIgnoreCase) &&
-                    observation.Success &&
-                    !string.IsNullOrWhiteSpace(observation.RunId))
-                ?.RunId;
-            var selectedRun = context.RecentObservations
-                .LastOrDefault(observation =>
-                    string.Equals(observation.ToolName, "SelectChapterCandidate", StringComparison.OrdinalIgnoreCase) &&
-                    observation.Success &&
-                    !string.IsNullOrWhiteSpace(observation.RunId) &&
-                    targetPlanRunIds.Contains(observation.RunId))
-                ?.RunId;
-
-            if (!string.IsNullOrWhiteSpace(selectedRun))
-            {
-                var action = new AgentAction
-                {
-                    Type = AgentActionType.ToolCall,
-                    Intent = "produce_chapter",
-                    Brief = "E2E fake LLM continues from selected chapter candidate to ProduceChapter.",
-                    Risk = "High",
-                    Confidence = 0.95,
-                    Source = "e2e_fake_llm",
-                    ToolCall = new AgentToolCall
-                    {
-                        Name = "ProduceChapter",
-                        Arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["runId"] = selectedRun,
-                            ["commitPolicy"] = commitPolicy
-                        }
-                    }
-                };
-                if (context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase))
-                    action.ToolCall!.Arguments["revisionPlanId"] = "revision-plan-e2e-rebuild";
-
-                return Task.FromResult<AgentAction?>(action);
-            }
-
-            if (!string.IsNullOrWhiteSpace(plannedRun))
-            {
-                return Task.FromResult<AgentAction?>(new AgentAction
-                {
-                    Type = AgentActionType.ToolCall,
-                    Intent = "select_chapter_candidate",
-                    Brief = "E2E fake LLM selects the first chapter candidate from the planned run.",
-                    Risk = "Medium",
-                    Confidence = 0.95,
-                    Source = "e2e_fake_llm",
-                    ToolCall = new AgentToolCall
-                    {
-                        Name = "SelectChapterCandidate",
-                        Arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["runId"] = plannedRun,
-                            ["candidateIndex"] = "1",
-                            ["selectionRationale"] = "第一候选最贴近本轮废土生存开局目标。"
-                        }
-                    }
-                });
-            }
-
-            return Task.FromResult<AgentAction?>(new AgentAction
-            {
-                Type = AgentActionType.ToolCall,
-                Intent = "plan_chapter",
-                Brief = "E2E fake LLM starts with PlanChapter.",
-                Risk = "Medium",
-                Confidence = 0.95,
-                Source = "e2e_fake_llm",
-                ToolCall = new AgentToolCall
-                {
-                    Name = "PlanChapter",
-                    Arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["creativeBrief"] = targetChapterId == "chapter-002"
-                            ? "第二章必须承接第一章结尾的分拣台第二次敲击声，围绕沈砚确认银蓝邮徽限制和旧邮路危机推进。"
-                            : context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "RevisionPlanRebuildE2E：按已采纳修订计划重建第一章，保留沈砚和银蓝邮徽，但把旧版逃生开局改成怪物围攻后的明确生存反击。"
-                            : context.UserMessage.Contains("E2E_PLAN_REVIEW_REWRITE_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "AgentReviewRewriteE2E：第一章必须有明确战斗反馈、代价后果和章末钩子；如果总编验收指出战斗反馈不足，必须按反馈重写后再提交。"
-                            : "第一章以废土幸存者发现异常邮路为核心，建立主角目标、危险环境和章节钩子。",
-                        ["chapterId"] = targetChapterId,
-                        ["sourceTurnId"] = context.UserTurn.TurnId,
-                        ["candidateDirections"] = targetChapterId == "chapter-002"
-                            ? "连续性承接：分拣台第二次敲击声引出新的投递危机，沈砚只能利用银蓝邮徽指路逃生；危机升级：怪物围堵废城邮局，邮徽不能主动攻击但能指出旧邮路缝隙。"
-                            : context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "RevisionPlanRebuildE2E：怪物围攻废城邮局，沈砚利用银蓝邮徽找到旧邮路夹缝完成反击，章末保留分拣台第二次敲击声。"
-                            : context.UserMessage.Contains("E2E_PLAN_REVIEW_REWRITE_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "AgentReviewRewriteE2E：先生成一个废城邮局战斗开局，若总编验收认为战斗反馈不足，应保留沈砚和银蓝邮徽设定并补足打怪升级反馈。"
-                            : "打怪升级开局：主角在废墟遭遇巡游怪物，靠旧邮徽找到逃生路线；废土悬疑开局：主角收到不属于现实的邮袋，发现旧邮路正在复苏。",
-                        ["forbiddenDirections"] = targetChapterId == "chapter-002"
-                            ? "不要更换主角；不要把银蓝邮徽写成攻击武器；不要跳过分拣台第二次敲击声。"
-                            : context.UserMessage.Contains("E2E_REVISION_REBUILD_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "RevisionPlanRebuildE2E：不要沿用旧版纯逃生开局；不要忽略修订计划；不要把邮徽写成攻击武器。"
-                            : context.UserMessage.Contains("E2E_PLAN_REVIEW_REWRITE_THEN_COMMIT", StringComparison.OrdinalIgnoreCase)
-                            ? "AgentReviewRewriteE2E：不要在总编验收失败后直接停住；不要提交未补足战斗反馈的版本。"
-                            : "不要写成纯情绪拉扯；不要跳过主角身份建立。"
-                    }
-                }
-            });
-        }
-
-        return Task.FromResult<AgentAction?>(new AgentAction
-        {
-            Type = AgentActionType.FinalReply,
-            Intent = "e2e_default_reply",
-            Reply = "我已收到。",
-            Brief = "E2E 默认短回复",
-            Risk = "Low",
-            Confidence = 0.8,
-            Source = "e2e_fake_llm"
-        });
-    }
 }
 
 internal sealed class E2EWritingModelCompletionService : IWritingModelCompletionService
@@ -520,6 +312,23 @@ internal sealed class E2EWritingModelCompletionService : IWritingModelCompletion
     }
 }
 
+internal sealed class E2EReworkIntentModelClient : IReworkIntentModelClient
+{
+    public Task<ReworkIntentDraft> CompileAsync(
+        ReworkIntentCompilationContext context,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ReworkIntentDraft(
+            context.SelectionStart.HasValue ? "selection" : "chapter",
+            "动机不清",
+            "强化行动因果和读者理解",
+            ["人物身份", "章节结局"],
+            ["行动过程", "局部表达"],
+            ["与问题无关的正文", "人工保护版本"],
+            ["行动动机有正文证据", "不破坏保留项"],
+            "copy",
+            "只影响当前候选章节的局部表达。"));
+}
+
 internal static class E2EWritingModelScenarios
 {
     private static readonly ConcurrentDictionary<string, byte> AgentReviewRewriteUsers = new(StringComparer.OrdinalIgnoreCase);
@@ -609,9 +418,10 @@ internal sealed class InMemoryDistributedLockService : IDistributedLockService
 
 internal sealed class NoopAgentRuntimeEventFanout : IAgentRuntimeEventFanout
 {
-    public Task PublishAsync(string sessionId, AgentSseEvent evt, CancellationToken ct = default) => Task.CompletedTask;
+    public Task PublishAsync(string userId, string sessionId, AgentSseEvent evt, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<AgentSseEvent>> ReplayAsync(
+        string userId,
         string sessionId,
         string? afterEventId = null,
         int limit = 100,
@@ -621,9 +431,10 @@ internal sealed class NoopAgentRuntimeEventFanout : IAgentRuntimeEventFanout
 
 internal sealed class NoopAgentRuntimeEventStreamConsumer : IAgentRuntimeEventStreamConsumer
 {
-    public Task EnsureConsumerGroupAsync(string sessionId, string groupName, CancellationToken ct = default) => Task.CompletedTask;
+    public Task EnsureConsumerGroupAsync(string userId, string sessionId, string groupName, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<AgentRuntimeStreamEvent>> ReadGroupAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -632,6 +443,7 @@ internal sealed class NoopAgentRuntimeEventStreamConsumer : IAgentRuntimeEventSt
         Task.FromResult<IReadOnlyList<AgentRuntimeStreamEvent>>(Array.Empty<AgentRuntimeStreamEvent>());
 
     public Task<IReadOnlyList<AgentRuntimeStreamEvent>> ClaimPendingAsync(
+        string userId,
         string sessionId,
         string groupName,
         string consumerName,
@@ -641,6 +453,7 @@ internal sealed class NoopAgentRuntimeEventStreamConsumer : IAgentRuntimeEventSt
         Task.FromResult<IReadOnlyList<AgentRuntimeStreamEvent>>(Array.Empty<AgentRuntimeStreamEvent>());
 
     public Task<bool> AcknowledgeAsync(
+        string userId,
         string sessionId,
         string groupName,
         string streamId,

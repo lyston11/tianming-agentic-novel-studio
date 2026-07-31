@@ -25,7 +25,7 @@ public class ApiEnvelopeResultFilterTests
         Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
         Assert.Equal("v1", envelope.ApiVersion);
         Assert.Equal("agent-tools-v1", envelope.ToolSchemaVersion);
-        Assert.Equal("agent-loop-v1", envelope.AgentLoopVersion);
+        Assert.Equal("novel-director-goal-v1", envelope.AgentLoopVersion);
         Assert.Equal("agentic-tianming-v1", envelope.KernelVersion);
     }
 
