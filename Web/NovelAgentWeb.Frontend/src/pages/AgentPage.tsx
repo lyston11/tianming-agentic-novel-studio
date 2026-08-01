@@ -1148,12 +1148,24 @@ export default function AgentPage() {
                     <span>Creative Goal</span>
                     <strong>{directorProposal.proposedContract.humanReadableObjective}</strong>
                   </div>
-                  <small>{directorProposal.proposedContract.collaborationMode}</small>
+                  <small>
+                    {directorProposal.proposedContract.executionStrategy === 'full_auto'
+                      ? '整书自动推进'
+                      : '分批交互推进'}
+                  </small>
                 </header>
                 <div className="agent-goal-contract-grid">
                   <div>
                     <span>章节范围</span>
                     <strong>{directorProposal.proposedContract.targetChapterRangeJson}</strong>
+                  </div>
+                  <div>
+                    <span>验收方式</span>
+                    <strong>
+                      {directorProposal.proposedContract.executionStrategy === 'full_auto'
+                        ? '工作流留痕，Agent 自动验收'
+                        : '工作流停顿，等待用户验收'}
+                    </strong>
                   </div>
                   <div>
                     <span>成功条件</span>

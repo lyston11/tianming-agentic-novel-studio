@@ -12,6 +12,7 @@ using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Canon;
 using TM.Web.NovelAgentWeb.Services.Execution;
 using TM.Web.NovelAgentWeb.Services.Goals;
+using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.Rework;
 using Xunit;
 
@@ -40,7 +41,40 @@ public sealed class GoalWorkflowControllerTests
     public async Task MergePrefix_AfterSuccessfulExplicitMerge_CompletesManualWorkflowTasks()
     {
         await using var db = CreateDb();
+        db.NovelProjects.Add(new NovelProject
+        {
+            Id = "project-1",
+            UserId = "user-1",
+            Title = "测试小说",
+            Status = "draft"
+        });
         SeedGoal(db);
+        db.BookProductions.Add(new BookProduction
+        {
+            Id = "production-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            TargetStartChapterNumber = 1,
+            TargetEndChapterNumber = 3,
+            NextChapterNumber = 1,
+            BatchSize = 3,
+            CurrentBatchNumber = 1
+        });
+        db.ProductionBatches.Add(new ProductionBatch
+        {
+            Id = "batch-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            BookProductionId = "production-1",
+            BatchNumber = 1,
+            StartChapterNumber = 1,
+            EndChapterNumber = 3,
+            CanonBranchId = "branch-1",
+            TaskGraphVersionId = "graph-1",
+            Status = "running"
+        });
         db.TaskGraphVersions.Add(new TaskGraphVersion
         {
             Id = "graph-1",
@@ -604,7 +638,14 @@ public sealed class GoalWorkflowControllerTests
             branches ?? Mock.Of<ICanonBranchService>(),
             prefixMerge ?? Mock.Of<IPrefixMergeService>(),
             rework ?? Mock.Of<IReworkIntentService>(),
-            Mock.Of<IGoalProgressEventPublisher>());
+            Mock.Of<IGoalProgressEventPublisher>(),
+            new BookProductionService(db, current.Object, new PassingBookValidationService()));
+    }
+
+    private sealed class PassingBookValidationService : IBookValidationService
+    {
+        public Task<BookValidationReport> ValidateAsync(BookValidationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BookValidationReport { OverallStatus = "validated" });
     }
 
     private static KernelTask ManualTask(string id, string taskType, string status) => new()

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { GoalCancellationStrategy, GoalWorkflowStatusView } from '../../../api/types';
+import type { BookExecutionStrategy, GoalCancellationStrategy, GoalWorkflowStatusView } from '../../../api/types';
 
 interface GoalInspectorProps {
   workflow?: GoalWorkflowStatusView;
@@ -8,6 +8,8 @@ interface GoalInspectorProps {
   resumeGoal: () => Promise<unknown>;
   cancelGoal: (strategy: GoalCancellationStrategy) => Promise<unknown>;
   mergeGoalPrefix: (branchId: string) => Promise<unknown>;
+  changeExecutionStrategy: (strategy: BookExecutionStrategy) => Promise<unknown>;
+  continueBatch: () => Promise<unknown>;
 }
 
 function money(value: number) {
@@ -21,6 +23,8 @@ export default function GoalInspector({
   resumeGoal,
   cancelGoal,
   mergeGoalPrefix,
+  changeExecutionStrategy,
+  continueBatch,
 }: GoalInspectorProps) {
   const [strategy, setStrategy] = useState<GoalCancellationStrategy>('PreserveCandidateBranch');
   if (!workflow) return <aside className="goal-inspector goal-loading">加载 Goal...</aside>;
@@ -32,6 +36,14 @@ export default function GoalInspector({
   const canPause = ['committed', 'running', 'resumed', 'pause_requested'].includes(goalStatus);
   const canResume = goalStatus === 'paused';
   const canCancel = !['completed', 'canceled', 'budget_exceeded'].includes(goalStatus);
+  const production = workflow.production;
+  const currentBatch = workflow.batches.find((batch) => batch.batchNumber === production?.currentBatchNumber);
+  const completedChapters = workflow.batches
+    .filter((batch) => batch.status === 'completed')
+    .reduce((count, batch) => count + batch.endChapterNumber - batch.startChapterNumber + 1, 0);
+  const totalChapters = production
+    ? production.targetEndChapterNumber - production.targetStartChapterNumber + 1
+    : 0;
 
   return (
     <aside className="goal-inspector">
@@ -40,6 +52,27 @@ export default function GoalInspector({
         <strong>{workflow.goal.status}</strong>
       </header>
       <h2>{workflow.goal.humanReadableObjective}</h2>
+      {production && (
+        <section className="goal-current-task">
+          <span>整书生产 · {production.status}</span>
+          <strong>{completedChapters} / {totalChapters} 章</strong>
+          <small>
+            第 {currentBatch?.batchNumber ?? production.currentBatchNumber} 批
+            {currentBatch ? ` · ${currentBatch.startChapterNumber}-${currentBatch.endChapterNumber} 章 · ${currentBatch.acceptanceActor} 验收` : ''}
+          </small>
+          <select
+            value={production.executionStrategy}
+            disabled={disabled || runningTask?.status === 'running'}
+            onChange={(event) => void changeExecutionStrategy(event.target.value as BookExecutionStrategy)}
+          >
+            <option value="full_auto">整书自动推进</option>
+            <option value="interactive_batch">分批交互推进</option>
+          </select>
+          {production.executionStrategy === 'interactive_batch' && production.status === 'awaiting_user' && (
+            <button type="button" onClick={() => void continueBatch()} disabled={disabled}>继续下一批</button>
+          )}
+        </section>
+      )}
       <dl className="goal-cost-grid">
         <div><dt>实际</dt><dd>{money(workflow.goal.actualCost)}</dd></div>
         <div><dt>预留</dt><dd>{money(workflow.goal.reservedCost)}</dd></div>

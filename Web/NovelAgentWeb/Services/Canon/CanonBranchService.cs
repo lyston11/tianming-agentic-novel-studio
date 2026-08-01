@@ -139,8 +139,17 @@ public sealed class CanonBranchService : ICanonBranchService
     public async Task<CandidateAcceptance> AcceptAsync(
         string candidateChapterId,
         int candidateVersion,
+        CancellationToken cancellationToken = default) =>
+        await AcceptAsync(candidateChapterId, candidateVersion, "human", cancellationToken);
+
+    public async Task<CandidateAcceptance> AcceptAsync(
+        string candidateChapterId,
+        int candidateVersion,
+        string actor,
         CancellationToken cancellationToken = default)
     {
+        if (actor is not ("human" or "agent"))
+            throw new ArgumentException("验收主体只能是 human 或 agent。", nameof(actor));
         var userId = _currentUser.GetUserId();
         var candidate = await _db.CandidateChapters.SingleOrDefaultAsync(item =>
             item.Id == candidateChapterId &&
@@ -160,7 +169,7 @@ public sealed class CanonBranchService : ICanonBranchService
             cancellationToken);
         if (existing != null)
         {
-            await EnsureAcceptanceArtifactAsync(existing, task, cancellationToken);
+            await EnsureAcceptanceArtifactAsync(existing, task, actor, cancellationToken);
             return existing;
         }
 
@@ -174,11 +183,11 @@ public sealed class CanonBranchService : ICanonBranchService
             CandidateChapterId = candidate.Id,
             CandidateVersion = candidate.Version,
             Decision = "accepted",
-            DecidedByUserId = userId,
+            DecidedByUserId = actor == "human" ? userId : "agent",
             CreatedAt = DateTime.UtcNow
         };
         _db.CandidateAcceptances.Add(acceptance);
-        await EnsureAcceptanceArtifactAsync(acceptance, task, cancellationToken);
+        await EnsureAcceptanceArtifactAsync(acceptance, task, actor, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         return acceptance;
     }
@@ -208,6 +217,7 @@ public sealed class CanonBranchService : ICanonBranchService
     private async Task EnsureAcceptanceArtifactAsync(
         CandidateAcceptance acceptance,
         KernelTask task,
+        string actor,
         CancellationToken cancellationToken)
     {
         var artifactId = $"acceptance-decision:{acceptance.Id}";
@@ -240,7 +250,7 @@ public sealed class CanonBranchService : ICanonBranchService
                 ContentJson = contentJson,
                 ContentHash = Sha256(contentJson),
                 Status = "adopted",
-                Authorship = "human",
+                Authorship = actor,
                 IsProtected = true,
                 CausationId = acceptance.Id,
                 CreatedAt = acceptance.CreatedAt

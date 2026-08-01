@@ -64,6 +64,8 @@ public class NovelAgentDbContext : DbContext
     public DbSet<ProjectDesignRule> ProjectDesignRules { get; set; } = null!;
     public DbSet<ChapterBlueprint> ChapterBlueprints { get; set; } = null!;
     public DbSet<CreativeGoal> CreativeGoals { get; set; } = null!;
+    public DbSet<BookProduction> BookProductions { get; set; } = null!;
+    public DbSet<ProductionBatch> ProductionBatches { get; set; } = null!;
     public DbSet<GoalRevision> GoalRevisions { get; set; } = null!;
     public DbSet<TaskGraphVersion> TaskGraphVersions { get; set; } = null!;
     public DbSet<KernelTask> KernelTasks { get; set; } = null!;

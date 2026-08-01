@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   acceptGoalChapter,
   cancelGoal,
+  changeGoalExecutionStrategy,
+  continueGoalBatch,
   getGoalChapter,
   getGoalWorkflowStatus,
   mergeGoalPrefix,
@@ -91,6 +93,15 @@ export function useGoalWorkflow(goalId: string) {
     mutationFn: (strategy: GoalCancellationStrategy) => cancelGoal(goalId, strategy),
     onSuccess: invalidate,
   });
+  const strategyMutation = useMutation({
+    mutationFn: (executionStrategy: 'full_auto' | 'interactive_batch') =>
+      changeGoalExecutionStrategy(goalId, executionStrategy),
+    onSuccess: invalidate,
+  });
+  const continueBatchMutation = useMutation({
+    mutationFn: () => continueGoalBatch(goalId),
+    onSuccess: invalidate,
+  });
 
   return {
     statusQuery,
@@ -106,6 +117,8 @@ export function useGoalWorkflow(goalId: string) {
     pauseGoal: pauseMutation.mutateAsync,
     resumeGoal: resumeMutation.mutateAsync,
     cancelGoal: cancelMutation.mutateAsync,
+    changeExecutionStrategy: strategyMutation.mutateAsync,
+    continueBatch: continueBatchMutation.mutateAsync,
     isMutating:
       reworkMutation.isPending ||
       manualEditMutation.isPending ||
@@ -113,7 +126,9 @@ export function useGoalWorkflow(goalId: string) {
       mergeMutation.isPending ||
       pauseMutation.isPending ||
       resumeMutation.isPending ||
-      cancelMutation.isPending,
+      cancelMutation.isPending ||
+      strategyMutation.isPending ||
+      continueBatchMutation.isPending,
     mutationError:
       reworkMutation.error ||
       manualEditMutation.error ||
@@ -121,6 +136,8 @@ export function useGoalWorkflow(goalId: string) {
       mergeMutation.error ||
       pauseMutation.error ||
       resumeMutation.error ||
-      cancelMutation.error,
+      cancelMutation.error ||
+      strategyMutation.error ||
+      continueBatchMutation.error,
   };
 }

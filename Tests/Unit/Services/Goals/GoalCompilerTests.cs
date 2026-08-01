@@ -4,6 +4,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Goals;
+using TM.Web.NovelAgentWeb.Services.Production;
 using Xunit;
 
 namespace Tests.Unit.Services.Goals;
@@ -15,10 +16,7 @@ public sealed class GoalCompilerTests
     {
         await using var db = CreateDb();
         await SeedGoalAsync(db);
-        var compiler = new GoalCompiler(
-            db,
-            new StubCurrentUserService("user-1"),
-            new TaskGraphValidator());
+        var compiler = CreateCompiler(db);
 
         var result = await compiler.CompileAsync("goal-1");
 
@@ -96,10 +94,7 @@ public sealed class GoalCompilerTests
     {
         await using var db = CreateDb();
         await SeedGoalAsync(db);
-        var compiler = new GoalCompiler(
-            db,
-            new StubCurrentUserService("user-1"),
-            new TaskGraphValidator());
+        var compiler = CreateCompiler(db);
         var first = await compiler.CompileAsync("goal-1");
         var firstJson = (await db.TaskGraphVersions.AsNoTracking().SingleAsync()).GraphJson;
 
@@ -116,10 +111,7 @@ public sealed class GoalCompilerTests
     {
         await using var db = CreateDb();
         await SeedGoalAsync(db);
-        var compiler = new GoalCompiler(
-            db,
-            new StubCurrentUserService("user-1"),
-            new TaskGraphValidator());
+        var compiler = CreateCompiler(db);
         await compiler.CompileAsync("goal-1");
         var previousGraph = await db.TaskGraphVersions.SingleAsync();
         var previousTasks = await db.KernelTasks
@@ -147,10 +139,7 @@ public sealed class GoalCompilerTests
     {
         await using var db = CreateDb();
         await SeedGoalAsync(db);
-        var compiler = new GoalCompiler(
-            db,
-            new StubCurrentUserService("user-1"),
-            new TaskGraphValidator());
+        var compiler = CreateCompiler(db);
         await compiler.CompileAsync("goal-1");
         var firstGraph = await db.TaskGraphVersions.SingleAsync();
         var reusableTask = await db.KernelTasks.SingleAsync(task =>
@@ -189,14 +178,11 @@ public sealed class GoalCompilerTests
     }
 
     [Fact]
-    public async Task RecompileForRevision_AppliesRevisionConstraintOverlayToEffectiveGraph()
+    public async Task RecompileForRevision_DoesNotExpandTheActiveProductionBatch()
     {
         await using var db = CreateDb();
         await SeedGoalAsync(db);
-        var compiler = new GoalCompiler(
-            db,
-            new StubCurrentUserService("user-1"),
-            new TaskGraphValidator());
+        var compiler = CreateCompiler(db);
         await compiler.CompileAsync("goal-1");
         db.GoalRevisions.Add(new GoalRevision
         {
@@ -207,16 +193,17 @@ public sealed class GoalCompilerTests
             RevisionNumber = 1,
             Reason = "增加第四章",
             ConstraintChangesJson = "{\"targetChapterRangeJson\":\"{\\\"start\\\":1,\\\"end\\\":4}\"}",
-            AffectedNodeIdsJson = "[\"chapter-4-plan\"]"
+            AffectedNodeIdsJson = "[\"chapter-3-plan\"]"
         });
         await db.SaveChangesAsync();
 
         var revised = await compiler.RecompileForRevisionAsync(
             "goal-1",
             "revision-expand-range",
-            ["chapter-4-plan"]);
+            ["chapter-3-plan"]);
 
-        Assert.Contains(revised.Nodes, node => node.Id == "chapter-4-write");
+        Assert.DoesNotContain(revised.Nodes, node => node.Id == "chapter-4-write");
+        Assert.Contains(revised.Nodes, node => node.Id == "chapter-3-write");
         Assert.Equal("{\"start\":1,\"end\":3}", (await db.CreativeGoals.SingleAsync()).TargetChapterRangeJson);
     }
 
@@ -307,7 +294,43 @@ public sealed class GoalCompilerTests
             StyleProfileVersion = "style-1",
             IdempotencyKey = "goal-1"
         });
+        db.BookProductions.Add(new BookProduction
+        {
+            Id = "production-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            TargetStartChapterNumber = 1,
+            TargetEndChapterNumber = 3,
+            NextChapterNumber = 1,
+            BatchSize = 3,
+            CurrentBatchNumber = 1
+        });
+        db.ProductionBatches.Add(new ProductionBatch
+        {
+            Id = "batch-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            BookProductionId = "production-1",
+            BatchNumber = 1,
+            StartChapterNumber = 1,
+            EndChapterNumber = 3
+        });
         await db.SaveChangesAsync();
+    }
+
+    private static GoalCompiler CreateCompiler(NovelAgentDbContext db)
+    {
+        var currentUser = new StubCurrentUserService("user-1");
+        var productions = new BookProductionService(db, currentUser, new PassingBookValidationService());
+        return new GoalCompiler(db, currentUser, new TaskGraphValidator(), productions);
+    }
+
+    private sealed class PassingBookValidationService : IBookValidationService
+    {
+        public Task<BookValidationReport> ValidateAsync(BookValidationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BookValidationReport { OverallStatus = "validated" });
     }
 
     private sealed class StubCurrentUserService(string userId) : ICurrentUserService

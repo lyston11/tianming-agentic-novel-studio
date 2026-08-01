@@ -10,6 +10,7 @@ internal static class TargetArchitectureModelConfiguration
     public static void ConfigureTargetArchitecture(this ModelBuilder modelBuilder)
     {
         ConfigureCreativeGoals(modelBuilder);
+        ConfigureBookProductions(modelBuilder);
         ConfigureGoalRevisions(modelBuilder);
         ConfigureTaskGraphs(modelBuilder);
         ConfigureKernelTasks(modelBuilder);
@@ -161,6 +162,9 @@ internal static class TargetArchitectureModelConfiguration
         Json(entity, x => x.MustNotChangeJson);
         Json(entity, x => x.AcceptancePolicyJson);
         Json(entity, x => x.ReworkPolicyJson);
+        Json(entity, x => x.BookPlanJson);
+        entity.Property(x => x.BookPlanJson).HasDefaultValue("{}");
+        entity.Property(x => x.ExecutionStrategy).HasDefaultValue("interactive_batch");
         Json(entity, x => x.ModelConfigVersionsJson);
         Json(entity, x => x.ProtocolVersionsJson);
         entity.HasIndex(x => new { x.UserId, x.ProjectId, x.IdempotencyKey })
@@ -169,6 +173,30 @@ internal static class TargetArchitectureModelConfiguration
             .HasDatabaseName("ux_creative_goals_scope_idempotency");
         entity.HasIndex(x => new { x.UserId, x.ProjectId, x.Status, x.CreatedAt })
             .HasDatabaseName("ix_creative_goals_scope_status");
+    }
+
+    private static void ConfigureBookProductions(ModelBuilder modelBuilder)
+    {
+        var production = ConfigureUserScoped<BookProduction>(modelBuilder, "book_productions");
+        Json(production, x => x.CompletionCriteriaJson);
+        Json(production, x => x.PausePolicyJson);
+        production.Property(x => x.AggregateVersion).IsConcurrencyToken();
+        production.HasIndex(x => new { x.UserId, x.GoalId }).IsUnique()
+            .HasDatabaseName("ux_book_productions_goal");
+        production.HasIndex(x => new { x.UserId, x.ProjectId, x.Status, x.UpdatedAt })
+            .HasDatabaseName("ix_book_productions_status");
+        production.HasOne<CreativeGoal>().WithOne().HasForeignKey<BookProduction>(x => x.GoalId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var batch = ConfigureUserScoped<ProductionBatch>(modelBuilder, "production_batches");
+        batch.HasIndex(x => new { x.UserId, x.BookProductionId, x.BatchNumber }).IsUnique()
+            .HasDatabaseName("ux_production_batches_number");
+        batch.HasIndex(x => new { x.UserId, x.GoalId, x.Status, x.BatchNumber })
+            .HasDatabaseName("ix_production_batches_goal_status");
+        batch.HasOne<BookProduction>().WithMany().HasForeignKey(x => x.BookProductionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        batch.HasOne<CreativeGoal>().WithMany().HasForeignKey(x => x.GoalId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureGoalRevisions(ModelBuilder modelBuilder)

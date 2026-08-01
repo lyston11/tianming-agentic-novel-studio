@@ -175,6 +175,8 @@ builder.Services.AddScoped<ICommitmentAssessmentService, CommitmentAssessmentSer
 builder.Services.AddScoped<TargetArchitectureDirector>();
 builder.Services.AddScoped<IGoalBaselineProvider, GoalBaselineProvider>();
 builder.Services.AddScoped<ICreativeGoalService, CreativeGoalService>();
+builder.Services.AddScoped<IBookProductionService, BookProductionService>();
+builder.Services.AddHostedService<BookProductionWorker>();
 builder.Services.AddSingleton<TaskGraphValidator>();
 builder.Services.AddScoped<IGoalCompiler, GoalCompiler>();
 builder.Services.AddScoped<IKernelTaskScheduler, PostgresKernelTaskScheduler>();

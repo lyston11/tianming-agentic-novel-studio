@@ -24,6 +24,12 @@ public interface ICanonBranchService
         string candidateChapterId,
         int candidateVersion,
         CancellationToken cancellationToken = default);
+
+    Task<CandidateAcceptance> AcceptAsync(
+        string candidateChapterId,
+        int candidateVersion,
+        string actor,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IPrefixMergeService

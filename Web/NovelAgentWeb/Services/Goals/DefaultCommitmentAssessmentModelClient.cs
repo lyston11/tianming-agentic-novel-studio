@@ -39,6 +39,10 @@ public sealed class DefaultCommitmentAssessmentModelClient : ICommitmentAssessme
             requiresConfirmation: boolean
             rationale: string
             proposedContract: null 或完整 CreativeGoalContract
+            proposedContract.executionStrategy 必须根据完整对话和项目状态选择 full_auto 或 interactive_batch；不得让用户手工先选模式。
+            full_auto 表示用户已授权后可跨批持续推进；interactive_batch 表示每批合并后暂停等待用户。
+            proposedContract.targetChapterRangeJson 表示整书预期章节范围，不是单批范围。
+            proposedContract.bookPlanJson 必须是 JSON object，至少包含 batchSize，并可包含 targetWordCountMin、targetWordCountMax、stages、coreConflictClosureCriteria、endingCriteria。batchSize 必须在 1-20。
             如果目标基本形成但执行授权仍有歧义，state 必须为 Proposed 且 requiresConfirmation=true。
             """;
         var user = JsonSerializer.Serialize(new

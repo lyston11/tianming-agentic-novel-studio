@@ -19,15 +19,18 @@ public sealed class GoalCompiler : IGoalCompiler
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly TaskGraphValidator _validator;
+    private readonly IBookProductionService _bookProductions;
 
     public GoalCompiler(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
-        TaskGraphValidator validator)
+        TaskGraphValidator validator,
+        IBookProductionService bookProductions)
     {
         _db = db;
         _currentUser = currentUser;
         _validator = validator;
+        _bookProductions = bookProductions;
     }
 
     public async Task<TaskGraphDefinition> CompileAsync(
@@ -80,7 +83,8 @@ public sealed class GoalCompiler : IGoalCompiler
             .Where(item => item.UserId == userId && item.GoalId == goal.Id)
             .OrderByDescending(item => item.Version)
             .FirstOrDefaultAsync(cancellationToken);
-        var range = ParseChapterRange(goal.TargetChapterRangeJson);
+        var currentBatch = await _bookProductions.GetCurrentBatchAsync(goal.Id, cancellationToken);
+        var range = new ChapterRange(currentBatch.StartChapterNumber, currentBatch.EndChapterNumber);
         var branch = await EnsureBatchStateAsync(goal, range, cancellationToken);
         var nextVersion = (await _db.TaskGraphVersions
             .Where(item => item.UserId == userId && item.GoalId == goal.Id)
@@ -175,6 +179,7 @@ public sealed class GoalCompiler : IGoalCompiler
             };
         }));
         await _db.SaveChangesAsync(cancellationToken);
+        await _bookProductions.BindCompiledBatchAsync(goal.Id, graphVersion.Id, branch.Id, cancellationToken);
         return definition;
     }
 
@@ -350,15 +355,6 @@ public sealed class GoalCompiler : IGoalCompiler
         AuthorityMutation authorityMutation = AuthorityMutation.None,
         int? chapter = null) =>
         new(id, taskType, kernel, executionKind, dependsOn, requires, produces, authorityMutation, chapter);
-
-    private static ChapterRange ParseChapterRange(string json)
-    {
-        var range = JsonSerializer.Deserialize<ChapterRange>(json, JsonOptions)
-            ?? throw new InvalidOperationException("Goal 缺少章节范围。");
-        if (range.Start <= 0 || range.End < range.Start || range.End - range.Start + 1 > 20)
-            throw new InvalidOperationException("Goal 章节范围无效或单批超过 20 章。 ");
-        return range;
-    }
 
     private sealed record ChapterRange(int Start, int End);
 }

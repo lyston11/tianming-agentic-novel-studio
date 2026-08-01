@@ -75,6 +75,8 @@ export default function GoalConsolePage() {
           resumeGoal={workflow.resumeGoal}
           cancelGoal={workflow.cancelGoal}
           mergeGoalPrefix={workflow.mergeGoalPrefix}
+          changeExecutionStrategy={workflow.changeExecutionStrategy}
+          continueBatch={workflow.continueBatch}
         />
       </div>
     </div>

@@ -190,6 +190,26 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
                 """, cancellationToken);
             if (goalUpdated != 1)
                 throw new InvalidOperationException("Goal 失败终态写入失败或 Goal 已不再可执行。");
+            var productionStatus = decision.Disposition == KernelTaskFailureDisposition.AwaitingDecision
+                ? "blocked"
+                : "failed";
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE book_productions
+                SET status = {productionStatus},
+                    aggregate_version = aggregate_version + 1,
+                    updated_at = clock_timestamp()
+                WHERE goal_id = {claim.GoalId}
+                  AND user_id = {claim.UserId}
+                  AND status IN ('running', 'resumed')
+                """, cancellationToken);
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE production_batches
+                SET status = {productionStatus},
+                    updated_at = clock_timestamp()
+                WHERE goal_id = {claim.GoalId}
+                  AND user_id = {claim.UserId}
+                  AND status IN ('planned', 'running', 'accepting')
+                """, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);

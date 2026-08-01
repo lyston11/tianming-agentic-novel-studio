@@ -172,7 +172,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
         var confirmation = assessment.RequiresConfirmation || assessment.State != DialogueCommitmentState.Committed
             ? "这仍是可修改的目标提案，不会自动启动生产。"
             : "目标合同已经明确，请核对金额上限后通过执行控件授权。";
-        return $"{assessment.Rationale}\n\n目标：{contract.HumanReadableObjective}\n章节范围：{contract.TargetChapterRangeJson}\n协作模式：{contract.CollaborationMode}\n{confirmation}";
+        return $"{assessment.Rationale}\n\n目标：{contract.HumanReadableObjective}\n整书章节范围：{contract.TargetChapterRangeJson}\n执行策略：{contract.ExecutionStrategy}\n协作模式：{contract.CollaborationMode}\n{confirmation}";
     }
 
     private static IReadOnlyList<string> BuildSuggestions(CommitmentAssessment assessment) =>

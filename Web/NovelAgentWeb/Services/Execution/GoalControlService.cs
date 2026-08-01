@@ -96,6 +96,15 @@ public sealed class GoalControlService : IGoalControlService
             }
             goal.Status = "paused";
         }
+        var production = await _db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == userId && item.GoalId == goalId,
+            cancellationToken);
+        if (production != null)
+        {
+            production.Status = goal.Status;
+            production.UpdatedAt = DateTime.UtcNow;
+            production.AggregateVersion++;
+        }
         goal.AggregateVersion++;
         await _db.SaveChangesAsync(cancellationToken);
         return goal.Status;
@@ -124,6 +133,15 @@ public sealed class GoalControlService : IGoalControlService
         }
         goal.Status = "resumed";
         goal.AggregateVersion++;
+        var production = await _db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == userId && item.GoalId == goalId,
+            cancellationToken);
+        if (production != null)
+        {
+            production.Status = "running";
+            production.UpdatedAt = DateTime.UtcNow;
+            production.AggregateVersion++;
+        }
         await _db.SaveChangesAsync(cancellationToken);
     }
 
@@ -183,6 +201,23 @@ public sealed class GoalControlService : IGoalControlService
         }
         goal.Status = "canceled";
         goal.AggregateVersion++;
+        var production = await _db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == userId && item.GoalId == goalId,
+            cancellationToken);
+        if (production != null)
+        {
+            production.Status = "canceled";
+            production.UpdatedAt = DateTime.UtcNow;
+            production.AggregateVersion++;
+            var batches = await _db.ProductionBatches.Where(item =>
+                item.UserId == userId && item.BookProductionId == production.Id && item.Status != "completed")
+                .ToListAsync(cancellationToken);
+            foreach (var batch in batches)
+            {
+                batch.Status = "canceled";
+                batch.UpdatedAt = DateTime.UtcNow;
+            }
+        }
         await _db.SaveChangesAsync(cancellationToken);
         if (transaction != null)
         {
@@ -267,6 +302,15 @@ public sealed class GoalControlService : IGoalControlService
         {
             goal.Status = "paused";
             goal.AggregateVersion++;
+            var production = await _db.BookProductions.SingleOrDefaultAsync(item =>
+                item.UserId == claim.UserId && item.GoalId == claim.GoalId,
+                cancellationToken);
+            if (production != null)
+            {
+                production.Status = "paused";
+                production.UpdatedAt = DateTime.UtcNow;
+                production.AggregateVersion++;
+            }
         }
         await _db.SaveChangesAsync(cancellationToken);
         return new GoalSafePointResult(disposition, ids);

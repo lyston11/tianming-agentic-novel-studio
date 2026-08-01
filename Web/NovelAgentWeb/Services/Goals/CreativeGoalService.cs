@@ -12,15 +12,18 @@ public sealed class CreativeGoalService : ICreativeGoalService
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IGoalBaselineProvider _baselines;
+    private readonly IBookProductionService _bookProductions;
 
     public CreativeGoalService(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
-        IGoalBaselineProvider baselines)
+        IGoalBaselineProvider baselines,
+        IBookProductionService bookProductions)
     {
         _db = db;
         _currentUser = currentUser;
         _baselines = baselines;
+        _bookProductions = bookProductions;
     }
 
     public async Task<GoalSubmissionResult> SubmitAsync(
@@ -60,7 +63,11 @@ public sealed class CreativeGoalService : ICreativeGoalService
                 goal.IdempotencyKey == idempotencyKey,
                 cancellationToken);
         if (existing != null)
+        {
+            if (existing.Status is not ("completed" or "canceled" or "failed"))
+                await _bookProductions.InitializeAsync(existing, cancellationToken);
             return new GoalSubmissionResult(GoalSubmissionStatus.Existing, existing.Id);
+        }
 
         var ownsSourceSession = await _db.AgentSessions
             .AsNoTracking()
@@ -86,6 +93,8 @@ public sealed class CreativeGoalService : ICreativeGoalService
             MustNotChangeJson = JsonSerializer.Serialize(command.Contract.MustNotChange),
             AcceptancePolicyJson = command.Contract.AcceptancePolicyJson,
             ReworkPolicyJson = command.Contract.ReworkPolicyJson,
+            ExecutionStrategy = BookExecutionStrategies.RequireValid(command.Contract.ExecutionStrategy),
+            BookPlanJson = command.Contract.BookPlanJson,
             TotalCostLimit = command.TotalCostLimit,
             CanonBaselineVersion = frozen.CanonVersion,
             KnowledgeSnapshotVersion = frozen.KnowledgeVersion,
@@ -117,6 +126,7 @@ public sealed class CreativeGoalService : ICreativeGoalService
         _db.CreativeGoals.Add(goal);
         _db.GoalContextSnapshots.Add(snapshot);
         await _db.SaveChangesAsync(cancellationToken);
+        await _bookProductions.InitializeAsync(goal, cancellationToken);
         return new GoalSubmissionResult(GoalSubmissionStatus.Created, goal.Id);
     }
 

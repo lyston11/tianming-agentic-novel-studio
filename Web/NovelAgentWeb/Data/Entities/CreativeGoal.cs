@@ -16,6 +16,8 @@ public sealed class CreativeGoal
     public string MustNotChangeJson { get; set; } = "[]";
     public string AcceptancePolicyJson { get; set; } = "{}";
     public string ReworkPolicyJson { get; set; } = "{}";
+    public string ExecutionStrategy { get; set; } = "interactive_batch";
+    public string BookPlanJson { get; set; } = "{}";
     public decimal TotalCostLimit { get; set; }
     public decimal ReservedCost { get; set; }
     public decimal ActualCost { get; set; }

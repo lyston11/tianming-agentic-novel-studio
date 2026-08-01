@@ -135,6 +135,34 @@ export interface CreativeGoalContract {
   mustNotChange: string[];
   acceptancePolicyJson: string;
   reworkPolicyJson: string;
+  executionStrategy: BookExecutionStrategy;
+  bookPlanJson: string;
+}
+
+export type BookExecutionStrategy = 'full_auto' | 'interactive_batch';
+
+export interface BookProductionView {
+  id: string;
+  goalId: string;
+  executionStrategy: BookExecutionStrategy;
+  status: string;
+  targetStartChapterNumber: number;
+  targetEndChapterNumber: number;
+  nextChapterNumber: number;
+  batchSize: number;
+  currentBatchNumber: number;
+  completedAt?: string | null;
+}
+
+export interface ProductionBatchView {
+  id: string;
+  batchNumber: number;
+  startChapterNumber: number;
+  endChapterNumber: number;
+  status: string;
+  taskGraphVersionId?: string | null;
+  canonBranchId?: string | null;
+  acceptanceActor: 'human' | 'agent';
 }
 
 export interface DirectorTurnView {
@@ -209,6 +237,8 @@ export interface GoalChapterSummaryView {
 
 export interface GoalWorkflowStatusView {
   goal: CreativeGoalView;
+  production?: BookProductionView | null;
+  batches: ProductionBatchView[];
   graph?: GoalTaskGraphView | null;
   tasks: GoalKernelTaskView[];
   branches: GoalCanonBranchView[];

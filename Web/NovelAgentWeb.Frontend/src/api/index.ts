@@ -359,6 +359,12 @@ export const resumeGoal = (goalId: string) =>
 export const cancelGoal = (goalId: string, strategy: GoalCancellationStrategy) =>
   post(`/goals/${encodeURIComponent(goalId)}/workflow/cancel`, { strategy });
 
+export const changeGoalExecutionStrategy = (goalId: string, executionStrategy: 'full_auto' | 'interactive_batch') =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/strategy`, { executionStrategy });
+
+export const continueGoalBatch = (goalId: string) =>
+  post(`/goals/${encodeURIComponent(goalId)}/workflow/continue-batch`);
+
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
   api<AgentChatResponse>('/agent/chat', {

@@ -12,7 +12,9 @@ public sealed record CreativeGoalContract(
     IReadOnlyList<string> MustHappen,
     IReadOnlyList<string> MustNotChange,
     string AcceptancePolicyJson,
-    string ReworkPolicyJson);
+    string ReworkPolicyJson,
+    string ExecutionStrategy = "interactive_batch",
+    string BookPlanJson = "{}");
 
 public sealed record CreateCreativeGoalCommand(
     string ProjectId,

@@ -38,6 +38,7 @@ public sealed class GoalWorkflowController : ControllerBase
     private readonly IPrefixMergeService _prefixMerge;
     private readonly IReworkIntentService _rework;
     private readonly IGoalProgressEventPublisher _progress;
+    private readonly IBookProductionService _bookProductions;
 
     public GoalWorkflowController(
         NovelAgentDbContext db,
@@ -49,7 +50,8 @@ public sealed class GoalWorkflowController : ControllerBase
         ICanonBranchService branches,
         IPrefixMergeService prefixMerge,
         IReworkIntentService rework,
-        IGoalProgressEventPublisher progress)
+        IGoalProgressEventPublisher progress,
+        IBookProductionService bookProductions)
     {
         _db = db;
         _currentUser = currentUser;
@@ -61,6 +63,7 @@ public sealed class GoalWorkflowController : ControllerBase
         _prefixMerge = prefixMerge;
         _rework = rework;
         _progress = progress;
+        _bookProductions = bookProductions;
     }
 
     [HttpPost("workflow/preview")]
@@ -191,7 +194,16 @@ public sealed class GoalWorkflowController : ControllerBase
                 item.BranchId))
             .ToListAsync(cancellationToken);
         var candidateCount = candidates.Count;
-        return Ok(new GoalWorkflowStatusResponse(goal, graph, tasks, branches, candidates, candidateCount));
+        var production = await _db.BookProductions.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.UserId == userId && item.GoalId == goal.Id,
+            cancellationToken);
+        var batches = production == null
+            ? []
+            : await _db.ProductionBatches.AsNoTracking()
+                .Where(item => item.UserId == userId && item.BookProductionId == production.Id)
+                .OrderBy(item => item.BatchNumber)
+                .ToListAsync(cancellationToken);
+        return Ok(new GoalWorkflowStatusResponse(goal, production, batches, graph, tasks, branches, candidates, candidateCount));
     }
 
     [HttpGet("{goalId}/workflow/chapters/{chapterNumber:int}")]
@@ -519,8 +531,13 @@ public sealed class GoalWorkflowController : ControllerBase
         if (branch == null)
             throw new KeyNotFoundException("候选分支不存在或不属于当前用户。");
         var merge = await _prefixMerge.MergeAcceptedPrefixAsync(request.BranchId, cancellationToken);
+        BookProductionAdvanceResult? advance = null;
         if (merge.EndChapterNumber == branch.EndChapterNumber)
-            await CompleteManualWorkflowTasksAsync(goal.Id, branch.Id, cancellationToken);
+        {
+            advance = await _bookProductions.FinalizeMergedBatchAsync(goal.Id, branch.Id, cancellationToken);
+            if (advance.ShouldCompileNextBatch)
+                await _compiler.CompileAsync(goal.Id, cancellationToken);
+        }
         await _progress.PublishAsync(new GoalProgressEventRequest(
             userId,
             goalId,
@@ -532,59 +549,24 @@ public sealed class GoalWorkflowController : ControllerBase
         return Ok(merge);
     }
 
-    private async Task CompleteManualWorkflowTasksAsync(
+    [HttpPost("{goalId}/workflow/strategy")]
+    public async Task<IActionResult> ChangeStrategy(
         string goalId,
-        string branchId,
+        [FromBody] ChangeBookExecutionStrategyRequest request,
         CancellationToken cancellationToken)
     {
-        var userId = _currentUser.GetUserId();
-        var graphId = await _db.TaskGraphVersions.AsNoTracking()
-            .Where(item => item.UserId == userId && item.GoalId == goalId)
-            .OrderByDescending(item => item.Version)
-            .Select(item => item.Id)
-            .FirstAsync(cancellationToken);
-        var tasks = await _db.KernelTasks.Where(task =>
-            task.UserId == userId &&
-            task.GoalId == goalId &&
-            task.TaskGraphVersionId == graphId &&
-            (task.TaskType == "UserAcceptance" || task.TaskType == "PrefixMerge"))
-            .ToListAsync(cancellationToken);
-        if (tasks.Count != 2)
-            throw new InvalidOperationException("Goal 人工验收或前缀合并任务缺失。");
-        var taskIds = tasks.Select(task => task.Id).ToArray();
-        var artifacts = await _db.KernelArtifacts.AsNoTracking()
-            .Where(artifact =>
-                artifact.UserId == userId &&
-                artifact.GoalId == goalId &&
-                artifact.BranchId == branchId &&
-                taskIds.Contains(artifact.TaskId) &&
-                (artifact.ArtifactType == "AcceptanceDecision" || artifact.ArtifactType == "MergeRecord"))
-            .OrderBy(artifact => artifact.CreatedAt)
-            .ThenBy(artifact => artifact.Id)
-            .ToListAsync(cancellationToken);
-        var now = DateTime.UtcNow;
-        foreach (var task in tasks)
-        {
-            var expectedArtifactType = task.TaskType == "PrefixMerge"
-                ? "MergeRecord"
-                : "AcceptanceDecision";
-            var outputArtifactIds = artifacts
-                .Where(artifact => artifact.TaskId == task.Id && artifact.ArtifactType == expectedArtifactType)
-                .Select(artifact => artifact.Id)
-                .ToArray();
-            if (outputArtifactIds.Length == 0)
-                throw new InvalidOperationException($"Goal {task.TaskType} 任务缺少权威 Artifact 输出。");
-            task.Status = "completed";
-            task.OutputArtifactIdsJson = JsonSerializer.Serialize(outputArtifactIds);
-            task.LeaseOwner = null;
-            task.LeaseExpiresAt = null;
-            task.CompletedAt = now;
-            task.UpdatedAt = now;
-        }
-        var goal = await _db.CreativeGoals.SingleAsync(item => item.Id == goalId && item.UserId == userId, cancellationToken);
-        goal.Status = "completed";
-        goal.AggregateVersion++;
-        await _db.SaveChangesAsync(cancellationToken);
+        await RequireGoalAsync(goalId, cancellationToken);
+        var production = await _bookProductions.ChangeStrategyAsync(goalId, request.ExecutionStrategy, cancellationToken);
+        return Ok(production);
+    }
+
+    [HttpPost("{goalId}/workflow/continue-batch")]
+    public async Task<IActionResult> ContinueBatch(string goalId, CancellationToken cancellationToken)
+    {
+        await RequireGoalAsync(goalId, cancellationToken);
+        await _bookProductions.ContinueInteractiveAsync(goalId, cancellationToken);
+        var graph = await _compiler.CompileAsync(goalId, cancellationToken);
+        return Ok(graph);
     }
 
     [HttpPost("{goalId}/workflow/pause")]
@@ -757,6 +739,8 @@ public sealed record GoalWorkflowConfirmationResponse(
 
 public sealed record GoalWorkflowStatusResponse(
     CreativeGoal Goal,
+    BookProduction? Production,
+    IReadOnlyList<ProductionBatch> Batches,
     TaskGraphVersion? Graph,
     IReadOnlyList<KernelTask> Tasks,
     IReadOnlyList<CanonBranch> Branches,
@@ -803,6 +787,7 @@ public sealed record GoalChapterManualEditResponse(
     bool IsProtected);
 public sealed record GoalChapterAcceptRequest(string CandidateChapterId, int CandidateVersion);
 public sealed record GoalPrefixMergeRequest(string BranchId);
+public sealed record ChangeBookExecutionStrategyRequest(string ExecutionStrategy);
 
 public sealed record CommitCreativeGoalRequest(
     CommitmentAssessmentRequest Assessment,

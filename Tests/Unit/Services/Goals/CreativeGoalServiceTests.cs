@@ -195,9 +195,12 @@ public sealed class CreativeGoalServiceTests
         Assert.Equal("write_batch", result.ProposedContract?.GoalType);
     }
 
-    private static CreativeGoalService CreateService(NovelAgentDbContext db) => new(
+    private static CreativeGoalService CreateService(NovelAgentDbContext db)
+    {
+        var currentUser = new StubCurrentUserService("authenticated-user");
+        return new CreativeGoalService(
         db,
-        new StubCurrentUserService("authenticated-user"),
+        currentUser,
         new StubGoalBaselineProvider(new GoalBaselines(
             "canon-7",
             "knowledge-11",
@@ -205,7 +208,15 @@ public sealed class CreativeGoalServiceTests
             "style-5",
             "models-3",
             "protocols-4",
-            "{\"canon\":\"hash-7\"}")));
+            "{\"canon\":\"hash-7\"}")),
+        new BookProductionService(db, currentUser, new PassingBookValidationService()));
+    }
+
+    private sealed class PassingBookValidationService : IBookValidationService
+    {
+        public Task<BookValidationReport> ValidateAsync(BookValidationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BookValidationReport { OverallStatus = "validated" });
+    }
 
     private static CreateCreativeGoalCommand CreateCommand(string sourceSessionId = "session-1") => new(
         ProjectId: "project-1",

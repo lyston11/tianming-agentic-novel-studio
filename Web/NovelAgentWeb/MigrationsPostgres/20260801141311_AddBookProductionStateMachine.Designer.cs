@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TM.Web.NovelAgentWeb.Data;
@@ -11,9 +12,11 @@ using TM.Web.NovelAgentWeb.Data;
 namespace TM.Web.NovelAgentWeb.MigrationsPostgres
 {
     [DbContext(typeof(PostgresNovelAgentDbContext))]
-    partial class PostgresNovelAgentDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801141311_AddBookProductionStateMachine")]
+    partial class AddBookProductionStateMachine
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
