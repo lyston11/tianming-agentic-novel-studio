@@ -62,6 +62,12 @@ public class WorkflowService : IWorkflowService
         if (project == null)
             throw new KeyNotFoundException($"Project {projectId} not found");
 
+        var latestGoalId = await _db.CreativeGoals.AsNoTracking()
+            .Where(item => item.UserId == userId && item.ProjectId == projectId)
+            .OrderByDescending(item => item.CreatedAt)
+            .Select(item => item.Id)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
         try
         {
@@ -132,6 +138,7 @@ public class WorkflowService : IWorkflowService
 
             return workflow with
             {
+                LatestGoalId = latestGoalId,
                 CreativeIntents = creativeIntents,
                 ProductionChains = productionChains
             };

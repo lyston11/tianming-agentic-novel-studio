@@ -9,10 +9,9 @@ import { useQuery } from '@tanstack/react-query';
 const navItems = [
   { path: '/', label: 'Agent 对话', num: '01' },
   { path: '/materials', label: '创意知识库', num: '02' },
-  { path: '/goal', label: 'Goal 工作台', num: '03' },
-  { path: '/workflow', label: '创作工作流', num: '04' },
-  { path: '/library', label: '小说书城', num: '05' },
-  { path: '/settings', label: '用户设置', num: '06' },
+  { path: '/workflow', label: '创作工作流', num: '03' },
+  { path: '/library', label: '小说书城', num: '04' },
+  { path: '/settings', label: '用户设置', num: '05' },
 ];
 
 export default function Rail() {

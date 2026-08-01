@@ -155,8 +155,26 @@ public sealed class GoalWorkflowController : ControllerBase
     [HttpGet("{goalId}/workflow")]
     public async Task<IActionResult> GetStatus(string goalId, CancellationToken cancellationToken)
     {
-        var userId = _currentUser.GetUserId();
         var goal = await RequireGoalAsync(goalId, cancellationToken);
+        return Ok(await BuildStatusAsync(goal, cancellationToken));
+    }
+
+    [HttpGet("project/{projectId}/latest/workflow")]
+    public async Task<IActionResult> GetLatestProjectStatus(string projectId, CancellationToken cancellationToken)
+    {
+        var userId = _currentUser.GetUserId();
+        var goal = await _db.CreativeGoals.AsNoTracking()
+            .Where(item => item.UserId == userId && item.ProjectId == projectId)
+            .OrderByDescending(item => item.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        return Ok(goal == null ? null : await BuildStatusAsync(goal, cancellationToken));
+    }
+
+    private async Task<GoalWorkflowStatusResponse> BuildStatusAsync(
+        CreativeGoal goal,
+        CancellationToken cancellationToken)
+    {
+        var userId = _currentUser.GetUserId();
         var graph = await _db.TaskGraphVersions.AsNoTracking()
             .Where(item => item.UserId == userId && item.ProjectId == goal.ProjectId && item.GoalId == goal.Id)
             .OrderByDescending(item => item.Version)
@@ -203,7 +221,7 @@ public sealed class GoalWorkflowController : ControllerBase
                 .Where(item => item.UserId == userId && item.BookProductionId == production.Id)
                 .OrderBy(item => item.BatchNumber)
                 .ToListAsync(cancellationToken);
-        return Ok(new GoalWorkflowStatusResponse(goal, production, batches, graph, tasks, branches, candidates, candidateCount));
+        return new GoalWorkflowStatusResponse(goal, production, batches, graph, tasks, branches, candidates, candidateCount);
     }
 
     [HttpGet("{goalId}/workflow/chapters/{chapterNumber:int}")]

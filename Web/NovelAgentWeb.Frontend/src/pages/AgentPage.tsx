@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   ApiError,
   confirmGoalWorkflow,
   createAgentSession,
+  getLatestProjectGoalWorkflowStatus,
   getSessionActiveRuntimeRun,
   listAgentSessions,
   resumeAgentSession,
@@ -24,6 +25,7 @@ import { useAgentStore } from '../stores/useAgentStore';
 import { useAppStore } from '../stores/useAppStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useProjectStore } from '../stores/useProjectStore';
+import BookProductionStatusCard from '../components/production/BookProductionStatusCard';
 import '../styles/agent.css';
 import {
   buildExecutionBlocksFromRuntimeEvents,
@@ -150,6 +152,7 @@ export default function AgentPage() {
     setSending,
   } = useChatStore();
   const addLog = useAppStore((s) => s.addLog);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const setCurrentProjectId = useProjectStore((s) => s.setCurrentProjectId);
   const {
     sessionId,
@@ -162,6 +165,13 @@ export default function AgentPage() {
     clearEvents,
     clearResumeState,
   } = useAgentStore();
+
+  const latestProjectGoalQuery = useQuery({
+    queryKey: ['latest-project-goal-workflow', currentProjectId],
+    queryFn: () => getLatestProjectGoalWorkflowStatus(currentProjectId!),
+    enabled: Boolean(currentProjectId),
+    refetchInterval: 30_000,
+  });
 
   const reloadSessions = useCallback(async () => {
     try {
@@ -894,8 +904,13 @@ export default function AgentPage() {
       const result = await confirmGoalWorkflow(directorProposal, sessionId, totalCostLimit);
       const goalId = result.submission.goalId;
       if (!goalId) throw new Error('Goal 已确认，但服务端没有返回 Goal ID');
+      const projectId = directorProposal.projectId;
+      setCurrentProjectId(projectId);
       setDirectorProposal(null);
-      navigate(`/goal/${encodeURIComponent(goalId)}`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['latest-project-goal-workflow', projectId] }),
+        queryClient.invalidateQueries({ queryKey: ['projectWorkflow', projectId] }),
+      ]);
     } catch (err) {
       setGoalConfirmError(err instanceof Error ? err.message : 'Goal 确认失败');
     } finally {
@@ -1154,6 +1169,9 @@ export default function AgentPage() {
                       : '分批交互推进'}
                   </small>
                 </header>
+                {directorProposal.rationale && (
+                  <p className="agent-goal-rationale">{directorProposal.rationale}</p>
+                )}
                 <div className="agent-goal-contract-grid">
                   <div>
                     <span>章节范围</span>
@@ -1206,6 +1224,13 @@ export default function AgentPage() {
                 </div>
                 {goalConfirmError && <div className="agent-goal-confirm-error">{goalConfirmError}</div>}
               </section>
+            )}
+            {!directorProposal?.proposedContract && latestProjectGoalQuery.data && currentProjectId && (
+              <BookProductionStatusCard
+                workflow={latestProjectGoalQuery.data}
+                context="chat"
+                onOpenWorkflow={() => navigate(`/workflow/${encodeURIComponent(currentProjectId)}`)}
+              />
             )}
             {isSending && !hasRunningExecutionBlock && !streamingReply && (
               <div className="agent-message agent thinking">

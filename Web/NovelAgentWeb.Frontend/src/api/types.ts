@@ -1319,6 +1319,7 @@ export interface NovelChapterView {
 }
 
 export interface ProjectWorkflowDocument {
+  latestGoalId: string;
   project: NovelBookView | null;
   library: NovelLibraryDocument;
   sessions: WorkflowSessionSummary[];

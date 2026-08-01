@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TM.Web.NovelAgentWeb.Controllers;
@@ -40,6 +41,13 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
         Assert.Contains(status.Tasks, task => task.TaskType == "UserAcceptance");
         Assert.Equal(1, status.CandidateChapterCount);
 
+        var latestProjectGoalResponse = await clientA.GetAsync("/api/goals/project/project-e2e/latest/workflow");
+        Assert.Equal(HttpStatusCode.OK, latestProjectGoalResponse.StatusCode);
+        var latestProjectGoal = await latestProjectGoalResponse.Content
+            .ReadEnvelopeDataAsync<GoalWorkflowStatusResponse?>();
+        Assert.NotNull(latestProjectGoal);
+        Assert.Equal("goal-e2e", latestProjectGoal.Goal.Id);
+
         var chapterResponse = await clientA.GetAsync("/api/goals/goal-e2e/workflow/chapters/1");
         Assert.Equal(HttpStatusCode.OK, chapterResponse.StatusCode);
         var chapter = await chapterResponse.Content.ReadEnvelopeDataAsync<GoalChapterDetailResponse>();
@@ -48,6 +56,13 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
 
         var forbidden = await clientB.GetAsync("/api/goals/goal-e2e/workflow");
         Assert.Equal(HttpStatusCode.NotFound, forbidden.StatusCode);
+
+        var otherUserLatest = await clientB.GetAsync("/api/goals/project/project-e2e/latest/workflow");
+        Assert.Equal(HttpStatusCode.OK, otherUserLatest.StatusCode);
+        using (var otherUserEnvelope = JsonDocument.Parse(await otherUserLatest.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(JsonValueKind.Null, otherUserEnvelope.RootElement.GetProperty("data").ValueKind);
+        }
 
         var reworkRequest = new GoalChapterReworkRequest(
             "candidate-e2e",

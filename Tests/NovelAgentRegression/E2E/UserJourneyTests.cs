@@ -168,6 +168,18 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
                     Status = "committed",
                     WordCount = 3500
                 });
+            db.CreativeGoals.Add(new CreativeGoal
+            {
+                Id = "workflow-goal-1",
+                UserId = auth.User.Id,
+                ProjectId = projectId,
+                SourceSessionId = "workflow-session-1",
+                GoalType = "book",
+                HumanReadableObjective = "生成整本测试小说",
+                TotalCostLimit = 10,
+                Status = "running",
+                IdempotencyKey = "workflow-goal-1"
+            });
             await db.SaveChangesAsync();
         }
 
@@ -177,6 +189,7 @@ public class UserJourneyTests : IClassFixture<TestWebApplicationFactory>
         var workflow = await workflowResponse.Content.ReadEnvelopeDataAsync<ProjectWorkflowDocument>();
         Assert.Equal(1, workflow.Project?.VolumeCount);
         Assert.Equal(2, workflow.Library.GeneratedChapterCount);
+        Assert.Equal("workflow-goal-1", workflow.LatestGoalId);
         var volume = Assert.Single(workflow.Library.Volumes);
         Assert.Equal(volumeId, volume.VolumeId);
         Assert.Equal("第一卷：黑雨旧邮路", volume.Title);

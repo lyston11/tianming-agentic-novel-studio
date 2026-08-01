@@ -314,6 +314,11 @@ export const confirmGoalWorkflow = (
 export const getGoalWorkflowStatus = (goalId: string) =>
   get<GoalWorkflowStatusView>(`/goals/${encodeURIComponent(goalId)}/workflow`);
 
+export const getLatestProjectGoalWorkflowStatus = (projectId: string) =>
+  get<GoalWorkflowStatusView | null>(
+    `/goals/project/${encodeURIComponent(projectId)}/latest/workflow`,
+  );
+
 export const getGoalChapter = (goalId: string, chapterNumber: number) =>
   get<GoalChapterDetailView>(
     `/goals/${encodeURIComponent(goalId)}/workflow/chapters/${chapterNumber}`,

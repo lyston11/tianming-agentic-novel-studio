@@ -241,6 +241,8 @@ public sealed record ProjectWorkflowDocument(
     IReadOnlyList<WorkflowProductionChain> ProductionChains,
     IReadOnlyList<WorkflowArtifactTimelineItem> ArtifactTimeline)
 {
+    public string LatestGoalId { get; init; } = string.Empty;
+
     [JsonIgnore]
     public IReadOnlyList<NovelAgentRun> RawRuns { get; init; } = Array.Empty<NovelAgentRun>();
 }

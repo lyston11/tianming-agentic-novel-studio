@@ -1697,6 +1697,15 @@
   font-size: 12px;
 }
 
+.agent-goal-rationale {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  color: var(--paper-2);
+  border-left: 2px solid var(--jade);
+  background: rgba(47, 117, 100, 0.09);
+  font: 13px/1.6 'Noto Serif SC', serif;
+}
+
 .empty.slim {
   padding: 18px 12px;
   min-height: 0;

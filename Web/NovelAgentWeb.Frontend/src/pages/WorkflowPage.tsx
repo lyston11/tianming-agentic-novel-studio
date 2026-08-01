@@ -42,6 +42,7 @@ import type {
 } from '../api/types';
 import Topbar from '../components/layout/Topbar';
 import { useProjectStore } from '../stores/useProjectStore';
+import ProjectGoalWorkbench from './workflow/ProjectGoalWorkbench';
 import '../styles/workflow.css';
 
 type ChapterDetailTab = 'manuscript' | 'workflow' | 'runtime' | 'issues';
@@ -2328,6 +2329,21 @@ export default function WorkflowPage() {
             </div>
           )}
         </section>
+
+        {workflow?.latestGoalId ? (
+          <ProjectGoalWorkbench goalId={workflow.latestGoalId} />
+        ) : (
+          <section className="project-goal-workbench empty-state">
+            <div>
+              <span>Book Production</span>
+              <h3>等待创作合同</h3>
+              <p>在 Agent 会话中确认整书目标后，批次计划、候选正文和验收操作会出现在这里。</p>
+            </div>
+            <button type="button" className="ink-button" onClick={() => navigate('/')}>
+              前往 Agent 会话
+            </button>
+          </section>
+        )}
 
         <section className="workflow-chapter-board">
           <aside className="workflow-chapter-index">
