@@ -44,6 +44,9 @@ public sealed class DefaultCommitmentAssessmentModelClient : ICommitmentAssessme
             proposedContract.targetChapterRangeJson 表示整书预期章节范围，不是单批范围。
             proposedContract.bookPlanJson 必须是 JSON object，至少包含 batchSize，并可包含 targetWordCountMin、targetWordCountMax、stages、coreConflictClosureCriteria、endingCriteria。batchSize 必须在 1-20。
             如果目标基本形成但执行授权仍有歧义，state 必须为 Proposed 且 requiresConfirmation=true。
+            ProjectStateJson.Knowledge 来自唯一只读工具 Knowledge.Query，是当前知识库目录和本轮相关条目的权威快照。
+            用户询问知识库有什么时，应在 rationale 中概括 Knowledge.directories 和 Knowledge.items；不得编造快照中不存在的条目。
+            讨论创作目标时，应主动利用 Knowledge.items 中的相关事实，并在资料不足时明确指出缺少的知识类型。
             """;
         var user = JsonSerializer.Serialize(new
         {

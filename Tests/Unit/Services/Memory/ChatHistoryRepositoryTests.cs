@@ -7,6 +7,7 @@ using Moq;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using Xunit;
@@ -39,6 +40,42 @@ namespace Tests.Unit.Services.Memory;
             It.IsAny<List<ChatHistoryTurnDto>>(),
             It.IsAny<TimeSpan>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AppendAsync_PersistsAndReloadsAssistantKnowledgeContext()
+    {
+        await using var db = CreateDb();
+        var repo = new ChatHistoryRepository(
+            db,
+            Mock.Of<IDistributedCacheService>(),
+            Mock.Of<IMemoryCacheService>(),
+            NullLogger<ChatHistoryRepository>.Instance);
+        var knowledge = new AgentKnowledgeContext(
+            "Knowledge.Query",
+            "retrieve",
+            "current_project",
+            "knowledge:user-1:v4",
+            "revision-1",
+            "灯城",
+            1,
+            [],
+            [new AgentKnowledgeItem("knowledge-1", "Setting", "灯城规则", "每夜熄灯。", 0.9f, "manual", "referenced")],
+            false);
+
+        await repo.AppendAsync(
+            "user-1",
+            "project-1",
+            "session-1",
+            "assistant",
+            "已应用知识库。",
+            CancellationToken.None,
+            knowledge);
+
+        var saved = await db.AgentChatTurns.SingleAsync();
+        Assert.NotEqual("{}", saved.KnowledgeContextJson);
+        var window = await repo.GetPromptWindowAsync("user-1", "project-1", "session-1", CancellationToken.None);
+        Assert.Equal("knowledge:user-1:v4", Assert.Single(window.RecentMessages).Knowledge!.KnowledgeVersion);
     }
 
     [Fact]

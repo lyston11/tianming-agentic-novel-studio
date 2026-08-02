@@ -26,6 +26,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useProjectStore } from '../stores/useProjectStore';
 import BookProductionStatusCard from '../components/production/BookProductionStatusCard';
+import KnowledgeContextCard from '../components/agent/KnowledgeContextCard';
 import '../styles/agent.css';
 import {
   buildExecutionBlocksFromRuntimeEvents,
@@ -729,6 +730,7 @@ export default function AgentPage() {
             response?.memory,
             response?.runtimeTrace,
             response?.memoryAudit,
+            response?.knowledge,
           );
         }
         setStreamingReply(null);
@@ -841,7 +843,7 @@ export default function AgentPage() {
       }
       if (!isRuntimeAck) {
         setActiveRuntimeRunId(null);
-        addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace, res.memoryAudit);
+        addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace, res.memoryAudit, res.knowledge);
         setDirectorProposal(res.director?.proposedContract ? res.director : null);
         setGoalConfirmError('');
         setExecutionBlocks((prev) => prev.filter((block) => (
@@ -1148,6 +1150,9 @@ export default function AgentPage() {
                       </div>
                     )}
                   </div>
+                  {msg.role === 'agent' && msg.knowledge && (
+                    <KnowledgeContextCard context={msg.knowledge} />
+                  )}
                   {ownedExecutionBlocks.length > 0 && (
                     <div className="agent-turn-executions" aria-label="本轮后台执行">
                       {ownedExecutionBlocks.map((block) => renderExecutionBlock(block))}

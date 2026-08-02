@@ -21,6 +21,7 @@ public class KnowledgeController : ControllerBase
     private readonly ILogger<KnowledgeController> _logger;
     private readonly IKnowledgeDocumentIngestionService _documentIngestion;
     private readonly IKnowledgeUploadTextExtractor _uploadTextExtractor;
+    private readonly IKnowledgeQueryService _knowledgeQueries;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
@@ -29,7 +30,8 @@ public class KnowledgeController : ControllerBase
         ILogger<KnowledgeController> logger,
         IContentDocumentService contentDocuments,
         IKnowledgeDocumentIngestionService documentIngestion,
-        IKnowledgeUploadTextExtractor uploadTextExtractor)
+        IKnowledgeUploadTextExtractor uploadTextExtractor,
+        IKnowledgeQueryService knowledgeQueries)
     {
         _knowledgeService = knowledgeService;
         _db = db;
@@ -38,6 +40,7 @@ public class KnowledgeController : ControllerBase
         _logger = logger;
         _documentIngestion = documentIngestion;
         _uploadTextExtractor = uploadTextExtractor;
+        _knowledgeQueries = knowledgeQueries;
     }
 
     [HttpGet("directories")]
@@ -45,8 +48,12 @@ public class KnowledgeController : ControllerBase
     {
         try
         {
-            var directories = await _knowledgeService.ListKnowledgeDirectoriesAsync(ct);
-            return Ok(directories);
+            var result = await _knowledgeQueries.QueryAsync(new KnowledgeQueryRequest(
+                KnowledgeQueryIntent.Inventory,
+                KnowledgeQueryScope.UserLibrary,
+                ProjectId: null,
+                Limit: 1), ct);
+            return Ok(result.Directories);
         }
         catch (Exception ex)
         {
@@ -159,8 +166,14 @@ public class KnowledgeController : ControllerBase
     {
         try
         {
-            var knowledge = await _knowledgeService.ListKnowledgeAsync(projectId ?? string.Empty, ct);
-            return Ok(knowledge);
+            var result = await _knowledgeQueries.QueryAsync(new KnowledgeQueryRequest(
+                KnowledgeQueryIntent.Inventory,
+                string.IsNullOrWhiteSpace(projectId)
+                    ? KnowledgeQueryScope.UserLibrary
+                    : KnowledgeQueryScope.CurrentProject,
+                projectId,
+                Limit: 1), ct);
+            return Ok(result.Inventory);
         }
         catch (KeyNotFoundException ex)
         {
@@ -252,8 +265,14 @@ public class KnowledgeController : ControllerBase
     {
         try
         {
-            var results = await _knowledgeService.SearchKnowledgeAsync(request, ct);
-            return Ok(results);
+            var result = await _knowledgeQueries.QueryAsync(new KnowledgeQueryRequest(
+                KnowledgeQueryIntent.Retrieve,
+                KnowledgeQueryScope.CurrentProject,
+                request.ProjectId,
+                request.Query,
+                request.EntryType,
+                request.TopK <= 0 ? 10 : Math.Clamp(request.TopK, 1, 50)), ct);
+            return Ok(result.Matches);
         }
         catch (KeyNotFoundException ex)
         {

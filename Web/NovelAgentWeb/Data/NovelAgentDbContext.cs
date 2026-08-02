@@ -1010,6 +1010,7 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.TurnIndex).HasColumnName("turn_index");
             entity.Property(e => e.Role).HasColumnName("role").IsRequired();
             entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.KnowledgeContextJson).HasColumnName("knowledge_context_json").HasDefaultValue("{}");
             entity.Property(e => e.TokenCount).HasColumnName("token_count");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.CompressedIntoSummaryId).HasColumnName("compressed_into_summary_id");

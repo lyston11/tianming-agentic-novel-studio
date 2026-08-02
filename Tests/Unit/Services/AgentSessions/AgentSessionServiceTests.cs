@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
@@ -173,6 +175,55 @@ public class AgentSessionServiceTests
                 Assert.Equal("turn-agent-1", second.TurnId);
                 Assert.Equal(2, second.TurnIndex);
             });
+    }
+
+    [Fact]
+    public async Task GetSessionByIdAsync_RestoresPersistedKnowledgeContext()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = "session-knowledge",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            Title = "知识会话",
+            SessionData = "{}"
+        });
+        var knowledge = new AgentKnowledgeContext(
+            "Knowledge.Query",
+            "retrieve",
+            "current_project",
+            "knowledge:user-1:v5",
+            "revision-2",
+            "人物代价",
+            1,
+            [],
+            [new AgentKnowledgeItem("knowledge-1", "Character", "主角代价", "点灯会失忆。", 0.95f, "manual", "imported")],
+            false);
+        db.AgentChatTurns.Add(new AgentChatTurn
+        {
+            Id = "turn-knowledge",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SessionId = "session-knowledge",
+            TurnIndex = 1,
+            Role = "assistant",
+            Content = "已读取人物设定。",
+            KnowledgeContextJson = JsonSerializer.Serialize(knowledge)
+        });
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        var response = await service.GetSessionByIdAsync(
+            "session-knowledge",
+            "user-1",
+            isAdmin: false,
+            CancellationToken.None);
+
+        var restored = Assert.Single(response.Messages).Knowledge;
+        Assert.NotNull(restored);
+        Assert.Equal("knowledge:user-1:v5", restored!.KnowledgeVersion);
+        Assert.Equal("主角代价", Assert.Single(restored.Items).Title);
     }
 
     [Fact]

@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Goals;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
@@ -55,6 +57,7 @@ public sealed class TargetArchitectureDirectorTests
                 "{}",
                 "{}"));
         var commitments = new RecordingCommitmentService(assessment);
+        var knowledge = new RecordingKnowledgeQueryTool();
         var sessions = new AgentSessionManager(db, currentUser, chat);
         var director = new TargetArchitectureDirector(
             sessions,
@@ -62,6 +65,7 @@ public sealed class TargetArchitectureDirectorTests
             chat,
             new CollaborationMemoryService(db),
             commitments,
+            knowledge,
             db);
 
         var result = await director.TryHandleAsync("session-1", "那就按第二种方案形成三章目标", CancellationToken.None);
@@ -72,12 +76,17 @@ public sealed class TargetArchitectureDirectorTests
         Assert.Equal(DialogueCommitmentState.Proposed, result.Response.Director!.State);
         Assert.Contains(commitments.Request!.Dialogue, item => item.Content == "先讨论主角的代价");
         Assert.Contains(commitments.Request.Dialogue, item => item.Content == "那就按第二种方案形成三章目标");
+        Assert.Contains("knowledge:user-1:v3", commitments.Request.ProjectStateJson);
+        Assert.Equal("Knowledge.Query", result.Response.Knowledge!.ToolName);
+        Assert.Equal("retrieve", result.Response.Knowledge.Intent);
+        Assert.Equal("那就按第二种方案形成三章目标", knowledge.Request!.Query);
         Assert.Empty(await db.CreativeGoals.ToListAsync());
         var dialogueState = Assert.Single(await db.SessionDialogueStates.ToListAsync());
         Assert.Equal(CollaborationMemoryKind.CommitmentJudgment.ToString(), dialogueState.MemoryKind);
         Assert.Equal("pending", dialogueState.Status);
         Assert.Equal(4, chat.Appended.Count);
         Assert.Equal("assistant", chat.Appended[^1].Role);
+        Assert.Equal("Knowledge.Query", chat.Appended[^1].Knowledge!.ToolName);
     }
 
     private static NovelAgentDbContext CreateDb()
@@ -101,13 +110,51 @@ public sealed class TargetArchitectureDirectorTests
         }
     }
 
+    private sealed class RecordingKnowledgeQueryTool : IKnowledgeQueryTool
+    {
+        public string Name => KnowledgeQueryTool.ToolName;
+        public KnowledgeQueryRequest? Request { get; private set; }
+
+        public Task<KnowledgeQueryResult> ExecuteAsync(
+            KnowledgeQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Request = request;
+            var context = new AgentKnowledgeContext(
+                Name,
+                "retrieve",
+                "current_project",
+                "knowledge:user-1:v3",
+                "revision-1",
+                request.Query ?? string.Empty,
+                1,
+                [new AgentKnowledgeDirectory("Setting", "设定", 1, ["灯城规则"])],
+                [new AgentKnowledgeItem("knowledge-1", "Setting", "灯城规则", "灯城每夜熄灭一盏灯。", 0.9f, "manual", "imported")],
+                false);
+            return Task.FromResult(new KnowledgeQueryResult(context, [], [], []));
+        }
+    }
+
     private sealed class RecordingChatHistoryRepository(IReadOnlyList<ChatHistoryTurnDto> initial) : IChatHistoryRepository
     {
         public List<ChatHistoryTurnDto> Appended { get; } = initial.ToList();
 
-        public Task AppendAsync(string userId, string? projectId, string sessionId, string role, string content, CancellationToken ct = default)
+        public Task AppendAsync(
+            string userId,
+            string? projectId,
+            string sessionId,
+            string role,
+            string content,
+            CancellationToken ct = default,
+            AgentKnowledgeContext? knowledge = null)
         {
-            Appended.Add(new ChatHistoryTurnDto(role, content, DateTime.UtcNow, $"turn-{Appended.Count + 1}", Appended.Count + 1));
+            Appended.Add(new ChatHistoryTurnDto(
+                role,
+                content,
+                DateTime.UtcNow,
+                $"turn-{Appended.Count + 1}",
+                Appended.Count + 1,
+                knowledge));
             return Task.CompletedTask;
         }
 

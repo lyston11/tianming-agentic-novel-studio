@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Caching;
 
 namespace TM.Web.NovelAgentWeb.Services.Memory;
@@ -41,7 +42,8 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
         string sessionId,
         string role,
         string content,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        AgentKnowledgeContext? knowledge = null)
     {
         var trimmed = content.Trim();
         var sessionLock = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
@@ -53,7 +55,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
                 try
                 {
                     await EnsureSessionExistsAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
-                    await AppendTurnOnceAsync(userId, projectId, sessionId, role, trimmed, ct);
+                    await AppendTurnOnceAsync(userId, projectId, sessionId, role, trimmed, knowledge, ct);
                     await WriteHotWindowAsync(userId, projectId, sessionId, ct);
                     await BumpChatVersionAsync(userId, projectId, sessionId, ct).ConfigureAwait(false);
                     return;
@@ -282,6 +284,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
         string sessionId,
         string role,
         string trimmed,
+        AgentKnowledgeContext? knowledge,
         CancellationToken ct)
     {
         var nextTurnIndex = await _context.AgentChatTurns
@@ -298,6 +301,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
             TurnIndex = nextTurnIndex + 1,
             Role = role.Trim(),
             Content = trimmed,
+            KnowledgeContextJson = knowledge == null ? "{}" : JsonSerializer.Serialize(knowledge),
             TokenCount = EstimateTokenCount(trimmed),
             CreatedAt = DateTime.UtcNow
         });
@@ -438,10 +442,34 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
             .OrderByDescending(t => t.TurnIndex)
             .Take(HotWindowSize)
             .OrderBy(t => t.TurnIndex)
-            .Select(t => new ChatHistoryTurnDto(t.Role, t.Content, t.CreatedAt, t.Id, t.TurnIndex))
+            .Select(t => new
+            {
+                t.Role,
+                t.Content,
+                t.CreatedAt,
+                t.Id,
+                t.TurnIndex,
+                t.KnowledgeContextJson
+            })
             .ToListAsync(ct);
 
-        return turns;
+        return turns
+            .Select(t => new ChatHistoryTurnDto(
+                t.Role,
+                t.Content,
+                t.CreatedAt,
+                t.Id,
+                t.TurnIndex,
+                DeserializeKnowledgeContext(t.KnowledgeContextJson)))
+            .ToList();
+    }
+
+    private static AgentKnowledgeContext? DeserializeKnowledgeContext(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return null;
+
+        return JsonSerializer.Deserialize<AgentKnowledgeContext>(json);
     }
 
     private static IReadOnlyList<string> DeserializeKeyDecisions(string? json)

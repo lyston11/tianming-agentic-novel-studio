@@ -27,7 +27,9 @@ public sealed record AgentChatResponse(
     AgentMemoryAuditSummary? MemoryAudit = null,
     string ActiveProjectId = "",
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    DirectorTurnView? Director = null);
+    DirectorTurnView? Director = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    AgentKnowledgeContext? Knowledge = null);
 
 public static class AgentChatResponsePublicProjection
 {
@@ -48,7 +50,8 @@ public static class AgentChatResponsePublicProjection
             PendingConfirmation: response.PendingConfirmation ?? response.Memory?.PendingConfirmation,
             MemoryAudit: response.MemoryAudit,
             ActiveProjectId: activeProjectId,
-            Director: response.Director);
+            Director: response.Director,
+            Knowledge: response.Knowledge);
     }
 }
 

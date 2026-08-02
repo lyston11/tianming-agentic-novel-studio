@@ -9,6 +9,7 @@ public class AgentChatTurn
     public int TurnIndex { get; set; }
     public string Role { get; set; } = null!;
     public string Content { get; set; } = null!;
+    public string KnowledgeContextJson { get; set; } = "{}";
     public int TokenCount { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string? CompressedIntoSummaryId { get; set; }

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   AgentConversationTurnView,
   AgentDecisionTrace,
+  AgentKnowledgeContext,
   AgentMemoryAuditSummary,
   AgentRagContext,
   AgentRuntimeStep,
@@ -20,6 +21,7 @@ export interface ChatMessage {
   memory?: AgentWorkingMemorySnapshot | null;
   memoryAudit?: AgentMemoryAuditSummary | null;
   runtimeTrace?: AgentRuntimeStep[] | null;
+  knowledge?: AgentKnowledgeContext | null;
   timestamp: Date;
 }
 
@@ -41,7 +43,8 @@ interface ChatState {
     rag?: AgentRagContext | null,
     memory?: AgentWorkingMemorySnapshot | null,
     runtimeTrace?: AgentRuntimeStep[] | null,
-    memoryAudit?: AgentMemoryAuditSummary | null
+    memoryAudit?: AgentMemoryAuditSummary | null,
+    knowledge?: AgentKnowledgeContext | null
   ) => void;
   setSending: (sending: boolean) => void;
   clearMessages: () => void;
@@ -69,6 +72,7 @@ function mapTurn(turn: AgentConversationTurnView, index: number, memory?: AgentW
     id: stableTurnId,
     role: turn.role === 'user' ? 'user' : 'agent',
     content: turn.content,
+    knowledge: turn.knowledge,
     memory: isLastAgent ? memory : undefined,
     timestamp: new Date(turn.createdAt),
   };
@@ -129,7 +133,7 @@ export const useChatStore = create<ChatState>((set) => ({
     return messageId;
   },
 
-  addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace, memoryAudit) =>
+  addAgentMessage: (sessionId, content, suggestions, runId, phase, decision, rag, memory, runtimeTrace, memoryAudit, knowledge) =>
     set((state) => {
       const message: ChatMessage = {
         id: createLocalMessageId('agent'),
@@ -143,6 +147,7 @@ export const useChatStore = create<ChatState>((set) => ({
         memory,
         memoryAudit,
         runtimeTrace,
+        knowledge,
         timestamp: new Date(),
       };
       const sessionMessages = state.messagesBySession[sessionId] ?? [];

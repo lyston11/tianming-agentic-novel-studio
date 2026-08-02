@@ -19,6 +19,89 @@ namespace Tests.Unit.Controllers;
 public class KnowledgeControllerTests
 {
     [Fact]
+    public async Task ListDirectories_ReturnsLegacyDirectoryPayloadThroughKnowledgeQuery()
+    {
+        await using var db = CreateDb();
+        var directories = new List<KnowledgeDirectoryResponse>
+        {
+            new() { Key = "Setting", Name = "设定", EntryCount = 2, IsSystem = true }
+        };
+        var queries = new Mock<IKnowledgeQueryService>(MockBehavior.Strict);
+        queries.Setup(service => service.QueryAsync(
+                It.Is<KnowledgeQueryRequest>(request =>
+                    request.Intent == KnowledgeQueryIntent.Inventory &&
+                    request.Scope == KnowledgeQueryScope.UserLibrary &&
+                    request.ProjectId == null),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(QueryResult(directories: directories));
+        var controller = CreateController(db, "user-1", queries.Object);
+
+        var result = await controller.ListDirectories(CancellationToken.None);
+
+        Assert.Same(directories, Assert.IsType<OkObjectResult>(result).Value);
+        queries.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ListKnowledge_ReturnsLegacyInventoryPayloadThroughKnowledgeQuery()
+    {
+        await using var db = CreateDb();
+        var inventory = new List<KnowledgeResponse>
+        {
+            new() { Id = "knowledge-1", EntryType = "Setting", Title = "灯城规则", Content = "每夜熄灯。" }
+        };
+        var queries = new Mock<IKnowledgeQueryService>(MockBehavior.Strict);
+        queries.Setup(service => service.QueryAsync(
+                It.Is<KnowledgeQueryRequest>(request =>
+                    request.Intent == KnowledgeQueryIntent.Inventory &&
+                    request.Scope == KnowledgeQueryScope.CurrentProject &&
+                    request.ProjectId == "project-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(QueryResult(inventory: inventory));
+        var controller = CreateController(db, "user-1", queries.Object);
+
+        var result = await controller.ListKnowledge("project-1", CancellationToken.None);
+
+        Assert.Same(inventory, Assert.IsType<OkObjectResult>(result).Value);
+        queries.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Search_ReturnsLegacyMatchPayloadThroughKnowledgeQuery()
+    {
+        await using var db = CreateDb();
+        var matches = new List<KnowledgeSearchResult>
+        {
+            new() { Id = "knowledge-1", EntryType = "Setting", Title = "灯城规则", Content = "每夜熄灯。", Score = 0.9f }
+        };
+        var queries = new Mock<IKnowledgeQueryService>(MockBehavior.Strict);
+        queries.Setup(service => service.QueryAsync(
+                It.Is<KnowledgeQueryRequest>(request =>
+                    request.Intent == KnowledgeQueryIntent.Retrieve &&
+                    request.Scope == KnowledgeQueryScope.CurrentProject &&
+                    request.ProjectId == "project-1" &&
+                    request.Query == "灯城" &&
+                    request.EntryType == "Setting" &&
+                    request.Limit == 6),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(QueryResult(matches: matches));
+        var controller = CreateController(db, "user-1", queries.Object);
+
+        var result = await controller.SearchKnowledge(
+            new SearchKnowledgeRequest
+            {
+                ProjectId = "project-1",
+                Query = "灯城",
+                EntryType = "Setting",
+                TopK = 6
+            },
+            CancellationToken.None);
+
+        Assert.Same(matches, Assert.IsType<OkObjectResult>(result).Value);
+        queries.VerifyAll();
+    }
+
+    [Fact]
     public async Task UploadFile_RequiresProjectId()
     {
         await using var db = CreateDb();
@@ -252,7 +335,8 @@ public class KnowledgeControllerTests
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
             CreateIngestionService(db, currentUser.Object),
-            new KnowledgeUploadTextExtractor());
+            new KnowledgeUploadTextExtractor(),
+            Mock.Of<IKnowledgeQueryService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext()
@@ -274,7 +358,10 @@ public class KnowledgeControllerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private static KnowledgeController CreateController(NovelAgentDbContext db, string userId)
+    private static KnowledgeController CreateController(
+        NovelAgentDbContext db,
+        string userId,
+        IKnowledgeQueryService? knowledgeQueries = null)
     {
         var currentUser = new Mock<ICurrentUserService>();
         currentUser.Setup(x => x.GetUserId()).Returns(userId);
@@ -286,7 +373,8 @@ public class KnowledgeControllerTests
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
             CreateIngestionService(db, currentUser.Object),
-            new KnowledgeUploadTextExtractor()));
+            new KnowledgeUploadTextExtractor(),
+            knowledgeQueries ?? Mock.Of<IKnowledgeQueryService>()));
     }
 
     private static KnowledgeController CreateRealController(NovelAgentDbContext db, string userId)
@@ -310,7 +398,8 @@ public class KnowledgeControllerTests
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
             CreateIngestionService(db, currentUser.Object),
-            new KnowledgeUploadTextExtractor()));
+            new KnowledgeUploadTextExtractor(),
+            new KnowledgeQueryService(service, currentUser.Object, db)));
     }
 
     private static IKnowledgeDocumentIngestionService CreateIngestionService(
@@ -364,6 +453,26 @@ public class KnowledgeControllerTests
             ContentType = "text/plain"
         };
     }
+
+    private static KnowledgeQueryResult QueryResult(
+        IReadOnlyList<KnowledgeResponse>? inventory = null,
+        IReadOnlyList<KnowledgeDirectoryResponse>? directories = null,
+        IReadOnlyList<KnowledgeSearchResult>? matches = null) =>
+        new(
+            new AgentKnowledgeContext(
+                KnowledgeQueryTool.ToolName,
+                "inventory",
+                "user_library",
+                "knowledge:empty",
+                "empty",
+                string.Empty,
+                inventory?.Count ?? 0,
+                [],
+                [],
+                false),
+            inventory ?? [],
+            directories ?? [],
+            matches ?? []);
 
     private static string ReadTaskId(object? value)
     {

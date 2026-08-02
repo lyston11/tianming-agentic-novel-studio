@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Extensions;
 using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
@@ -209,20 +210,32 @@ public class AgentSessionService : IAgentSessionService
     {
         var data = DeserializeSessionData(session.SessionData);
         var projectId = session.ProjectId ?? string.Empty;
-        var messages = await _dbContext.AgentChatTurns
+        var turnRows = await _dbContext.AgentChatTurns
             .AsNoTracking()
             .Where(t => t.SessionId == session.Id && t.UserId == session.UserId)
             .OrderBy(t => t.TurnIndex)
+            .Select(t => new
+            {
+                t.Id,
+                t.TurnIndex,
+                t.Role,
+                t.Content,
+                t.CreatedAt,
+                t.KnowledgeContextJson
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var messages = turnRows
             .Select(t => new AgentConversationTurn
             {
                 TurnId = t.Id,
                 TurnIndex = t.TurnIndex,
                 Role = t.Role,
                 Content = t.Content,
+                Knowledge = DeserializeKnowledgeContext(t.KnowledgeContextJson),
                 CreatedAt = t.CreatedAt
             })
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
+            .ToList();
         var displayTitle = BuildDisplayTitle(session.Title, messages);
 
         return new AgentSessionResponse
@@ -271,6 +284,14 @@ public class AgentSessionService : IAgentSessionService
             return string.Empty;
         return string.Join(' ', value.Split(new[] { '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries))
             .Trim();
+    }
+
+    private static AgentKnowledgeContext? DeserializeKnowledgeContext(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}")
+            return null;
+
+        return JsonSerializer.Deserialize<AgentKnowledgeContext>(json);
     }
 
     private static SessionData DeserializeSessionData(string? sessionData)

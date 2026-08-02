@@ -8,6 +8,7 @@ const agentPage = readFileSync(join(__dirname, '../src/pages/AgentPage.tsx'), 'u
 const runtimeEvents = readFileSync(join(__dirname, '../src/pages/agent/runtimeEvents.ts'), 'utf8');
 const agentCss = readFileSync(join(__dirname, '../src/styles/agent.css'), 'utf8');
 const chatStore = readFileSync(join(__dirname, '../src/stores/useChatStore.ts'), 'utf8');
+const knowledgeCard = readFileSync(join(__dirname, '../src/components/agent/KnowledgeContextCard.tsx'), 'utf8');
 
 assert.doesNotMatch(
   agentPage,
@@ -91,6 +92,24 @@ assert.match(
   chatStore,
   /createLocalMessageId/,
   'local chat messages need a monotonic id factory so rapid SSE replies still render with unique React keys',
+);
+
+assert.match(
+  agentPage,
+  /KnowledgeContextCard context=\{msg\.knowledge\}/,
+  'agent replies should show the unified Knowledge.Query context card',
+);
+
+assert.match(
+  knowledgeCard,
+  /Knowledge\.Query[\s\S]*已读取当前知识库/,
+  'knowledge context card must identify the single agent knowledge tool and its inventory',
+);
+
+assert.match(
+  chatStore,
+  /knowledge:\s*turn\.knowledge/,
+  'persisted conversation turns must restore their original knowledge context cards after session reload',
 );
 
 assert.doesNotMatch(

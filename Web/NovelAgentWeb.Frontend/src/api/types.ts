@@ -1880,6 +1880,37 @@ export interface AgentChatResponse {
   memoryAudit?: AgentMemoryAuditSummary | null;
   activeProjectId?: string;
   director?: DirectorTurnView | null;
+  knowledge?: AgentKnowledgeContext | null;
+}
+
+export interface AgentKnowledgeContext {
+  toolName: string;
+  intent: 'inventory' | 'retrieve';
+  scope: 'current_project' | 'user_library';
+  knowledgeVersion: string;
+  catalogRevision: string;
+  query: string;
+  totalCount: number;
+  directories: AgentKnowledgeDirectory[];
+  items: AgentKnowledgeItem[];
+  truncated: boolean;
+}
+
+export interface AgentKnowledgeDirectory {
+  key: string;
+  name: string;
+  count: number;
+  sampleTitles: string[];
+}
+
+export interface AgentKnowledgeItem {
+  id: string;
+  entryType: string;
+  title: string;
+  excerpt: string;
+  score?: number | null;
+  sourceType: string;
+  projectUsageStatus: string;
 }
 
 export interface AgentDecisionTrace {
@@ -2350,6 +2381,7 @@ export interface AgentConversationTurnView {
   turnIndex?: number;
   role: string;
   content: string;
+  knowledge?: AgentKnowledgeContext | null;
   createdAt: string;
 }
 

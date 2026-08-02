@@ -198,3 +198,30 @@ public class KnowledgeSearchResult
     public int ProjectUsageCount { get; set; }
     public DateTime? ProjectLastUsedAt { get; set; }
 }
+
+public sealed record AgentKnowledgeContext(
+    string ToolName,
+    string Intent,
+    string Scope,
+    string KnowledgeVersion,
+    string CatalogRevision,
+    string Query,
+    int TotalCount,
+    IReadOnlyList<AgentKnowledgeDirectory> Directories,
+    IReadOnlyList<AgentKnowledgeItem> Items,
+    bool Truncated);
+
+public sealed record AgentKnowledgeDirectory(
+    string Key,
+    string Name,
+    int Count,
+    IReadOnlyList<string> SampleTitles);
+
+public sealed record AgentKnowledgeItem(
+    string Id,
+    string EntryType,
+    string Title,
+    string Excerpt,
+    float? Score,
+    string SourceType,
+    string ProjectUsageStatus);

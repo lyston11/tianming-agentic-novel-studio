@@ -38,6 +38,7 @@ public sealed class AgentConversationTurn
     public int TurnIndex { get; set; }
     public string Role { get; set; } = "user";
     public string Content { get; set; } = string.Empty;
+    public AgentKnowledgeContext? Knowledge { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

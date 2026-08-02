@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 
@@ -16,6 +17,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
     private readonly IChatHistoryRepository _chatHistory;
     private readonly ICollaborationMemoryService _collaborationMemory;
     private readonly ICommitmentAssessmentService _commitments;
+    private readonly IKnowledgeQueryTool _knowledgeQuery;
     private readonly NovelAgentDbContext _db;
 
     public TargetArchitectureDirector(
@@ -24,6 +26,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
         IChatHistoryRepository chatHistory,
         ICollaborationMemoryService collaborationMemory,
         ICommitmentAssessmentService commitments,
+        IKnowledgeQueryTool knowledgeQuery,
         NovelAgentDbContext db)
     {
         _sessions = sessions;
@@ -31,6 +34,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
         _chatHistory = chatHistory;
         _collaborationMemory = collaborationMemory;
         _commitments = commitments;
+        _knowledgeQuery = knowledgeQuery;
         _db = db;
     }
 
@@ -60,6 +64,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
                 ["选择项目"],
                 "project_required",
                 null,
+                null,
                 ct).ConfigureAwait(false);
         }
 
@@ -68,6 +73,14 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             ct).ConfigureAwait(false);
         if (!ownsProject)
             throw new KeyNotFoundException("项目不存在或不属于当前用户。");
+
+        var knowledge = await _knowledgeQuery.ExecuteAsync(new KnowledgeQueryRequest(
+                KnowledgeQueryIntent.Retrieve,
+                KnowledgeQueryScope.CurrentProject,
+                projectId,
+                message,
+                Limit: 8), ct)
+            .ConfigureAwait(false);
 
         var dialogue = await BuildDialogueAsync(userId, projectId, session.SessionId, ct).ConfigureAwait(false);
         var decisions = await _db.ProjectCollaborationDecisions.AsNoTracking()
@@ -92,7 +105,13 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             latestGoal?.CollaborationMode ?? "coauthor",
             dialogue,
             JsonSerializer.Serialize(decisions, JsonOptions),
-            JsonSerializer.Serialize(new { Project = project, ChapterCount = chapterCount, LatestGoal = latestGoal }, JsonOptions),
+            JsonSerializer.Serialize(new
+            {
+                Project = project,
+                ChapterCount = chapterCount,
+                LatestGoal = latestGoal,
+                Knowledge = knowledge.Context
+            }, JsonOptions),
             ExplicitExecutionAction: false,
             ProposedContract: null), ct).ConfigureAwait(false);
 
@@ -118,6 +137,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             BuildSuggestions(assessment),
             Phase(assessment.State),
             director,
+            knowledge.Context,
             ct).ConfigureAwait(false);
     }
 
@@ -143,6 +163,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
         IReadOnlyList<string> suggestions,
         string phase,
         DirectorTurnView? director,
+        AgentKnowledgeContext? knowledge,
         CancellationToken ct)
     {
         await _chatHistory.AppendAsync(
@@ -151,7 +172,8 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             session.SessionId,
             "assistant",
             reply,
-            ct).ConfigureAwait(false);
+            ct,
+            knowledge).ConfigureAwait(false);
         session.Phase = phase;
         await _sessions.SaveSessionAsync(session, ct).ConfigureAwait(false);
         return AgentForegroundTurnResult.Reply(new AgentChatResponse(
@@ -160,7 +182,8 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             session.SessionId,
             Phase: phase,
             ActiveProjectId: session.ActiveProjectId,
-            Director: director));
+            Director: director,
+            Knowledge: knowledge));
     }
 
     private static string BuildReply(CommitmentAssessment assessment)
