@@ -145,17 +145,17 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
                 await _documentIngestion.FinalizeProcessingAsync(task.UploadBlobId, content, createdIds, ct);
             }
 
-            task.Status = "completed";
-            task.Progress = 100;
+            task.Status = "processing";
+            task.Progress = Math.Max(task.Progress, 90);
             task.ExtractedEntriesCount = entries.Count;
-            task.CompletedAt = DateTime.UtcNow;
+            task.CompletedAt = null;
             await _db.SaveChangesAsync(ct);
 
             // Trigger auto-classification for newly created knowledge entries
             await TriggerAutoClassificationAsync(task, createdIds, ct);
 
             await RecordProcessingOutputArtifactAsync(task, createdIds, progress, ct);
-            await ReportProgressAsync(progress, "completed", $"知识处理完成，已提取并绑定 {entries.Count} 条知识。", 100, new { taskId, knowledgeIds = createdIds }, ct);
+            await ReportProgressAsync(progress, "extraction_completed", $"知识抽取完成，已提取并绑定 {entries.Count} 条知识，正在等待向量索引。", task.Progress, new { taskId, knowledgeIds = createdIds }, ct);
 
             return $"成功提取 {entries.Count} 条知识条目";
         }
@@ -220,12 +220,12 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
                     ChapterId: null,
                     PackageId: null,
                     ToolName: "KnowledgeProcessing",
-                    Stage: "knowledge_processing_completed",
+                    Stage: "knowledge_extraction_completed",
                     Status: "completed",
                     ArtifactType: "knowledge_processing_result",
                     ArtifactId: task.Id,
                     OutputKind: "ProcessArtifact",
-                    Summary: $"知识文件 {task.FileName} 已完成解析，提取 {task.ExtractedEntriesCount} 条知识。",
+                    Summary: $"知识文件 {task.FileName} 已完成解析，提取 {task.ExtractedEntriesCount} 条知识，等待向量索引。",
                     UserVisibleWhere: new[] { "知识库", "创作工作流" },
                     VisibleInWorkflow: true,
                     VisibleInLibrary: false,
@@ -598,7 +598,7 @@ public partial class KnowledgeProcessingService : IKnowledgeProcessingService
 
         await ReportProgressAsync(progress, "aggregate_entries", "分块抽取完成，正在聚合去重知识条目。", Math.Max(task.Progress, 82), new { task.Id, rawEntryCount = allEntries.Count }, ct);
         var aggregated = await AggregateEntriesAsync(allEntries, ct);
-        task.Progress = 100;
+        task.Progress = Math.Max(task.Progress, 84);
         await _db.SaveChangesAsync(ct);
 
         return aggregated;

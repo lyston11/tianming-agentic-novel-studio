@@ -122,6 +122,67 @@ public class KnowledgeControllerTests
     }
 
     [Fact]
+    public async Task UploadFile_UnsupportedFormat_ReturnsBadRequest()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        db.NovelProjects.Add(new NovelProject
+        {
+            Id = "project-1",
+            UserId = "user-1",
+            Title = "Project One",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, "user-1");
+        var bytes = Encoding.UTF8.GetBytes("unsupported");
+        var file = new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "knowledge.docx")
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        };
+
+        var result = await controller.UploadFile(file, "project-1", "上传知识");
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Empty(db.KnowledgeProcessingTasks);
+    }
+
+    [Fact]
+    public async Task UploadFile_OversizedFile_ReturnsPayloadTooLarge()
+    {
+        await using var db = CreateDb();
+        SeedUser(db, "user-1");
+        db.NovelProjects.Add(new NovelProject
+        {
+            Id = "project-1",
+            UserId = "user-1",
+            Title = "Project One",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, "user-1");
+        var file = new FormFile(
+            new MemoryStream([1]),
+            0,
+            KnowledgeUploadTextExtractor.MaxUploadBytes + 1,
+            "file",
+            "knowledge.txt")
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = "text/plain"
+        };
+
+        var result = await controller.UploadFile(file, "project-1", "上传知识");
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, objectResult.StatusCode);
+        Assert.Empty(db.KnowledgeProcessingTasks);
+    }
+
+    [Fact]
     public async Task CreateKnowledge_WithSameIdempotencyKey_ReturnsExistingKnowledge()
     {
         await using var db = CreateDb();
@@ -190,7 +251,8 @@ public class KnowledgeControllerTests
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
-            CreateIngestionService(db, currentUser.Object));
+            CreateIngestionService(db, currentUser.Object),
+            new KnowledgeUploadTextExtractor());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext()
@@ -223,7 +285,8 @@ public class KnowledgeControllerTests
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
-            CreateIngestionService(db, currentUser.Object)));
+            CreateIngestionService(db, currentUser.Object),
+            new KnowledgeUploadTextExtractor()));
     }
 
     private static KnowledgeController CreateRealController(NovelAgentDbContext db, string userId)
@@ -246,7 +309,8 @@ public class KnowledgeControllerTests
             currentUser.Object,
             NullLogger<KnowledgeController>.Instance,
             new ContentDocumentService(db),
-            CreateIngestionService(db, currentUser.Object)));
+            CreateIngestionService(db, currentUser.Object),
+            new KnowledgeUploadTextExtractor()));
     }
 
     private static IKnowledgeDocumentIngestionService CreateIngestionService(

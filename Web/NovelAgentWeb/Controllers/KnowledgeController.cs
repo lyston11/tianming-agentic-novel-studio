@@ -20,6 +20,7 @@ public class KnowledgeController : ControllerBase
     private readonly IContentDocumentService _contentDocuments;
     private readonly ILogger<KnowledgeController> _logger;
     private readonly IKnowledgeDocumentIngestionService _documentIngestion;
+    private readonly IKnowledgeUploadTextExtractor _uploadTextExtractor;
 
     public KnowledgeController(
         IKnowledgeService knowledgeService,
@@ -27,7 +28,8 @@ public class KnowledgeController : ControllerBase
         ICurrentUserService currentUserService,
         ILogger<KnowledgeController> logger,
         IContentDocumentService contentDocuments,
-        IKnowledgeDocumentIngestionService documentIngestion)
+        IKnowledgeDocumentIngestionService documentIngestion,
+        IKnowledgeUploadTextExtractor uploadTextExtractor)
     {
         _knowledgeService = knowledgeService;
         _db = db;
@@ -35,6 +37,7 @@ public class KnowledgeController : ControllerBase
         _contentDocuments = contentDocuments;
         _logger = logger;
         _documentIngestion = documentIngestion;
+        _uploadTextExtractor = uploadTextExtractor;
     }
 
     [HttpGet("directories")]
@@ -305,7 +308,8 @@ public class KnowledgeController : ControllerBase
     public async Task<IActionResult> UploadFile(
         [FromForm] IFormFile file,
         [FromForm] string? projectId,
-        [FromForm] string? title)
+        [FromForm] string? title,
+        CancellationToken ct = default)
     {
         try
         {
@@ -318,7 +322,7 @@ public class KnowledgeController : ControllerBase
             var normalizedProjectId = projectId.Trim();
             var projectExists = await _db.NovelProjects
                 .AsNoTracking()
-                .AnyAsync(p => p.Id == normalizedProjectId && p.UserId == userId);
+                .AnyAsync(p => p.Id == normalizedProjectId && p.UserId == userId, ct);
             if (!projectExists)
                 return NotFound(ApiErrors.NotFound("Project not found"));
 
@@ -332,19 +336,20 @@ public class KnowledgeController : ControllerBase
                     .FirstOrDefaultAsync(task =>
                         task.UserId == userId &&
                         task.ProjectId == normalizedProjectId &&
-                        task.IdempotencyKey == idempotencyKey);
+                        task.IdempotencyKey == idempotencyKey,
+                        ct);
                 if (existingTask != null)
                     return Ok(ToUploadResponse(existingTask));
             }
 
             var fileName = Path.GetFileName(file.FileName);
-            var bytes = await ReadFormFileBytesAsync(file);
-            var text = ReadUploadedText(bytes);
+            var extraction = await _uploadTextExtractor.ExtractAsync(file, ct);
             var uploadBlob = await _documentIngestion.StoreUploadAsync(
                 normalizedProjectId,
                 fileName,
                 file.ContentType,
-                bytes);
+                extraction.OriginalBytes,
+                ct);
 
             var task = new Data.Entities.KnowledgeProcessingTask
             {
@@ -362,7 +367,7 @@ public class KnowledgeController : ControllerBase
             task.UploadBlobId = uploadBlob.Id;
 
             _db.KnowledgeProcessingTasks.Add(task);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
 
             var uploadDocument = await _contentDocuments.SaveOrReplaceTextAsync(
                 userId,
@@ -371,9 +376,10 @@ public class KnowledgeController : ControllerBase
                 task.Id,
                 "upload_raw",
                 task.FileName,
-                text);
+                extraction.Text,
+                ct);
             task.UploadDocumentId = uploadDocument.Id;
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(ct);
 
             _logger.LogInformation("File uploaded: {FileName} ({FileSize} bytes) for user {UserId}, task {TaskId}",
                 task.FileName, task.FileSize, userId, task.Id);
@@ -383,6 +389,14 @@ public class KnowledgeController : ControllerBase
         catch (UnauthorizedAccessException)
         {
             return Unauthorized(ApiErrors.Create("UNAUTHENTICATED", "User not authenticated", "authorization", recoverable: true, recommendedAction: "请重新登录后再试。"));
+        }
+        catch (KnowledgeUploadValidationException ex)
+        {
+            var error = ApiErrors.BadRequest(
+                ex.Message,
+                code: ex.IsTooLarge ? "KNOWLEDGE_FILE_TOO_LARGE" : "KNOWLEDGE_FILE_INVALID",
+                recommendedAction: "请上传有效的 TXT、PDF 或 EPUB 文件后重试。");
+            return ex.IsTooLarge ? StatusCode(StatusCodes.Status413PayloadTooLarge, error) : BadRequest(error);
         }
         catch (Exception ex)
         {
@@ -430,22 +444,6 @@ public class KnowledgeController : ControllerBase
             _logger.LogError(ex, "Failed to get task status for {TaskId}", taskId);
             return StatusCode(500, ApiErrors.Internal("Failed to get task status"));
         }
-    }
-
-    private static async Task<byte[]> ReadFormFileBytesAsync(IFormFile file)
-    {
-        await using var stream = file.OpenReadStream();
-        using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer);
-        return buffer.ToArray();
-    }
-
-    private static string ReadUploadedText(byte[] data)
-    {
-        var text = System.Text.Encoding.UTF8.GetString(data);
-        if (string.IsNullOrWhiteSpace(text))
-            throw new InvalidOperationException("Uploaded knowledge content is empty.");
-        return text;
     }
 
     private static object ToUploadResponse(Data.Entities.KnowledgeProcessingTask task) => new

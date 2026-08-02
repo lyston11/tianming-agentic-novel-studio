@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -28,6 +29,7 @@ public class ProductionOutboxDispatcherTests
     public async Task DispatchPendingAsync_ProjectDomainEvent_ValidatesAuthoritativeEventAndCompletesOutbox()
     {
         await using var db = CreateDb();
+        await SeedProjectAndChapterAsync(db);
         var backgroundUsers = new RecordingBackgroundUserContext();
         db.DomainEvents.Add(new DomainEvent
         {
@@ -74,6 +76,7 @@ public class ProductionOutboxDispatcherTests
     public async Task DispatchPendingAsync_ProjectDomainEventWithoutAuthoritativeEvent_RemainsRetryable()
     {
         await using var db = CreateDb();
+        await SeedProjectAndChapterAsync(db);
         db.OutboxEvents.Add(new OutboxEvent
         {
             Id = "outbox-missing-domain-event",
@@ -98,6 +101,71 @@ public class ProductionOutboxDispatcherTests
         Assert.Equal(0, dispatched);
         Assert.Equal("retryable_failed", failed.Status);
         Assert.Contains("missing-domain-event", failed.LastError);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_OrphanedProjectEvent_IsTerminatedWithoutRetry()
+    {
+        await using var db = CreateDb();
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = "outbox-orphaned-project",
+            UserId = "user-1",
+            ProjectId = "deleted-project",
+            EventType = "index_knowledge_content",
+            AggregateType = "knowledge",
+            AggregateId = "deleted-knowledge",
+            IdempotencyKey = "outbox-orphaned-project-idempotency"
+        });
+        await db.SaveChangesAsync();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            new RecordingVectorStore(),
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance);
+
+        var dispatched = await dispatcher.DispatchPendingAsync();
+
+        var failed = await db.OutboxEvents.SingleAsync();
+        Assert.Equal(0, dispatched);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal(5, failed.Attempts);
+        Assert.Null(failed.NextAttemptAt);
+        Assert.Null(failed.ProcessingOwner);
+        Assert.Null(failed.ProcessingLeaseExpiresAt);
+        Assert.Contains("deleted project deleted-project", failed.LastError);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_DeleteProjectContent_AllowsDeletedProject()
+    {
+        await using var db = CreateDb();
+        db.OutboxEvents.Add(new OutboxEvent
+        {
+            Id = "outbox-deleted-project-vectors",
+            UserId = "user-1",
+            ProjectId = "deleted-project",
+            EventType = "delete_project_content",
+            AggregateType = "project",
+            AggregateId = "deleted-project",
+            IdempotencyKey = "outbox-deleted-project-vectors-idempotency"
+        });
+        await db.SaveChangesAsync();
+        var vectorStore = new RecordingVectorStore();
+        var dispatcher = new ProductionOutboxDispatcher(
+            db,
+            vectorStore,
+            new FixedEmbeddingService(),
+            new RecordingMaterialVectorIndexingService(),
+            NullLogger<ProductionOutboxDispatcher>.Instance);
+
+        var dispatched = await dispatcher.DispatchPendingAsync();
+
+        var completed = await db.OutboxEvents.SingleAsync();
+        Assert.Equal(1, dispatched);
+        Assert.Equal("completed", completed.Status);
+        Assert.Contains(vectorStore.DeletedFilters, filter => Equals(filter["project_id"], "deleted-project"));
     }
 
     [Fact]
@@ -571,6 +639,27 @@ public class ProductionOutboxDispatcherTests
         Assert.Null(failed.NextAttemptAt);
         Assert.Null(failed.ProcessingOwner);
         Assert.Null(failed.ProcessingLeaseExpiresAt);
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_WhenHandlerFailureStateCannotBeSaved_StillTransitionsDetachedOutbox()
+    {
+        var saveFailure = new FailNextSaveChangesInterceptor();
+        await using var db = CreateDb(saveChangesInterceptor: saveFailure);
+        var outbox = await SeedChapterFactOutboxAsync(db, "outbox-handler-save-failure");
+        var processor = new EnablingFailureChapterFactOutboxProcessor(saveFailure);
+        var dispatcher = CreateDispatcher(db, processor);
+
+        Assert.Equal(0, await dispatcher.DispatchPendingAsync());
+
+        db.ChangeTracker.Clear();
+        var failed = await db.OutboxEvents.SingleAsync(e => e.Id == outbox.Id);
+        Assert.Equal("retryable_failed", failed.Status);
+        Assert.Equal(1, failed.Attempts);
+        Assert.NotNull(failed.NextAttemptAt);
+        Assert.Null(failed.ProcessingOwner);
+        Assert.Null(failed.ProcessingLeaseExpiresAt);
+        Assert.Contains("handler failed before failure state persisted", failed.LastError);
     }
 
     [Fact]
@@ -1203,13 +1292,15 @@ public class ProductionOutboxDispatcherTests
 
     private static NovelAgentDbContext CreateDb(
         string? databaseName = null,
-        InMemoryDatabaseRoot? databaseRoot = null)
+        InMemoryDatabaseRoot? databaseRoot = null,
+        SaveChangesInterceptor? saveChangesInterceptor = null)
     {
-        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
-            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot)
-            .Options;
+        var optionsBuilder = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot);
+        if (saveChangesInterceptor != null)
+            optionsBuilder.AddInterceptors(saveChangesInterceptor);
 
-        return new NovelAgentDbContext(options);
+        return new NovelAgentDbContext(optionsBuilder.Options);
     }
 
     private static ProductionOutboxDispatcher CreateDispatcher(
@@ -1402,6 +1493,34 @@ public class ProductionOutboxDispatcherTests
 
             ProcessedEvent = evt;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class EnablingFailureChapterFactOutboxProcessor(
+        FailNextSaveChangesInterceptor saveFailure)
+        : IChapterFactOutboxProcessor
+    {
+        public Task ProcessAsync(OutboxEvent evt, CancellationToken ct = default)
+        {
+            saveFailure.FailNextSave = true;
+            throw new InvalidOperationException("handler failed before failure state persisted");
+        }
+    }
+
+    private sealed class FailNextSaveChangesInterceptor : SaveChangesInterceptor
+    {
+        public bool FailNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!FailNextSave)
+                return ValueTask.FromResult(result);
+
+            FailNextSave = false;
+            throw new InvalidOperationException("simulated persistence failure");
         }
     }
 

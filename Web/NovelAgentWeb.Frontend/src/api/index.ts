@@ -18,6 +18,7 @@ import type {
   KnowledgeDirectoryResponse,
   CharacterResponse,
   KnowledgeResponse,
+  KnowledgeProcessingTaskResponse,
   KnowledgeSearchResult,
   LlmConnectionHealth,
   MaterialContentResponse,
@@ -135,8 +136,14 @@ export const deleteMaterialById = (id: string) =>
   api<void>(`/materials/${id}`, { method: 'DELETE' });
 
 // Knowledge API (new multi-user endpoints)
-export const searchKnowledgeEntries = (req: { projectId: string; query: string; topK?: number; entryType?: string }) =>
-  post<KnowledgeSearchResult[]>('/knowledge/search', req);
+export const searchKnowledgeEntries = (
+  req: { projectId: string; query: string; topK?: number; entryType?: string },
+  signal?: AbortSignal,
+) => api<KnowledgeSearchResult[]>('/knowledge/search', {
+  method: 'POST',
+  body: JSON.stringify(req),
+  signal,
+});
 
 export const listKnowledgeEntries = (projectId?: string) =>
   projectId?.trim()
@@ -184,14 +191,14 @@ export const uploadKnowledgeFile = (projectId: string, file: File, title?: strin
   formData.append('projectId', projectId);
   if (title) formData.append('title', title);
 
-  return api<{ taskId: string; status: string; message: string }>('/knowledge/upload', {
+  return api<{ taskId: string; fileName: string; fileSize: number; status: string; message: string }>('/knowledge/upload', {
     method: 'POST',
     body: formData,
   });
 };
 
 export const getKnowledgeTask = (taskId: string) =>
-  get<{ id: string; status: string; progress: number; extractedEntriesCount: number; errorMessage?: string }>(
+  get<KnowledgeProcessingTaskResponse>(
     `/knowledge/tasks/${encodeURIComponent(taskId)}`
   );
 

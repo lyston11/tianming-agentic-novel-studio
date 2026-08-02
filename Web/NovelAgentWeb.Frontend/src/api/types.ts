@@ -886,6 +886,22 @@ export interface KnowledgeSearchResult {
   projectLastUsedAt: string | null;
 }
 
+export interface KnowledgeProcessingTaskResponse {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  status: string;
+  strategy: string;
+  progress: number;
+  totalChunks: number;
+  processedChunks: number;
+  extractedEntriesCount: number;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+}
+
 // StoryBible response types
 export interface StoryConstitutionResponse {
   id: string;

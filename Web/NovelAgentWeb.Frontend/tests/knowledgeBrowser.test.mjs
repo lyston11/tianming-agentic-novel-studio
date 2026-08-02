@@ -8,9 +8,9 @@ const browser = readFileSync(join(__dirname, '../src/components/materials/Knowle
 const api = readFileSync(join(__dirname, '../src/api/index.ts'), 'utf8');
 const page = readFileSync(join(__dirname, '../src/pages/MaterialsPage.tsx'), 'utf8');
 
-assert.doesNotMatch(
+assert.match(
   browser,
-  /enabled:\s*!!projectId/,
+  /useQuery<KnowledgeResponse\[\], Error>\(\{[\s\S]*?queryFn:\s*\(\)\s*=>\s*listKnowledgeEntries\(projectId\),\s*\}\);/,
   'knowledge browser must load user-level entries even when no project is selected',
 );
 
@@ -72,4 +72,64 @@ assert.match(
   browser,
   /hasDirectoryEntriesButNoLoadedEntries[\s\S]*void\s+refetchEntries\(\)/,
   'knowledge browser should refetch once when directory counts prove entries exist but the entry list is empty',
+);
+
+assert.match(
+  browser,
+  /searchKnowledgeEntries\(\{[\s\S]*projectId:[\s\S]*query:[\s\S]*topK:/,
+  'knowledge browser should call the semantic search API for project-scoped queries',
+);
+
+assert.match(
+  browser,
+  /queryFn:\s*\(\{\s*signal\s*\}\)[\s\S]*searchKnowledgeEntries\([\s\S]*signal\)/,
+  'semantic search should forward the React Query cancellation signal',
+);
+
+assert.match(
+  browser,
+  /semanticSearchApplied[\s\S]*semanticScores/,
+  'knowledge browser should render ranked semantic search results and scores',
+);
+
+assert.doesNotMatch(
+  browser,
+  /条目会移动到[“"]未分类/,
+  'directory deletion must not promise an automatic entry migration that the backend does not perform',
+);
+
+assert.match(
+  browser,
+  /请先将条目移动到其他目录，再删除空目录/,
+  'non-empty directory deletion should guide the user to move entries first',
+);
+
+assert.match(
+  page,
+  /getKnowledgeTask/,
+  'materials page should poll the knowledge processing task endpoint after upload',
+);
+
+assert.match(
+  page,
+  /refetchInterval:[\s\S]*TERMINAL_KNOWLEDGE_TASK_STATUSES/,
+  'knowledge task polling should stop after a terminal status',
+);
+
+assert.match(
+  page,
+  /queryKey:\s*\[['"]knowledgeTask['"],\s*lastKnowledgeTask\?\.projectId,\s*lastKnowledgeTask\?\.taskId\]/,
+  'knowledge task polling must be scoped by both project and task',
+);
+
+assert.match(
+  page,
+  /hasActiveKnowledgeTask[\s\S]*uploadKnowledgeMutation\.mutate\(\{\s*projectId:\s*currentProjectId,\s*file\s*\}\)/,
+  'materials page must not replace an in-flight task with a second upload from the same project',
+);
+
+assert.doesNotMatch(
+  page,
+  /可在 Agent 对话中发送：处理知识文件/,
+  'uploaded knowledge files are processed automatically and must not require a manual Agent command',
 );

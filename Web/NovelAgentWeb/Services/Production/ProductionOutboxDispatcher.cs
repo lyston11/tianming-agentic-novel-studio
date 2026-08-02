@@ -141,6 +141,29 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
 
             using (backgroundUserScope)
             {
+                var projectExists = await OutboxProjectExistsAsync(evt, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!projectExists && !IsProjectDeletionEvent(evt))
+                {
+                    var orphanError = $"Outbox event {evt.Id} references deleted project {evt.ProjectId}.";
+                    var transitioned = await TryTransitionOwnedAsync(
+                            evt,
+                            "failed",
+                            MaxAttempts,
+                            orphanError,
+                            nextAttemptAt: null,
+                            completedAt: null,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    _logger.LogWarning(
+                        transitioned
+                            ? "Production outbox event {EventId} was terminated because project {ProjectId} no longer exists"
+                            : "Production outbox event {EventId} lost lease before orphaned project {ProjectId} could be recorded",
+                        evt.Id,
+                        evt.ProjectId);
+                    continue;
+                }
+
                 using var heartbeatStop = new CancellationTokenSource();
                 var heartbeatTask = RenewProcessingLeaseUntilStoppedAsync(
                     evt.Id,
@@ -148,8 +171,19 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                     heartbeatStop.Token);
                 try
                 {
-                    await AppendOutboxProductionEventAsync(evt, "outbox_processing", "running", "后台 outbox 开始处理。", null, cancellationToken)
-                        .ConfigureAwait(false);
+                    if (projectExists)
+                    {
+                        try
+                        {
+                            await AppendOutboxProductionEventAsync(evt, "outbox_processing", "running", "后台 outbox 开始处理。", null, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            DetachUncommittedProductionEvents();
+                            throw;
+                        }
+                    }
                     await DispatchOneAsync(evt, cancellationToken).ConfigureAwait(false);
                     await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 }
@@ -161,7 +195,18 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                 catch (Exception ex)
                 {
                     await StopLeaseRenewalAsync(heartbeatStop, heartbeatTask).ConfigureAwait(false);
-                    await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception persistenceException)
+                    {
+                        _logger.LogWarning(
+                            persistenceException,
+                            "Production outbox event {EventId} handler failure state could not be persisted",
+                            evt.Id);
+                        _db.ChangeTracker.Clear();
+                    }
                     var attempts = checked(evt.Attempts + 1);
                     var status = attempts >= MaxAttempts ? "failed" : "retryable_failed";
                     DateTime? nextAttemptAt = status == "retryable_failed"
@@ -176,13 +221,25 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                             completedAt: null,
                             cancellationToken)
                         .ConfigureAwait(false);
-                    if (transitioned)
+                    if (transitioned && projectExists)
                     {
                         var message = status == "failed"
                             ? "后台 outbox 重试耗尽，已终止处理。"
                             : "后台 outbox 处理失败，已排队重试。";
-                        await AppendOutboxProductionEventAsync(evt, "outbox_failed", status, message, ex.Message, cancellationToken)
-                            .ConfigureAwait(false);
+                        try
+                        {
+                            await AppendOutboxProductionEventAsync(evt, "outbox_failed", status, message, ex.Message, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception auditException)
+                        {
+                            _db.ChangeTracker.Clear();
+                            _logger.LogWarning(
+                                auditException,
+                                "Production outbox event {EventId} transitioned to {Status}, but its failure audit event could not be written",
+                                evt.Id,
+                                status);
+                        }
                     }
 
                     _logger.LogWarning(
@@ -214,10 +271,13 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
                     continue;
                 }
 
-                await AppendOutboxProductionEventAsync(evt, "outbox_completed", "completed", "后台 outbox 处理完成。", null, cancellationToken)
-                    .ConfigureAwait(false);
-                await TryAppendRunCompletedAsync(evt, cancellationToken)
-                    .ConfigureAwait(false);
+                if (projectExists)
+                {
+                    await AppendOutboxProductionEventAsync(evt, "outbox_completed", "completed", "后台 outbox 处理完成。", null, cancellationToken)
+                        .ConfigureAwait(false);
+                    await TryAppendRunCompletedAsync(evt, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 dispatched++;
             }
         }
@@ -419,15 +479,24 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         }
         else
         {
-            await _db.Entry(evt).ReloadAsync(cancellationToken).ConfigureAwait(false);
-            if (evt.Status != "processing" ||
-                !string.Equals(evt.ProcessingOwner, _processingOwner, StringComparison.Ordinal))
+            if (_db.Entry(evt).State != EntityState.Detached)
+                _db.Entry(evt).State = EntityState.Detached;
+            var current = await _db.OutboxEvents.AsNoTracking().SingleOrDefaultAsync(
+                    item => item.Id == evt.Id && item.UserId == evt.UserId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (current == null ||
+                current.Status != "processing" ||
+                !string.Equals(current.ProcessingOwner, _processingOwner, StringComparison.Ordinal))
             {
                 return false;
             }
 
-            ApplyTransition(evt, status, attempts, lastError, nextAttemptAt, completedAt, now);
+            _db.Attach(current);
+            ApplyTransition(current, status, attempts, lastError, nextAttemptAt, completedAt, now);
             await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            _db.Entry(current).State = EntityState.Detached;
+            ApplyTransition(evt, status, attempts, lastError, nextAttemptAt, completedAt, now);
             return true;
         }
 
@@ -463,6 +532,32 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
     }
 
     private sealed record ClaimedOutboxEvent(string EventId, string? UserId);
+
+    private async Task<bool> OutboxProjectExistsAsync(OutboxEvent evt, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(evt.ProjectId))
+            return true;
+
+        return await _db.NovelProjects
+            .AsNoTracking()
+            .AnyAsync(project => project.Id == evt.ProjectId && project.UserId == evt.UserId, ct)
+            .ConfigureAwait(false);
+    }
+
+    private static bool IsProjectDeletionEvent(OutboxEvent evt)
+    {
+        return evt.EventType == "delete_project_content" && evt.AggregateType == "project";
+    }
+
+    private void DetachUncommittedProductionEvents()
+    {
+        foreach (var entry in _db.ChangeTracker.Entries<ProductionEvent>()
+                     .Where(entry => entry.State == EntityState.Added)
+                     .ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
 
     private async Task DispatchOneAsync(OutboxEvent evt, CancellationToken ct)
     {

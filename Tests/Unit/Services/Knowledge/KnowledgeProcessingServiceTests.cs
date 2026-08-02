@@ -520,7 +520,7 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Contains("1", result);
 
         var updatedTask = await _db.KnowledgeProcessingTasks.FindAsync(task.Id);
-        Assert.Equal("completed", updatedTask!.Status);
+        Assert.Equal("processing", updatedTask!.Status);
         Assert.Equal("single_pass", updatedTask.Strategy);
         Assert.Equal(1, updatedTask.ExtractedEntriesCount);
     }
@@ -602,7 +602,7 @@ public class KnowledgeProcessingServiceTests : IDisposable
             e.ArtifactId == task.Id);
         Assert.Equal(task.UserId, evt.UserId);
         Assert.Equal(task.ProjectId, evt.ProjectId);
-        Assert.Equal("knowledge_processing_completed", evt.Stage);
+        Assert.Equal("knowledge_extraction_completed", evt.Stage);
         Assert.Equal("completed", evt.Status);
         Assert.Contains("uploaded.txt", evt.Message);
         Assert.Contains("knowledge-output-1", evt.DataJson);
@@ -645,7 +645,7 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Contains(events, e => e.Stage == "read_upload");
         Assert.Contains(events, e => e.Stage == "llm_extract");
         Assert.Contains(events, e => e.Stage == "save_entries");
-        Assert.Contains(events, e => e.Stage == "completed" && e.Progress == 100);
+        Assert.Contains(events, e => e.Stage == "extraction_completed" && e.Progress >= 90);
     }
 
     [Fact]
@@ -760,11 +760,11 @@ public class KnowledgeProcessingServiceTests : IDisposable
         Assert.Contains("成功提取", result);
 
         var updatedTask = await _db.KnowledgeProcessingTasks.FindAsync(task.Id);
-        Assert.Equal("completed", updatedTask!.Status);
+        Assert.Equal("processing", updatedTask!.Status);
         Assert.Equal("chunked", updatedTask.Strategy);
         Assert.True(updatedTask.TotalChunks > 1);
         Assert.Equal(updatedTask.TotalChunks, updatedTask.ProcessedChunks);
-        Assert.Equal(100, updatedTask.Progress);
+        Assert.True(updatedTask.Progress >= 90);
     }
 
     [Fact]

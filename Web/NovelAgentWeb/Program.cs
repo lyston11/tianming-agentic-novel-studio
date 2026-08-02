@@ -231,6 +231,7 @@ builder.Services.AddScoped<IKnowledgeCanonConflictStatusService, KnowledgeCanonC
 builder.Services.AddScoped<IKnowledgeConflictDetector, KnowledgeConflictDetector>();
 builder.Services.AddScoped<IKnowledgeConflictResolver, KnowledgeConflictResolver>();
 builder.Services.AddScoped<IKnowledgeService, KnowledgeService>();
+builder.Services.AddScoped<IKnowledgeUploadTextExtractor, KnowledgeUploadTextExtractor>();
 builder.Services.AddScoped<IKnowledgeProcessingService, KnowledgeProcessingService>();
 builder.Services.AddScoped<IKnowledgeProcessingTaskClaimer, PostgresKnowledgeProcessingTaskClaimer>();
 builder.Services.AddScoped<KnowledgeProcessingTaskRunner>();

@@ -1,18 +1,45 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listMaterials,
+  getKnowledgeTask,
   uploadKnowledgeFile,
   deleteMaterialById,
   updateMaterialById,
   createMaterialFromText,
 } from '../api';
-import type { MaterialResponse } from '../api/types';
+import type { KnowledgeProcessingTaskResponse, MaterialResponse } from '../api/types';
 import { useAppStore } from '../stores/useAppStore';
 import { useProjectStore } from '../stores/useProjectStore';
 import Topbar from '../components/layout/Topbar';
 import KnowledgeBaseBrowser from '../components/materials/KnowledgeBaseBrowser';
 import '../styles/materials.css';
+
+const TERMINAL_KNOWLEDGE_TASK_STATUSES = new Set(['completed', 'failed']);
+
+interface KnowledgeTaskMeta {
+  taskId: string;
+  projectId: string;
+  fileName: string;
+  status: string;
+}
+
+function knowledgeTaskPresentation(status: string) {
+  switch (status) {
+    case 'completed':
+      return { label: '知识已就绪', tone: 'completed', description: '解析、知识抽取与向量索引均已完成。' };
+    case 'failed':
+      return { label: '处理失败', tone: 'failed', description: '后台处理未能完成，请根据错误信息修正文件后重试。' };
+    case 'retryable_failed':
+      return { label: '等待重试', tone: 'retrying', description: '本次处理失败，后台将在退避后自动重试。' };
+    case 'processing':
+      return { label: '正在构建知识', tone: 'processing', description: '正在解析文档、抽取条目并建立语义索引。' };
+    case 'claimed':
+      return { label: '任务已领取', tone: 'processing', description: '后台工作器已领取任务，即将开始解析。' };
+    default:
+      return { label: '等待处理', tone: 'pending', description: '文件已安全入队，后台会自动开始处理。' };
+  }
+}
 
 export default function MaterialsPage() {
   const queryClient = useQueryClient();
@@ -27,7 +54,9 @@ export default function MaterialsPage() {
   const [editTitle, setEditTitle] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editTags, setEditTags] = useState('');
-  const [lastKnowledgeTask, setLastKnowledgeTask] = useState<{ taskId: string; fileName: string } | null>(null);
+  const [knowledgeTasksByProject, setKnowledgeTasksByProject] = useState<Record<string, KnowledgeTaskMeta>>({});
+  const handledKnowledgeTaskIdsRef = useRef(new Set<string>());
+  const lastKnowledgeTask = currentProjectId ? knowledgeTasksByProject[currentProjectId] ?? null : null;
 
   const { data: materialsData } = useQuery({
     queryKey: ['materials', currentProjectId],
@@ -35,18 +64,58 @@ export default function MaterialsPage() {
     enabled: !!currentProjectId
   });
 
-  const uploadKnowledgeMutation = useMutation({
-    mutationFn: (file: File) => {
-      if (!currentProjectId) throw new Error('No project selected');
-      return uploadKnowledgeFile(currentProjectId, file, file.name);
+  const knowledgeTaskQuery = useQuery<KnowledgeProcessingTaskResponse, Error>({
+    queryKey: ['knowledgeTask', lastKnowledgeTask?.projectId, lastKnowledgeTask?.taskId],
+    queryFn: () => getKnowledgeTask(lastKnowledgeTask!.taskId),
+    enabled: !!lastKnowledgeTask?.taskId,
+    refetchInterval: (query) => {
+      if (query.state.status === 'error') return false;
+      const status = query.state.data?.status;
+      return status && TERMINAL_KNOWLEDGE_TASK_STATUSES.has(status) ? false : 1200;
     },
-    onSuccess: (result, file) => {
-      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', currentProjectId] });
-      setLastKnowledgeTask({ taskId: result.taskId, fileName: file.name });
+    retry: 2,
+  });
+
+  const uploadKnowledgeMutation = useMutation({
+    mutationFn: ({ projectId, file }: { projectId: string; file: File }) => {
+      return uploadKnowledgeFile(projectId, file, file.name);
+    },
+    onSuccess: (result, { projectId, file }) => {
+      queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', projectId] });
+      handledKnowledgeTaskIdsRef.current.delete(result.taskId);
+      setKnowledgeTasksByProject((current) => ({
+        ...current,
+        [projectId]: {
+          taskId: result.taskId,
+          projectId,
+          fileName: result.fileName || file.name,
+          status: result.status,
+        },
+      }));
       addLog(`知识文件已上传，taskId=${result.taskId}`);
     },
     onError: (err) => addLog(`上传失败: ${err}`),
   });
+
+  useEffect(() => {
+    const task = knowledgeTaskQuery.data;
+    if (!task || !lastKnowledgeTask) {
+      return;
+    }
+
+    if (!TERMINAL_KNOWLEDGE_TASK_STATUSES.has(task.status) || handledKnowledgeTaskIdsRef.current.has(task.id)) {
+      return;
+    }
+
+    handledKnowledgeTaskIdsRef.current.add(task.id);
+    if (task.status === 'completed') {
+      void queryClient.invalidateQueries({ queryKey: ['knowledgeEntries', lastKnowledgeTask.projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['knowledgeDirectories'] });
+      addLog(`知识文件处理完成，已提取 ${task.extractedEntriesCount} 条知识`);
+    } else {
+      addLog(`知识文件处理失败：${task.errorMessage || '未知错误'}`);
+    }
+  }, [addLog, knowledgeTaskQuery.data, lastKnowledgeTask, queryClient]);
 
   const createTextMutation = useMutation({
     mutationFn: () => {
@@ -98,13 +167,19 @@ export default function MaterialsPage() {
     onError: (err) => addLog(`更新失败: ${err}`),
   });
 
-  const handleFile = async (file: File) => {
-    uploadKnowledgeMutation.mutate(file);
+  const currentKnowledgeTask = knowledgeTaskQuery.data;
+  const currentKnowledgeStatus = currentKnowledgeTask?.status ?? lastKnowledgeTask?.status ?? 'pending';
+  const hasActiveKnowledgeTask = !!lastKnowledgeTask && !TERMINAL_KNOWLEDGE_TASK_STATUSES.has(currentKnowledgeStatus);
+
+  const handleFile = (file: File) => {
+    if (!currentProjectId || uploadKnowledgeMutation.isPending || hasActiveKnowledgeTask) return;
+    uploadKnowledgeMutation.mutate({ projectId: currentProjectId, file });
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFile(file);
+    e.target.value = '';
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -128,6 +203,8 @@ export default function MaterialsPage() {
   };
 
   const materials = materialsData?.materials ?? [];
+  const currentKnowledgePresentation = knowledgeTaskPresentation(currentKnowledgeStatus);
+  const currentKnowledgeProgress = Math.max(0, Math.min(100, currentKnowledgeTask?.progress ?? 0));
   return (
     <>
       <Topbar title="创意知识库" />
@@ -170,37 +247,67 @@ export default function MaterialsPage() {
               </div>
 
               <div
-                className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
+                className={`upload-zone ${dragOver ? 'drag-over' : ''} ${uploadKnowledgeMutation.isPending || hasActiveKnowledgeTask ? 'disabled' : ''}`}
+                aria-disabled={uploadKnowledgeMutation.isPending || hasActiveKnowledgeTask}
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
-                onClick={() => fileRef.current?.click()}
+                onClick={() => {
+                  if (!uploadKnowledgeMutation.isPending && !hasActiveKnowledgeTask) fileRef.current?.click();
+                }}
               >
                 <input
                   ref={fileRef}
                   type="file"
                   accept=".txt,.epub,.pdf"
                   onChange={handleFileInput}
+                  disabled={uploadKnowledgeMutation.isPending || hasActiveKnowledgeTask}
                   style={{ display: 'none' }}
                 />
                 <div className="upload-icon">+</div>
                 <div className="upload-text">
-                  {uploadKnowledgeMutation.isPending ? '上传中...' : '选择知识文件'}
+                  {uploadKnowledgeMutation.isPending
+                    ? '上传中...'
+                    : hasActiveKnowledgeTask
+                      ? '当前文件处理中'
+                      : '选择知识文件'}
                 </div>
                 <div className="upload-hint">.txt / .epub / .pdf</div>
               </div>
 
               {lastKnowledgeTask && (
-                <div className="knowledge-task-note">
-                  <div>
-                    <span>已上传知识文件</span>
+                <div className={`knowledge-task-note ${currentKnowledgePresentation.tone}`} aria-live="polite">
+                  <div className="knowledge-task-head">
+                    <span>{currentKnowledgePresentation.label}</span>
                     <strong>{lastKnowledgeTask.fileName}</strong>
                   </div>
-                  <code>{lastKnowledgeTask.taskId}</code>
-                  <p>
-                    可在 Agent 对话中发送：处理知识文件 taskId={lastKnowledgeTask.taskId}，再基于知识库继续创作。
-                  </p>
+                  <div className="knowledge-task-progress" aria-label={`处理进度 ${currentKnowledgeProgress}%`}>
+                    <i style={{ width: `${currentKnowledgeProgress}%` }} />
+                  </div>
+                  <div className="knowledge-task-stats">
+                    <span>{currentKnowledgeProgress}%</span>
+                    <span>{currentKnowledgeTask?.extractedEntriesCount ?? 0} 条知识</span>
+                  </div>
+                  <p>{currentKnowledgePresentation.description}</p>
+                  {currentKnowledgeTask?.errorMessage && (
+                    <p className="knowledge-task-error">{currentKnowledgeTask.errorMessage}</p>
+                  )}
+                  {knowledgeTaskQuery.isError && (
+                    <p className="knowledge-task-error">
+                      状态查询失败：{knowledgeTaskQuery.error.message}
+                      <button className="ghost-button" onClick={() => void knowledgeTaskQuery.refetch()}>
+                        重新查询
+                      </button>
+                    </p>
+                  )}
+                  <code title="任务编号">{lastKnowledgeTask.taskId}</code>
                 </div>
+              )}
+
+              {uploadKnowledgeMutation.isError && (
+                <p className="knowledge-upload-error" role="alert">
+                  上传失败：{uploadKnowledgeMutation.error.message}
+                </p>
               )}
 
               <div className="paste-area">

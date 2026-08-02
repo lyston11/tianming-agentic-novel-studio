@@ -8,6 +8,7 @@ import {
   deleteKnowledgeEntryById,
   listKnowledgeDirectories,
   listKnowledgeEntries,
+  searchKnowledgeEntries,
   updateKnowledgeDirectory,
   updateKnowledgeEntryById,
 } from '../../api';
@@ -17,6 +18,7 @@ import type {
   KnowledgeDirectoryResponse,
   KnowledgeProjectUsage,
   KnowledgeResponse,
+  KnowledgeSearchResult,
 } from '../../api/types';
 import { projectService } from '../../services/projectService';
 import { useProjectStore } from '../../stores/useProjectStore';
@@ -215,6 +217,7 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
   const currentProject = useProjectStore((state) => state.currentProject);
   const [selectedDirectory, setSelectedDirectory] = useState<KnowledgeDirectoryKey>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [directoryMenu, setDirectoryMenu] = useState<{
     directory: KnowledgeDirectoryResponse;
@@ -259,6 +262,24 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
   const { data: rawDirectories = [] } = useQuery({
     queryKey: ['knowledgeDirectories'],
     queryFn: listKnowledgeDirectories,
+  });
+
+  useEffect(() => {
+    const normalizedQuery = searchQuery.trim();
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(normalizedQuery), 320);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  const semanticSearchQuery = useQuery<KnowledgeSearchResult[], Error>({
+    queryKey: ['knowledgeSemanticSearch', projectId, debouncedSearchQuery, selectedDirectory],
+    queryFn: ({ signal }) => searchKnowledgeEntries({
+      projectId: projectId!,
+      query: debouncedSearchQuery,
+      topK: 50,
+      entryType: selectedDirectory === 'All' ? undefined : selectedDirectory,
+    }, signal),
+    enabled: !!projectId && debouncedSearchQuery.length >= 2,
+    retry: 1,
   });
 
   const { data: projects = [] } = useQuery({
@@ -374,16 +395,34 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     ?? directories[0]
     ?? ALL_DIRECTORY;
 
+  const normalizedSearchQuery = searchQuery.trim();
+  const semanticSearchReady = !!projectId
+    && normalizedSearchQuery.length >= 2
+    && normalizedSearchQuery === debouncedSearchQuery;
+  const semanticSearchApplied = semanticSearchReady && semanticSearchQuery.data !== undefined;
+  const semanticScores = useMemo(
+    () => new Map((semanticSearchQuery.data ?? []).map((result) => [result.id, result.score])),
+    [semanticSearchQuery.data],
+  );
   const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return entries
-      .filter((entry) => selectedDirectory === 'All' || entry.category === selectedDirectory)
+    const directoryEntries = entries.filter(
+      (entry) => selectedDirectory === 'All' || entry.category === selectedDirectory,
+    );
+    if (semanticSearchApplied) {
+      const entriesById = new Map(directoryEntries.map((entry) => [entry.id, entry]));
+      return (semanticSearchQuery.data ?? [])
+        .map((result) => entriesById.get(result.id))
+        .filter((entry): entry is KnowledgeEntryView => !!entry);
+    }
+
+    const localQuery = normalizedSearchQuery.toLowerCase();
+    return directoryEntries
       .filter((entry) => {
-        if (!q) return true;
-        return entry.title.toLowerCase().includes(q) || entry.content.toLowerCase().includes(q);
+        if (!localQuery) return true;
+        return entry.title.toLowerCase().includes(localQuery) || entry.content.toLowerCase().includes(localQuery);
       })
       .sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
-  }, [entries, searchQuery, selectedDirectory]);
+  }, [entries, normalizedSearchQuery, selectedDirectory, semanticSearchApplied, semanticSearchQuery.data]);
 
   const selectedEntry = useMemo(() => {
     if (creatingEntry) return null;
@@ -621,8 +660,14 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
 
   const removeDirectory = (directory: KnowledgeDirectoryResponse) => {
     if (directory.key === 'All' || directory.isSystem) return;
-    const ok = window.confirm(`删除目录「${directoryDisplayName(directory)}」？其中 ${directory.entryCount} 个条目会移动到“未分类”，不会删除条目。`);
+    if (directory.entryCount > 0) {
+      window.alert(`目录「${directoryDisplayName(directory)}」仍有 ${directory.entryCount} 个条目。请先将条目移动到其他目录，再删除空目录。`);
+      setDirectoryMenu(null);
+      return;
+    }
+    const ok = window.confirm(`删除空目录「${directoryDisplayName(directory)}」？`);
     if (!ok) return;
+    deleteDirectoryMutation.reset();
     deleteDirectoryMutation.mutate(directory.key);
     setDirectoryMenu(null);
   };
@@ -758,12 +803,27 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
     <section className="knowledge-browser">
       {!isDetailMode && (
         <div className="knowledge-search-row">
-          <input
-            className="knowledge-search"
-            placeholder="搜索标题或内容"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-          />
+          <div className="knowledge-search-stack">
+            <input
+              className="knowledge-search"
+              placeholder={projectId ? '按含义搜索知识库' : '搜索标题或内容'}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <div className={`knowledge-search-status ${semanticSearchQuery.isError ? 'error' : ''}`} aria-live="polite">
+              {!projectId && normalizedSearchQuery.length >= 2
+                ? '当前使用标题与内容检索；选择项目后可启用语义检索'
+                : semanticSearchReady && semanticSearchQuery.isFetching
+                  ? '正在理解查询并检索语义索引…'
+                  : semanticSearchQuery.isError
+                    ? `语义检索失败，已回退到文本匹配：${semanticSearchQuery.error.message}`
+                    : semanticSearchApplied
+                      ? `语义检索 · ${filtered.length} 条相关知识`
+                      : projectId
+                        ? '输入至少 2 个字符后启用语义检索'
+                        : '当前浏览用户知识库'}
+            </div>
+          </div>
           <div className="knowledge-command-side">
             <div className="knowledge-command-stats" aria-label="知识库统计">
               <span><strong>{totalEntryCount}</strong> 条目</span>
@@ -816,6 +876,11 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
               </button>
             ))}
           </div>
+          {deleteDirectoryMutation.isError && (
+            <p className="knowledge-edit-error knowledge-directory-error" role="alert">
+              目录删除失败：{deleteDirectoryMutation.error.message}
+            </p>
+          )}
         </aside>
 
         {directoryMenu && (
@@ -1045,7 +1110,9 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
           ) : hasDirectoryEntriesButNoLoadedEntries ? (
             <div className="empty knowledge-empty">正在同步知识条目...</div>
           ) : filtered.length === 0 ? (
-            <div className="empty knowledge-empty">当前目录没有知识条目</div>
+            <div className="empty knowledge-empty">
+              {normalizedSearchQuery ? '没有找到相关知识条目' : '当前目录没有知识条目'}
+            </div>
           ) : (
             <div className="knowledge-card-grid">
               {filtered.map((entry) => (
@@ -1067,7 +1134,14 @@ export default function KnowledgeBaseBrowser({ projectId, actions }: KnowledgeBa
                 <span className="category-badge" style={{ color: directoryColor(entry.category) }}>
                   {directoryDisplayName(directories.find((directory) => directory.key === entry.category) ?? entry.category)}
                 </span>
-                <span className="knowledge-project-count">{usageProjectCountLabel(entry, currentProjectTitle)}</span>
+                <span className="knowledge-card-signals">
+                  {semanticSearchApplied && semanticScores.has(entry.id) && (
+                    <em className="knowledge-semantic-score">
+                      相关 {Math.round(Math.max(0, Math.min(1, semanticScores.get(entry.id)!)) * 100)}%
+                    </em>
+                  )}
+                  <span className="knowledge-project-count">{usageProjectCountLabel(entry, currentProjectTitle)}</span>
+                </span>
               </div>
                   <strong>{entry.title}</strong>
                   <p>{getShortContent(entry)}</p>
