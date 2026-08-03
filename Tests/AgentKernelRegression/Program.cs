@@ -95,13 +95,16 @@ internal static class Program
             "DirectedRework",
             "ExtractContinuitySummary",
             "BatchImpactAnalysis",
-            "UserAcceptance",
+            "AcceptanceGate",
             "PrefixMerge"
         };
         var cursor = -1;
         foreach (var stage in orderedStages)
         {
-            var next = source.IndexOf($"\"{stage}\"", cursor + 1, StringComparison.Ordinal);
+            var token = stage == "AcceptanceGate"
+                ? "BookProductionWorkflow.AcceptanceGate"
+                : $"\"{stage}\"";
+            var next = source.IndexOf(token, cursor + 1, StringComparison.Ordinal);
             Check(next > cursor, $"DAG stage missing or out of order: {stage}");
             cursor = next;
         }

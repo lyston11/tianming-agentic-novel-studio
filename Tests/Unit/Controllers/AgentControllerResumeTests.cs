@@ -45,8 +45,7 @@ public class AgentControllerResumeTests
 
         var controller = new AgentController(
             coordinator,
-            sessionManager: null!,
-            agentSessionService: null!,
+            sessions: null!,
             currentUserService: currentUser.Object,
             resumeService: null!);
 
@@ -105,8 +104,7 @@ public class AgentControllerResumeTests
 
         var controller = new AgentController(
             coordinator,
-            sessionManager: null!,
-            agentSessionService: null!,
+            sessions: null!,
             currentUserService: currentUser.Object,
             resumeService: null!);
 
@@ -150,8 +148,7 @@ public class AgentControllerResumeTests
 
         var controller = new AgentController(
             coordinator: null!,
-            sessionManager: null!,
-            agentSessionService: null!,
+            sessions: null!,
             currentUserService: Mock.Of<ICurrentUserService>(),
             resumeService: resume.Object);
 
@@ -167,7 +164,7 @@ public class AgentControllerResumeTests
     public async Task CreateSession_ReadsIdempotencyKeyHeaderIntoService()
     {
         string? capturedIdempotencyKey = null;
-        var agentSessions = new Mock<IAgentSessionService>();
+        var agentSessions = new Mock<IAgentSessionApplicationService>();
         agentSessions
             .Setup(x => x.GetOrCreateSessionAsync(
                 null,
@@ -187,8 +184,7 @@ public class AgentControllerResumeTests
             });
         var controller = new AgentController(
             coordinator: null!,
-            sessionManager: null!,
-            agentSessionService: agentSessions.Object,
+            sessions: agentSessions.Object,
             currentUserService: CurrentUser("user-1").Object,
             resumeService: null!)
         {
@@ -216,8 +212,7 @@ public class AgentControllerResumeTests
 
         var controller = new AgentController(
             coordinator: null!,
-            sessionManager: null!,
-            agentSessionService: null!,
+            sessions: null!,
             currentUserService: Mock.Of<ICurrentUserService>(),
             resumeService: resume.Object);
 
@@ -370,14 +365,16 @@ public class AgentControllerResumeTests
         var fanout = new Mock<IAgentRuntimeEventFanout>();
         fanout.Setup(x => x.ReplayAsync("user-1", "session-1", first.Id, 100, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentSseEvent>());
-        var sessionService = new Mock<IAgentSessionService>();
+        var sessionService = new Mock<IAgentSessionApplicationService>();
         sessionService
             .Setup(x => x.GetSessionByIdAsync("session-1", "user-1", false, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentSessionResponse { SessionId = "session-1" });
+        sessionService
+            .Setup(x => x.SubscribeEvents("user-1", "session-1", false))
+            .Returns(() => sessions.SubscribeEvents("user-1", "session-1", false));
         var controller = new AgentController(
             coordinator: null!,
-            sessionManager: sessions,
-            agentSessionService: sessionService.Object,
+            sessions: sessionService.Object,
             currentUserService: currentUser.Object,
             resumeService: null!,
             runtimeEventFanout: fanout.Object,
@@ -404,15 +401,14 @@ public class AgentControllerResumeTests
     public async Task StreamEvents_WhenSessionDoesNotBelongToUserStopsBeforeReplay()
     {
         var currentUser = CurrentUser("user-1");
-        var sessionService = new Mock<IAgentSessionService>(MockBehavior.Strict);
+        var sessionService = new Mock<IAgentSessionApplicationService>(MockBehavior.Strict);
         sessionService
             .Setup(x => x.GetSessionByIdAsync("session-owned-by-user-2", "user-1", false, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new KeyNotFoundException("Session not found"));
         var fanout = new Mock<IAgentRuntimeEventFanout>(MockBehavior.Strict);
         var controller = new AgentController(
             coordinator: null!,
-            sessionManager: null!,
-            agentSessionService: sessionService.Object,
+            sessions: sessionService.Object,
             currentUserService: currentUser.Object,
             resumeService: null!,
             runtimeEventFanout: fanout.Object,
@@ -483,7 +479,7 @@ public class AgentControllerResumeTests
             _result = result;
         }
 
-        public Task<AgentForegroundTurnResult> TryHandleAsync(string sessionId, string userMessage, CancellationToken ct) =>
+        public Task<AgentForegroundTurnResult> TryHandleAsync(string sessionId, string userMessage, string? canonicalMessageKey, CancellationToken ct) =>
             Task.FromResult(_result);
     }
 }

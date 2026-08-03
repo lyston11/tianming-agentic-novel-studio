@@ -38,7 +38,7 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
         Assert.Equal("goal-e2e", status.Goal.Id);
         Assert.Equal(2, status.Tasks.Count);
         Assert.Contains(status.Tasks, task => task.TaskType == "WriteCandidate");
-        Assert.Contains(status.Tasks, task => task.TaskType == "UserAcceptance");
+        Assert.Contains(status.Tasks, task => task.TaskType == "AcceptanceGate");
         Assert.Equal(1, status.CandidateChapterCount);
 
         var latestProjectGoalResponse = await clientA.GetAsync("/api/goals/project/project-e2e/latest/workflow");
@@ -140,6 +140,8 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
             ProjectId = "project-e2e",
             GoalId = "goal-e2e",
             Version = 1,
+            Status = "active",
+            GraphJson = "{\"goalId\":\"goal-e2e\",\"projectId\":\"project-e2e\",\"version\":1,\"nodes\":[]}",
             ContentHash = "graph-e2e-hash"
         });
         db.KernelTasks.AddRange(
@@ -164,7 +166,7 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
                 TaskGraphVersionId = "graph-e2e",
                 BranchId = "branch-e2e",
                 KernelName = "human",
-                TaskType = "UserAcceptance",
+                TaskType = "AcceptanceGate",
                 Status = "awaiting_user",
                 IdempotencyKey = $"accept:{userId}:e2e"
             });
@@ -176,6 +178,35 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
             GoalId = "goal-e2e",
             StartChapterNumber = 1,
             EndChapterNumber = 1
+        });
+        db.BookProductions.Add(new BookProduction
+        {
+            Id = "production-e2e",
+            UserId = userId,
+            ProjectId = "project-e2e",
+            GoalId = "goal-e2e",
+            ExecutionStrategy = "interactive_batch",
+            Status = "running",
+            TargetStartChapterNumber = 1,
+            TargetEndChapterNumber = 1,
+            NextChapterNumber = 1,
+            BatchSize = 1,
+            CurrentBatchNumber = 1
+        });
+        db.ProductionBatches.Add(new ProductionBatch
+        {
+            Id = "batch-e2e",
+            UserId = userId,
+            ProjectId = "project-e2e",
+            GoalId = "goal-e2e",
+            BookProductionId = "production-e2e",
+            BatchNumber = 1,
+            StartChapterNumber = 1,
+            EndChapterNumber = 1,
+            Status = "running",
+            AcceptanceActor = "user",
+            TaskGraphVersionId = "graph-e2e",
+            CanonBranchId = "branch-e2e"
         });
         db.KernelArtifacts.AddRange(
             new KernelArtifact

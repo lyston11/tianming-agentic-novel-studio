@@ -9,13 +9,16 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
 {
     private readonly NovelAgentDbContext _db;
     private readonly IBackgroundClaimConnectionFactory _claimConnections;
+    private readonly IBookProductionTransitionService _transitions;
 
     public PostgresKernelTaskScheduler(
         NovelAgentDbContext db,
-        IBackgroundClaimConnectionFactory claimConnections)
+        IBackgroundClaimConnectionFactory claimConnections,
+        IBookProductionTransitionService transitions)
     {
         _db = db;
         _claimConnections = claimConnections;
+        _transitions = transitions;
     }
 
     public async Task<KernelTaskClaim?> ClaimNextAsync(
@@ -91,7 +94,7 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
                     byNodeId.TryGetValue(dependency, out var dependencyTask) &&
                     dependencyTask.Status is "completed" or "reused"))
             {
-                blocked.Status = blocked.TaskType == "UserAcceptance" ? "awaiting_user" : "ready";
+                blocked.Status = blocked.TaskType == BookProductionWorkflow.AcceptanceGate ? "awaiting_user" : "ready";
                 blocked.UpdatedAt = DateTime.UtcNow;
             }
         }
@@ -176,41 +179,7 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
             throw new InvalidOperationException($"任务失败写入失败：{failure.Message}");
 
         if (decision.Disposition is not KernelTaskFailureDisposition.Retry)
-        {
-            var goalStatus = decision.Disposition == KernelTaskFailureDisposition.AwaitingDecision
-                ? "awaiting_decision"
-                : "failed";
-            var goalUpdated = await _db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE creative_goals
-                SET status = {goalStatus},
-                    aggregate_version = aggregate_version + 1
-                WHERE id = {claim.GoalId}
-                  AND user_id = {claim.UserId}
-                  AND status IN ('committed', 'running', 'resumed')
-                """, cancellationToken);
-            if (goalUpdated != 1)
-                throw new InvalidOperationException("Goal 失败终态写入失败或 Goal 已不再可执行。");
-            var productionStatus = decision.Disposition == KernelTaskFailureDisposition.AwaitingDecision
-                ? "blocked"
-                : "failed";
-            await _db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE book_productions
-                SET status = {productionStatus},
-                    aggregate_version = aggregate_version + 1,
-                    updated_at = clock_timestamp()
-                WHERE goal_id = {claim.GoalId}
-                  AND user_id = {claim.UserId}
-                  AND status IN ('running', 'resumed')
-                """, cancellationToken);
-            await _db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE production_batches
-                SET status = {productionStatus},
-                    updated_at = clock_timestamp()
-                WHERE goal_id = {claim.GoalId}
-                  AND user_id = {claim.UserId}
-                  AND status IN ('planned', 'running', 'accepting')
-                """, cancellationToken);
-        }
+            await _transitions.ApplyTaskFailureAsync(claim, decision.Disposition, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
     }
@@ -220,4 +189,5 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
         var separator = task.Id.IndexOf(':');
         return separator < 0 ? task.Id : task.Id[(separator + 1)..];
     }
+
 }

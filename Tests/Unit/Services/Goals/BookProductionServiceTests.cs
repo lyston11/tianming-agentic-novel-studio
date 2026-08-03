@@ -27,7 +27,7 @@ public sealed class BookProductionServiceTests
             production.BatchSize,
             production.CurrentBatchNumber));
         var batch = Assert.Single(await db.ProductionBatches.ToListAsync());
-        Assert.Equal((1, 5, "human"), (batch.StartChapterNumber, batch.EndChapterNumber, batch.AcceptanceActor));
+        Assert.Equal((1, 5, "user"), (batch.StartChapterNumber, batch.EndChapterNumber, batch.AcceptanceActor));
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class BookProductionServiceTests
 
         Assert.True(result.ShouldCompileNextBatch);
         Assert.Equal("running", result.Production.Status);
-        Assert.Equal("agent", result.NextBatch!.AcceptanceActor);
+        Assert.Equal("agent-policy", result.NextBatch!.AcceptanceActor);
     }
 
     private static CreativeGoal Goal(string strategy) => new()

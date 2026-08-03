@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -149,7 +150,10 @@ public class AgentSessionResumeTests
             ArtifactId: "chapter-002",
             DisplaySurface: AgentRuntimeEventSurface.Workflow,
             DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline));
-        var service = new AgentSessionResumeService(manager, db, runtimeEvents);
+        var sessions = new AgentSessionApplicationService(
+            manager,
+            new AgentSessionService(db, NullLogger<AgentSessionService>.Instance));
+        var service = new AgentSessionResumeService(sessions, db, runtimeEvents);
 
         var response = await service.ResumeAsync("session-1");
 

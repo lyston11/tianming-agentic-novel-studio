@@ -1,4 +1,5 @@
 using TM.Web.NovelAgentWeb.DTOs;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -10,10 +11,19 @@ namespace TM.Web.NovelAgentWeb.Support;
 public sealed class AgentTurnCoordinator
 {
     private readonly IAgentForegroundTurnRunner _foreground;
+    private readonly IAgentChatIdempotencyService _idempotency;
 
-    public AgentTurnCoordinator(IAgentForegroundTurnRunner foreground)
+    public AgentTurnCoordinator(
+        IAgentForegroundTurnRunner foreground,
+        IAgentChatIdempotencyService idempotency)
     {
         _foreground = foreground;
+        _idempotency = idempotency;
+    }
+
+    public AgentTurnCoordinator(IAgentForegroundTurnRunner foreground)
+        : this(foreground, new PassthroughChatIdempotencyService())
+    {
     }
 
     public async Task<AgentChatResponse> HandleAsync(
@@ -23,8 +33,27 @@ public sealed class AgentTurnCoordinator
         string? idempotencyKey = null,
         string? sourceMessageId = null)
     {
-        var result = await _foreground.TryHandleAsync(sessionId, userMessage, ct).ConfigureAwait(false);
-        return result.Response ?? throw new InvalidOperationException(
-            "Conversation director returned no response. Production work must be started through the Goal workflow.");
+        var canonicalKey = string.IsNullOrWhiteSpace(idempotencyKey) ? sourceMessageId : idempotencyKey;
+        return await _idempotency.ExecuteAsync(
+            sessionId,
+            userMessage,
+            canonicalKey,
+            async () =>
+            {
+                var result = await _foreground.TryHandleAsync(sessionId, userMessage, canonicalKey, ct).ConfigureAwait(false);
+                return result.Response ?? throw new InvalidOperationException(
+                    "Conversation director returned no response. Production work must be started through the Goal workflow.");
+            },
+            ct).ConfigureAwait(false);
+    }
+
+    private sealed class PassthroughChatIdempotencyService : IAgentChatIdempotencyService
+    {
+        public Task<AgentChatResponse> ExecuteAsync(
+            string sessionId,
+            string message,
+            string? canonicalKey,
+            Func<Task<AgentChatResponse>> execute,
+            CancellationToken cancellationToken = default) => execute();
     }
 }

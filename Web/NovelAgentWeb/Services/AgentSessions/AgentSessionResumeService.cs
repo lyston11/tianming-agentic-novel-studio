@@ -9,12 +9,12 @@ namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 
 public sealed class AgentSessionResumeService : IAgentSessionResumeService
 {
-    private readonly AgentSessionManager _sessions;
+    private readonly IAgentSessionApplicationService _sessions;
     private readonly NovelAgentDbContext _db;
     private readonly IAgentRuntimeEventService _runtimeEvents;
 
     public AgentSessionResumeService(
-        AgentSessionManager sessions,
+        IAgentSessionApplicationService sessions,
         NovelAgentDbContext db,
         IAgentRuntimeEventService runtimeEvents)
     {
@@ -25,7 +25,7 @@ public sealed class AgentSessionResumeService : IAgentSessionResumeService
 
     public async Task<AgentSessionResumeResponse> ResumeAsync(string sessionId, CancellationToken ct = default)
     {
-        var session = await _sessions.GetSessionAsync(sessionId, ct).ConfigureAwait(false);
+        var session = await _sessions.FindRuntimeSessionAsync(sessionId, ct).ConfigureAwait(false);
         if (session == null)
             throw new KeyNotFoundException($"Session {sessionId} not found");
 

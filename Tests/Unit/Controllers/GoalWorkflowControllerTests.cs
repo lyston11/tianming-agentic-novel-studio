@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using Moq;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,6 +11,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Canon;
+using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.Execution;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Production;
@@ -55,6 +57,8 @@ public sealed class GoalWorkflowControllerTests
             UserId = "user-1",
             ProjectId = "project-1",
             GoalId = "goal-1",
+            ExecutionStrategy = "interactive_batch",
+            Status = "running",
             TargetStartChapterNumber = 1,
             TargetEndChapterNumber = 3,
             NextChapterNumber = 1,
@@ -73,7 +77,8 @@ public sealed class GoalWorkflowControllerTests
             EndChapterNumber = 3,
             CanonBranchId = "branch-1",
             TaskGraphVersionId = "graph-1",
-            Status = "running"
+            Status = "running",
+            AcceptanceActor = "user"
         });
         db.TaskGraphVersions.Add(new TaskGraphVersion
         {
@@ -95,7 +100,7 @@ public sealed class GoalWorkflowControllerTests
             EndChapterNumber = 3
         });
         db.KernelTasks.AddRange(
-            ManualTask("graph-1:user-acceptance", "UserAcceptance", "ready"),
+            ManualTask("graph-1:acceptance-gate", "AcceptanceGate", "ready"),
             ManualTask("graph-1:prefix-merge", "PrefixMerge", "blocked"));
         db.KernelArtifacts.AddRange(
             new KernelArtifact
@@ -104,7 +109,7 @@ public sealed class GoalWorkflowControllerTests
                 UserId = "user-1",
                 ProjectId = "project-1",
                 GoalId = "goal-1",
-                TaskId = "graph-1:user-acceptance",
+                TaskId = "graph-1:acceptance-gate",
                 BranchId = "branch-1",
                 ArtifactType = "AcceptanceDecision",
                 ContentJson = "{}",
@@ -148,7 +153,7 @@ public sealed class GoalWorkflowControllerTests
         Assert.All(tasks, task => Assert.NotNull(task.CompletedAt));
         Assert.Equal(
             new[] { "acceptance-artifact-1" },
-            JsonSerializer.Deserialize<string[]>(tasks.Single(task => task.TaskType == "UserAcceptance").OutputArtifactIdsJson));
+            JsonSerializer.Deserialize<string[]>(tasks.Single(task => task.TaskType == "AcceptanceGate").OutputArtifactIdsJson));
         Assert.Equal(
             new[] { "merge-artifact-1" },
             JsonSerializer.Deserialize<string[]>(tasks.Single(task => task.TaskType == "PrefixMerge").OutputArtifactIdsJson));
@@ -312,6 +317,8 @@ public sealed class GoalWorkflowControllerTests
             ProjectId = "project-1",
             GoalId = "goal-1",
             Version = 1,
+            Status = "active",
+            GraphJson = JsonSerializer.Serialize(new TaskGraphDefinition("goal-1", 1, [])),
             ContentHash = "graph-hash"
         });
         db.KernelTasks.Add(new KernelTask
@@ -387,6 +394,8 @@ public sealed class GoalWorkflowControllerTests
             ProjectId = "project-1",
             GoalId = "goal-1",
             Version = 1,
+            Status = "active",
+            GraphJson = JsonSerializer.Serialize(new TaskGraphDefinition("goal-1", 1, [])),
             ContentHash = "graph-hash"
         });
         db.KernelArtifacts.Add(new KernelArtifact
@@ -484,7 +493,9 @@ public sealed class GoalWorkflowControllerTests
         db.TaskGraphVersions.Add(new TaskGraphVersion
         {
             Id = "graph-1", UserId = "user-1", ProjectId = "project-1", GoalId = "goal-1",
-            Version = 1, Status = "active", ContentHash = "graph-hash"
+            Version = 1, Status = "active",
+            GraphJson = JsonSerializer.Serialize(new TaskGraphDefinition("goal-1", 1, [])),
+            ContentHash = "graph-hash"
         });
         db.KernelArtifacts.AddRange(
             new KernelArtifact
@@ -628,18 +639,37 @@ public sealed class GoalWorkflowControllerTests
     {
         var current = new Mock<ICurrentUserService>();
         current.Setup(service => service.GetUserId()).Returns("user-1");
+        var branchService = branches ?? Mock.Of<ICanonBranchService>();
+        var mergeService = prefixMerge ?? Mock.Of<IPrefixMergeService>();
+        var goalCompiler = compiler ?? Mock.Of<IGoalCompiler>();
+        var bookProduction = new BookProductionService(db, current.Object, new PassingBookValidationService());
+        var progress = Mock.Of<IGoalProgressEventPublisher>();
+        var transitions = new BookProductionTransitionService(
+            db,
+            current.Object,
+            branchService,
+            mergeService,
+            bookProduction,
+            goalCompiler,
+            progress,
+            Mock.Of<IContentDocumentService>(),
+            Mock.Of<ILogger<BookProductionTransitionService>>());
+        var reworkCompiler = new ReworkGraphCompiler(
+            db,
+            current.Object,
+            rework ?? Mock.Of<IReworkIntentService>());
         return new GoalWorkflowController(
             db,
             current.Object,
             commitments ?? Mock.Of<ICommitmentAssessmentService>(),
             goals ?? Mock.Of<ICreativeGoalService>(),
-            compiler ?? Mock.Of<IGoalCompiler>(),
+            goalCompiler,
             control ?? Mock.Of<IGoalControlService>(),
-            branches ?? Mock.Of<ICanonBranchService>(),
-            prefixMerge ?? Mock.Of<IPrefixMergeService>(),
-            rework ?? Mock.Of<IReworkIntentService>(),
-            Mock.Of<IGoalProgressEventPublisher>(),
-            new BookProductionService(db, current.Object, new PassingBookValidationService()));
+            branchService,
+            progress,
+            bookProduction,
+            transitions,
+            reworkCompiler);
     }
 
     private sealed class PassingBookValidationService : IBookValidationService
@@ -656,11 +686,11 @@ public sealed class GoalWorkflowControllerTests
         GoalId = "goal-1",
         TaskGraphVersionId = "graph-1",
         BranchId = "branch-1",
-        KernelName = taskType == "UserAcceptance" ? "workflow" : "domain_reducer",
+        KernelName = taskType == "AcceptanceGate" ? "workflow" : "domain_reducer",
         TaskType = taskType,
         Status = status,
         IdempotencyKey = id,
-        Priority = taskType == "UserAcceptance" ? 1 : 2
+        Priority = taskType == "AcceptanceGate" ? 1 : 2
     };
 
     private static CreativeGoalContract Contract() => new(

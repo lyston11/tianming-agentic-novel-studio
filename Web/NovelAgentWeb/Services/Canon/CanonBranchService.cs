@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.Goals;
 
 namespace TM.Web.NovelAgentWeb.Services.Canon;
 
@@ -160,7 +161,8 @@ public sealed class CanonBranchService : ICanonBranchService
             userId,
             candidate.GoalId,
             candidate.BranchId,
-            "UserAcceptance",
+            BookProductionWorkflow.AcceptanceGate,
+            actor,
             cancellationToken);
         var existing = await _db.CandidateAcceptances.FirstOrDefaultAsync(item =>
             item.UserId == userId &&
@@ -197,19 +199,30 @@ public sealed class CanonBranchService : ICanonBranchService
         string goalId,
         string branchId,
         string taskType,
+        string actor,
         CancellationToken cancellationToken)
     {
-        var graphId = await _db.TaskGraphVersions.AsNoTracking()
-            .Where(item => item.UserId == userId && item.GoalId == goalId)
-            .OrderByDescending(item => item.Version)
-            .Select(item => item.Id)
+        var batch = await _db.ProductionBatches.AsNoTracking()
+            .Where(item =>
+                item.UserId == userId &&
+                item.GoalId == goalId &&
+                item.CanonBranchId == branchId &&
+                item.TaskGraphVersionId != null)
+            .OrderByDescending(item => item.BatchNumber)
             .FirstOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Goal 缺少可追踪的任务图，不能记录人工验收证据。");
+            ?? throw new InvalidOperationException("候选分支未绑定生产批次，不能记录验收证据。");
+        var expectedActor = actor == "agent"
+            ? BookProductionWorkflow.AgentPolicyActor
+            : BookProductionWorkflow.UserActor;
+        if (batch.AcceptanceActor != expectedActor)
+            throw new InvalidOperationException("候选章节验收主体与批次执行策略不匹配。");
+        if (batch.Status is not ("running" or "accepting"))
+            throw new InvalidOperationException("当前生产批次不在可验收状态。");
         return await _db.KernelTasks.SingleOrDefaultAsync(task =>
             task.UserId == userId &&
             task.GoalId == goalId &&
             task.BranchId == branchId &&
-            task.TaskGraphVersionId == graphId &&
+            task.TaskGraphVersionId == batch.TaskGraphVersionId &&
             task.TaskType == taskType,
             cancellationToken) ?? throw new InvalidOperationException("Goal 缺少人工验收任务，不能记录验收证据。");
     }

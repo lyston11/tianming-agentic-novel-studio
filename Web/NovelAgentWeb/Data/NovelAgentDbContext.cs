@@ -28,6 +28,7 @@ public class NovelAgentDbContext : DbContext
     public DbSet<Character> Characters { get; set; } = null!;
     public DbSet<Material> Materials { get; set; } = null!;
     public DbSet<KnowledgeBase> KnowledgeBases { get; set; } = null!;
+    public DbSet<KnowledgeCatalogState> KnowledgeCatalogStates { get; set; } = null!;
     public DbSet<KnowledgeClassification> KnowledgeClassifications { get; set; } = null!;
     public DbSet<KnowledgeConflictReport> KnowledgeConflictReports { get; set; } = null!;
     public DbSet<KnowledgeDirectory> KnowledgeDirectories { get; set; } = null!;
@@ -43,6 +44,7 @@ public class NovelAgentDbContext : DbContext
     public DbSet<OutboxEvent> OutboxEvents { get; set; } = null!;
     public DbSet<AgentMemory> AgentMemories { get; set; } = null!;
     public DbSet<AgentChatTurn> AgentChatTurns { get; set; } = null!;
+    public DbSet<AgentChatRequestReceipt> AgentChatRequestReceipts { get; set; } = null!;
     public DbSet<AgentChatSummary> AgentChatSummaries { get; set; } = null!;
     public DbSet<AgentMemoryEvent> AgentMemoryEvents { get; set; } = null!;
     public DbSet<AgentMemoryVersion> AgentMemoryVersions { get; set; } = null!;
@@ -56,7 +58,6 @@ public class NovelAgentDbContext : DbContext
     public DbSet<WorldSettingEntry> WorldSettingEntries { get; set; } = null!;
     public DbSet<AgentRun> AgentRuns { get; set; } = null!;
     public DbSet<AgentToolExecution> AgentToolExecutions { get; set; } = null!;
-    public DbSet<AgentToolSearchSnapshot> AgentToolSearchSnapshots { get; set; } = null!;
     public DbSet<AgentRuntimeRun> AgentRuntimeRuns { get; set; } = null!;
     public DbSet<AgentInterrupt> AgentInterrupts { get; set; } = null!;
     public DbSet<AgentRuntimeEvent> AgentRuntimeEvents { get; set; } = null!;
@@ -97,6 +98,20 @@ public class NovelAgentDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<KnowledgeCatalogState>(entity =>
+        {
+            entity.ToTable("knowledge_catalog_states");
+            entity.HasKey(e => e.UserId);
+            entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.Revision).HasColumnName("revision");
+            entity.Property(e => e.ActiveEntryCount).HasColumnName("active_entry_count");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasOne<User>()
+                .WithOne()
+                .HasForeignKey<KnowledgeCatalogState>(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // Ignore non-entity types from Support namespace
         modelBuilder.Ignore<TM.Web.NovelAgentWeb.Support.ChatMessage>();
@@ -1035,6 +1050,35 @@ public class NovelAgentDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<AgentChatRequestReceipt>(entity =>
+        {
+            entity.ToTable("agent_chat_request_receipts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.RequestedSessionId).HasColumnName("requested_session_id").HasMaxLength(160).IsRequired();
+            entity.Property(e => e.CanonicalKey).HasColumnName("canonical_key").HasMaxLength(160).IsRequired();
+            entity.Property(e => e.RequestHash).HasColumnName("request_hash").HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+            entity.Property(e => e.LeaseOwner).HasColumnName("lease_owner").HasMaxLength(64);
+            entity.Property(e => e.LeaseExpiresAt).HasColumnName("lease_expires_at");
+            var responseJson = entity.Property(e => e.ResponseJson).HasColumnName("response_json");
+            responseJson.HasColumnType(Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL" ? "jsonb" : "TEXT");
+            entity.Property(e => e.ResolvedSessionId).HasColumnName("resolved_session_id");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at");
+            entity.HasIndex(e => new { e.UserId, e.RequestedSessionId, e.CanonicalKey })
+                .IsUnique()
+                .HasDatabaseName("ux_agent_chat_receipt_scope_key");
+            entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt })
+                .HasDatabaseName("idx_agent_chat_receipt_status");
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // AgentChatSummary entity configuration
         modelBuilder.Entity<AgentChatSummary>(entity =>
         {
@@ -1604,28 +1648,6 @@ public class NovelAgentDbContext : DbContext
                 .HasDatabaseName("idx_agent_tool_executions_scope_recent");
             entity.HasIndex(e => new { e.UserId, e.ProjectId, e.ToolName, e.ArgumentsHash })
                 .HasDatabaseName("idx_agent_tool_executions_dedupe");
-        });
-
-        modelBuilder.Entity<AgentToolSearchSnapshot>(entity =>
-        {
-            entity.ToTable("agent_tool_search_snapshots");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
-            entity.Property(e => e.ProjectId).HasColumnName("project_id");
-            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
-            entity.Property(e => e.Phase).HasColumnName("phase").IsRequired();
-            entity.Property(e => e.Version).HasColumnName("version").IsRequired();
-            entity.Property(e => e.ToolsJson).HasColumnName("tools_json").IsRequired();
-            entity.Property(e => e.SourceExecutionId).HasColumnName("source_execution_id");
-            entity.Property(e => e.CachedAt).HasColumnName("cached_at");
-            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
-
-            entity.HasIndex(e => new { e.UserId, e.ProjectId, e.SessionId, e.Phase, e.Version })
-                .IsUnique()
-                .HasDatabaseName("idx_agent_tool_search_snapshots_scope_version");
-            entity.HasIndex(e => e.ExpiresAt)
-                .HasDatabaseName("idx_agent_tool_search_snapshots_expires_at");
         });
 
         modelBuilder.Entity<AgentRuntimeRun>(entity =>

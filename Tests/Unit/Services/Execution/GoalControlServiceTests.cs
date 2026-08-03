@@ -383,7 +383,7 @@ public sealed class GoalControlServiceTests
             UserId = "user-1",
             ProjectId = "project-1",
             GoalId = "goal-atomic",
-            TaskId = "graph-atomic:user-acceptance",
+            TaskId = "graph-atomic:acceptance-gate",
             BranchId = "branch-atomic",
             ArtifactType = "AcceptanceDecision",
             ContentJson = "{}",
@@ -398,8 +398,38 @@ public sealed class GoalControlServiceTests
             ProjectId = "project-1",
             GoalId = "goal-atomic",
             Version = 1,
+            Status = "active",
             GraphJson = "{}",
             ContentHash = "graph-hash"
+        });
+        db.BookProductions.Add(new BookProduction
+        {
+            Id = "production-atomic",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-atomic",
+            ExecutionStrategy = "interactive_batch",
+            Status = "running",
+            TargetStartChapterNumber = 1,
+            TargetEndChapterNumber = 1,
+            NextChapterNumber = 1,
+            BatchSize = 1,
+            CurrentBatchNumber = 1
+        });
+        db.ProductionBatches.Add(new ProductionBatch
+        {
+            Id = "batch-atomic",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-atomic",
+            BookProductionId = "production-atomic",
+            BatchNumber = 1,
+            StartChapterNumber = 1,
+            EndChapterNumber = 1,
+            Status = "accepting",
+            AcceptanceActor = "user",
+            TaskGraphVersionId = "graph-atomic",
+            CanonBranchId = "branch-atomic"
         });
         db.KernelTasks.AddRange(
         new KernelTask

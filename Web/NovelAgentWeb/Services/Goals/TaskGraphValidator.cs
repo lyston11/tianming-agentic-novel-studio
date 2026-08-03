@@ -30,8 +30,8 @@ public sealed class TaskGraphValidator
             ValidateChapterReviews(nodes, errors);
         }
 
-        if (!nodes.Values.Any(node => node.TaskType == "UserAcceptance"))
-            errors.Add(new("TASK_GRAPH_ACCEPTANCE_REQUIRED", "任务图缺少用户验收门。"));
+        if (!nodes.Values.Any(node => node.TaskType == BookProductionWorkflow.AcceptanceGate))
+            errors.Add(new("TASK_GRAPH_ACCEPTANCE_REQUIRED", "任务图缺少验收门。"));
         if (!nodes.Values.Any(node => node.TaskType == "PrefixMerge"))
             errors.Add(new("TASK_GRAPH_PREFIX_MERGE_REQUIRED", "任务图缺少连续前缀合并节点。"));
 

@@ -176,9 +176,11 @@ builder.Services.AddScoped<TargetArchitectureDirector>();
 builder.Services.AddScoped<IGoalBaselineProvider, GoalBaselineProvider>();
 builder.Services.AddScoped<ICreativeGoalService, CreativeGoalService>();
 builder.Services.AddScoped<IBookProductionService, BookProductionService>();
+builder.Services.AddScoped<IBookProductionTransitionService, BookProductionTransitionService>();
 builder.Services.AddHostedService<BookProductionWorker>();
 builder.Services.AddSingleton<TaskGraphValidator>();
 builder.Services.AddScoped<IGoalCompiler, GoalCompiler>();
+builder.Services.AddScoped<IReworkGraphCompiler, ReworkGraphCompiler>();
 builder.Services.AddScoped<IKernelTaskScheduler, PostgresKernelTaskScheduler>();
 builder.Services.AddScoped<IGoalBudgetService, GoalBudgetService>();
 builder.Services.AddScoped<IGoalControlService, GoalControlService>();
@@ -277,7 +279,11 @@ builder.Services.AddHostedService<ProductionOutboxHostedService>();
 builder.Services.AddScoped<IWorkspaceService, WorkspaceService>();
 
 // Register Agent Session Service
-builder.Services.AddScoped<IAgentSessionService, AgentSessionService>();
+builder.Services.AddScoped<AgentSessionService>();
+builder.Services.AddScoped<AgentSessionApplicationService>();
+builder.Services.AddScoped<IAgentSessionApplicationService>(sp => sp.GetRequiredService<AgentSessionApplicationService>());
+builder.Services.AddScoped<IAgentSessionService>(sp => sp.GetRequiredService<IAgentSessionApplicationService>());
+builder.Services.AddScoped<IAgentChatIdempotencyService, AgentChatIdempotencyService>();
 builder.Services.AddScoped<IAgentSessionResumeService, AgentSessionResumeService>();
 builder.Services.AddScoped<ILegacyRuntimeAuditReader, LegacyRuntimeAuditReader>();
 builder.Services.AddScoped<IAgentRuntimeEventService, AgentRuntimeEventService>();

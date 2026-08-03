@@ -27,6 +27,7 @@ public sealed class KnowledgeQueryServiceTests
             Status = "processed",
             KnowledgeVersion = 4
         });
+        SeedCatalog(db);
         await db.SaveChangesAsync();
         var knowledge = CreateKnowledgeServiceMock();
         var service = new KnowledgeQueryService(knowledge.Object, new StubCurrentUserService(), db);
@@ -53,6 +54,8 @@ public sealed class KnowledgeQueryServiceTests
     public async Task QueryAsync_Retrieve_ReturnsCatalogAndRelevantItemsThroughOneContract()
     {
         await using var db = CreateDb();
+        SeedCatalog(db);
+        await db.SaveChangesAsync();
         var knowledge = CreateKnowledgeServiceMock();
         knowledge.Setup(service => service.SearchKnowledgeAsync(
                 It.Is<SearchKnowledgeRequest>(request =>
@@ -138,6 +141,21 @@ public sealed class KnowledgeQueryServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         return new NovelAgentDbContext(options);
+    }
+
+    private static void SeedCatalog(NovelAgentDbContext db)
+    {
+        db.KnowledgeBases.AddRange(
+            new KnowledgeBase
+            {
+                Id = "knowledge-1", UserId = "user-1", SourceProjectId = "project-1",
+                EntryType = "Setting", Title = "灯城规则", Content = "灯城每夜熄灭一盏灯。", Weight = 9
+            },
+            new KnowledgeBase
+            {
+                Id = "knowledge-2", UserId = "user-1", SourceProjectId = "project-1",
+                EntryType = "Setting", Title = "主角代价", Content = "每次点亮旧灯都会失去一段记忆。", Weight = 8
+            });
     }
 
     private sealed class StubCurrentUserService : ICurrentUserService

@@ -35,10 +35,10 @@ public sealed class GoalWorkflowController : ControllerBase
     private readonly IGoalCompiler _compiler;
     private readonly IGoalControlService _control;
     private readonly ICanonBranchService _branches;
-    private readonly IPrefixMergeService _prefixMerge;
-    private readonly IReworkIntentService _rework;
     private readonly IGoalProgressEventPublisher _progress;
     private readonly IBookProductionService _bookProductions;
+    private readonly IBookProductionTransitionService _transitions;
+    private readonly IReworkGraphCompiler _reworkCompiler;
 
     public GoalWorkflowController(
         NovelAgentDbContext db,
@@ -48,10 +48,10 @@ public sealed class GoalWorkflowController : ControllerBase
         IGoalCompiler compiler,
         IGoalControlService control,
         ICanonBranchService branches,
-        IPrefixMergeService prefixMerge,
-        IReworkIntentService rework,
         IGoalProgressEventPublisher progress,
-        IBookProductionService bookProductions)
+        IBookProductionService bookProductions,
+        IBookProductionTransitionService transitions,
+        IReworkGraphCompiler reworkCompiler)
     {
         _db = db;
         _currentUser = currentUser;
@@ -60,10 +60,10 @@ public sealed class GoalWorkflowController : ControllerBase
         _compiler = compiler;
         _control = control;
         _branches = branches;
-        _prefixMerge = prefixMerge;
-        _rework = rework;
         _progress = progress;
         _bookProductions = bookProductions;
+        _transitions = transitions;
+        _reworkCompiler = reworkCompiler;
     }
 
     [HttpPost("workflow/preview")]
@@ -281,123 +281,22 @@ public sealed class GoalWorkflowController : ControllerBase
             throw new ArgumentException("返工请求必须提供幂等键。", nameof(request));
         var response = await InSerializableTransactionAsync<IActionResult>(async () =>
         {
-        var userId = _currentUser.GetUserId();
-        var goal = await RequireGoalAsync(goalId, cancellationToken);
-        var taskIdempotencyKey = ReworkTaskIdempotencyKey(goal.Id, request.IdempotencyKey);
-        await AcquireReworkIdempotencyLockAsync(userId, taskIdempotencyKey, cancellationToken);
-        var existing = await _db.KernelTasks.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.UserId == userId && item.IdempotencyKey == taskIdempotencyKey,
-            cancellationToken);
-        if (existing != null)
-            return Ok(new GoalChapterReworkResponse(existing.Id, IntentArtifactId(existing.InputArtifactIdsJson), existing.Status));
-
-        var candidate = await _db.CandidateChapters.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == request.CandidateChapterId &&
-            item.UserId == userId &&
-            item.ProjectId == goal.ProjectId &&
-            item.GoalId == goal.Id &&
-            item.ChapterNumber == chapterNumber &&
-            item.Version == request.CandidateVersion,
-            cancellationToken) ?? throw new KeyNotFoundException("候选章节不存在、版本不匹配或不属于当前用户。");
-        var originalExists = await _db.KernelArtifacts.AsNoTracking().AnyAsync(item =>
-            item.Id == candidate.CurrentArtifactId &&
-            item.UserId == userId &&
-            item.ProjectId == goal.ProjectId &&
-            item.GoalId == goal.Id &&
-            item.BranchId == candidate.BranchId,
-            cancellationToken);
-        if (!originalExists)
-            throw new KeyNotFoundException("候选正文 Artifact 不存在。");
-        var graph = await _db.TaskGraphVersions.AsNoTracking()
-            .Where(item => item.UserId == userId && item.ProjectId == goal.ProjectId && item.GoalId == goal.Id)
-            .OrderByDescending(item => item.Version)
-            .FirstOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Goal 尚未编译任务图。");
-        var contextArtifactId = await _db.KernelArtifacts.AsNoTracking()
-            .Where(item =>
-                item.UserId == userId &&
-                item.ProjectId == goal.ProjectId &&
-                item.GoalId == goal.Id &&
-                item.BranchId == candidate.BranchId &&
-                item.TaskId == $"{graph.Id}:chapter-{chapterNumber}-context" &&
-                item.ArtifactType == "ChapterContextContract")
-            .Select(item => item.Id)
-            .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("返工缺少该章冻结的 ChapterContextContract。");
-        var intent = await _rework.CompileAsync(new CompileReworkIntentRequest(
-            candidate.Id,
-            candidate.Version,
-            request.SessionId,
-            request.UserDescription,
-            request.SelectionStart,
-            request.SelectionEnd,
-            request.SelectedText), cancellationToken);
-        await _rework.StartAutomaticAttemptAsync(intent.Id, cancellationToken);
-        var intentJson = JsonSerializer.Serialize(new ReworkIntentArtifactContract(
-            intent.Id,
-            intent.TargetScope,
-            intent.SelectionStart,
-            intent.SelectionEnd,
-            intent.Problem,
-            intent.DesiredEffect,
-            DeserializeList(intent.PreserveJson),
-            DeserializeList(intent.MayChangeJson),
-            DeserializeList(intent.MustNotChangeJson),
-            DeserializeList(intent.AcceptanceCriteriaJson)), JsonOptions);
-        var nodePrefix = $"manual-rework-{Sha256(taskIdempotencyKey)[..16]}";
-        var draftNode = $"{nodePrefix}-draft";
-        var continuityNode = $"{nodePrefix}-continuity-review";
-        var literaryNode = $"{nodePrefix}-literary-review";
-        var adoptNode = $"{nodePrefix}-adopt";
-        var summaryNode = $"{nodePrefix}-continuity-summary";
-        var now = DateTime.UtcNow;
-        var draftTask = ReworkTask(
-            graph.Id,
-            draftNode,
-            "tianming_writing",
-            "DirectedReworkDraft",
-            "ready",
-            [],
-            [contextArtifactId, candidate.CurrentArtifactId],
-            taskIdempotencyKey,
-            100,
-            userId,
-            goal,
-            candidate.BranchId,
-            now);
-        var intentArtifact = new KernelArtifact
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = goal.ProjectId,
-            GoalId = goal.Id,
-            TaskId = draftTask.Id,
-            BranchId = candidate.BranchId,
-            ArtifactType = "ReworkIntent",
-            ContentJson = intentJson,
-            ContentHash = Sha256(intentJson),
-            Status = "adopted",
-            Authorship = "human"
-        };
-        draftTask.InputArtifactIdsJson = JsonSerializer.Serialize(
-            new[] { contextArtifactId, candidate.CurrentArtifactId, intentArtifact.Id }, JsonOptions);
-        var continuityTask = ReworkTask(
-            graph.Id, continuityNode, "continuity_review", "ReviewContinuity", "blocked",
-            [draftNode], [], $"{taskIdempotencyKey}:continuity", 101, userId, goal, candidate.BranchId, now);
-        var literaryTask = ReworkTask(
-            graph.Id, literaryNode, "literary_review", "ReviewLiteraryQuality", "blocked",
-            [draftNode], [], $"{taskIdempotencyKey}:literary", 102, userId, goal, candidate.BranchId, now);
-        var adoptTask = ReworkTask(
-            graph.Id, adoptNode, "tianming_writing", "DirectedRework", "blocked",
-            [draftNode, continuityNode, literaryNode], [contextArtifactId],
-            $"{taskIdempotencyKey}:adopt", 103, userId, goal, candidate.BranchId, now);
-        var summaryTask = ReworkTask(
-            graph.Id, summaryNode, "continuity_review", "ExtractContinuitySummary", "blocked",
-            [adoptNode], [], $"{taskIdempotencyKey}:summary", 104, userId, goal, candidate.BranchId, now);
-        _db.KernelArtifacts.Add(intentArtifact);
-        _db.KernelTasks.AddRange(draftTask, continuityTask, literaryTask, adoptTask, summaryTask);
-        await _db.SaveChangesAsync(cancellationToken);
-        return Ok(new GoalChapterReworkResponse(draftTask.Id, intentArtifact.Id, draftTask.Status));
+            await RequireGoalAsync(goalId, cancellationToken);
+            var compiled = await _reworkCompiler.CompileAsync(new ReworkGraphCompileRequest(
+                goalId,
+                chapterNumber,
+                request.CandidateChapterId,
+                request.CandidateVersion,
+                request.SessionId,
+                request.UserDescription,
+                request.SelectionStart,
+                request.SelectionEnd,
+                request.SelectedText,
+                request.IdempotencyKey), cancellationToken);
+            return Ok(new GoalChapterReworkResponse(
+                compiled.TaskId,
+                compiled.IntentArtifactId,
+                compiled.Status));
         }, cancellationToken);
         if (response is OkObjectResult { Value: GoalChapterReworkResponse rework })
         {
@@ -548,23 +447,12 @@ public sealed class GoalWorkflowController : ControllerBase
             cancellationToken);
         if (branch == null)
             throw new KeyNotFoundException("候选分支不存在或不属于当前用户。");
-        var merge = await _prefixMerge.MergeAcceptedPrefixAsync(request.BranchId, cancellationToken);
-        BookProductionAdvanceResult? advance = null;
-        if (merge.EndChapterNumber == branch.EndChapterNumber)
-        {
-            advance = await _bookProductions.FinalizeMergedBatchAsync(goal.Id, branch.Id, cancellationToken);
-            if (advance.ShouldCompileNextBatch)
-                await _compiler.CompileAsync(goal.Id, cancellationToken);
-        }
-        await _progress.PublishAsync(new GoalProgressEventRequest(
-            userId,
-            goalId,
-            AgentSseEventType.GoalPrefixMerged,
-            $"第 {merge.StartChapterNumber}-{merge.EndChapterNumber} 章已合并到正史。",
-            BranchId: branch.Id,
-            ArtifactIds: [$"merge-record:{merge.Id}"],
-            Action: "prefix_merged"), cancellationToken);
-        return Ok(merge);
+        var result = await _transitions.AdvanceAfterAcceptanceAsync(
+            goal.Id,
+            branch.Id,
+            BookProductionWorkflow.UserActor,
+            cancellationToken);
+        return Ok(result.Merge);
     }
 
     [HttpPost("{goalId}/workflow/strategy")]
@@ -582,8 +470,7 @@ public sealed class GoalWorkflowController : ControllerBase
     public async Task<IActionResult> ContinueBatch(string goalId, CancellationToken cancellationToken)
     {
         await RequireGoalAsync(goalId, cancellationToken);
-        await _bookProductions.ContinueInteractiveAsync(goalId, cancellationToken);
-        var graph = await _compiler.CompileAsync(goalId, cancellationToken);
+        var graph = await _transitions.ContinueInteractiveAsync(goalId, cancellationToken);
         return Ok(graph);
     }
 
@@ -662,70 +549,8 @@ public sealed class GoalWorkflowController : ControllerBase
             cancellationToken) ?? throw new KeyNotFoundException("候选章节不存在或不属于当前用户。");
     }
 
-    private static IReadOnlyList<string> DeserializeList(string json) =>
-        JsonSerializer.Deserialize<string[]>(json) ?? [];
-
-    private static KernelTask ReworkTask(
-        string graphId,
-        string nodeId,
-        string kernelName,
-        string taskType,
-        string status,
-        IReadOnlyList<string> dependencies,
-        IReadOnlyList<string> inputArtifactIds,
-        string idempotencyKey,
-        int priority,
-        string userId,
-        CreativeGoal goal,
-        string branchId,
-        DateTime now) => new()
-    {
-        Id = $"{graphId}:{nodeId}",
-        UserId = userId,
-        ProjectId = goal.ProjectId,
-        GoalId = goal.Id,
-        TaskGraphVersionId = graphId,
-        BranchId = branchId,
-        KernelName = kernelName,
-        TaskType = taskType,
-        Status = status,
-        DependencyTaskIdsJson = JsonSerializer.Serialize(dependencies, JsonOptions),
-        InputArtifactIdsJson = JsonSerializer.Serialize(inputArtifactIds, JsonOptions),
-        IdempotencyKey = idempotencyKey,
-        MaxAttempts = 1,
-        Priority = priority,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
-
-    private static string ReworkTaskIdempotencyKey(string goalId, string requestKey)
-    {
-        var raw = $"goal-rework:{goalId}:{requestKey.Trim()}";
-        return raw.Length <= 160 ? raw : $"goal-rework:{Sha256(raw)}";
-    }
-
-    private static string? IntentArtifactId(string inputArtifactIdsJson)
-    {
-        var ids = JsonSerializer.Deserialize<string[]>(inputArtifactIdsJson) ?? [];
-        return ids.LastOrDefault();
-    }
-
     private static string Sha256(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-
-    private async Task AcquireReworkIdempotencyLockAsync(
-        string userId,
-        string idempotencyKey,
-        CancellationToken cancellationToken)
-    {
-        if (!_db.Database.IsRelational() ||
-            _db.Database.GetDbConnection() is not Npgsql.NpgsqlConnection)
-            return;
-        var lockKey = $"goal-rework\u001f{userId}\u001f{idempotencyKey}";
-        await _db.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))",
-            cancellationToken);
-    }
 
     private async Task<T> InSerializableTransactionAsync<T>(
         Func<Task<T>> action,

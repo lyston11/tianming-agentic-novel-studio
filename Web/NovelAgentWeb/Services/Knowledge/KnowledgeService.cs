@@ -180,7 +180,7 @@ public class KnowledgeService : IKnowledgeService
         _db.KnowledgeBases.Add(knowledge);
         try
         {
-            await _db.SaveChangesAsync(ct);
+            await SaveCatalogMutationAsync(userId, 1, ct);
         }
         catch (DbUpdateException) when (normalizedIdempotencyKey != null)
         {
@@ -373,7 +373,7 @@ public class KnowledgeService : IKnowledgeService
         _db.KnowledgeDirectories.Add(directory);
         try
         {
-            await _db.SaveChangesAsync(ct);
+            await SaveCatalogMutationAsync(userId, 0, ct);
         }
         catch (DbUpdateException) when (normalizedIdempotencyKey != null)
         {
@@ -425,7 +425,7 @@ public class KnowledgeService : IKnowledgeService
             knowledge.EntryType = newKey;
         }
 
-        await _db.SaveChangesAsync(ct);
+        await SaveCatalogMutationAsync(userId, 0, ct);
         foreach (var knowledge in affected)
         {
             await EnqueueKnowledgeIndexAsync(userId, knowledge, ct);
@@ -465,7 +465,7 @@ public class KnowledgeService : IKnowledgeService
         }
 
         _db.KnowledgeDirectories.Remove(directory);
-        await _db.SaveChangesAsync(ct);
+        await SaveCatalogMutationAsync(userId, 0, ct);
         foreach (var knowledge in affected)
         {
             await EnqueueKnowledgeIndexAsync(userId, knowledge, ct);
@@ -514,6 +514,8 @@ public class KnowledgeService : IKnowledgeService
         if (knowledge == null)
             throw new KeyNotFoundException($"Knowledge entry {knowledgeId} not found");
 
+        var wasArchived = knowledge.IsArchived;
+
         if (!string.IsNullOrWhiteSpace(request.EntryType))
             knowledge.EntryType = NormalizeDirectoryKey(request.EntryType);
 
@@ -539,7 +541,8 @@ public class KnowledgeService : IKnowledgeService
         if (request.IsArchived.HasValue)
             knowledge.IsArchived = request.IsArchived.Value;
 
-        await _db.SaveChangesAsync(ct);
+        var activeDelta = wasArchived == knowledge.IsArchived ? 0 : knowledge.IsArchived ? -1 : 1;
+        await SaveCatalogMutationAsync(userId, activeDelta, ct);
         await EnqueueKnowledgeIndexAsync(userId, knowledge, ct);
         await InvalidateUserKnowledgeCachesAsync(userId, ct);
         if (!string.IsNullOrWhiteSpace(knowledge.SourceProjectId))
@@ -580,7 +583,7 @@ public class KnowledgeService : IKnowledgeService
         await EnqueueKnowledgeDeleteAsync(userId, knowledge, ct);
 
         _db.KnowledgeBases.Remove(knowledge);
-        await _db.SaveChangesAsync(ct);
+        await SaveCatalogMutationAsync(userId, knowledge.IsArchived ? 0 : -1, ct);
         await InvalidateUserKnowledgeCachesAsync(userId, ct);
 
         _logger.LogInformation("Deleted knowledge entry {KnowledgeId}", knowledgeId);
@@ -613,11 +616,30 @@ public class KnowledgeService : IKnowledgeService
             topK,
             ct);
 
-        var knowledgeById = await _db.KnowledgeBases
+        var semanticIds = searchResults
+            .Where(result => result.EntityType == "knowledge" && !string.IsNullOrWhiteSpace(result.EntityId))
+            .Select(result => result.EntityId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var fragments = BuildSearchFragments(request.Query);
+        var fragment0 = fragments.ElementAtOrDefault(0) ?? string.Empty;
+        var fragment1 = fragments.ElementAtOrDefault(1) ?? string.Empty;
+        var fragment2 = fragments.ElementAtOrDefault(2) ?? string.Empty;
+        var boundedCandidates = await _db.KnowledgeBases
             .AsNoTracking()
             .Where(k => k.UserId == userId && !k.IsArchived)
             .Where(k => entryTypeKeys == null || entryTypeKeys.Contains(k.EntryType))
-            .ToDictionaryAsync(k => k.Id, ct);
+            .Where(k =>
+                semanticIds.Contains(k.Id) ||
+                k.Title.Contains(fragment0) || k.Content.Contains(fragment0) || (k.Tags != null && k.Tags.Contains(fragment0)) ||
+                fragment1 != string.Empty && (k.Title.Contains(fragment1) || k.Content.Contains(fragment1) || (k.Tags != null && k.Tags.Contains(fragment1))) ||
+                fragment2 != string.Empty && (k.Title.Contains(fragment2) || k.Content.Contains(fragment2) || (k.Tags != null && k.Tags.Contains(fragment2))))
+            .OrderByDescending(k => semanticIds.Contains(k.Id))
+            .ThenByDescending(k => k.Weight)
+            .ThenByDescending(k => k.CreatedAt)
+            .Take(topK * 4)
+            .ToListAsync(ct);
+        var knowledgeById = boundedCandidates.ToDictionary(k => k.Id, StringComparer.OrdinalIgnoreCase);
         var usageByKnowledgeId = await LoadUsageByKnowledgeIdAsync(
             userId,
             request.ProjectId,
@@ -1306,6 +1328,24 @@ public class KnowledgeService : IKnowledgeService
         return score == 0 ? 0 : score + Math.Clamp(knowledge.Weight, 1, 10) / 100f;
     }
 
+    private static IReadOnlyList<string> BuildSearchFragments(string query)
+    {
+        var normalized = new string(query
+            .Where(character => !char.IsWhiteSpace(character) && !char.IsPunctuation(character))
+            .ToArray());
+        if (normalized.Length <= 2)
+            return [normalized];
+        return new[]
+            {
+                normalized[..2],
+                normalized.Substring(Math.Max(0, normalized.Length / 2 - 1), 2),
+                normalized[^2..]
+            }
+            .Where(fragment => !string.IsNullOrWhiteSpace(fragment))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static int GetEntryTypeRank(string entryType) =>
         NormalizeDirectoryKey(entryType) switch
         {
@@ -1315,6 +1355,44 @@ public class KnowledgeService : IKnowledgeService
             "TropePattern" => 1,
             _ => 0
         };
+
+    private async Task SaveCatalogMutationAsync(
+        string userId,
+        int activeEntryDelta,
+        CancellationToken cancellationToken)
+    {
+        if (!_db.Database.IsRelational())
+        {
+            await KnowledgeCatalogProjection.TouchAtomicAsync(
+                _db,
+                userId,
+                activeEntryDelta,
+                cancellationToken);
+            return;
+        }
+
+        var ownsTransaction = _db.Database.CurrentTransaction == null;
+        await using var transaction = ownsTransaction
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+            await KnowledgeCatalogProjection.TouchAtomicAsync(
+                _db,
+                userId,
+                activeEntryDelta,
+                cancellationToken);
+            if (transaction != null)
+                await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            if (transaction != null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
 
     private async Task EnqueueKnowledgeIndexAsync(string userId, KnowledgeBase knowledge, CancellationToken ct)
     {

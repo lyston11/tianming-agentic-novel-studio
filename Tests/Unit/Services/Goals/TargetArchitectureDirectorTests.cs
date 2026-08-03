@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
@@ -59,8 +61,11 @@ public sealed class TargetArchitectureDirectorTests
         var commitments = new RecordingCommitmentService(assessment);
         var knowledge = new RecordingKnowledgeQueryTool();
         var sessions = new AgentSessionManager(db, currentUser, chat);
-        var director = new TargetArchitectureDirector(
+        var sessionApplication = new AgentSessionApplicationService(
             sessions,
+            new AgentSessionService(db, NullLogger<AgentSessionService>.Instance));
+        var director = new TargetArchitectureDirector(
+            sessionApplication,
             currentUser,
             chat,
             new CollaborationMemoryService(db),
@@ -68,7 +73,7 @@ public sealed class TargetArchitectureDirectorTests
             knowledge,
             db);
 
-        var result = await director.TryHandleAsync("session-1", "那就按第二种方案形成三章目标", CancellationToken.None);
+        var result = await director.TryHandleAsync("session-1", "那就按第二种方案形成三章目标", null, CancellationToken.None);
 
         Assert.False(result.StartBackground);
         Assert.NotNull(result.Response);

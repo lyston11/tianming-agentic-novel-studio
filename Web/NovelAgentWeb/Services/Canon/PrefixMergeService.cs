@@ -243,12 +243,16 @@ public sealed class PrefixMergeService : IPrefixMergeService
         string taskType,
         CancellationToken cancellationToken)
     {
-        var graphId = await _db.TaskGraphVersions.AsNoTracking()
-            .Where(item => item.UserId == userId && item.GoalId == goalId)
-            .OrderByDescending(item => item.Version)
-            .Select(item => item.Id)
+        var graphId = await _db.ProductionBatches.AsNoTracking()
+            .Where(item =>
+                item.UserId == userId &&
+                item.GoalId == goalId &&
+                item.CanonBranchId == branchId &&
+                item.TaskGraphVersionId != null)
+            .OrderByDescending(item => item.BatchNumber)
+            .Select(item => item.TaskGraphVersionId)
             .FirstOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Goal 缺少可追踪的任务图，不能记录正史合并证据。");
+            ?? throw new InvalidOperationException("候选分支未绑定生产批次，不能记录正史合并证据。");
         return await _db.KernelTasks.SingleOrDefaultAsync(task =>
             task.UserId == userId &&
             task.GoalId == goalId &&

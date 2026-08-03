@@ -150,12 +150,12 @@ public sealed class KernelTaskClaimTests : IAsyncLifetime
     public async Task ClaimNextAsync_DoesNotDispatchHumanAcceptanceOrPrefixMergeTasks()
     {
         var dependency = CreateTask("graph-1:batch-impact", "user-1", 0);
-        var acceptance = CreateTask("graph-1:user-acceptance", "user-1", 1, "UserAcceptance");
+        var acceptance = CreateTask("graph-1:acceptance-gate", "user-1", 1, "AcceptanceGate");
         acceptance.Status = "blocked";
         acceptance.DependencyTaskIdsJson = "[\"batch-impact\"]";
         var prefixMerge = CreateTask("graph-1:prefix-merge", "user-1", 2, "PrefixMerge");
         prefixMerge.Status = "blocked";
-        prefixMerge.DependencyTaskIdsJson = "[\"user-acceptance\"]";
+        prefixMerge.DependencyTaskIdsJson = "[\"acceptance-gate\"]";
         await SeedTasksAsync(dependency, acceptance, prefixMerge);
         await using var db = CreateApplicationDbContext();
         var scheduler = CreateScheduler(db);
@@ -313,7 +313,39 @@ public sealed class KernelTaskClaimTests : IAsyncLifetime
                 ["ConnectionStrings:NovelAgentWorkerDb"] = _workerConnectionString
             })
             .Build();
-        return new PostgresKernelTaskScheduler(db, new BackgroundClaimConnectionFactory(configuration));
+        return new PostgresKernelTaskScheduler(
+            db,
+            new BackgroundClaimConnectionFactory(configuration),
+            new ClaimOnlyTransitionService(db));
+    }
+
+    private sealed class ClaimOnlyTransitionService : IBookProductionTransitionService
+    {
+        private readonly NovelAgentDbContext _db;
+
+        public ClaimOnlyTransitionService(NovelAgentDbContext db)
+        {
+            _db = db;
+        }
+
+        private static InvalidOperationException Unsupported() => new("Claim test does not execute production transitions.");
+        public Task<AdvanceAfterAcceptanceResult> AdvanceAfterAcceptanceAsync(string goalId, string branchId, string actor, CancellationToken cancellationToken = default) => throw Unsupported();
+        public Task<TaskGraphDefinition> ContinueInteractiveAsync(string goalId, CancellationToken cancellationToken = default) => throw Unsupported();
+        public Task BlockAsync(string goalId, string batchId, CancellationToken cancellationToken = default) => throw Unsupported();
+
+        public async Task ApplyTaskFailureAsync(
+            KernelTaskClaim claim,
+            KernelTaskFailureDisposition disposition,
+            CancellationToken cancellationToken = default)
+        {
+            var goal = await _db.CreativeGoals.SingleAsync(item =>
+                item.Id == claim.GoalId && item.UserId == claim.UserId,
+                cancellationToken);
+            goal.Status = disposition == KernelTaskFailureDisposition.AwaitingDecision
+                ? "awaiting_decision"
+                : "failed";
+            await _db.SaveChangesAsync(cancellationToken);
+        }
     }
 
     private static async Task SetUserScopeAsync(PostgresNovelAgentDbContext db, string userId)

@@ -6,6 +6,8 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
@@ -20,7 +22,7 @@ public class WorkflowService : IWorkflowService
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUserService;
     private readonly IWorkspaceFactory _workspaceFactory;
-    private readonly AgentSessionManager _sessionManager;
+    private readonly IAgentSessionApplicationService _sessionManager;
     private readonly MissionBlackboardRecoveryService _blackboardRecovery;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IProductionWorkflowBridge _productionWorkflowBridge;
@@ -32,7 +34,7 @@ public class WorkflowService : IWorkflowService
         NovelAgentDbContext db,
         ICurrentUserService currentUserService,
         IWorkspaceFactory workspaceFactory,
-        AgentSessionManager sessionManager,
+        IAgentSessionApplicationService sessionManager,
         MissionBlackboardRecoveryService blackboardRecovery,
         IServiceScopeFactory scopeFactory,
         IProductionWorkflowBridge productionWorkflowBridge,
@@ -88,8 +90,13 @@ public class WorkflowService : IWorkflowService
             var productionEvents = await _productionWorkflowBridge
                 .LoadProjectEventsAsync(project.Id, cancellationToken: ct)
                 .ConfigureAwait(false);
-            var toolExecutions = await LoadProjectToolExecutionsAsync(project.Id, userId, ct)
-                .ConfigureAwait(false);
+            var toolExecutions = string.IsNullOrWhiteSpace(latestGoalId)
+                ? await LoadProjectToolExecutionsAsync(project.Id, userId, ct).ConfigureAwait(false)
+                : [];
+            var legacyToolExecutionCount = string.IsNullOrWhiteSpace(latestGoalId)
+                ? toolExecutions.Count
+                : await _db.AgentToolExecutions.AsNoTracking()
+                    .CountAsync(item => item.UserId == userId && item.ProjectId == projectId, ct);
             var productionChains = await BuildWorkflowProductionChainsAsync(project.Id, userId, productionEvents, ct)
                 .ConfigureAwait(false);
             var creativeIntents = await LoadCreativeIntentEvidenceAsync(project.Id, userId, ct)
@@ -136,17 +143,158 @@ public class WorkflowService : IWorkflowService
                 };
             }
 
+            var goalState = await LoadGoalStateAsync(userId, projectId, latestGoalId, ct);
             return workflow with
             {
                 LatestGoalId = latestGoalId,
                 CreativeIntents = creativeIntents,
-                ProductionChains = productionChains
+                ProductionChains = productionChains,
+                GoalState = goalState,
+                ProductionStages = goalState == null
+                    ? workflow.ProductionStages
+                    : BuildGoalProductionStages(goalState),
+                LegacyAudit = new WorkflowLegacyAudit(
+                    workflow.MissionPlans.Count,
+                    workflow.Runs.Count,
+                    legacyToolExecutionCount,
+                    "legacy_retired")
             };
         }
         finally
         {
             _workspaceFactory.Release(userId, workspaceEntry.ProjectId);
         }
+    }
+
+    private static IReadOnlyList<WorkflowProductionStage> BuildGoalProductionStages(WorkflowGoalState state)
+    {
+        var groups = new[]
+        {
+            new { Key = "planning", Label = "规划", Types = new[] { "FreezeBaselines", "AnalyzeCreativeRequirements", "CompileBatchPlan", "PlanChapter" } },
+            new { Key = "context", Label = "上下文", Types = new[] { "CompileChapterContext" } },
+            new { Key = "writing", Label = "正文生成", Types = new[] { "WriteCandidate", "DirectedReworkDraft", "DirectedRework" } },
+            new { Key = "review", Label = "双评审", Types = new[] { "ReviewContinuity", "ReviewLiteraryQuality", "ExtractContinuitySummary", "BatchImpactAnalysis" } },
+            new { Key = "acceptance", Label = "验收门", Types = new[] { BookProductionWorkflow.AcceptanceGate } },
+            new { Key = "merge", Label = "正史合并", Types = new[] { BookProductionWorkflow.PrefixMerge } }
+        };
+        return groups.Select(group =>
+        {
+            var tasks = state.Tasks.Where(task => group.Types.Contains(task.TaskType, StringComparer.Ordinal)).ToArray();
+            var completed = tasks.Count(task => task.Status is "completed" or "reused");
+            var status = tasks.Any(task => task.Status is "failed" or "awaiting_decision")
+                ? "blocked"
+                : tasks.Any(task => task.Status == "running")
+                    ? "running"
+                    : tasks.Length > 0 && completed == tasks.Length
+                        ? "completed"
+                        : "pending";
+            var latest = tasks.OrderByDescending(task => task.UpdatedAt).FirstOrDefault();
+            var artifactCount = state.Artifacts.Count(artifact => tasks.Any(task => task.TaskId == artifact.TaskId));
+            return new WorkflowProductionStage(
+                group.Key,
+                group.Label,
+                "Goal 状态机",
+                status,
+                $"{completed}/{tasks.Length} 个任务完成",
+                latest == null ? "当前批次尚未进入该阶段。" : $"最近任务：{latest.TaskType} · {latest.Status}",
+                artifactCount,
+                completed,
+                tasks.Length,
+                latest?.UpdatedAt.ToString("O") ?? string.Empty,
+                state.Artifacts.FirstOrDefault(artifact => tasks.Any(task => task.TaskId == artifact.TaskId))?.ArtifactId ?? string.Empty,
+                state.ActiveTaskGraphId,
+                tasks.Length == 0 ? "当前任务图没有该阶段节点。" : string.Empty,
+                status == "blocked" ? "在工作流中处理失败或决策节点。" : "等待状态机推进。",
+                []);
+        }).ToArray();
+    }
+
+    private async Task<WorkflowGoalState?> LoadGoalStateAsync(
+        string userId,
+        string projectId,
+        string goalId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(goalId))
+            return null;
+        var goal = await _db.CreativeGoals.AsNoTracking().SingleAsync(item =>
+            item.UserId == userId && item.ProjectId == projectId && item.Id == goalId,
+            cancellationToken);
+        var production = await _db.BookProductions.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.UserId == userId && item.GoalId == goalId,
+            cancellationToken);
+        var graph = await _db.TaskGraphVersions.AsNoTracking()
+            .Where(item => item.UserId == userId && item.GoalId == goalId && item.Status == "active")
+            .OrderByDescending(item => item.Version)
+            .FirstOrDefaultAsync(cancellationToken);
+        var batches = production == null
+            ? []
+            : await _db.ProductionBatches.AsNoTracking()
+                .Where(item => item.UserId == userId && item.BookProductionId == production.Id)
+                .OrderBy(item => item.BatchNumber)
+                .Select(item => new WorkflowGoalBatchState(
+                    item.Id,
+                    item.BatchNumber,
+                    item.StartChapterNumber,
+                    item.EndChapterNumber,
+                    item.Status,
+                    item.AcceptanceActor,
+                    item.TaskGraphVersionId ?? string.Empty,
+                    item.CanonBranchId ?? string.Empty))
+                .ToListAsync(cancellationToken);
+        var tasks = graph == null
+            ? []
+            : await _db.KernelTasks.AsNoTracking()
+                .Where(item => item.UserId == userId && item.TaskGraphVersionId == graph.Id)
+                .OrderBy(item => item.Priority)
+                .Select(item => new WorkflowGoalTaskState(
+                    item.Id,
+                    item.TaskType,
+                    item.Status,
+                    item.KernelName,
+                    item.BranchId ?? string.Empty,
+                    item.Attempt,
+                    item.MaxAttempts,
+                    item.UpdatedAt))
+                .ToListAsync(cancellationToken);
+        var candidates = await _db.CandidateChapters.AsNoTracking()
+            .Where(item => item.UserId == userId && item.GoalId == goalId)
+            .OrderBy(item => item.ChapterNumber)
+            .ThenByDescending(item => item.Version)
+            .Select(item => new WorkflowGoalCandidateState(
+                item.Id,
+                item.ChapterNumber,
+                item.Version,
+                item.Status,
+                item.Authorship,
+                item.IsProtected,
+                item.CurrentArtifactId))
+            .ToListAsync(cancellationToken);
+        var artifacts = await _db.KernelArtifacts.AsNoTracking()
+            .Where(item => item.UserId == userId && item.GoalId == goalId)
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(200)
+            .Select(item => new WorkflowGoalArtifactState(
+                item.Id,
+                item.ArtifactType,
+                item.TaskId,
+                item.BranchId ?? string.Empty,
+                item.Status,
+                item.CreatedAt))
+            .ToListAsync(cancellationToken);
+        return new WorkflowGoalState(
+            goal.Id,
+            goal.Status,
+            goal.ExecutionStrategy,
+            production?.Status ?? string.Empty,
+            production?.CurrentBatchNumber ?? 0,
+            production?.NextChapterNumber ?? 0,
+            graph?.Id ?? string.Empty,
+            graph?.Version ?? 0,
+            batches,
+            tasks,
+            candidates,
+            artifacts);
     }
 
     public async Task<VolumeArcResponse> CreateVolumeArcAsync(

@@ -245,10 +245,69 @@ public sealed record ProjectWorkflowDocument(
     IReadOnlyList<WorkflowArtifactTimelineItem> ArtifactTimeline)
 {
     public string LatestGoalId { get; init; } = string.Empty;
+    public WorkflowGoalState? GoalState { get; init; }
+    public WorkflowLegacyAudit LegacyAudit { get; init; } = new(0, 0, 0, "legacy_retired");
 
     [JsonIgnore]
     public IReadOnlyList<NovelAgentRun> RawRuns { get; init; } = Array.Empty<NovelAgentRun>();
 }
+
+public sealed record WorkflowGoalState(
+    string GoalId,
+    string GoalStatus,
+    string ExecutionStrategy,
+    string ProductionStatus,
+    int CurrentBatchNumber,
+    int NextChapterNumber,
+    string ActiveTaskGraphId,
+    int ActiveTaskGraphVersion,
+    IReadOnlyList<WorkflowGoalBatchState> Batches,
+    IReadOnlyList<WorkflowGoalTaskState> Tasks,
+    IReadOnlyList<WorkflowGoalCandidateState> Candidates,
+    IReadOnlyList<WorkflowGoalArtifactState> Artifacts);
+
+public sealed record WorkflowGoalBatchState(
+    string BatchId,
+    int BatchNumber,
+    int StartChapterNumber,
+    int EndChapterNumber,
+    string Status,
+    string AcceptanceActor,
+    string TaskGraphVersionId,
+    string CanonBranchId);
+
+public sealed record WorkflowGoalTaskState(
+    string TaskId,
+    string TaskType,
+    string Status,
+    string KernelName,
+    string BranchId,
+    int Attempt,
+    int MaxAttempts,
+    DateTime UpdatedAt);
+
+public sealed record WorkflowGoalCandidateState(
+    string CandidateChapterId,
+    int ChapterNumber,
+    int Version,
+    string Status,
+    string Authorship,
+    bool IsProtected,
+    string ArtifactId);
+
+public sealed record WorkflowGoalArtifactState(
+    string ArtifactId,
+    string ArtifactType,
+    string TaskId,
+    string BranchId,
+    string Status,
+    DateTime CreatedAt);
+
+public sealed record WorkflowLegacyAudit(
+    int MissionPlanCount,
+    int AgentRunCount,
+    int ToolExecutionCount,
+    string Status);
 
 public sealed record WorkflowRunSummary(
     string RunId,

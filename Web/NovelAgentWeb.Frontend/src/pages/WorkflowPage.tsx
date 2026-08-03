@@ -1694,9 +1694,9 @@ export default function WorkflowPage() {
     ?? (isDetailView ? null : activeBook);
   const volumes = useMemo(() => workflow?.library?.volumes ?? [], [workflow?.library?.volumes]);
   const chapters = useMemo(() => volumes.flatMap((volume) => volume.chapters), [volumes]);
-  const selectedPlan = workflow?.missionPlans?.[0]
-    ?? workflow?.sessions?.[0]?.missionPlan
-    ?? null;
+  const selectedPlan = workflow?.goalState
+    ? null
+    : workflow?.missionPlans?.[0] ?? workflow?.sessions?.[0]?.missionPlan ?? null;
   const timeline = useMemo(() => workflow?.artifactTimeline ?? [], [workflow?.artifactTimeline]);
   const visibleTimeline = useMemo(() => timeline.filter((artifact) => artifact.isUserVisible), [timeline]);
   const selectedChapter = chapters.find((chapter) => chapter.chapterId === selectedChapterId)
@@ -1818,7 +1818,9 @@ export default function WorkflowPage() {
     || workflow?.sessions?.[0]?.sessionId
     || agentSessions?.find((session) => session.activeProjectId === currentProjectId)?.sessionId
     || '';
-  const selectedProjectTaskQueue: AgentScheduledTask[] = workflow?.schedulerTasks ?? selectedPlan?.schedulerState?.tasks ?? [];
+  const selectedProjectTaskQueue: AgentScheduledTask[] = workflow?.goalState
+    ? []
+    : workflow?.schedulerTasks ?? selectedPlan?.schedulerState?.tasks ?? [];
   const primaryScheduledTask = selectedProjectTaskQueue.find((task) => task.status === 'running')
     ?? selectedProjectTaskQueue.find((task) => task.status === 'blocked' || task.status === 'waiting_confirmation')
     ?? null;
@@ -2331,7 +2333,28 @@ export default function WorkflowPage() {
         </section>
 
         {workflow?.latestGoalId ? (
-          <ProjectGoalWorkbench goalId={workflow.latestGoalId} />
+          <>
+            {workflow.goalState && (
+              <section className="project-goal-workbench">
+                <div>
+                  <span>Goal State Machine</span>
+                  <h3>批次 {workflow.goalState.currentBatchNumber} · {workflow.goalState.productionStatus}</h3>
+                  <p>
+                    {workflow.goalState.executionStrategy === 'full_auto' ? '全自动推进' : '分批交互推进'}
+                    {' · '}下一章 {workflow.goalState.nextChapterNumber || '—'}
+                    {' · '}任务图 v{workflow.goalState.activeTaskGraphVersion || '—'}
+                  </p>
+                </div>
+                <div className="workflow-project-metrics">
+                  <strong>{workflow.goalState.tasks.filter((task) => task.status === 'completed' || task.status === 'reused').length}<small>已完成任务</small></strong>
+                  <strong>{workflow.goalState.tasks.filter((task) => task.status === 'ready' || task.status === 'running').length}<small>执行中</small></strong>
+                  <strong>{workflow.goalState.candidates.length}<small>候选版本</small></strong>
+                  <strong>{workflow.goalState.artifacts.length}<small>权威产物</small></strong>
+                </div>
+              </section>
+            )}
+            <ProjectGoalWorkbench goalId={workflow.latestGoalId} />
+          </>
         ) : (
           <section className="project-goal-workbench empty-state">
             <div>

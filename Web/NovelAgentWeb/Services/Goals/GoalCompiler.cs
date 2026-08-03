@@ -162,7 +162,8 @@ public sealed class GoalCompiler : IGoalCompiler
                 ProjectId = goal.ProjectId,
                 GoalId = goal.Id,
                 TaskGraphVersionId = graphVersion.Id,
-                BranchId = node.ChapterNumber.HasValue || node.TaskType is "UserAcceptance" or "PrefixMerge"
+                BranchId = node.ChapterNumber.HasValue ||
+                    node.TaskType is BookProductionWorkflow.AcceptanceGate or BookProductionWorkflow.PrefixMerge
                     ? branch.Id
                     : null,
                 KernelName = node.KernelName,
@@ -337,10 +338,10 @@ public sealed class GoalCompiler : IGoalCompiler
             .ToArray();
         nodes.Add(Node("batch-impact-analysis", "BatchImpactAnalysis", "narrative_planning", TaskExecutionKind.Kernel,
             summaries, ["ContinuitySummary"], ["BatchImpactReport"]));
-        nodes.Add(Node("user-acceptance", "UserAcceptance", "workflow", TaskExecutionKind.HumanGate,
+        nodes.Add(Node("acceptance-gate", BookProductionWorkflow.AcceptanceGate, "workflow", TaskExecutionKind.HumanGate,
             ["batch-impact-analysis"], ["BatchImpactReport"], ["AcceptanceDecision"]));
         nodes.Add(Node("prefix-merge", "PrefixMerge", "domain_reducer", TaskExecutionKind.System,
-            ["user-acceptance"], ["AcceptanceDecision"], ["MergeRecord"], AuthorityMutation.MergeAcceptedPrefix));
+            ["acceptance-gate"], ["AcceptanceDecision"], ["MergeRecord"], AuthorityMutation.MergeAcceptedPrefix));
         return nodes;
     }
 

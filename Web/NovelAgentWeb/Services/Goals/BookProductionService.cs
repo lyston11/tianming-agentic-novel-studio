@@ -242,16 +242,15 @@ public sealed class BookProductionService : IBookProductionService
         CancellationToken cancellationToken = default)
     {
         var userId = _currentUser.GetUserId();
-        var graphId = await _db.TaskGraphVersions.AsNoTracking()
-            .Where(item => item.UserId == userId && item.GoalId == goalId)
-            .OrderByDescending(item => item.Version)
-            .Select(item => item.Id)
-            .FirstAsync(cancellationToken);
+        var batch = await GetCurrentBatchAsync(goalId, cancellationToken);
+        if (batch.CanonBranchId != branchId || string.IsNullOrWhiteSpace(batch.TaskGraphVersionId))
+            throw new InvalidOperationException("合并分支未绑定当前生产批次任务图。");
+        var graphId = batch.TaskGraphVersionId;
         var tasks = await _db.KernelTasks.Where(task =>
             task.UserId == userId &&
             task.GoalId == goalId &&
             task.TaskGraphVersionId == graphId &&
-            (task.TaskType == "UserAcceptance" || task.TaskType == "PrefixMerge"))
+            (task.TaskType == BookProductionWorkflow.AcceptanceGate || task.TaskType == BookProductionWorkflow.PrefixMerge))
             .ToListAsync(cancellationToken);
         if (tasks.Count != 2)
             throw new InvalidOperationException("批次验收或前缀合并任务缺失。");
@@ -320,7 +319,9 @@ public sealed class BookProductionService : IBookProductionService
             StartChapterNumber = start,
             EndChapterNumber = end,
             Status = "planned",
-            AcceptanceActor = production.ExecutionStrategy == BookExecutionStrategies.FullAuto ? "agent" : "human",
+            AcceptanceActor = production.ExecutionStrategy == BookExecutionStrategies.FullAuto
+                ? BookProductionWorkflow.AgentPolicyActor
+                : BookProductionWorkflow.UserActor,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

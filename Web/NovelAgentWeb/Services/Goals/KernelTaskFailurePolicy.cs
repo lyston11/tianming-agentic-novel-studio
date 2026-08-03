@@ -44,7 +44,7 @@ public static class KernelTaskFailurePolicy
         "FreezeBaselines" or "CompileChapterContext" or "BatchImpactAnalysis" => 3,
         "CompileBatchPlan" or "PlanChapter" or "WriteCandidate" or "DirectedRework" or
             "ReviewContinuity" or "ReviewLiteraryQuality" or "ExtractContinuitySummary" => 2,
-        "PrefixMerge" or "UserAcceptance" => 1,
+        BookProductionWorkflow.PrefixMerge or BookProductionWorkflow.AcceptanceGate => 1,
         _ => 2
     };
 
@@ -59,7 +59,7 @@ public static class KernelTaskFailurePolicy
 
         if (category == KernelTaskFailureCategory.Transient &&
             attempt < maxAttempts &&
-            taskType is not "PrefixMerge" and not "UserAcceptance")
+            taskType is not BookProductionWorkflow.PrefixMerge and not BookProductionWorkflow.AcceptanceGate)
         {
             var exponent = Math.Clamp(attempt - 1, 0, 5);
             return new KernelTaskFailureDecision(

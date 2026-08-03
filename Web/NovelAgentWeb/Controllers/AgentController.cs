@@ -15,7 +15,7 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 public class AgentController : ControllerBase
 {
     private readonly AgentTurnCoordinator _coordinator;
-    private readonly AgentSessionManager _sessionManager;
+    private readonly IAgentSessionApplicationService _sessions;
     private readonly IAgentSessionService _agentSessionService;
     private readonly ICurrentUserService _currentUserService;
     private readonly IAgentSessionResumeService _resumeService;
@@ -24,16 +24,15 @@ public class AgentController : ControllerBase
 
     public AgentController(
         AgentTurnCoordinator coordinator,
-        AgentSessionManager sessionManager,
-        IAgentSessionService agentSessionService,
+        IAgentSessionApplicationService sessions,
         ICurrentUserService currentUserService,
         IAgentSessionResumeService resumeService,
         IAgentRuntimeEventFanout? runtimeEventFanout = null,
         IAgentRuntimeEventService? runtimeEvents = null)
     {
         _coordinator = coordinator;
-        _sessionManager = sessionManager;
-        _agentSessionService = agentSessionService;
+        _sessions = sessions;
+        _agentSessionService = sessions;
         _currentUserService = currentUserService;
         _resumeService = resumeService;
         _runtimeEventFanout = runtimeEventFanout;
@@ -45,6 +44,10 @@ public class AgentController : ControllerBase
     {
         var sessionId = request.SessionId;
         var idempotencyKey = ControllerContext.HttpContext?.Request.Headers["Idempotency-Key"].ToString();
+        if (!string.IsNullOrWhiteSpace(idempotencyKey) &&
+            !string.IsNullOrWhiteSpace(request.ClientMessageId) &&
+            !string.Equals(idempotencyKey.Trim(), request.ClientMessageId.Trim(), StringComparison.Ordinal))
+            return BadRequest(new { error = "Idempotency-Key 与 clientMessageId 必须一致。" });
         var response = await _coordinator.HandleAsync(
             sessionId,
             request.Message ?? "",
@@ -77,7 +80,7 @@ public class AgentController : ControllerBase
 
         var replayAfterEventId = FirstNonEmpty(afterEventId, Request.Headers["Last-Event-ID"].ToString());
         var isReplay = !string.IsNullOrWhiteSpace(replayAfterEventId);
-        await using var subscription = _sessionManager.SubscribeEvents(userId, sessionId, includeBacklog: !isReplay);
+        await using var subscription = _sessions.SubscribeEvents(userId, sessionId, includeBacklog: !isReplay);
         var seenEventIds = new HashSet<string>(StringComparer.Ordinal);
         if (!string.IsNullOrWhiteSpace(replayAfterEventId))
         {

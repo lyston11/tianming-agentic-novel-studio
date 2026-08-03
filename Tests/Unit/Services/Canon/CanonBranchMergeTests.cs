@@ -33,7 +33,7 @@ public sealed class CanonBranchMergeTests
         Assert.Equal("project-1", artifact.ProjectId);
         Assert.Equal("goal-1", artifact.GoalId);
         Assert.Equal(branch.Id, artifact.BranchId);
-        Assert.Equal("graph-1:user-acceptance", artifact.TaskId);
+        Assert.Equal("graph-1:acceptance-gate", artifact.TaskId);
         Assert.Equal("adopted", artifact.Status);
         Assert.Equal("human", artifact.Authorship);
         using var content = JsonDocument.Parse(artifact.ContentJson);
@@ -485,23 +485,56 @@ public sealed class CanonBranchMergeTests
                 ProjectId = "project-1",
                 GoalId = "goal-1",
                 Version = 1,
+                Status = "active",
                 GraphJson = "{}",
                 ContentHash = "graph-hash"
+            });
+        }
+        if (!await db.BookProductions.AnyAsync(item => item.GoalId == "goal-1"))
+        {
+            db.BookProductions.Add(new BookProduction
+            {
+                Id = "production-1",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                GoalId = "goal-1",
+                ExecutionStrategy = "interactive_batch",
+                Status = "running",
+                TargetStartChapterNumber = 1,
+                TargetEndChapterNumber = 3,
+                NextChapterNumber = 1,
+                BatchSize = 3,
+                CurrentBatchNumber = 1
+            });
+            db.ProductionBatches.Add(new ProductionBatch
+            {
+                Id = "batch-1",
+                UserId = "user-1",
+                ProjectId = "project-1",
+                GoalId = "goal-1",
+                BookProductionId = "production-1",
+                BatchNumber = 1,
+                StartChapterNumber = 1,
+                EndChapterNumber = 3,
+                Status = "running",
+                AcceptanceActor = "user",
+                TaskGraphVersionId = "graph-1",
+                CanonBranchId = branchId
             });
         }
         db.KernelTasks.AddRange(
             new KernelTask
             {
-                Id = "graph-1:user-acceptance",
+                Id = "graph-1:acceptance-gate",
                 UserId = "user-1",
                 ProjectId = "project-1",
                 GoalId = "goal-1",
                 TaskGraphVersionId = "graph-1",
                 BranchId = branchId,
                 KernelName = "workflow",
-                TaskType = "UserAcceptance",
+                TaskType = "AcceptanceGate",
                 Status = "awaiting_user",
-                IdempotencyKey = "graph-1:user-acceptance"
+                IdempotencyKey = "graph-1:acceptance-gate"
             },
             new KernelTask
             {

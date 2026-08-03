@@ -2,6 +2,7 @@ using System.Text.Json;
 using TM.Services.Framework.AI.NovelAgent.Models;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Production;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
 
 namespace TM.Web.NovelAgentWeb.Support;
 
@@ -10,7 +11,7 @@ public static class ProjectWorkflow
     public static async Task<ProjectWorkflowDocument?> BuildAsync(
         NovelAgentWorkspace workspace,
         NovelProjectCatalog catalog,
-        AgentSessionManager sessionManager,
+        IAgentSessionApplicationService sessionManager,
         MissionBlackboardRecoveryService? blackboardRecovery,
         string projectId,
         CancellationToken ct = default)
@@ -28,7 +29,7 @@ public static class ProjectWorkflow
             () => workspace.Orchestrator.GetStoryBibleAsync(ct),
             ct).ConfigureAwait(false);
 
-        var sessions = (await sessionManager.ListSessionsAsync(ct).ConfigureAwait(false))
+        var sessions = (await sessionManager.ListRuntimeSessionsAsync(ct).ConfigureAwait(false))
             .Where(session => IsProjectSession(session, project.Id))
             .OrderByDescending(session => session.UpdatedAt)
             .ToList();

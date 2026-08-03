@@ -54,6 +54,7 @@ public sealed class AgentTurnCoordinatorRuntimeQueueTests
         public Task<AgentForegroundTurnResult> TryHandleAsync(
             string sessionId,
             string userMessage,
+            string? canonicalMessageKey,
             CancellationToken ct)
         {
             CallCount++;

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
@@ -12,7 +13,7 @@ namespace TM.Web.NovelAgentWeb.Services.Goals;
 public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly AgentSessionManager _sessions;
+    private readonly IAgentSessionApplicationService _sessions;
     private readonly ICurrentUserService _currentUser;
     private readonly IChatHistoryRepository _chatHistory;
     private readonly ICollaborationMemoryService _collaborationMemory;
@@ -21,7 +22,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
     private readonly NovelAgentDbContext _db;
 
     public TargetArchitectureDirector(
-        AgentSessionManager sessions,
+        IAgentSessionApplicationService sessions,
         ICurrentUserService currentUser,
         IChatHistoryRepository chatHistory,
         ICollaborationMemoryService collaborationMemory,
@@ -41,11 +42,12 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
     public async Task<AgentForegroundTurnResult> TryHandleAsync(
         string sessionId,
         string userMessage,
+        string? canonicalMessageKey,
         CancellationToken ct)
     {
         var message = RequireText(userMessage, nameof(userMessage));
         var userId = _currentUser.GetUserId();
-        var session = await _sessions.GetOrCreateSessionAsync(sessionId, ct).ConfigureAwait(false);
+        var session = await _sessions.GetRuntimeSessionAsync(sessionId, ct).ConfigureAwait(false);
         var projectId = session.ActiveProjectId;
 
         await _chatHistory.AppendAsync(
@@ -175,7 +177,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             ct,
             knowledge).ConfigureAwait(false);
         session.Phase = phase;
-        await _sessions.SaveSessionAsync(session, ct).ConfigureAwait(false);
+        await _sessions.SaveRuntimeSessionAsync(session, ct).ConfigureAwait(false);
         return AgentForegroundTurnResult.Reply(new AgentChatResponse(
             reply,
             suggestions,

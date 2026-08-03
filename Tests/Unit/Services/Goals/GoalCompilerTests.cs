@@ -38,7 +38,7 @@ public sealed class GoalCompilerTests
             Assert.Contains(result.Nodes, node => node.Id == $"chapter-{chapter}-continuity-summary");
         }
         Assert.Contains(result.Nodes, node => node.Id == "batch-impact-analysis");
-        Assert.Contains(result.Nodes, node => node.Id == "user-acceptance");
+        Assert.Contains(result.Nodes, node => node.Id == "acceptance-gate");
         Assert.Contains(result.Nodes, node => node.Id == "prefix-merge");
         Assert.Single(await db.TaskGraphVersions.ToListAsync());
         Assert.Equal(result.Nodes.Count, await db.KernelTasks.CountAsync());
@@ -84,7 +84,7 @@ public sealed class GoalCompilerTests
         var missingReview = new TaskGraphDefinition("goal", 1,
         [
             Node("chapter-1-write", [], taskType: "WriteCandidate", produces: ["CandidateChapterDraft"]),
-            Node("user-acceptance", ["chapter-1-write"], taskType: "UserAcceptance")
+            Node("acceptance-gate", ["chapter-1-write"], taskType: "AcceptanceGate")
         ]);
         Assert.Contains(validator.Validate(missingReview), error => error.Code == "CHAPTER_REVIEW_REQUIRED");
     }

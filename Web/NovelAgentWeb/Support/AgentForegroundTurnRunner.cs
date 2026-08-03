@@ -4,7 +4,11 @@ namespace TM.Web.NovelAgentWeb.Support;
 
 public interface IAgentForegroundTurnRunner
 {
-    Task<AgentForegroundTurnResult> TryHandleAsync(string sessionId, string userMessage, CancellationToken ct);
+    Task<AgentForegroundTurnResult> TryHandleAsync(
+        string sessionId,
+        string userMessage,
+        string? canonicalMessageKey,
+        CancellationToken ct);
 }
 
 public sealed record AgentForegroundTurnResult(AgentChatResponse? Response, bool StartBackground)

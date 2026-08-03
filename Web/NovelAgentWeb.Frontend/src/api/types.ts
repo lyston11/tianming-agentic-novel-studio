@@ -1336,6 +1336,8 @@ export interface NovelChapterView {
 
 export interface ProjectWorkflowDocument {
   latestGoalId: string;
+  goalState?: WorkflowGoalState | null;
+  legacyAudit: WorkflowLegacyAudit;
   project: NovelBookView | null;
   library: NovelLibraryDocument;
   sessions: WorkflowSessionSummary[];
@@ -1358,6 +1360,69 @@ export interface ProjectWorkflowDocument {
   productionStages: WorkflowProductionStage[];
   productionChains: WorkflowProductionChain[];
   artifactTimeline: WorkflowArtifactTimelineItem[];
+}
+
+export interface WorkflowGoalState {
+  goalId: string;
+  goalStatus: string;
+  executionStrategy: string;
+  productionStatus: string;
+  currentBatchNumber: number;
+  nextChapterNumber: number;
+  activeTaskGraphId: string;
+  activeTaskGraphVersion: number;
+  batches: WorkflowGoalBatchState[];
+  tasks: WorkflowGoalTaskState[];
+  candidates: WorkflowGoalCandidateState[];
+  artifacts: WorkflowGoalArtifactState[];
+}
+
+export interface WorkflowGoalBatchState {
+  batchId: string;
+  batchNumber: number;
+  startChapterNumber: number;
+  endChapterNumber: number;
+  status: string;
+  acceptanceActor: string;
+  taskGraphVersionId: string;
+  canonBranchId: string;
+}
+
+export interface WorkflowGoalTaskState {
+  taskId: string;
+  taskType: string;
+  status: string;
+  kernelName: string;
+  branchId: string;
+  attempt: number;
+  maxAttempts: number;
+  updatedAt: string;
+}
+
+export interface WorkflowGoalCandidateState {
+  candidateChapterId: string;
+  chapterNumber: number;
+  version: number;
+  status: string;
+  authorship: string;
+  isProtected: boolean;
+  artifactId: string;
+}
+
+export interface WorkflowGoalArtifactState {
+  artifactId: string;
+  artifactType: string;
+  taskId: string;
+  branchId: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface WorkflowLegacyAudit {
+  missionPlanCount: number;
+  agentRunCount: number;
+  toolExecutionCount: number;
+  status: string;
 }
 
 export interface WorkflowRunSummary {
