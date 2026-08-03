@@ -20,6 +20,167 @@ namespace Tests.Unit.Services.Workflow;
 public sealed class WorkflowServiceTests
 {
     [Fact]
+    public async Task GetProjectWorkflowAsync_WithGoal_UsesCanonicalProjectionWithoutLegacyWorkspace()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new NovelAgentDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        SeedUserProject(db);
+        var now = DateTime.UtcNow;
+        db.CreativeGoals.Add(new CreativeGoal
+        {
+            Id = "goal-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SourceSessionId = "session-goal",
+            HumanReadableObjective = "完成第一章",
+            ExecutionStrategy = "interactive_batch",
+            Status = "running",
+            CreatedAt = now
+        });
+        db.TaskGraphVersions.Add(new TaskGraphVersion
+        {
+            Id = "graph-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            Version = 1,
+            Status = "active",
+            ContentHash = "graph-hash",
+            CreatedAt = now
+        });
+        db.KernelTasks.Add(new KernelTask
+        {
+            Id = "task-write-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            TaskGraphVersionId = "graph-1",
+            BranchId = "branch-1",
+            KernelName = "writing",
+            TaskType = "WriteCandidate",
+            Status = "completed",
+            IdempotencyKey = "goal-1:write:1",
+            InputArtifactIdsJson = "[\"outline-1\"]",
+            OutputArtifactIdsJson = "[\"artifact-draft-1\"]",
+            Attempt = 1,
+            MaxAttempts = 2,
+            StartedAt = now.AddSeconds(-2),
+            CompletedAt = now,
+            CreatedAt = now.AddSeconds(-3),
+            UpdatedAt = now
+        });
+        db.KernelTasks.Add(new KernelTask
+        {
+            Id = "task-acceptance-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            TaskGraphVersionId = "graph-1",
+            BranchId = "branch-1",
+            KernelName = "workflow",
+            TaskType = "AcceptanceGate",
+            Status = "awaiting_user",
+            IdempotencyKey = "goal-1:acceptance:1",
+            Attempt = 0,
+            MaxAttempts = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.KernelArtifacts.Add(new KernelArtifact
+        {
+            Id = "artifact-draft-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            TaskId = "task-write-1",
+            BranchId = "branch-1",
+            ArtifactType = "CandidateChapterDraft",
+            ContentHash = "artifact-hash",
+            Status = "proposed",
+            CreatedAt = now
+        });
+        db.CandidateChapters.Add(new CandidateChapter
+        {
+            Id = "candidate-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            GoalId = "goal-1",
+            BranchId = "branch-1",
+            ChapterId = "chapter-001",
+            ChapterNumber = 1,
+            Version = 1,
+            CurrentArtifactId = "artifact-draft-1",
+            Status = "candidate",
+            CreatedAt = now
+        });
+        db.AgentToolExecutions.Add(new AgentToolExecution
+        {
+            Id = "legacy-tool-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SessionId = "legacy-session",
+            ToolName = "ProduceChapter",
+            Phase = "writing",
+            Risk = "High",
+            ArgumentsHash = "legacy-hash",
+            Status = "succeeded",
+            StartedAt = now.AddMinutes(-5)
+        });
+        await db.SaveChangesAsync();
+
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(item => item.GetUserId()).Returns("user-1");
+        var workspaceFactory = new Mock<IWorkspaceFactory>();
+        var productionBridge = new Mock<IProductionWorkflowBridge>();
+        productionBridge
+            .Setup(item => item.LoadProjectEventsAsync("project-1", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<WorkflowProductionEventSummary>());
+        var service = new WorkflowService(
+            db,
+            currentUser.Object,
+            workspaceFactory.Object,
+            null!,
+            null!,
+            Mock.Of<IServiceScopeFactory>(),
+            productionBridge.Object,
+            new ProductionChainProjectionService(),
+            NullLogger<WorkflowService>.Instance);
+
+        var workflow = await service.GetProjectWorkflowAsync("project-1");
+
+        Assert.Equal("goal", workflow.ProjectionKind);
+        Assert.Equal("goal-1", workflow.LatestGoalId);
+        Assert.Equal("session-goal", workflow.ActiveSessionId);
+        Assert.Empty(workflow.Sessions);
+        Assert.Empty(workflow.Runs);
+        Assert.Empty(workflow.MissionPlans);
+        Assert.Equal("not_loaded", workflow.LegacyAudit.Status);
+        Assert.Null(workflow.LegacyAudit.MissionPlanCount);
+        Assert.Null(workflow.LegacyAudit.AgentRunCount);
+        Assert.Null(workflow.LegacyAudit.ToolExecutionCount);
+        var task = Assert.Single(workflow.GoalState!.Tasks, item => item.TaskId == "task-write-1");
+        Assert.Equal(new[] { "outline-1" }, task.InputArtifactIds);
+        Assert.Equal(new[] { "artifact-draft-1" }, task.OutputArtifactIds);
+        var writingStage = Assert.Single(workflow.ProductionStages, stage => stage.Key == "writing");
+        Assert.Equal("task-write-1", Assert.Single(writingStage.TaskExecutions).TaskId);
+        Assert.Empty(writingStage.ToolExecutions);
+        var acceptanceStage = Assert.Single(workflow.ProductionStages, stage => stage.Key == "acceptance");
+        Assert.Equal("awaiting_user", acceptanceStage.Status);
+        Assert.Contains(workflow.ArtifactTimeline, item =>
+            item.Id == "goal-artifact:artifact-draft-1" &&
+            item.ChapterId == "chapter-001" &&
+            item.Source == "KernelArtifact");
+        workspaceFactory.Verify(
+            item => item.AcquireAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task CreateVolumeArcAsync_WithSameIdempotencyKey_ReturnsExistingVolumeArc()
     {
         await using var connection = new SqliteConnection("DataSource=:memory:");

@@ -28,6 +28,7 @@ import type {
   WorkflowCreativeIntentEvidence,
   WorkflowFactSnapshotEvidence,
   WorkflowGateEvidence,
+  WorkflowGoalTaskState,
   WorkflowKnowledgeBindingEvidence,
   WorkflowKnowledgeBindingSummaryEvidence,
   WorkflowKnowledgeConstraintEvidence,
@@ -256,7 +257,7 @@ function productionStageClass(stage?: WorkflowProductionStage | null) {
   const status = (stage?.status ?? '').toLowerCase();
   if (status.includes('blocked') || status.includes('fail')) return 'blocked';
   if (status.includes('ready') || status.includes('completed')) return 'done';
-  if (status.includes('running') || status.includes('progress')) return 'running';
+  if (status.includes('running') || status.includes('progress') || status.includes('awaiting')) return 'running';
   if (stage && stage.productionEvents.length > 0) return 'drafting';
   return 'unstarted';
 }
@@ -437,6 +438,8 @@ function toolExecutionDisplayName(tool: WorkflowToolExecutionSummary) {
 
 function toolExecutionStatusLabel(status: string) {
   const value = status.toLowerCase();
+  if (value === 'awaiting_user') return '待用户验收';
+  if (value === 'awaiting_decision') return '待处理';
   if (value.includes('fail')) return '失败';
   if (value.includes('cancel')) return '已取消';
   if (value.includes('running') || value.includes('execut')) return '执行中';
@@ -446,7 +449,11 @@ function toolExecutionStatusLabel(status: string) {
 }
 
 function toolExecutionClass(tool: WorkflowToolExecutionSummary) {
-  const value = tool.status.toLowerCase();
+  return executionStatusClass(tool.status);
+}
+
+function executionStatusClass(status: string) {
+  const value = status.toLowerCase();
   if (value.includes('fail') || value.includes('cancel')) return 'blocked';
   if (value.includes('running') || value.includes('execut')) return 'running';
   if (value.includes('complete') || value.includes('success') || value.includes('succeed')) return 'done';
@@ -521,6 +528,50 @@ function renderToolExecutions(tools: WorkflowToolExecutionSummary[]) {
               <div className="workflow-tool-policy">
                 {contract.idempotencyPolicy && <span title={contract.idempotencyPolicy}>幂等：{contract.idempotencyPolicy}</span>}
                 {contract.rollbackPolicy && <span title={contract.rollbackPolicy}>回滚：{contract.rollbackPolicy}</span>}
+              </div>
+            )}
+            {result && <small title={result}>{result}</small>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderTaskExecutions(tasks: WorkflowGoalTaskState[]) {
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className="workflow-tool-execution-list" aria-label="Kernel 任务执行">
+      {tasks.map((task) => {
+        const artifacts = [...task.inputArtifactIds, ...task.outputArtifactIds];
+        const result = task.lastError || (task.completedAt ? '任务已完成并记录持久状态。' : '等待统一任务调度器推进。');
+        return (
+          <div key={task.taskId} className={`workflow-tool-execution ${executionStatusClass(task.status)}`}>
+            <div className="workflow-tool-execution-head">
+              <span>{task.kernelName || 'Kernel'}</span>
+              <strong title={task.taskId}>{task.taskType}</strong>
+              <em>{toolExecutionStatusLabel(task.status)}</em>
+            </div>
+            <div className="workflow-tool-execution-meta">
+              <i>尝试 {task.attempt}/{task.maxAttempts}</i>
+              {task.failureKind && <i>{task.failureKind}</i>}
+              <i>{formatTime(task.updatedAt)}</i>
+            </div>
+            {artifacts.length > 0 && (
+              <div className="workflow-tool-artifacts">
+                {task.inputArtifactIds.length > 0 && (
+                  <p>
+                    <span>输入</span>
+                    {task.inputArtifactIds.slice(0, 4).map((artifact) => <i key={`task-in-${task.taskId}-${artifact}`}>{artifact}</i>)}
+                  </p>
+                )}
+                {task.outputArtifactIds.length > 0 && (
+                  <p>
+                    <span>输出</span>
+                    {task.outputArtifactIds.slice(0, 4).map((artifact) => <i key={`task-out-${task.taskId}-${artifact}`}>{artifact}</i>)}
+                  </p>
+                )}
               </div>
             )}
             {result && <small title={result}>{result}</small>}
@@ -1752,6 +1803,8 @@ export default function WorkflowPage() {
     return stage.productionEvents.some((event) => event.chapterId === selectedChapter.chapterId)
       || stage.productionEvents.some((event) => !event.chapterId);
   });
+  const selectedRuntimeStages = selectedProductionStages.filter((stage) =>
+    (stage.taskExecutions?.length ?? 0) > 0 || toolExecutionsForStage(stage).length > 0);
   const selectedProductionChains = (workflow?.productionChains ?? []).filter((chain) => {
     if (productionChainMatchesChapter(chain, selectedChapter)) return true;
     return selectedChapter
@@ -2846,25 +2899,27 @@ export default function WorkflowPage() {
                 <section className="workflow-runtime-log-panel" aria-label="Agent 运行日志">
                   <div className="workflow-runtime-log-head">
                     <div>
-                      <span>Agent 运行日志</span>
+                      <span>{workflow?.projectionKind === 'goal' ? 'Goal 任务执行' : 'Agent 运行日志'}</span>
                       <strong>{selectedChapter ? selectedChapter.title : '项目全局'}</strong>
                     </div>
-                    <em>展示 Agent Runtime 工具调用、输入/输出契约和执行结果，独立于天命生产链阶段</em>
+                    <em>{workflow?.projectionKind === 'goal'
+                      ? '展示持久 KernelTask、输入输出产物和失败原因'
+                      : '展示旧项目的只读 Agent Runtime 工具调用记录'}</em>
                   </div>
-                  {selectedProductionStages.length === 0 ? (
-                    <p className="workflow-runtime-log-empty">当前未捕获到 Agent 工具调用记录。</p>
+                  {selectedRuntimeStages.length === 0 ? (
+                    <p className="workflow-runtime-log-empty">当前没有可展示的任务执行记录。</p>
                   ) : (
                     <div className="workflow-runtime-log-stages">
-                      {selectedProductionStages.map((stage) => {
+                      {selectedRuntimeStages.map((stage) => {
+                        const tasks = stage.taskExecutions ?? [];
                         const tools = toolExecutionsForStage(stage);
-                        if (tools.length === 0) return null;
                         return (
                           <article key={`runtime-${stage.key}`} className={`workflow-runtime-log-stage ${stage.status}`}>
                             <div className="workflow-runtime-log-stage-head">
                               <span>{stage.label}</span>
-                              <em>{tools.length} 次工具调用</em>
+                              <em>{tasks.length > 0 ? `${tasks.length} 个任务` : `${tools.length} 次工具调用`}</em>
                             </div>
-                            {renderToolExecutions(tools)}
+                            {tasks.length > 0 ? renderTaskExecutions(tasks) : renderToolExecutions(tools)}
                           </article>
                         );
                       })}

@@ -1335,6 +1335,7 @@ export interface NovelChapterView {
 }
 
 export interface ProjectWorkflowDocument {
+  projectionKind: 'goal' | 'legacy';
   latestGoalId: string;
   goalState?: WorkflowGoalState | null;
   legacyAudit: WorkflowLegacyAudit;
@@ -1364,6 +1365,7 @@ export interface ProjectWorkflowDocument {
 
 export interface WorkflowGoalState {
   goalId: string;
+  sourceSessionId: string;
   goalStatus: string;
   executionStrategy: string;
   productionStatus: string;
@@ -1396,17 +1398,26 @@ export interface WorkflowGoalTaskState {
   branchId: string;
   attempt: number;
   maxAttempts: number;
+  inputArtifactIds: string[];
+  outputArtifactIds: string[];
+  failureKind: string;
+  lastError: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
 export interface WorkflowGoalCandidateState {
   candidateChapterId: string;
+  chapterId: string;
   chapterNumber: number;
   version: number;
   status: string;
   authorship: string;
   isProtected: boolean;
   artifactId: string;
+  branchId: string;
 }
 
 export interface WorkflowGoalArtifactState {
@@ -1419,9 +1430,9 @@ export interface WorkflowGoalArtifactState {
 }
 
 export interface WorkflowLegacyAudit {
-  missionPlanCount: number;
-  agentRunCount: number;
-  toolExecutionCount: number;
+  missionPlanCount: number | null;
+  agentRunCount: number | null;
+  toolExecutionCount: number | null;
   status: string;
 }
 
@@ -1503,6 +1514,7 @@ export interface WorkflowProductionStage {
   nextIntentHint: string;
   productionEvents: WorkflowProductionEventSummary[];
   toolExecutions: WorkflowToolExecutionSummary[];
+  taskExecutions: WorkflowGoalTaskState[];
 }
 
 export interface WorkflowToolExecutionSummary {
