@@ -70,6 +70,9 @@ public class WorkflowService : IWorkflowService
             .Select(item => item.Id)
             .FirstOrDefaultAsync(ct) ?? string.Empty;
 
+        if (!string.IsNullOrWhiteSpace(latestGoalId))
+            return await BuildGoalProjectWorkflowAsync(project, userId, latestGoalId, ct).ConfigureAwait(false);
+
         var workspaceEntry = await _workspaceFactory.AcquireAsync(userId, projectId, ct);
         try
         {
@@ -90,13 +93,8 @@ public class WorkflowService : IWorkflowService
             var productionEvents = await _productionWorkflowBridge
                 .LoadProjectEventsAsync(project.Id, cancellationToken: ct)
                 .ConfigureAwait(false);
-            var toolExecutions = string.IsNullOrWhiteSpace(latestGoalId)
-                ? await LoadProjectToolExecutionsAsync(project.Id, userId, ct).ConfigureAwait(false)
-                : [];
-            var legacyToolExecutionCount = string.IsNullOrWhiteSpace(latestGoalId)
-                ? toolExecutions.Count
-                : await _db.AgentToolExecutions.AsNoTracking()
-                    .CountAsync(item => item.UserId == userId && item.ProjectId == projectId, ct);
+            var toolExecutions = await LoadProjectToolExecutionsAsync(project.Id, userId, ct)
+                .ConfigureAwait(false);
             var productionChains = await BuildWorkflowProductionChainsAsync(project.Id, userId, productionEvents, ct)
                 .ConfigureAwait(false);
             var creativeIntents = await LoadCreativeIntentEvidenceAsync(project.Id, userId, ct)
@@ -143,27 +141,144 @@ public class WorkflowService : IWorkflowService
                 };
             }
 
-            var goalState = await LoadGoalStateAsync(userId, projectId, latestGoalId, ct);
             return workflow with
             {
-                LatestGoalId = latestGoalId,
+                ProjectionKind = "legacy",
                 CreativeIntents = creativeIntents,
                 ProductionChains = productionChains,
-                GoalState = goalState,
-                ProductionStages = goalState == null
-                    ? workflow.ProductionStages
-                    : BuildGoalProductionStages(goalState),
                 LegacyAudit = new WorkflowLegacyAudit(
                     workflow.MissionPlans.Count,
                     workflow.Runs.Count,
-                    legacyToolExecutionCount,
-                    "legacy_retired")
+                    toolExecutions.Count,
+                    "legacy_read_only")
             };
         }
         finally
         {
             _workspaceFactory.Release(userId, workspaceEntry.ProjectId);
         }
+    }
+
+    private async Task<ProjectWorkflowDocument> BuildGoalProjectWorkflowAsync(
+        NovelProject project,
+        string userId,
+        string goalId,
+        CancellationToken cancellationToken)
+    {
+        var productionEvents = await _productionWorkflowBridge
+            .LoadProjectEventsAsync(project.Id, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var productionChains = _productionChainProjection.BuildWorkflowChains(productionEvents);
+        var creativeIntents = await LoadCreativeIntentEvidenceAsync(project.Id, userId, cancellationToken)
+            .ConfigureAwait(false);
+        var goalState = await LoadGoalStateAsync(userId, project.Id, goalId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Goal {goalId} does not have a workflow projection.");
+        var shellLibrary = BuildProjectShellLibrary(project);
+        var library = await BuildDatabaseLibraryAsync(
+                project,
+                shellLibrary,
+                Array.Empty<WorkflowChapterArtifactSummary>(),
+                productionChains,
+                creativeIntents,
+                cancellationToken)
+            .ConfigureAwait(false) ?? shellLibrary;
+        var timeline = ProjectWorkflow.BuildArtifactTimeline(
+                library,
+                new StoryBibleDocument(),
+                Array.Empty<WorkflowChapterArtifactSummary>(),
+                Array.Empty<AgentScheduledTask>(),
+                productionEvents)
+            .Concat(BuildGoalArtifactTimeline(goalState))
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(item => item.UpdatedAt, StringComparer.Ordinal).First())
+            .OrderByDescending(item => item.UpdatedAt, StringComparer.Ordinal)
+            .ToList();
+        var activityScore = library.GeneratedChapterCount * 100
+                            + library.PlannedChapterCount * 20
+                            + goalState.Tasks.Count * 10
+                            + goalState.Candidates.Count * 25
+                            + goalState.Artifacts.Count * 5;
+
+        return new ProjectWorkflowDocument(
+            library.ActiveBook,
+            library,
+            Array.Empty<WorkflowSessionSummary>(),
+            Array.Empty<WorkflowRunSummary>(),
+            Array.Empty<AgentScheduledTask>(),
+            Array.Empty<AgentMissionPlan>(),
+            Array.Empty<WorkflowChapterArtifactSummary>(),
+            Array.Empty<WorkflowChapterArtifactSummary>(),
+            Array.Empty<AgentScheduledTask>(),
+            activityScore,
+            false,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            null,
+            string.Empty,
+            goalState.SourceSessionId,
+            string.Empty,
+            DateTime.UtcNow.ToString("O"),
+            creativeIntents,
+            BuildGoalProductionStages(goalState),
+            productionChains,
+            timeline)
+        {
+            ProjectionKind = "goal",
+            LatestGoalId = goalId,
+            GoalState = goalState,
+            LegacyAudit = new WorkflowLegacyAudit(null, null, null, "not_loaded")
+        };
+    }
+
+    private static NovelLibraryDocument BuildProjectShellLibrary(NovelProject project)
+    {
+        var book = new NovelBookView(
+            project.Id,
+            project.Title,
+            project.Genre ?? project.StoryConstitution?.Genre ?? string.Empty,
+            project.SubGenre ?? project.StoryConstitution?.SubGenre ?? string.Empty,
+            project.CoreHook ?? project.StoryConstitution?.CoreHook ?? string.Empty,
+            project.StoryConstitution?.ReaderPromise ?? string.Empty,
+            project.Status,
+            project.Status != "archived",
+            0,
+            0,
+            0,
+            0,
+            project.UpdatedAt.ToString("O"),
+            null);
+        return new NovelLibraryDocument([book], book, [], null, 0, 0, 0);
+    }
+
+    private static IReadOnlyList<WorkflowArtifactTimelineItem> BuildGoalArtifactTimeline(WorkflowGoalState state)
+    {
+        var candidateByArtifactId = state.Candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.ArtifactId))
+            .GroupBy(candidate => candidate.ArtifactId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Version).First(), StringComparer.OrdinalIgnoreCase);
+
+        return state.Artifacts.Select(artifact =>
+        {
+            candidateByArtifactId.TryGetValue(artifact.ArtifactId, out var candidate);
+            var isFinal = candidate?.Status is "accepted" or "merged" or "canon";
+            return new WorkflowArtifactTimelineItem(
+                $"goal-artifact:{artifact.ArtifactId}",
+                artifact.ArtifactType,
+                candidate == null ? "Goal 产物" : $"第 {candidate.ChapterNumber} 章候选",
+                "Goal 状态机",
+                artifact.Status,
+                candidate == null ? artifact.ArtifactType : $"第 {candidate.ChapterNumber} 章 v{candidate.Version}",
+                $"{artifact.ArtifactType} · {artifact.Status}",
+                string.Empty,
+                string.Empty,
+                candidate?.ChapterId ?? string.Empty,
+                state.ActiveTaskGraphId,
+                artifact.CreatedAt.ToString("O"),
+                isFinal,
+                true,
+                "KernelArtifact");
+        }).ToList();
     }
 
     private static IReadOnlyList<WorkflowProductionStage> BuildGoalProductionStages(WorkflowGoalState state)
@@ -183,6 +298,8 @@ public class WorkflowService : IWorkflowService
             var completed = tasks.Count(task => task.Status is "completed" or "reused");
             var status = tasks.Any(task => task.Status is "failed" or "awaiting_decision")
                 ? "blocked"
+                : tasks.Any(task => task.Status == "awaiting_user")
+                    ? "awaiting_user"
                 : tasks.Any(task => task.Status == "running")
                     ? "running"
                     : tasks.Length > 0 && completed == tasks.Length
@@ -205,7 +322,10 @@ public class WorkflowService : IWorkflowService
                 state.ActiveTaskGraphId,
                 tasks.Length == 0 ? "当前任务图没有该阶段节点。" : string.Empty,
                 status == "blocked" ? "在工作流中处理失败或决策节点。" : "等待状态机推进。",
-                []);
+                [])
+            {
+                TaskExecutions = tasks
+            };
         }).ToArray();
     }
 
@@ -242,33 +362,42 @@ public class WorkflowService : IWorkflowService
                     item.TaskGraphVersionId ?? string.Empty,
                     item.CanonBranchId ?? string.Empty))
                 .ToListAsync(cancellationToken);
-        var tasks = graph == null
+        var taskRows = graph == null
             ? []
             : await _db.KernelTasks.AsNoTracking()
                 .Where(item => item.UserId == userId && item.TaskGraphVersionId == graph.Id)
                 .OrderBy(item => item.Priority)
-                .Select(item => new WorkflowGoalTaskState(
-                    item.Id,
-                    item.TaskType,
-                    item.Status,
-                    item.KernelName,
-                    item.BranchId ?? string.Empty,
-                    item.Attempt,
-                    item.MaxAttempts,
-                    item.UpdatedAt))
                 .ToListAsync(cancellationToken);
+        var tasks = taskRows.Select(item => new WorkflowGoalTaskState(
+            item.Id,
+            item.TaskType,
+            item.Status,
+            item.KernelName,
+            item.BranchId ?? string.Empty,
+            item.Attempt,
+            item.MaxAttempts,
+            ChapterIdentityResolver.ParseStringArray(item.InputArtifactIdsJson),
+            ChapterIdentityResolver.ParseStringArray(item.OutputArtifactIdsJson),
+            item.FailureKind ?? string.Empty,
+            item.LastError ?? string.Empty,
+            item.StartedAt,
+            item.CompletedAt,
+            item.CreatedAt,
+            item.UpdatedAt)).ToList();
         var candidates = await _db.CandidateChapters.AsNoTracking()
             .Where(item => item.UserId == userId && item.GoalId == goalId)
             .OrderBy(item => item.ChapterNumber)
             .ThenByDescending(item => item.Version)
             .Select(item => new WorkflowGoalCandidateState(
                 item.Id,
+                item.ChapterId,
                 item.ChapterNumber,
                 item.Version,
                 item.Status,
                 item.Authorship,
                 item.IsProtected,
-                item.CurrentArtifactId))
+                item.CurrentArtifactId,
+                item.BranchId))
             .ToListAsync(cancellationToken);
         var artifacts = await _db.KernelArtifacts.AsNoTracking()
             .Where(item => item.UserId == userId && item.GoalId == goalId)
@@ -284,6 +413,7 @@ public class WorkflowService : IWorkflowService
             .ToListAsync(cancellationToken);
         return new WorkflowGoalState(
             goal.Id,
+            goal.SourceSessionId,
             goal.Status,
             goal.ExecutionStrategy,
             production?.Status ?? string.Empty,

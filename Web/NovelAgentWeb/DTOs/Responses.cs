@@ -244,9 +244,10 @@ public sealed record ProjectWorkflowDocument(
     IReadOnlyList<WorkflowProductionChain> ProductionChains,
     IReadOnlyList<WorkflowArtifactTimelineItem> ArtifactTimeline)
 {
+    public string ProjectionKind { get; init; } = "legacy";
     public string LatestGoalId { get; init; } = string.Empty;
     public WorkflowGoalState? GoalState { get; init; }
-    public WorkflowLegacyAudit LegacyAudit { get; init; } = new(0, 0, 0, "legacy_retired");
+    public WorkflowLegacyAudit LegacyAudit { get; init; } = new(null, null, null, "not_loaded");
 
     [JsonIgnore]
     public IReadOnlyList<NovelAgentRun> RawRuns { get; init; } = Array.Empty<NovelAgentRun>();
@@ -254,6 +255,7 @@ public sealed record ProjectWorkflowDocument(
 
 public sealed record WorkflowGoalState(
     string GoalId,
+    string SourceSessionId,
     string GoalStatus,
     string ExecutionStrategy,
     string ProductionStatus,
@@ -284,16 +286,25 @@ public sealed record WorkflowGoalTaskState(
     string BranchId,
     int Attempt,
     int MaxAttempts,
+    IReadOnlyList<string> InputArtifactIds,
+    IReadOnlyList<string> OutputArtifactIds,
+    string FailureKind,
+    string LastError,
+    DateTime? StartedAt,
+    DateTime? CompletedAt,
+    DateTime CreatedAt,
     DateTime UpdatedAt);
 
 public sealed record WorkflowGoalCandidateState(
     string CandidateChapterId,
+    string ChapterId,
     int ChapterNumber,
     int Version,
     string Status,
     string Authorship,
     bool IsProtected,
-    string ArtifactId);
+    string ArtifactId,
+    string BranchId);
 
 public sealed record WorkflowGoalArtifactState(
     string ArtifactId,
@@ -304,9 +315,9 @@ public sealed record WorkflowGoalArtifactState(
     DateTime CreatedAt);
 
 public sealed record WorkflowLegacyAudit(
-    int MissionPlanCount,
-    int AgentRunCount,
-    int ToolExecutionCount,
+    int? MissionPlanCount,
+    int? AgentRunCount,
+    int? ToolExecutionCount,
     string Status);
 
 public sealed record WorkflowRunSummary(
@@ -384,6 +395,7 @@ public sealed record WorkflowProductionStage(
     IReadOnlyList<WorkflowProductionEventSummary> ProductionEvents)
 {
     public IReadOnlyList<WorkflowToolExecutionSummary> ToolExecutions { get; init; } = Array.Empty<WorkflowToolExecutionSummary>();
+    public IReadOnlyList<WorkflowGoalTaskState> TaskExecutions { get; init; } = Array.Empty<WorkflowGoalTaskState>();
 }
 
 public sealed record WorkflowToolExecutionSummary
