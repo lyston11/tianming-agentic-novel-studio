@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Proposal and Workflow confirmation must remain inside AgentControlDbContext ownership, transaction, and idempotency boundaries."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses Contracts, Application, Infrastructure runtime adapters, Web composition, and API result serialization."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing Workflow confirmation and idempotency path; do not introduce a second Goal/Proposal write implementation."}
