@@ -46,6 +46,13 @@ import type {
   GoalWorkflowConfirmationView,
   GoalWorkflowStatusView,
   DirectorTurnView,
+  AppendNovelAgentTurnRequest,
+  ConfirmNovelAgentProposalRequest,
+  ConfirmNovelAgentProposalResult,
+  NovelAgentConversationTurnResult,
+  NovelAgentWorkflowResponse,
+  CreateLegacyRecoveryProposalRequest,
+  CreateLegacyRecoveryProposalResult,
 } from './types';
 
 export { API_BASE_URL, ApiError };
@@ -377,6 +384,52 @@ export const changeGoalExecutionStrategy = (goalId: string, executionStrategy: '
 export const continueGoalBatch = (goalId: string) =>
   post(`/goals/${encodeURIComponent(goalId)}/workflow/continue-batch`);
 
+// Novel Agent application boundary
+export const appendNovelAgentTurn = (
+  projectId: string,
+  sessionId: string,
+  request: AppendNovelAgentTurnRequest,
+) => api<NovelAgentConversationTurnResult>(
+  `/novel-agent/conversations/${encodeURIComponent(sessionId)}/turns?projectId=${encodeURIComponent(projectId)}`,
+  { method: 'POST', body: JSON.stringify(request) },
+);
+
+export const confirmNovelAgentProposal = (
+  proposalId: string,
+  request: ConfirmNovelAgentProposalRequest,
+) => api<ConfirmNovelAgentProposalResult>(
+  `/novel-agent/proposals/${encodeURIComponent(proposalId)}/confirm`,
+  { method: 'POST', body: JSON.stringify(request) },
+);
+
+export const getNovelAgentWorkflow = (projectId: string) =>
+  get<NovelAgentWorkflowResponse>(`/novel-agent/workflows/projects/${encodeURIComponent(projectId)}`);
+
+export const createLegacyRecoveryProposal = (
+  projectId: string,
+  request: CreateLegacyRecoveryProposalRequest,
+) => api<CreateLegacyRecoveryProposalResult>(
+  `/novel-agent/legacy/projects/${encodeURIComponent(projectId)}/recovery-proposals`,
+  { method: 'POST', body: JSON.stringify(request) },
+);
+
+export const startNovelAgentProduction = (productionId: string) =>
+  post(`/novel-agent/productions/${encodeURIComponent(productionId)}/commands/start`);
+
+export const pauseNovelAgentProduction = (productionId: string, hasRunningTask: boolean) =>
+  post(`/novel-agent/productions/${encodeURIComponent(productionId)}/commands/pause`, { hasRunningTask });
+
+export const resumeNovelAgentProduction = (productionId: string) =>
+  post(`/novel-agent/productions/${encodeURIComponent(productionId)}/commands/resume`);
+
+export const cancelNovelAgentProduction = (productionId: string, reason: string) =>
+  post(`/novel-agent/productions/${encodeURIComponent(productionId)}/commands/cancel`, { reason });
+
+export const acceptNovelAgentPrefix = (
+  productionId: string,
+  request: { branchId: string; acceptedThroughChapter: number; idempotencyKey: string; correlationId: string },
+) => post(`/novel-agent/productions/${encodeURIComponent(productionId)}/commands/accept-prefix`, request);
+
 // Agent Chat
 export const sendChat = (req: AgentChatRequest) =>
   api<AgentChatResponse>('/agent/chat', {
@@ -442,12 +495,8 @@ const dispatchSseBlock = (connection: SseStreamConnection, block: string) => {
   connection.onmessage?.(new MessageEvent('message', { data }));
 };
 
-export const createSseConnection = (sessionId: string, afterEventId?: string | null): SseStreamConnection => {
+const createFetchSseConnection = (url: string): SseStreamConnection => {
   const token = readStoredAuthToken();
-  const params = new URLSearchParams();
-  if (afterEventId) params.set('afterEventId', afterEventId);
-  const query = params.toString();
-  const url = `${API_BASE_URL}/agent/sse/${sessionId}${query ? `?${query}` : ''}`;
   const controller = new AbortController();
   const connection: SseStreamConnection = {
     close: () => controller.abort(),
@@ -468,16 +517,11 @@ export const createSseConnection = (sessionId: string, afterEventId?: string | n
       }
 
       connection.onopen?.();
-
-      const reader = response.body
-        .pipeThrough(new TextDecoderStream())
-        .getReader();
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = '';
-
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
         buffer = (buffer + value).replace(/\r\n/g, '\n');
         let delimiter = buffer.indexOf('\n\n');
         while (delimiter >= 0) {
@@ -487,18 +531,40 @@ export const createSseConnection = (sessionId: string, afterEventId?: string | n
           delimiter = buffer.indexOf('\n\n');
         }
       }
-      if (!controller.signal.aborted) {
-        connection.onerror?.();
-      }
+      if (!controller.signal.aborted) connection.onerror?.();
     } catch {
-      if (!controller.signal.aborted) {
-        connection.onerror?.();
-      }
+      if (!controller.signal.aborted) connection.onerror?.();
     }
   })();
 
   return connection;
 };
+
+export const createSseConnection = (sessionId: string, afterEventId?: string | null): SseStreamConnection => {
+  const params = new URLSearchParams();
+  if (afterEventId) params.set('afterEventId', afterEventId);
+  const query = params.toString();
+  const url = `${API_BASE_URL}/agent/sse/${sessionId}${query ? `?${query}` : ''}`;
+  return createFetchSseConnection(url);
+};
+
+const createNovelAgentStreamConnection = (
+  stream: 'conversations' | 'workflows',
+  streamId: string,
+  cursor?: string | null,
+): SseStreamConnection => {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  const query = params.toString();
+  const url = `${API_BASE_URL}/novel-agent/streams/${stream}/${encodeURIComponent(streamId)}${query ? `?${query}` : ''}`;
+  return createFetchSseConnection(url);
+};
+
+export const createNovelAgentConversationSseConnection = (sessionId: string, cursor?: string | null) =>
+  createNovelAgentStreamConnection('conversations', sessionId, cursor);
+
+export const createNovelAgentWorkflowSseConnection = (projectId: string, cursor?: string | null) =>
+  createNovelAgentStreamConnection('workflows', projectId, cursor);
 
 // Novel Projects
 export const createNovelProject = (req: NovelProjectCreateRequest) => {

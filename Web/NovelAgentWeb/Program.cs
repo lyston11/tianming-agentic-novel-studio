@@ -51,6 +51,13 @@ using TM.Web.NovelAgentWeb.Services.Workspace;
 using TM.Web.NovelAgentWeb.Support;
 using Qdrant.Client;
 using TM.Services.Framework.AI.NovelAgent.Services.ProductionKernel;
+using Tianming.NovelAgent.Application.Conversation;
+using Tianming.NovelAgent.Application.Ports;
+using Tianming.NovelAgent.Application.Production;
+using Tianming.NovelAgent.Application.Workflow;
+using Tianming.NovelAgent.Infrastructure;
+using Tianming.NovelAgent.Infrastructure.Persistence;
+using TM.Web.NovelAgentWeb.Services.AgentApplication;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -82,11 +89,16 @@ builder.Services.AddHttpClient();
 
 // PostgreSQL is the sole authoritative production database.
 builder.Services.AddScoped<UserScopeConnectionInterceptor>();
+var novelAgentConnectionString = builder.Configuration.GetConnectionString("NovelAgentDb")
+    ?? (builder.Environment.IsEnvironment("Testing")
+        ? "Host=localhost;Database=novel_agent_testing;Username=postgres;Password=postgres"
+        : throw new InvalidOperationException("ConnectionStrings:NovelAgentDb is not configured."));
 builder.Services.AddDbContext<PostgresNovelAgentDbContext>((sp, options) =>
     options
-        .UseNpgsql(builder.Configuration.GetConnectionString("NovelAgentDb"))
+        .UseNpgsql(novelAgentConnectionString)
         .AddInterceptors(sp.GetRequiredService<UserScopeConnectionInterceptor>()));
 builder.Services.AddScoped<NovelAgentDbContext>(sp => sp.GetRequiredService<PostgresNovelAgentDbContext>());
+builder.Services.AddNovelAgentPostgresInfrastructure(novelAgentConnectionString);
 builder.Services.AddSingleton<IBackgroundClaimConnectionFactory, BackgroundClaimConnectionFactory>();
 builder.Services.AddSingleton<IBackgroundClaimDatabasePreflight, BackgroundClaimDatabasePreflight>();
 
@@ -266,6 +278,16 @@ builder.Services.AddScoped<IProductionChainProjectionService, ProductionChainPro
 builder.Services.AddScoped<IBookValidationService, BookValidationService>();
 builder.Services.AddScoped<IChapterProductionLeaseService, ChapterProductionLeaseService>();
 builder.Services.AddScoped<IWritingModelCompletionService, DefaultWritingModelCompletionService>();
+builder.Services.AddScoped<IConversationTextCompletionPort, LegacyConversationTextCompletionAdapter>();
+builder.Services.AddScoped<IConversationAgentRuntime, StructuredConversationAgentRuntime>();
+builder.Services.AddScoped<ConversationApplicationService>();
+builder.Services.AddScoped<LegacyRecoveryApplicationService>();
+builder.Services.AddScoped<WorkflowApplicationService>();
+builder.Services.AddScoped<IWorkflowCommandPort>(sp => sp.GetRequiredService<WorkflowApplicationService>());
+builder.Services.AddScoped<ProductionApplicationService>();
+builder.Services.AddScoped<ILegacyProjectSnapshotReader, LegacyProjectSnapshotReaderAdapter>();
+builder.Services.AddScoped<INovelAgentResourceAuthorizer, NovelAgentResourceAuthorizer>();
+builder.Services.AddScoped<INovelAgentOutboxHandler, NovelAgentOutboxHandler>();
 builder.Services.AddScoped<IAgentEditorialReviewModelClient, DefaultAgentEditorialReviewModelClient>();
 builder.Services.AddScoped<IChapterContinuityFactPersister, StoryBibleChapterContinuityFactPersister>();
 builder.Services.AddScoped<IChapterFactSnapshotUpdater, ChapterFactSnapshotUpdater>();
@@ -407,6 +429,13 @@ else
         .Options;
     await using var migrationDb = new PostgresNovelAgentDbContext(migrationOptions);
     await migrationDb.Database.MigrateAsync();
+    var agentMigrationOptions = new DbContextOptionsBuilder<AgentControlDbContext>()
+        .UseNpgsql(
+            migrationConnectionString,
+            postgres => postgres.MigrationsHistoryTable("__AgentControlMigrationsHistory"))
+        .Options;
+    await using var agentMigrationDb = new AgentControlDbContext(agentMigrationOptions);
+    await agentMigrationDb.Database.MigrateAsync();
     await workerPreflight.VerifyPermissionsAsync();
 }
 

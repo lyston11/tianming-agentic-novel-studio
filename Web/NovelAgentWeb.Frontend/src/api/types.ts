@@ -124,6 +124,157 @@ export type GoalCancellationStrategy =
   | 'MergeAcceptedPrefix'
   | 'DiscardCandidateBranch';
 
+export type NovelAgentStreamKind = 'Conversation' | 'Workflow';
+
+export type NovelAgentConversationDecisionKind =
+  | 'DiscussOnly'
+  | 'ProposeGoal'
+  | 'ProposeRevision'
+  | 'NeedClarification'
+  | 'RejectUnsafe';
+
+export interface NovelAgentConversationConfirmation {
+  goalId: string;
+  goalRevisionId: string;
+  productionId: string;
+  correlationId: string;
+}
+
+export interface AppendNovelAgentTurnRequest {
+  idempotencyKey: string;
+  content: string;
+  attachmentIds?: string[] | null;
+}
+
+export interface NovelAgentConversationDecision {
+  kind: NovelAgentConversationDecisionKind;
+  message: string;
+  proposalId?: string | null;
+  proposalJson?: string | null;
+  proposalHash?: string | null;
+  autoConfirmRequested?: boolean;
+}
+
+export interface NovelAgentConversationTurnResult {
+  messageId: string;
+  decision: NovelAgentConversationDecision;
+  correlationId: string;
+  confirmation?: NovelAgentConversationConfirmation | null;
+  toolError?: string | null;
+}
+
+export interface ConfirmNovelAgentProposalRequest {
+  idempotencyKey: string;
+  confirmationNote?: string | null;
+}
+
+export interface ConfirmNovelAgentProposalResult {
+  goalId: string;
+  goalRevisionId: string;
+  productionId: string;
+  correlationId: string;
+}
+
+export interface CreateLegacyRecoveryProposalRequest {
+  sessionId: string;
+  idempotencyKey: string;
+  objective: string;
+  mode: 'SingleChapter' | 'InteractiveBatch' | 'AutonomousBook';
+  startChapter: number;
+  endChapter: number;
+  successCriteria: string[];
+  mustPreserve?: string[] | null;
+  mustHappen?: string[] | null;
+  mustNotChange?: string[] | null;
+  acceptancePolicy?: string;
+  reworkPolicy?: string;
+  totalCostLimit?: number;
+}
+
+export interface CreateLegacyRecoveryProposalResult {
+  proposalId: string;
+  contractHash: string;
+  evidence: {
+    formalChapterVersionIds: string[];
+    confirmedDecisionIds: string[];
+    knowledgeIds: string[];
+  };
+  correlationId: string;
+}
+
+export interface NovelAgentWorkflowProposalView {
+  id: string;
+  sourceSessionId: string;
+  status: string;
+  contractHash: string;
+  updatedAt: string;
+}
+
+export interface NovelAgentWorkflowGoalView {
+  id: string;
+  status: string;
+  objective: string;
+  currentRevisionId?: string | null;
+  version: number;
+  totalCostLimit: number;
+  reservedCost: number;
+  actualCost: number;
+}
+
+export interface NovelAgentWorkflowProductionView {
+  id: string;
+  goalId: string;
+  goalRevisionId: string;
+  mode: string;
+  status: string;
+  taskGraphVersionId: string;
+  version: number;
+  terminalReason?: string | null;
+}
+
+export interface NovelAgentWorkflowTaskView {
+  id: string;
+  goalId: string;
+  taskType: string;
+  kernelName: string;
+  status: string;
+  attempt: number;
+  maxAttempts: number;
+  priority: number;
+}
+
+export interface NovelAgentWorkflowProjectView {
+  projectId: string;
+  proposals: NovelAgentWorkflowProposalView[];
+  goals: NovelAgentWorkflowGoalView[];
+  productions: NovelAgentWorkflowProductionView[];
+  tasks: NovelAgentWorkflowTaskView[];
+  lastWorkflowSequence: number;
+}
+
+export interface NovelAgentWorkflowResponse {
+  current: NovelAgentWorkflowProjectView;
+  legacy: ProjectWorkflowDocument;
+}
+
+export interface NovelAgentEventEnvelope<TData = unknown> {
+  eventId: string;
+  streamKind: NovelAgentStreamKind;
+  streamId: string;
+  sequence: number;
+  eventType: string;
+  schemaVersion: number;
+  occurredAt: string;
+  correlationId: string;
+  causationId?: string | null;
+  projectId: string;
+  sessionId?: string | null;
+  goalId?: string | null;
+  productionId?: string | null;
+  transient: boolean;
+  data: TData;
+}
+
 export interface CreativeGoalContract {
   goalType: string;
   collaborationMode: string;

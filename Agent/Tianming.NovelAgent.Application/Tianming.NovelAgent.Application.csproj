@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Tianming.NovelAgent.Contracts/Tianming.NovelAgent.Contracts.csproj" />
+    <ProjectReference Include="../Tianming.NovelAgent.Domain/Tianming.NovelAgent.Domain.csproj" />
+  </ItemGroup>
+</Project>
