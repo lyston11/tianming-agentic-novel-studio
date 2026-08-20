@@ -25,6 +25,8 @@ PHASE1_COMPLETION_REPORT.md
 v2.8.7-升级说明.txt
 
 # .NET build output
+.dotnet/
+.dotnet-download.*
 bin/
 obj/
 TestResults/

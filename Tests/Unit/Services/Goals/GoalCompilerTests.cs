@@ -5,6 +5,7 @@ using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Production;
+using Tests.Unit.Support;
 using Xunit;
 
 namespace Tests.Unit.Services.Goals;
@@ -324,7 +325,7 @@ public sealed class GoalCompilerTests
     {
         var currentUser = new StubCurrentUserService("user-1");
         var productions = new BookProductionService(db, currentUser, new PassingBookValidationService());
-        return new GoalCompiler(db, currentUser, new TaskGraphValidator(), productions);
+        return new GoalCompiler(db, currentUser, new TaskGraphValidator(), productions, new LegacyControlPlaneCommandTestDouble(db));
     }
 
     private sealed class PassingBookValidationService : IBookValidationService

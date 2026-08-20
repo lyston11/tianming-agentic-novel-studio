@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
@@ -33,12 +34,36 @@ public sealed class GoalWorkflowController : ControllerBase
     private readonly ICommitmentAssessmentService _commitments;
     private readonly ICreativeGoalService _goals;
     private readonly IGoalCompiler _compiler;
-    private readonly IGoalControlService _control;
     private readonly ICanonBranchService _branches;
     private readonly IGoalProgressEventPublisher _progress;
-    private readonly IBookProductionService _bookProductions;
     private readonly IBookProductionTransitionService _transitions;
     private readonly IReworkGraphCompiler _reworkCompiler;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public GoalWorkflowController(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser,
+        ICommitmentAssessmentService commitments,
+        ICreativeGoalService goals,
+        IGoalCompiler compiler,
+        ICanonBranchService branches,
+        IGoalProgressEventPublisher progress,
+        IBookProductionTransitionService transitions,
+        IReworkGraphCompiler reworkCompiler,
+        ILegacyControlPlaneCommands controlPlane)
+    {
+        _db = db;
+        _currentUser = currentUser;
+        _commitments = commitments;
+        _goals = goals;
+        _compiler = compiler;
+        _branches = branches;
+        _progress = progress;
+        _transitions = transitions;
+        _reworkCompiler = reworkCompiler;
+        _controlPlane = controlPlane;
+    }
 
     public GoalWorkflowController(
         NovelAgentDbContext db,
@@ -46,24 +71,22 @@ public sealed class GoalWorkflowController : ControllerBase
         ICommitmentAssessmentService commitments,
         ICreativeGoalService goals,
         IGoalCompiler compiler,
-        IGoalControlService control,
         ICanonBranchService branches,
         IGoalProgressEventPublisher progress,
-        IBookProductionService bookProductions,
         IBookProductionTransitionService transitions,
         IReworkGraphCompiler reworkCompiler)
+        : this(
+            db,
+            currentUser,
+            commitments,
+            goals,
+            compiler,
+            branches,
+            progress,
+            transitions,
+            reworkCompiler,
+            LegacyControlPlaneCommands.Unconfigured)
     {
-        _db = db;
-        _currentUser = currentUser;
-        _commitments = commitments;
-        _goals = goals;
-        _compiler = compiler;
-        _control = control;
-        _branches = branches;
-        _progress = progress;
-        _bookProductions = bookProductions;
-        _transitions = transitions;
-        _reworkCompiler = reworkCompiler;
     }
 
     [HttpPost("workflow/preview")]
@@ -78,29 +101,21 @@ public sealed class GoalWorkflowController : ControllerBase
         CancellationToken cancellationToken)
     {
         var assessment = await _commitments.AssessAsync(request.Assessment, cancellationToken);
-        var response = await InSerializableTransactionAsync<IActionResult>(async () =>
-        {
-            var submission = await _goals.SubmitAsync(request.Command, assessment, cancellationToken);
-            if (submission.Status is not (GoalSubmissionStatus.Created or GoalSubmissionStatus.Existing) ||
-                string.IsNullOrWhiteSpace(submission.GoalId))
-                return Conflict(submission);
+        var submission = await _goals.SubmitAsync(request.Command, assessment, cancellationToken);
+        if (submission.Status is not (GoalSubmissionStatus.Created or GoalSubmissionStatus.Existing) ||
+            string.IsNullOrWhiteSpace(submission.GoalId))
+            return Conflict(submission);
 
-            var graph = submission.Status == GoalSubmissionStatus.Existing
-                ? await LoadExistingGraphOrCompileAsync(submission.GoalId, cancellationToken)
-                : await _compiler.CompileAsync(submission.GoalId, cancellationToken);
-            return Ok(new GoalWorkflowConfirmationResponse(submission, graph));
-        }, cancellationToken);
-        if (response is OkObjectResult { Value: GoalWorkflowConfirmationResponse confirmation } &&
-            !string.IsNullOrWhiteSpace(confirmation.Submission.GoalId))
-        {
-            await _progress.PublishAsync(new GoalProgressEventRequest(
-                _currentUser.GetUserId(),
-                confirmation.Submission.GoalId,
-                AgentSseEventType.GoalCommitted,
-                "Creative Goal 已确认并编译为持久任务图。",
-                Action: confirmation.Submission.Status.ToString()), cancellationToken);
-        }
-        return response;
+        var graph = submission.Status == GoalSubmissionStatus.Existing
+            ? await LoadExistingGraphOrCompileAsync(submission.GoalId, cancellationToken)
+            : await _compiler.CompileAsync(submission.GoalId, cancellationToken);
+        await _progress.PublishAsync(new GoalProgressEventRequest(
+            _currentUser.GetUserId(),
+            submission.GoalId,
+            AgentSseEventType.GoalCommitted,
+            "Creative Goal 已确认并编译为持久任务图。",
+            Action: submission.Status.ToString()), cancellationToken);
+        return Ok(new GoalWorkflowConfirmationResponse(submission, graph));
     }
 
     private async Task<TaskGraphDefinition> LoadExistingGraphOrCompileAsync(
@@ -126,30 +141,26 @@ public sealed class GoalWorkflowController : ControllerBase
         [FromBody] ReviseCreativeGoalApiRequest request,
         CancellationToken cancellationToken)
     {
-        var response = await InSerializableTransactionAsync<IActionResult>(async () =>
-        {
-            await RequireGoalAsync(goalId, cancellationToken);
-            var revision = await _goals.ReviseAsync(new ReviseCreativeGoalCommand(
-                goalId,
-                request.Reason,
-                request.ConstraintChangesJson,
-                request.ReusableArtifactIds,
-                request.InvalidatedArtifactIds,
-                request.AffectedNodeIds), cancellationToken);
-            var graph = await _compiler.RecompileForRevisionAsync(
-                goalId,
-                revision.Id,
-                request.AffectedNodeIds,
-                cancellationToken);
-            return Ok(new { revision, graph });
-        }, cancellationToken);
+        await RequireGoalAsync(goalId, cancellationToken);
+        var revision = await _goals.ReviseAsync(new ReviseCreativeGoalCommand(
+            goalId,
+            request.Reason,
+            request.ConstraintChangesJson,
+            request.ReusableArtifactIds,
+            request.InvalidatedArtifactIds,
+            request.AffectedNodeIds), cancellationToken);
+        var graph = await _compiler.RecompileForRevisionAsync(
+            goalId,
+            revision.Id,
+            request.AffectedNodeIds,
+            cancellationToken);
         await _progress.PublishAsync(new GoalProgressEventRequest(
             _currentUser.GetUserId(),
             goalId,
             AgentSseEventType.GoalRevised,
             "Goal 约束已修订并生成新的任务图版本。",
             Action: "revised"), cancellationToken);
-        return response;
+        return Ok(new { revision, graph });
     }
 
     [HttpGet("{goalId}/workflow")]
@@ -279,7 +290,7 @@ public sealed class GoalWorkflowController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ArgumentException("返工请求必须提供幂等键。", nameof(request));
-        var response = await InSerializableTransactionAsync<IActionResult>(async () =>
+        return await InSerializableTransactionAsync<IActionResult>(async () =>
         {
             await RequireGoalAsync(goalId, cancellationToken);
             var compiled = await _reworkCompiler.CompileAsync(new ReworkGraphCompileRequest(
@@ -293,23 +304,19 @@ public sealed class GoalWorkflowController : ControllerBase
                 request.SelectionEnd,
                 request.SelectedText,
                 request.IdempotencyKey), cancellationToken);
-            return Ok(new GoalChapterReworkResponse(
-                compiled.TaskId,
-                compiled.IntentArtifactId,
-                compiled.Status));
-        }, cancellationToken);
-        if (response is OkObjectResult { Value: GoalChapterReworkResponse rework })
-        {
             await _progress.PublishAsync(new GoalProgressEventRequest(
                 _currentUser.GetUserId(),
                 goalId,
                 AgentSseEventType.GoalStateChanged,
                 $"第 {chapterNumber} 章返工任务已进入队列。",
-                TaskId: rework.TaskId,
+                TaskId: compiled.TaskId,
                 ChapterNumber: chapterNumber,
                 Action: "rework_queued"), cancellationToken);
-        }
-        return response;
+            return Ok(new GoalChapterReworkResponse(
+                compiled.TaskId,
+                compiled.IntentArtifactId,
+                compiled.Status));
+        }, cancellationToken);
     }
 
     [HttpPost("{goalId}/workflow/chapters/{chapterNumber:int}/manual-edit")]
@@ -322,10 +329,8 @@ public sealed class GoalWorkflowController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Content))
             throw new ArgumentException("人工正文不能为空。", nameof(request));
 
-        var response = await InSerializableTransactionAsync<IActionResult>(async () =>
-        {
-            var userId = _currentUser.GetUserId();
-            var candidate = await RequireCandidateAsync(
+        var userId = _currentUser.GetUserId();
+        var candidate = await RequireCandidateAsync(
                 goalId,
                 chapterNumber,
                 request.CandidateChapterId,
@@ -360,25 +365,23 @@ public sealed class GoalWorkflowController : ControllerBase
                 GeneratedAt = DateTime.UtcNow
             };
             var contentJson = JsonSerializer.Serialize(editedDraft, JsonOptions);
-            _db.KernelArtifacts.Add(new KernelArtifact
-            {
-                Id = artifactId,
-                UserId = userId,
-                ProjectId = candidate.ProjectId,
-                GoalId = candidate.GoalId,
-                TaskId = currentArtifact.TaskId,
-                BranchId = candidate.BranchId,
-                ArtifactType = "CandidateChapterDraft",
-                SchemaVersion = 1,
-                ContentJson = contentJson,
-                ContentHash = Sha256(contentJson),
-                Status = "adopted",
-                Authorship = "human",
-                IsProtected = true,
-                CausationId = currentArtifact.Id,
-                CreatedAt = DateTime.UtcNow
-            });
-            await _db.SaveChangesAsync(cancellationToken);
+            await _controlPlane.CreateArtifactAsync(new LegacyArtifactCommand(
+                userId,
+                candidate.ProjectId,
+                candidate.GoalId,
+                currentArtifact.TaskId,
+                artifactId,
+                candidate.BranchId,
+                "CandidateChapterDraft",
+                1,
+                contentJson,
+                Sha256(contentJson),
+                "adopted",
+                "human",
+                true,
+                null,
+                currentArtifact.Id,
+                DateTimeOffset.UtcNow), cancellationToken);
             var editedCandidate = await _branches.AddCandidateAsync(
                 candidate.BranchId,
                 candidate.ChapterId,
@@ -388,27 +391,22 @@ public sealed class GoalWorkflowController : ControllerBase
                 "human",
                 true,
                 cancellationToken);
-            return Ok(new GoalChapterManualEditResponse(
-                editedCandidate.Id,
-                editedCandidate.Version,
-                artifactId,
-                editedCandidate.Authorship,
-                editedCandidate.IsProtected));
-        }, cancellationToken);
-        if (response is OkObjectResult { Value: GoalChapterManualEditResponse edited })
-        {
             await _progress.PublishAsync(new GoalProgressEventRequest(
-                _currentUser.GetUserId(),
+                userId,
                 goalId,
                 AgentSseEventType.GoalCandidateChanged,
-                $"第 {chapterNumber} 章人工候选版本 v{edited.CandidateVersion} 已保存。",
-                CandidateChapterId: edited.CandidateChapterId,
-                CandidateVersion: edited.CandidateVersion,
+                $"第 {chapterNumber} 章人工候选版本 v{editedCandidate.Version} 已保存。",
+                CandidateChapterId: editedCandidate.Id,
+                CandidateVersion: editedCandidate.Version,
                 ChapterNumber: chapterNumber,
-                ArtifactIds: [edited.ArtifactId],
+                ArtifactIds: [artifactId],
                 Action: "manual_edit"), cancellationToken);
-        }
-        return response;
+        return Ok(new GoalChapterManualEditResponse(
+            editedCandidate.Id,
+            editedCandidate.Version,
+            artifactId,
+            editedCandidate.Authorship,
+            editedCandidate.IsProtected));
     }
 
     [HttpPost("{goalId}/workflow/chapters/{chapterNumber:int}/accept")]
@@ -418,7 +416,12 @@ public sealed class GoalWorkflowController : ControllerBase
         [FromBody] GoalChapterAcceptRequest request,
         CancellationToken cancellationToken)
     {
-        var candidate = await RequireCandidateAsync(goalId, chapterNumber, request.CandidateChapterId, request.CandidateVersion, cancellationToken);
+        var candidate = await RequireCandidateAsync(
+            goalId,
+            chapterNumber,
+            request.CandidateChapterId,
+            request.CandidateVersion,
+            cancellationToken);
         var acceptance = await _branches.AcceptAsync(candidate.Id, candidate.Version, cancellationToken);
         await _progress.PublishAsync(new GoalProgressEventRequest(
             _currentUser.GetUserId(),
@@ -462,7 +465,7 @@ public sealed class GoalWorkflowController : ControllerBase
         CancellationToken cancellationToken)
     {
         await RequireGoalAsync(goalId, cancellationToken);
-        var production = await _bookProductions.ChangeStrategyAsync(goalId, request.ExecutionStrategy, cancellationToken);
+        var production = await _transitions.ChangeStrategyAsync(goalId, request.ExecutionStrategy, cancellationToken);
         return Ok(production);
     }
 
@@ -477,30 +480,16 @@ public sealed class GoalWorkflowController : ControllerBase
     [HttpPost("{goalId}/workflow/pause")]
     public async Task<IActionResult> Pause(string goalId, CancellationToken cancellationToken)
     {
-        var userId = _currentUser.GetUserId();
         await RequireGoalAsync(goalId, cancellationToken);
-        var status = await _control.RequestPauseAsync(userId, goalId, cancellationToken);
-        await _progress.PublishAsync(new GoalProgressEventRequest(
-            userId,
-            goalId,
-            AgentSseEventType.GoalStateChanged,
-            status == "paused" ? "Goal 已暂停。" : "Goal 将在下一个安全点暂停。",
-            Action: status), cancellationToken);
+        var status = await _transitions.RequestPauseAsync(goalId, cancellationToken);
         return Ok(new GoalWorkflowControlResponse(goalId, status));
     }
 
     [HttpPost("{goalId}/workflow/resume")]
     public async Task<IActionResult> Resume(string goalId, CancellationToken cancellationToken)
     {
-        var userId = _currentUser.GetUserId();
         await RequireGoalAsync(goalId, cancellationToken);
-        await _control.ResumeAsync(userId, goalId, cancellationToken);
-        await _progress.PublishAsync(new GoalProgressEventRequest(
-            userId,
-            goalId,
-            AgentSseEventType.GoalStateChanged,
-            "Goal 已恢复执行。",
-            Action: "resumed"), cancellationToken);
+        await _transitions.ResumeAsync(goalId, cancellationToken);
         return Ok(new GoalWorkflowControlResponse(goalId, "resumed"));
     }
 
@@ -510,15 +499,8 @@ public sealed class GoalWorkflowController : ControllerBase
         [FromBody] CancelGoalRequest request,
         CancellationToken cancellationToken)
     {
-        var userId = _currentUser.GetUserId();
         await RequireGoalAsync(goalId, cancellationToken);
-        await _control.CancelAsync(userId, goalId, request.Strategy, cancellationToken);
-        await _progress.PublishAsync(new GoalProgressEventRequest(
-            userId,
-            goalId,
-            AgentSseEventType.GoalStateChanged,
-            "Goal 已取消。",
-            Action: request.Strategy.ToString()), cancellationToken);
+        await _transitions.CancelAsync(goalId, request.Strategy, cancellationToken);
         return Ok(new GoalWorkflowControlResponse(goalId, "canceled", request.Strategy));
     }
 

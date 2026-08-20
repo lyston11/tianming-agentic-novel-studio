@@ -431,14 +431,13 @@ Controller 从认证主体取得 user id，验证 ownership，将 DTO 转为 App
 
 目标决策没有改变：`AgentControlDbContext` 是新控制面的 Goal、Production、Task、Artifact 和新业务事件写入 owner；旧 MissionPlan、Orchestrator 和 Runtime 不能成为新执行模型的 owner。
 
-当前实现存在一个明确的迁移期例外：旧 Web 托管的 `KernelTaskWorker` 仍通过 `PostgresKernelTaskScheduler` 使用 `NovelAgentDbContext` 完成共享 `kernel_tasks` 状态和 `novel_agent_acceptance_gate_reached` Outbox 写入。该例外的边界是：
+Worker ownership cutover 已完成：旧 Web 托管的 `KernelTaskWorker` 仍通过 `PostgresKernelTaskScheduler` 运行，但 scheduler 现在使用 `AgentControlDbContext` 完成共享 `kernel_tasks` 状态、失败推进、租约和 `novel_agent_acceptance_gate_reached` Outbox 写入。`claim_kernel_task` 由 Agent migration history 管理，并限制为 background worker role。
 
-- 它只负责已经编译任务的 claim/complete/fail/renew 和 acceptance-gate bridge，不创建 Goal、Proposal 或新的 Canon 事实。
-- bridge consumer 在新 Application 中重新校验 user/project/goal/graph/task/dependency/batch/branch，再推进 `ProductionAwaitingAcceptance`；重复投递必须幂等。
-- `EnforceLegacyControlPlaneReadOnly=false` 是迁移未完成的显式信号，不是最终安全配置；不能据此宣称 AC-8 已通过。
-- 在启用 legacy write guard 前，必须把 scheduler 的任务写入、失败状态推进和相关 migration function 迁移到 AgentControl owner，或形成经过批准且可证明不越权的独立 worker adapter；不得通过 raw SQL 或 scoped bypass 绕过守卫。
+本轮已将 Goal submission、Goal compilation、Workflow batch transition、task-failure progression 以及 manual Artifact 兼容入口迁入 `ILegacyControlPlaneCommands`，由 Infrastructure 的 `EfLegacyControlPlaneCommands` 通过 `AgentControlDbContext` 承担验证、EF 映射和事务；Web 只保留 DTO/输入适配与公开兼容入口，不保留双写。
 
-这是一条迁移边界记录，不是长期双写决策。下一纵切面的完成条件是：同一真实 Worker 从新控制面 claim 到 acceptance bridge 的 Testcontainers 证据、失败/租约路径的单一写入口，以及 guard 默认启用后的回归测试。
+全局 guard 仍不能默认启用：`GoalControlService` 的 pause/resume/cancel/safe-point 路径以及其他遗留 production/recovery Artifact writer 仍直接写共享控制表。后续迁移必须继续使用 Application-owned command，不得通过 raw SQL、缩窄 guard 或 scoped bypass 绕过守卫。
+
+这一阶段的完成证据是：同一真实 Worker 从新控制面 claim 到 acceptance bridge 的 Testcontainers 测试、失败/租约路径的单一写入口、bridge 重投幂等和 completion rollback；全局 guard cutover 属于下一纵切面。
 
 ## 17. 实现前必须验证的技术项
 

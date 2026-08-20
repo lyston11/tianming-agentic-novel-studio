@@ -1,24 +1,26 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Tianming.NovelAgent.Infrastructure.Persistence;
 using TM.Web.NovelAgentWeb.Data;
+using TM.Web.NovelAgentWeb.Services.AgentApplication;
 
 namespace TM.Web.NovelAgentWeb.Services.Goals;
 
 public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
 {
-    private readonly NovelAgentDbContext _db;
+    private readonly AgentControlDbContext _db;
+    private readonly AgentUserScope _userScope;
     private readonly IBackgroundClaimConnectionFactory _claimConnections;
-    private readonly IBookProductionTransitionService _transitions;
 
     public PostgresKernelTaskScheduler(
-        NovelAgentDbContext db,
-        IBackgroundClaimConnectionFactory claimConnections,
-        IBookProductionTransitionService transitions)
+        AgentControlDbContext db,
+        AgentUserScope userScope,
+        IBackgroundClaimConnectionFactory claimConnections)
     {
         _db = db;
+        _userScope = userScope;
         _claimConnections = claimConnections;
-        _transitions = transitions;
     }
 
     public async Task<KernelTaskClaim?> ClaimNextAsync(
@@ -64,41 +66,116 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
         IReadOnlyList<string> artifactIds,
         CancellationToken cancellationToken = default)
     {
-        var updated = await _db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE kernel_tasks
-            SET status = 'completed',
-                output_artifact_ids_json = {JsonSerializer.Serialize(artifactIds)}::jsonb,
-                lease_owner = NULL,
-                lease_expires_at = NULL,
-                completed_at = clock_timestamp(),
-                updated_at = clock_timestamp()
-            WHERE id = {claim.TaskId}
-              AND user_id = {claim.UserId}
-              AND lease_owner = {claim.LeaseOwner}
-              AND status = 'running'
-            """, cancellationToken);
-        if (updated != 1)
-            throw new InvalidOperationException("任务完成写入失败：lease 已失效或任务作用域不匹配。");
-
-        _db.ChangeTracker.Clear();
-        var graphTasks = await _db.KernelTasks
-            .Where(task =>
-                task.UserId == claim.UserId &&
-                task.TaskGraphVersionId == claim.TaskGraphVersionId)
-            .ToListAsync(cancellationToken);
-        var byNodeId = graphTasks.ToDictionary(TaskNodeId, StringComparer.Ordinal);
-        foreach (var blocked in graphTasks.Where(task => task.Status == "blocked"))
+        using var userScope = _userScope.Enter(claim.UserId);
+        await using var transaction = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        try
         {
-            var dependencies = JsonSerializer.Deserialize<string[]>(blocked.DependencyTaskIdsJson) ?? [];
-            if (dependencies.All(dependency =>
-                    byNodeId.TryGetValue(dependency, out var dependencyTask) &&
-                    dependencyTask.Status is "completed" or "reused"))
+            var updated = await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE kernel_tasks
+                SET status = 'completed',
+                    output_artifact_ids_json = {JsonSerializer.Serialize(artifactIds)}::jsonb,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    completed_at = clock_timestamp(),
+                    updated_at = clock_timestamp()
+                WHERE id = {claim.TaskId}
+                  AND user_id = {claim.UserId}
+                  AND lease_owner = {claim.LeaseOwner}
+                  AND status = 'running'
+                """, cancellationToken);
+            if (updated != 1)
+                throw new InvalidOperationException("任务完成写入失败：lease 已失效或任务作用域不匹配。");
+
+            _db.ChangeTracker.Clear();
+            var graphTasks = await _db.KernelTasks
+                .Where(task =>
+                    task.UserId == claim.UserId &&
+                    task.TaskGraphVersionId == claim.TaskGraphVersionId)
+                .ToListAsync(cancellationToken);
+            var byNodeId = graphTasks.ToDictionary(TaskNodeId, StringComparer.Ordinal);
+            var acceptanceGates = new List<KernelTaskRecord>();
+            foreach (var blocked in graphTasks.Where(task => task.Status == "blocked"))
             {
-                blocked.Status = blocked.TaskType == BookProductionWorkflow.AcceptanceGate ? "awaiting_user" : "ready";
-                blocked.UpdatedAt = DateTime.UtcNow;
+                var dependencies = JsonSerializer.Deserialize<string[]>(blocked.DependencyTaskIdsJson) ?? [];
+                if (dependencies.All(dependency =>
+                        byNodeId.TryGetValue(dependency, out var dependencyTask) &&
+                        dependencyTask.Status is "completed" or "reused"))
+                {
+                    blocked.Status = blocked.TaskType == BookProductionWorkflow.AcceptanceGate ? "awaiting_user" : "ready";
+                    blocked.UpdatedAt = DateTimeOffset.UtcNow;
+                    if (blocked.Status == "awaiting_user")
+                        acceptanceGates.Add(blocked);
+                }
             }
+
+            if (acceptanceGates.Count > 0)
+            {
+                var graph = await _db.TaskGraphs.AsNoTracking().SingleAsync(item =>
+                    item.Id == claim.TaskGraphVersionId &&
+                    item.UserId == claim.UserId &&
+                    item.GoalId == claim.GoalId,
+                    cancellationToken);
+                if (!string.IsNullOrWhiteSpace(graph.GoalRevisionId))
+                {
+                    foreach (var gate in acceptanceGates)
+                        await AddAcceptanceGateOutboxAsync(claim, gate, cancellationToken);
+                }
+            }
+            await _db.SaveChangesAsync(cancellationToken);
+            if (transaction != null)
+                await transaction.CommitAsync(cancellationToken);
         }
-        await _db.SaveChangesAsync(cancellationToken);
+        catch
+        {
+            if (transaction != null)
+                await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    private async Task AddAcceptanceGateOutboxAsync(
+        KernelTaskClaim claim,
+        KernelTaskRecord gate,
+        CancellationToken cancellationToken)
+    {
+        var production = await (
+            from batch in _db.ProductionBatches.AsNoTracking()
+            join item in _db.BookProductions.AsNoTracking()
+                on new { batch.UserId, Id = batch.BookProductionId }
+                equals new { item.UserId, item.Id }
+            where batch.UserId == claim.UserId
+                && batch.ProjectId == claim.ProjectId
+                && batch.GoalId == claim.GoalId
+                && batch.TaskGraphVersionId == claim.TaskGraphVersionId
+                && batch.CanonBranchId == gate.BranchId
+            select item)
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("AcceptanceGate 缺少对应的新 Production，不能可靠推进验收状态。");
+        var payload = new AcceptanceGateReachedPayload(
+            claim.UserId,
+            claim.ProjectId,
+            claim.GoalId,
+            production.Id,
+            claim.TaskGraphVersionId,
+            gate.Id,
+            gate.BranchId);
+        var now = DateTimeOffset.UtcNow;
+        _db.OutboxEvents.Add(new OutboxEventRecord
+        {
+            Id = $"novel-agent:acceptance-gate:{gate.Id}",
+            UserId = claim.UserId,
+            ProjectId = claim.ProjectId,
+            EventType = NovelAgentOutboxHandler.AcceptanceGateReachedEventType,
+            AggregateType = "book_production",
+            AggregateId = production.Id,
+            IdempotencyKey = $"novel-agent:acceptance-gate:{gate.Id}",
+            PayloadJson = JsonSerializer.Serialize(payload),
+            Status = "pending",
+            CreatedAt = now,
+            UpdatedAt = now
+        });
     }
 
     public async Task<bool> RenewAsync(
@@ -110,6 +187,7 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
         if (leaseSeconds is < 5 or > 3600)
             throw new ArgumentOutOfRangeException(nameof(leaseDuration), "Lease 必须在 5 秒到 1 小时之间。");
 
+        using var userScope = _userScope.Enter(claim.UserId);
         var updated = await _db.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE kernel_tasks
             SET lease_expires_at = clock_timestamp() + make_interval(secs => {leaseSeconds}),
@@ -136,6 +214,7 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
         KernelTaskFailure failure,
         CancellationToken cancellationToken = default)
     {
+        using var userScope = _userScope.Enter(claim.UserId);
         var task = await _db.KernelTasks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == claim.TaskId &&
             item.UserId == claim.UserId &&
@@ -156,8 +235,8 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
             _ => throw new ArgumentOutOfRangeException()
         };
         var nextAttemptAt = decision.Disposition == KernelTaskFailureDisposition.Retry
-            ? DateTime.UtcNow.Add(decision.RetryAfter)
-            : (DateTime?)null;
+            ? DateTimeOffset.UtcNow.Add(decision.RetryAfter)
+            : (DateTimeOffset?)null;
         var failureKind = failure.Category.ToString().ToLowerInvariant();
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
@@ -179,12 +258,54 @@ public sealed class PostgresKernelTaskScheduler : IKernelTaskScheduler
             throw new InvalidOperationException($"任务失败写入失败：{failure.Message}");
 
         if (decision.Disposition is not KernelTaskFailureDisposition.Retry)
-            await _transitions.ApplyTaskFailureAsync(claim, decision.Disposition, cancellationToken);
+            await ApplyTaskFailureAsync(claim, decision.Disposition, cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
     }
 
-    private static string TaskNodeId(Data.Entities.KernelTask task)
+    private async Task ApplyTaskFailureAsync(
+        KernelTaskClaim claim,
+        KernelTaskFailureDisposition disposition,
+        CancellationToken cancellationToken)
+    {
+        if (claim.TaskId.Contains(":manual-rework-", StringComparison.Ordinal))
+            return;
+
+        var goalStatus = disposition == KernelTaskFailureDisposition.AwaitingDecision
+            ? "awaiting_decision"
+            : "failed";
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE creative_goals
+            SET status = {goalStatus},
+                aggregate_version = aggregate_version + 1
+            WHERE id = {claim.GoalId}
+              AND user_id = {claim.UserId}
+              AND status IN ('committed', 'running', 'resumed', 'awaiting_user', 'awaiting_next_batch')
+            """, cancellationToken);
+
+        var productionStatus = disposition == KernelTaskFailureDisposition.AwaitingDecision
+            ? "blocked"
+            : "failed";
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE book_productions
+            SET status = {productionStatus},
+                aggregate_version = aggregate_version + 1,
+                updated_at = clock_timestamp()
+            WHERE goal_id = {claim.GoalId}
+              AND user_id = {claim.UserId}
+              AND status IN ('running', 'resumed')
+            """, cancellationToken);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE production_batches
+            SET status = {productionStatus},
+                updated_at = clock_timestamp()
+            WHERE goal_id = {claim.GoalId}
+              AND user_id = {claim.UserId}
+              AND status IN ('planned', 'running', 'accepting')
+            """, cancellationToken);
+    }
+
+    private static string TaskNodeId(KernelTaskRecord task)
     {
         var separator = task.Id.IndexOf(':');
         return separator < 0 ? task.Id : task.Id[(separator + 1)..];

@@ -33,7 +33,10 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
         using var clientB = CreateAuthenticatedClient(userB.Token);
 
         var statusResponse = await clientA.GetAsync("/api/goals/goal-e2e/workflow");
-        Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+        var statusBody = await statusResponse.Content.ReadAsStringAsync();
+        Assert.True(
+            statusResponse.StatusCode == HttpStatusCode.OK,
+            $"Expected workflow status to succeed, but received {(int)statusResponse.StatusCode}: {statusBody}");
         var status = await statusResponse.Content.ReadEnvelopeDataAsync<GoalWorkflowStatusResponse>();
         Assert.Equal("goal-e2e", status.Goal.Id);
         Assert.Equal(2, status.Tasks.Count);
@@ -93,7 +96,10 @@ public sealed class GoalWorkflowApiTests : IClassFixture<TestWebApplicationFacto
         var accept = await clientA.PostAsJsonAsync(
             "/api/goals/goal-e2e/workflow/chapters/1/accept",
             new GoalChapterAcceptRequest("candidate-e2e", 1));
-        Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
+        var acceptBody = await accept.Content.ReadAsStringAsync();
+        Assert.True(
+            accept.StatusCode == HttpStatusCode.OK,
+            $"Expected chapter acceptance to succeed, but received {(int)accept.StatusCode}: {acceptBody}");
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();

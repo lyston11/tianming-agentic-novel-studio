@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Services.Auth;
 
 namespace TM.Web.NovelAgentWeb.Services.Goals;
@@ -12,18 +13,28 @@ public sealed class CreativeGoalService : ICreativeGoalService
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IGoalBaselineProvider _baselines;
-    private readonly IBookProductionService _bookProductions;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public CreativeGoalService(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser,
+        IGoalBaselineProvider baselines,
+        ILegacyControlPlaneCommands controlPlane)
+    {
+        _db = db;
+        _currentUser = currentUser;
+        _baselines = baselines;
+        _controlPlane = controlPlane;
+    }
 
     public CreativeGoalService(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
         IGoalBaselineProvider baselines,
         IBookProductionService bookProductions)
+        : this(db, currentUser, baselines, LegacyControlPlaneCommands.Unconfigured)
     {
-        _db = db;
-        _currentUser = currentUser;
-        _baselines = baselines;
-        _bookProductions = bookProductions;
     }
 
     public async Task<GoalSubmissionResult> SubmitAsync(
@@ -65,7 +76,7 @@ public sealed class CreativeGoalService : ICreativeGoalService
         if (existing != null)
         {
             if (existing.Status is not ("completed" or "canceled" or "failed"))
-                await _bookProductions.InitializeAsync(existing, cancellationToken);
+                await _controlPlane.SubmitGoalAsync(ToSubmissionCommand(existing), cancellationToken);
             return new GoalSubmissionResult(GoalSubmissionStatus.Existing, existing.Id);
         }
 
@@ -76,58 +87,35 @@ public sealed class CreativeGoalService : ICreativeGoalService
             throw new KeyNotFoundException("来源会话不存在或不属于当前用户。");
 
         var frozen = await _baselines.CaptureAsync(userId, command.ProjectId, cancellationToken);
-        var now = DateTime.UtcNow;
-        var goal = new CreativeGoal
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = command.ProjectId,
-            SourceSessionId = sourceSessionId,
-            GoalType = RequireText(command.Contract.GoalType, nameof(command.Contract.GoalType)),
-            CollaborationMode = RequireText(command.Contract.CollaborationMode, nameof(command.Contract.CollaborationMode)),
-            HumanReadableObjective = RequireText(command.Contract.HumanReadableObjective, nameof(command.Contract.HumanReadableObjective)),
-            TargetChapterRangeJson = command.Contract.TargetChapterRangeJson,
-            SuccessCriteriaJson = JsonSerializer.Serialize(command.Contract.SuccessCriteria),
-            MustPreserveJson = JsonSerializer.Serialize(command.Contract.MustPreserve),
-            MustHappenJson = JsonSerializer.Serialize(command.Contract.MustHappen),
-            MustNotChangeJson = JsonSerializer.Serialize(command.Contract.MustNotChange),
-            AcceptancePolicyJson = command.Contract.AcceptancePolicyJson,
-            ReworkPolicyJson = command.Contract.ReworkPolicyJson,
-            ExecutionStrategy = BookExecutionStrategies.RequireValid(command.Contract.ExecutionStrategy),
-            BookPlanJson = command.Contract.BookPlanJson,
-            TotalCostLimit = command.TotalCostLimit,
-            CanonBaselineVersion = frozen.CanonVersion,
-            KnowledgeSnapshotVersion = frozen.KnowledgeVersion,
-            QualityContractVersion = frozen.QualityContractVersion,
-            StyleProfileVersion = frozen.StyleProfileVersion,
-            ModelConfigVersionsJson = frozen.ModelConfigVersionsJson,
-            ProtocolVersionsJson = frozen.ProtocolVersionsJson,
-            Status = "committed",
-            AggregateVersion = 1,
-            IdempotencyKey = idempotencyKey,
-            CreatedAt = now
-        };
-        var snapshot = new GoalContextSnapshot
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = command.ProjectId,
-            GoalId = goal.Id,
-            CanonVersion = frozen.CanonVersion,
-            KnowledgeVersion = frozen.KnowledgeVersion,
-            QualityContractVersion = frozen.QualityContractVersion,
-            StyleProfileVersion = frozen.StyleProfileVersion,
-            ModelConfigVersionsJson = frozen.ModelConfigVersionsJson,
-            ProtocolVersionsJson = frozen.ProtocolVersionsJson,
-            ContentHashesJson = frozen.ContentHashesJson,
-            CreatedAt = now
-        };
-
-        _db.CreativeGoals.Add(goal);
-        _db.GoalContextSnapshots.Add(snapshot);
-        await _db.SaveChangesAsync(cancellationToken);
-        await _bookProductions.InitializeAsync(goal, cancellationToken);
-        return new GoalSubmissionResult(GoalSubmissionStatus.Created, goal.Id);
+        var submission = await _controlPlane.SubmitGoalAsync(new LegacyGoalSubmissionCommand(
+            userId,
+            command.ProjectId,
+            sourceSessionId,
+            idempotencyKey,
+            command.TotalCostLimit,
+            RequireText(command.Contract.GoalType, nameof(command.Contract.GoalType)),
+            RequireText(command.Contract.CollaborationMode, nameof(command.Contract.CollaborationMode)),
+            RequireText(command.Contract.HumanReadableObjective, nameof(command.Contract.HumanReadableObjective)),
+            command.Contract.TargetChapterRangeJson,
+            JsonSerializer.Serialize(command.Contract.SuccessCriteria),
+            JsonSerializer.Serialize(command.Contract.MustPreserve),
+            JsonSerializer.Serialize(command.Contract.MustHappen),
+            JsonSerializer.Serialize(command.Contract.MustNotChange),
+            command.Contract.AcceptancePolicyJson,
+            command.Contract.ReworkPolicyJson,
+            BookExecutionStrategies.RequireValid(command.Contract.ExecutionStrategy),
+            command.Contract.BookPlanJson,
+            new LegacyFrozenBaselines(
+                frozen.CanonVersion,
+                frozen.KnowledgeVersion,
+                frozen.QualityContractVersion,
+                frozen.StyleProfileVersion,
+                frozen.ModelConfigVersionsJson,
+                frozen.ProtocolVersionsJson,
+                frozen.ContentHashesJson)), cancellationToken);
+        return new GoalSubmissionResult(
+            submission.Existing ? GoalSubmissionStatus.Existing : GoalSubmissionStatus.Created,
+            submission.GoalId);
     }
 
     public async Task<GoalRevision> ReviseAsync(
@@ -145,30 +133,66 @@ public sealed class CreativeGoalService : ICreativeGoalService
             ?? throw new ArgumentException("Goal Revision 约束变化不能为空。", nameof(command.ConstraintChangesJson));
         if (changes.TotalCostLimit.HasValue && changes.TotalCostLimit <= 0)
             throw new ArgumentOutOfRangeException(nameof(command.ConstraintChangesJson), "修订后的 Goal 总金额上限必须大于零。");
-        var nextRevision = await _db.GoalRevisions
-            .Where(item => item.UserId == userId && item.GoalId == goal.Id)
-            .Select(item => (int?)item.RevisionNumber)
-            .MaxAsync(cancellationToken) ?? 0;
-
-        var revision = new GoalRevision
+        var revisionId = Guid.NewGuid().ToString("N");
+        var createdAt = DateTimeOffset.UtcNow;
+        var revision = await _controlPlane.CreateGoalRevisionAsync(
+            new LegacyGoalRevisionCommand(
+                userId,
+                goal.ProjectId,
+                goal.Id,
+                revisionId,
+                0,
+                RequireText(command.Reason, nameof(command.Reason)),
+                JsonSerializer.Serialize(changes, JsonOptions),
+                JsonSerializer.Serialize(command.ReusableArtifactIds),
+                JsonSerializer.Serialize(command.InvalidatedArtifactIds),
+                JsonSerializer.Serialize(command.AffectedNodeIds.Distinct(StringComparer.Ordinal)),
+                createdAt),
+            cancellationToken);
+        return new GoalRevision
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = revision.Id,
             UserId = userId,
             ProjectId = goal.ProjectId,
             GoalId = goal.Id,
-            RevisionNumber = nextRevision + 1,
-            Reason = RequireText(command.Reason, nameof(command.Reason)),
-            ConstraintChangesJson = JsonSerializer.Serialize(changes, JsonOptions),
-            ReusableArtifactIdsJson = JsonSerializer.Serialize(command.ReusableArtifactIds),
-            InvalidatedArtifactIdsJson = JsonSerializer.Serialize(command.InvalidatedArtifactIds),
-            AffectedNodeIdsJson = JsonSerializer.Serialize(command.AffectedNodeIds.Distinct(StringComparer.Ordinal)),
-            CreatedAt = DateTime.UtcNow
+            RevisionNumber = revision.RevisionNumber,
+            Reason = revision.Reason,
+            ConstraintChangesJson = revision.ConstraintChangesJson,
+            ReusableArtifactIdsJson = revision.ReusableArtifactIdsJson,
+            InvalidatedArtifactIdsJson = revision.InvalidatedArtifactIdsJson,
+            AffectedNodeIdsJson = revision.AffectedNodeIdsJson,
+            CreatedAt = revision.CreatedAt.UtcDateTime
         };
-        _db.GoalRevisions.Add(revision);
-        await _db.SaveChangesAsync(cancellationToken);
-        return revision;
     }
 
+    private static LegacyGoalSubmissionCommand ToSubmissionCommand(CreativeGoal existing) =>
+        new(
+            existing.UserId,
+            existing.ProjectId,
+            existing.SourceSessionId,
+            existing.IdempotencyKey,
+            existing.TotalCostLimit,
+            existing.GoalType,
+            existing.CollaborationMode,
+            existing.HumanReadableObjective,
+            existing.TargetChapterRangeJson,
+            existing.SuccessCriteriaJson,
+            existing.MustPreserveJson,
+            existing.MustHappenJson,
+            existing.MustNotChangeJson,
+            existing.AcceptancePolicyJson,
+            existing.ReworkPolicyJson,
+            existing.ExecutionStrategy,
+            existing.BookPlanJson,
+            new LegacyFrozenBaselines(
+                existing.CanonBaselineVersion,
+                existing.KnowledgeSnapshotVersion,
+                existing.QualityContractVersion,
+                existing.StyleProfileVersion,
+                existing.ModelConfigVersionsJson,
+                existing.ProtocolVersionsJson,
+                "{}"),
+            existing.Id);
     private static bool ContractsMatch(CreativeGoalContract left, CreativeGoalContract right) =>
         JsonSerializer.Serialize(left) == JsonSerializer.Serialize(right);
 

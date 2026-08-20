@@ -16,6 +16,7 @@ using TM.Web.NovelAgentWeb.Services.Execution;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Production;
 using TM.Web.NovelAgentWeb.Services.Rework;
+using Tests.Unit.Support;
 using Xunit;
 
 namespace Tests.Unit.Controllers;
@@ -217,7 +218,7 @@ public sealed class GoalWorkflowControllerTests
     }
 
     [Fact]
-    public async Task Confirm_WhenCompilationFails_RollsBackCreatedGoal()
+    public async Task Confirm_WhenCompilationFails_PreservesApplicationOwnedGoalForRetry()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -259,11 +260,11 @@ public sealed class GoalWorkflowControllerTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => controller.Confirm(request, CancellationToken.None));
 
         db.ChangeTracker.Clear();
-        Assert.Empty(await db.CreativeGoals.ToListAsync());
+        Assert.Equal("goal-created", (await db.CreativeGoals.SingleAsync()).Id);
     }
 
     [Fact]
-    public async Task Revise_WhenRecompilationFails_RollsBackRevision()
+    public async Task Revise_WhenRecompilationFails_PreservesApplicationOwnedRevisionForRetry()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -302,7 +303,7 @@ public sealed class GoalWorkflowControllerTests
             CancellationToken.None));
 
         db.ChangeTracker.Clear();
-        Assert.Empty(await db.GoalRevisions.ToListAsync());
+        Assert.Equal("revision-1", (await db.GoalRevisions.SingleAsync()).Id);
     }
 
     [Fact]
@@ -644,6 +645,7 @@ public sealed class GoalWorkflowControllerTests
         var goalCompiler = compiler ?? Mock.Of<IGoalCompiler>();
         var bookProduction = new BookProductionService(db, current.Object, new PassingBookValidationService());
         var progress = Mock.Of<IGoalProgressEventPublisher>();
+        var controlPlane = new LegacyControlPlaneCommandTestDouble(db);
         var transitions = new BookProductionTransitionService(
             db,
             current.Object,
@@ -652,8 +654,11 @@ public sealed class GoalWorkflowControllerTests
             bookProduction,
             goalCompiler,
             progress,
+            control ?? Mock.Of<IGoalControlService>(),
             Mock.Of<IContentDocumentService>(),
-            Mock.Of<ILogger<BookProductionTransitionService>>());
+            Mock.Of<ILogger<BookProductionTransitionService>>(),
+            controlPlane,
+            new PassingBookValidationService());
         var reworkCompiler = new ReworkGraphCompiler(
             db,
             current.Object,
@@ -664,12 +669,11 @@ public sealed class GoalWorkflowControllerTests
             commitments ?? Mock.Of<ICommitmentAssessmentService>(),
             goals ?? Mock.Of<ICreativeGoalService>(),
             goalCompiler,
-            control ?? Mock.Of<IGoalControlService>(),
             branchService,
             progress,
-            bookProduction,
             transitions,
-            reworkCompiler);
+            reworkCompiler,
+            controlPlane);
     }
 
     private sealed class PassingBookValidationService : IBookValidationService

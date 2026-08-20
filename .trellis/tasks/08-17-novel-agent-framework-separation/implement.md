@@ -6,7 +6,7 @@
 
 ### 已完成
 
-- Phase 0：`global.json`、solution、项目 `net10.0` 升级和依赖锁定已完成；上一轮 warnings-as-errors build 通过。当前交接环境缺少 `.NET SDK 10.0.400`，需在下一可用环境重验。
+- Phase 0：`global.json`、solution、项目 `net10.0` 升级和依赖锁定已完成；项目根目录 `.dotnet/` 提供 SDK 10.0.400，`./Scripts/dotnet` 是统一入口。
 - Phase 1：Domain / Contracts / Application / Infrastructure 项目骨架、依赖护栏和架构测试已完成。
 - Phase 2：核心合同、状态机、Typed DAG、三种 ProductionMode 合同和基础测试已完成。
 - Phase 3：Proposal/Goal/Production 应用命令、唯一写入口、Conversation/Workflow SSE 合同、ownership adapter 和 recovery boundary 已建立。
@@ -15,19 +15,19 @@
 
 ### 部分完成或未完成
 
-- Phase 4/6：真实 Worker 仍由旧 Web scheduler 通过 `NovelAgentDbContext` 写共享 `kernel_tasks/outbox_events`；新控制面尚未拥有完整 claim/complete/fail/renew 写路径。
+- Phase 4/6：真实 Worker 的 claim/renew/complete/fail、失败推进、dependent unblocking、AcceptanceGate bridge 和 claim function 已迁入 `AgentControlDbContext`；旧 Workflow 命令仍有 legacy control-plane 写路径。
 - Phase 5：Provider-neutral gateway 和 deterministic runtime 已有；真实 OpenAI Responses/MAF 全链路兼容证据未齐。
 - Phase 6：AcceptanceGate bridge 已闭环，但 Candidate、双审、人工验收、Canon adapter 的完整真实单批 E2E 尚未闭环。
 - Phase 7：API/SSE/前端接线已完成主要路径；仓库没有 Playwright 配置，SSE 过期游标语义和浏览器 E2E 未完成。
-- Phase 9：上一轮 build、架构测试、NovelAgentRegression 通过；本次前端 test/lint/type-check/build 与 `git diff --check` 通过。.NET 检查因 SDK 缺失未重跑；完整 AC-5/AC-8/故障注入证据仍缺，Trellis Check 保持阻塞发现。
+- Phase 9：项目本地 SDK 下 solution build、架构测试、Unit、NovelAgentRegression 和 AgentKernelRegression 已重跑通过；前端 test/lint/type-check/build 与 `git diff --check` 通过。完整 AC-5/AC-8/故障注入证据仍缺，Trellis Check 保持阻塞发现。
 
-### 准确的下一步
+### 本轮收束状态
 
-1. 先锁定 Worker ownership cutover 方案。推荐将 scheduler 的 task claim/complete/fail/renew、失败状态推进和 claim SQL/migration 迁入 `AgentControlDbContext`；若保留迁移期 adapter，必须另行批准其边界、审计证据和退出条件。
-2. 在 ownership cutover 后默认启用 `EnforceLegacyControlPlaneReadOnly`，补齐旧 context 对控制面写入的全面回归测试。
-3. 用 Testcontainers 串起真实 Worker → Candidate → 双审 → 人工验收 → Canon merge → Workflow projection 单批 E2E，并加入崩溃/重投/租约失效断言。
-4. 补 SSE 过期游标稳定错误、Playwright 浏览器 E2E、AcceptPrefix 并发幂等和 Redis/Qdrant 清空重建验证。
-5. 重新运行全量 Trellis Check；只有 AC-5/AC-8 和上述门槛通过后，才进入提交和归档。
+1. [x] 旧 Goal submission/compiler、Workflow batch transition、task-failure progression 和 manual Artifact 兼容入口已迁入 `ILegacyControlPlaneCommands` / `EfLegacyControlPlaneCommands`，Web 保留公开兼容入口但不再直接写这些控制面对象。
+2. [~] `EnforceLegacyControlPlaneReadOnly` 仍保持关闭；`GoalControlService` pause/resume/cancel/safe-point 和其他遗留 production/recovery Artifact writer 尚未迁移。
+3. [ ] 真实 Worker → Candidate → 双审 → 人工验收 → Canon merge → Workflow projection 单批 E2E，以及崩溃/重投/租约失效矩阵仍留作后续工作。
+4. [ ] SSE 过期游标、Playwright 浏览器 E2E、AcceptPrefix 并发幂等和 Redis/Qdrant 清空重建仍留作后续工作。
+5. 用户于 2026-08-19 明确要求停止扩展测试、提交现有代码并归档任务；归档不代表上述未完成 AC 已满足。
 
 ## 实施原则
 
@@ -38,21 +38,21 @@
 
 ## Phase 0：工具链与基线
 
-- [~] `global.json` 已锁定 `.NET SDK 10.0.400`；当前交接环境只安装 8.0.127，需在具备 10.0.400 的环境重新验证。
+- [x] `global.json` 锁定 `.NET SDK 10.0.400`；项目根目录 `.dotnet/` 已安装对应 SDK，`./Scripts/dotnet --version` 输出 `10.0.400`。
 - [x] 锁定 `.NET 10` 兼容的 ASP.NET Core、EF Core/Npgsql、OpenAI SDK、MAF、Testcontainers 和测试包版本。
 - [x] Web、Agent 和现有测试项目已升级到 `net10.0`；上一轮基线构建与测试已有通过记录。
 - [x] 已建立 `TianmingAgenticNovelStudio.slnx`，纳入现有与新增项目。
-- [~] 已区分本次 SDK 环境阻塞与代码失败；仍需在 .NET 10 环境记录一次完整重验结果。
+- [x] 已用项目本地 SDK 完成 solution warnings-as-errors build、AgentArchitecture、Unit、NovelAgentRegression 和 AgentKernelRegression 重验。
 
 验证：
 
 ```bash
-dotnet --info
-dotnet restore <solution>
-dotnet build <solution> --no-restore
-dotnet test Tests/Unit/Unit.csproj --no-build
-dotnet test Tests/NovelAgentRegression/NovelAgentRegression.csproj --no-build
-dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --no-build
+./Scripts/dotnet --info
+./Scripts/dotnet restore <solution>
+./Scripts/dotnet build <solution> --no-restore
+./Scripts/dotnet test Tests/Unit/Unit.csproj --no-build
+./Scripts/dotnet test Tests/NovelAgentRegression/NovelAgentRegression.csproj --no-build
+./Scripts/dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --no-build
 ```
 
 ## Phase 1：项目骨架与架构护栏
@@ -78,7 +78,7 @@ dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --
 
 - [x] 定义仓储、UnitOfWork、Model Gateway、Conversation Runtime、Canon/Knowledge/Chapter 和 legacy snapshot 端口。
 - [x] 实现 append conversation turn、persist proposal、confirm/reject proposal 和 create Goal Revision 用例。
-- [~] Production 控制与人工验收命令已建立；task claim/complete/fail/renew 仍由旧 Web scheduler 执行，尚未收敛唯一 owner。
+- [~] Production 控制与人工验收命令已建立；task claim/renew/complete/fail、失败推进、AcceptanceGate bridge，以及本轮迁移的 legacy Goal/Workflow compatibility commands 已收敛到 `AgentControlDbContext`。`GoalControlService` 等遗留控制路径仍待迁移。
 - [~] `AcceptPrefix -> CanonMergeRequested -> CanonPrefixMerged/Rejected` 已有幂等握手；并发唯一键冲突尚未统一返回既有 request-result。
 - [x] fake-port/contract tests 已覆盖未确认不得启动、Conversation 边界和重复命令。
 
@@ -86,7 +86,7 @@ dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --
 
 - [x] 创建 `AgentControlDbContext` 和独立 migration history 所有权配置，映射现有控制表而非创建重复表。
 - [x] 添加 Conversation、Proposal、Context Checkpoint、StreamEvent 及必要兼容列和索引。
-- [~] 聚合版本、命令幂等、项目级唯一 Canon lease 已建立；Task/Outbox claim 仍跨新旧 owner。
+- [~] 聚合版本、命令幂等、项目级唯一 Canon lease 已建立；Task/AcceptanceGate Outbox Worker 与本轮 legacy Goal/Workflow compatibility command 写入已归属 Agent owner，其他 legacy 控制路径仍待迁移。
 - [~] Application 命令事务已覆盖主要聚合/事件路径；完整故障注入证据未齐。
 - [~] durable replay、Outbox dispatcher 和部分恢复路径已实现；过期游标、完整 lease/迟到 Artifact 恢复仍缺。
 - [~] PostgreSQL 集成测试已覆盖主纵切面和重复投递的一部分；并发、事务故障、RLS/ownership 和恢复矩阵未完整。
@@ -105,7 +105,7 @@ dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --
 ## Phase 6：单批 Production 纵切面
 
 - [x] 实现 `FreezeContext -> Analyze -> Plan -> CompileContext -> Write -> 双审 -> AwaitAcceptance -> Merge -> Finalize` 类型图编译。
-- [~] PostgreSQL worker 已可运行主要任务和 AcceptanceGate bridge；owner cutover、完整 pause/retry/failure/budget/`OutcomeUnknown` 证据未齐。
+- [~] PostgreSQL worker 已通过 Agent owner 运行 claim/renew/complete/fail 和 AcceptanceGate bridge；完整 pause/budget/`OutcomeUnknown` 与真实 Candidate/Canon E2E 证据未齐。
 - [~] Canon/Knowledge/章节 Adapter 和作用域边界已建立；冻结版本的全链路断言未齐。
 - [~] Candidate/Review Artifact 合同和持久化已建立；真实 Worker 产出到人工验收的 E2E 未齐。
 - [~] Legacy Canon merge Adapter 与幂等握手已建立；基线冲突、连续前缀、人工保护和崩溃恢复矩阵未齐。
@@ -121,8 +121,8 @@ dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --
 
 ## Phase 8：遗留写入隔离与恢复
 
-- [~] `LegacyControlPlaneWriteGuard` 类型与测试已建立；配置默认关闭，尚未形成最终拒写边界。
-- [~] 新 API 已走 Application；旧 MissionPlan/Orchestrator/Runtime 路由与 Worker 写路径尚未全部退为只读。
+- [~] `LegacyControlPlaneWriteGuard` 类型与测试已建立；Worker 和指定 legacy Goal/Workflow/Artifact compatibility writers 已完成 owner cutover，但 `GoalControlService` 等剩余控制路径使配置仍必须保持默认关闭。
+- [~] 新 Novel Agent API 与 Worker 已走 Application/Agent owner；旧 Goal Workflow 命令及 MissionPlan/Orchestrator/Runtime 路由尚未全部退为只读。
 - [x] legacy project snapshot reader 只提取正式内容、有效知识和已确认决定。
 - [x] 已实现“恢复为新 Proposal/Goal”，拒绝续跑 MissionPlan、RuntimeRun 和 pending tool。
 - [~] 已有旧路径回归测试；guard 默认启用和真实 Worker 下的全面控制面拒写尚未验证。
@@ -132,15 +132,15 @@ dotnet run --project Tests/AgentKernelRegression/AgentKernelRegression.csproj --
 - [~] 上一轮 .NET build/单元/回归/架构测试有通过记录；本次前端 test/lint/type-check/build 通过。.NET 10 与 Playwright 未在本次重跑。
 - [x] `prd.md` 已建立 AC-1 至 AC-16 证据/缺口表，未把缺证据项标记完成。
 - [ ] Outbox、SSE replay、Task lease、Canon merge 和 Redis/Qdrant 清空恢复的完整故障注入矩阵。
-- [~] Trellis Check 已识别 Worker ownership 为阻塞发现；只有完成 cutover 和全量重验后才能清零。
+- [~] Trellis Check 已验证本轮 legacy command migration 的聚焦行为；完整 AC-5/AC-8 与故障注入门槛仍未清零，按用户要求作为残余风险归档。
 - [x] 本次交接在 `notes.md` 记录验证命令、通过/阻塞项和残余风险；未提交代码。
 
 建议的最终命令（以实际 solution/项目名补齐）：
 
 ```bash
-dotnet restore <solution>
-dotnet build <solution> --no-restore -warnaserror
-dotnet test <solution> --no-build
+./Scripts/dotnet restore <solution>
+./Scripts/dotnet build <solution> --no-restore -warnaserror
+./Scripts/dotnet test <solution> --no-build
 npm --prefix Web/NovelAgentWeb.Frontend run build
 npm --prefix Web/NovelAgentWeb.Frontend run test --if-present
 npm --prefix Web/NovelAgentWeb.Frontend run test:e2e --if-present
@@ -163,6 +163,6 @@ git diff --check
 
 - [x] `prd.md`、`design.md`、`implement.md` 已完成规划并进入实施；当前任务状态为 `in_progress`。
 - [x] `implement.jsonl`、`check.jsonl` 包含真实 spec/research 条目；本次 `task.py validate` 再次通过。
-- [~] 依赖版本已锁定且上一轮 `.NET 10` 验证通过；当前机器缺少 SDK 10.0.400，下一会话需重验。
+- [x] 依赖版本已锁定；项目本地 SDK 10.0.400 和 `Scripts/dotnet` wrapper 已加入工具链基线并完成重验。
 - [x] 工作区既有未提交修改已记录，交接未回退用户改动。
 - [x] 本次交接未创建 Git commit，未执行 finish-work 或归档。

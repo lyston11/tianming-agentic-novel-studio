@@ -89,6 +89,7 @@ builder.Services.AddHttpClient();
 
 // PostgreSQL is the sole authoritative production database.
 builder.Services.AddScoped<UserScopeConnectionInterceptor>();
+builder.Services.AddScoped<LegacyControlPlaneWriteGuard>();
 var novelAgentConnectionString = builder.Configuration.GetConnectionString("NovelAgentDb")
     ?? (builder.Environment.IsEnvironment("Testing")
         ? "Host=localhost;Database=novel_agent_testing;Username=postgres;Password=postgres"
@@ -96,7 +97,9 @@ var novelAgentConnectionString = builder.Configuration.GetConnectionString("Nove
 builder.Services.AddDbContext<PostgresNovelAgentDbContext>((sp, options) =>
     options
         .UseNpgsql(novelAgentConnectionString)
-        .AddInterceptors(sp.GetRequiredService<UserScopeConnectionInterceptor>()));
+        .AddInterceptors(
+            sp.GetRequiredService<UserScopeConnectionInterceptor>(),
+            sp.GetRequiredService<LegacyControlPlaneWriteGuard>()));
 builder.Services.AddScoped<NovelAgentDbContext>(sp => sp.GetRequiredService<PostgresNovelAgentDbContext>());
 builder.Services.AddNovelAgentPostgresInfrastructure(novelAgentConnectionString);
 builder.Services.AddSingleton<IBackgroundClaimConnectionFactory, BackgroundClaimConnectionFactory>();
@@ -146,6 +149,8 @@ builder.Services.AddScoped<IAgentMemoryEventService, AgentMemoryEventService>();
 builder.Services.AddScoped<IChatHistoryRepository, ChatHistoryRepository>();
 builder.Services.AddScoped<IAgentMemoryContextService, AgentMemoryContextService>();
 builder.Services.AddScoped<ICollaborationMemoryService, CollaborationMemoryService>();
+builder.Services.AddScoped<IMemoryStore, UnifiedMemoryStore>();
+builder.Services.AddScoped<TM.Web.NovelAgentWeb.Services.Context.IAgentContextAssembler, TM.Web.NovelAgentWeb.Services.Context.AgentContextAssembler>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
@@ -186,9 +191,11 @@ builder.Services.AddScoped<ICommitmentAssessmentModelClient, DefaultCommitmentAs
 builder.Services.AddScoped<ICommitmentAssessmentService, CommitmentAssessmentService>();
 builder.Services.AddScoped<TargetArchitectureDirector>();
 builder.Services.AddScoped<IGoalBaselineProvider, GoalBaselineProvider>();
-builder.Services.AddScoped<ICreativeGoalService, CreativeGoalService>();
+builder.Services.AddScoped<ICreativeGoalService>(serviceProvider =>
+    ActivatorUtilities.CreateInstance<CreativeGoalService>(serviceProvider));
 builder.Services.AddScoped<IBookProductionService, BookProductionService>();
-builder.Services.AddScoped<IBookProductionTransitionService, BookProductionTransitionService>();
+builder.Services.AddScoped<IBookProductionTransitionService>(serviceProvider =>
+    ActivatorUtilities.CreateInstance<BookProductionTransitionService>(serviceProvider));
 builder.Services.AddHostedService<BookProductionWorker>();
 builder.Services.AddSingleton<TaskGraphValidator>();
 builder.Services.AddScoped<IGoalCompiler, GoalCompiler>();
@@ -197,12 +204,14 @@ builder.Services.AddScoped<IKernelTaskScheduler, PostgresKernelTaskScheduler>();
 builder.Services.AddScoped<IGoalBudgetService, GoalBudgetService>();
 builder.Services.AddScoped<IGoalControlService, GoalControlService>();
 builder.Services.AddScoped<IGoalProgressEventPublisher, GoalProgressEventPublisher>();
+builder.Services.AddScoped<IGoalProgressEventDelivery, GoalProgressEventDelivery>();
 builder.Services.AddScoped<IModelExecutionRecoveryService, ModelExecutionRecoveryService>();
 builder.Services.AddSingleton<IModelExecutionOutcomeResolver, UnsupportedModelExecutionOutcomeResolver>();
 builder.Services.AddScoped<DomainContractValidator>();
 builder.Services.AddScoped<IKernelArtifactStore, KernelArtifactStore>();
 builder.Services.AddScoped<IDomainReducer, DomainReducer>();
-builder.Services.AddScoped<ICanonBranchService, CanonBranchService>();
+builder.Services.AddScoped<ICanonBranchService>(serviceProvider =>
+    ActivatorUtilities.CreateInstance<CanonBranchService>(serviceProvider));
 builder.Services.AddScoped<IPrefixMergeService, PrefixMergeService>();
 builder.Services.AddScoped<ICanonMergeConflictModelClient, DefaultCanonMergeConflictModelClient>();
 builder.Services.AddScoped<CanonChangeExtractor>();
@@ -387,6 +396,7 @@ builder.Services.AddScoped<EvidenceBundleCompiler>();
 builder.Services.AddScoped<IHybridRetriever, HybridRetriever>();
 builder.Services.AddScoped<SqliteToPostgresImporter>();
 builder.Services.AddScoped<MigrationVerifier>();
+builder.Services.AddScoped<ILegacyExecutionArchiveService, LegacyExecutionArchiveService>();
 builder.Services.AddScoped<TargetArchitectureCutoverService>();
 
 builder.Services.AddSingleton<QdrantHealthCheck>();

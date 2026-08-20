@@ -13,7 +13,7 @@ namespace Tests.Unit.Services.Goals;
 public sealed class GoalProgressEventPublisherTests
 {
     [Fact]
-    public async Task PublishAsync_UsesOwnedSourceSessionAndDoesNotWriteLegacyRuntimeEvents()
+    public async Task PublishAsync_QueuesDurableOutboxWithoutWritingLegacyRuntimeEvents()
     {
         await using var db = CreateDb();
         db.CreativeGoals.Add(new CreativeGoal
@@ -41,14 +41,7 @@ public sealed class GoalProgressEventPublisherTests
             IdempotencyKey = "task-1"
         });
         await db.SaveChangesAsync();
-        var local = new AgentSseEventBus();
-        var fanout = new RecordingFanout();
-        var publisher = new GoalProgressEventPublisher(
-            db,
-            local,
-            fanout,
-            NullLogger<GoalProgressEventPublisher>.Instance);
-        await using var subscription = local.Subscribe("user-1", "session-1", includeBacklog: false);
+        var publisher = new GoalProgressEventPublisher(db);
 
         await publisher.PublishAsync(new GoalProgressEventRequest(
             "user-1",
@@ -57,14 +50,52 @@ public sealed class GoalProgressEventPublisherTests
             "候选正文已完成。",
             TaskId: "task-1"));
 
+        var outbox = Assert.Single(await db.OutboxEvents.ToListAsync());
+        Assert.Equal(GoalProgressEventDelivery.OutboxEventType, outbox.EventType);
+        Assert.Equal("creative_goal", outbox.AggregateType);
+        Assert.Equal("goal-1", outbox.AggregateId);
+        Assert.Contains(AgentSseEventType.GoalTaskCompleted, outbox.PayloadJson);
+        Assert.Empty(await db.AgentRuntimeEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Delivery_UsesStableOutboxIdAndOwnedSourceSession()
+    {
+        await using var db = CreateDb();
+        db.CreativeGoals.Add(new CreativeGoal
+        {
+            Id = "goal-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            SourceSessionId = "session-1",
+            HumanReadableObjective = "写第一章",
+            Status = "running",
+            TotalCostLimit = 10,
+            IdempotencyKey = "goal-1"
+        });
+        await db.SaveChangesAsync();
+        var local = new AgentSseEventBus();
+        var fanout = new RecordingFanout();
+        var delivery = new GoalProgressEventDelivery(db, local, fanout);
+        var outbox = new OutboxEvent
+        {
+            Id = "outbox-1",
+            UserId = "user-1",
+            ProjectId = "project-1",
+            EventType = GoalProgressEventDelivery.OutboxEventType,
+            AggregateType = "creative_goal",
+            AggregateId = "goal-1",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new GoalProgressEventRequest(
+                "user-1", "goal-1", AgentSseEventType.GoalStateChanged, "运行中。"))
+        };
+        await using var subscription = local.Subscribe("user-1", "session-1", includeBacklog: false);
+
+        await delivery.DeliverAsync(outbox);
+
         var evt = await subscription.Reader.ReadAsync();
-        var data = Assert.IsType<GoalProgressEventData>(evt.Data);
-        Assert.Equal(AgentSseEventType.GoalTaskCompleted, evt.Type);
-        Assert.Equal("task-1", evt.StepId);
-        Assert.Equal("goal-1", data.GoalId);
+        Assert.Equal("outbox-1", evt.EventId);
         Assert.Equal("session-1", evt.SessionId);
         Assert.Equal(("user-1", "session-1"), fanout.Scope);
-        Assert.Empty(await db.AgentRuntimeEvents.ToListAsync());
     }
 
     private static NovelAgentDbContext CreateDb()

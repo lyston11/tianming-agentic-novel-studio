@@ -2916,6 +2916,12 @@ details.workflow-production-stage-details:not([open]) > :not(summary),
   border-color: rgba(102, 217, 159, 0.22);
 }
 
+.workflow-creative-inbox-row .ghost-button.compact {
+  padding: 4px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .workflow-production-stage-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

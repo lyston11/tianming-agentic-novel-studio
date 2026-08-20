@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Tianming.NovelAgent.Application.Ports;
+using Tests.Unit.Support;
 using Microsoft.Extensions.Logging.Abstractions;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
@@ -209,7 +211,7 @@ public sealed class CreativeGoalServiceTests
             "models-3",
             "protocols-4",
             "{\"canon\":\"hash-7\"}")),
-        new BookProductionService(db, currentUser, new PassingBookValidationService()));
+        new LegacyControlPlaneCommandTestDouble(db));
     }
 
     private sealed class PassingBookValidationService : IBookValidationService

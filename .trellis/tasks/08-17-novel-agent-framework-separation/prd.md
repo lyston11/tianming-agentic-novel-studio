@@ -11,7 +11,7 @@
 - `MissionPlan`、`NovelAgentOrchestrator`、Runtime/ToolExecution 和旧 Workflow 投影仍存在；旧 Workflow 已有 `legacy_read_only` 语义，需保留作兼容、审计和恢复输入，但不能继续成为新执行模型。
 - Goal 路径与旧 MissionPlan 投影已有初步隔离；旧执行状态不能原地续跑，恢复必须根据正式内容和已确认决策重新形成 Goal。
 - Canon、Knowledge、章节版本和模型完成服务已有可靠接口，可通过 Adapter 复用，不要求重写。
-- 仓库项目与 `global.json` 已迁到 C# / `.NET 10 LTS`，并锁定 EF Core 10、官方 OpenAI .NET SDK 和 MAF adapter；当前交接环境仅安装 `.NET SDK 8.0.127`，无法重新执行锁定为 `10.0.400` 的 .NET 构建和测试。
+- 仓库项目与 `global.json` 已迁到 C# / `.NET 10 LTS`，并锁定 EF Core 10、官方 OpenAI .NET SDK 和 MAF adapter；项目根目录 `.dotnet/` 提供 `10.0.400`，统一通过 `./Scripts/dotnet` 执行构建和测试。
 - PostgreSQL 是生产业务真源；SQLite、Redis、Qdrant 和旧导入路径不能形成第二真源。Redis/Qdrant 只能保存可重建派生数据。
 - 前端使用 React、TypeScript、Vite，已有 REST 与可重放 SSE 基础能力。
 
@@ -122,7 +122,7 @@
 - [ ] AC-5：完成真实“Conversation Proposal → Goal → 单批 DAG → Candidate → 人工验收 → Canon → Workflow 投影”单链路。
 - [~] AC-6：每次模型调用可审计 Provider、模型、Prompt/Schema、Context hash、预算、用量、延迟、重试和 Trace，且无敏感凭据。
 - [~] AC-7：未验收 Candidate 不得进入 Canon；基线冲突、租约失效和人工保护不会产生部分写入或静默覆盖。
-- [ ] AC-8：Goal、Production、Task、Canon 各自只有一个写入入口，Web、Conversation Runtime 和旧运行时不能绕过入口。
+- [~] AC-8：Goal、Production、Task、Canon 各自只有一个写入入口，Web、Conversation Runtime 和旧运行时不能绕过入口。
 - [~] AC-9：聚合、Artifact、Domain Event、StreamEvent、Outbox 的事务边界经故障注入验证。
 - [~] AC-10：Conversation/Workflow SSE 分流，业务事件可断线重放、去重、排序，Token delta 不参与恢复。
 - [~] AC-11：迁移保留正式章节、人物、世界观、伏笔、有效知识和确认决策；旧执行状态只读归档，恢复创建新 Goal。
@@ -134,16 +134,16 @@
 
 ## 当前验收证据与缺口
 
-以下 .NET 通过数来自本任务上一轮已记录的成功运行；本次交接因本机缺少 `.NET SDK 10.0.400` 未能重跑。前端和 diff 检查已在本次交接重新执行，详见 `notes.md`。
+以下 .NET 通过数来自项目本地 `.dotnet/` SDK `10.0.400` 的重跑；前端和 diff 检查详见 `notes.md`。
 
 - AC-1：通过。`AgentArchitecture` 依赖测试 `16/16`，warnings-as-errors build 无警告。
-- AC-2：部分。Legacy archive/recovery 和写入守卫存在；旧 Worker 仍通过 `NovelAgentDbContext` 写共享 `kernel_tasks/outbox_events`，guard 默认关闭。
+- AC-2：部分。Legacy archive/recovery 和写入守卫存在；本轮已迁移 Goal submission/compiler、Workflow batch transition、task-failure progression 和 manual Artifact 兼容入口，但其他遗留控制路径仍存在。
 - AC-3：部分。Proposal 确认、未确认不得启动和幂等测试已覆盖；缺完整真实 Conversation runtime E2E。
 - AC-4：通过合同层。同一 Domain 状态机/DAG 编译合同覆盖三种模式；缺真实 Worker 三模式证据。
 - AC-5：未完成。已有 AcceptanceGate bridge 的 PostgreSQL 证据；缺真实 Worker → Candidate → 验收 → Canon → Projection 单链路。
 - AC-6：部分。Provider-neutral gateway、审计字段和测试 Runtime 已有；缺真实 OpenAI/MAF 全链路证据。
 - AC-7：部分。Candidate/lease/merge 合同已有；缺完整基线冲突、人工保护和故障注入证据。
-- AC-8：未完成。Application 写入口和架构测试已有；旧 Worker ownership 尚未迁移。
+- AC-8：部分。Worker 的 claim/renew/complete/fail、失败推进、dependent unblocking、AcceptanceGate bridge，以及本轮指定的 Goal/Workflow/Artifact compatibility commands 已迁至 `AgentControlDbContext` 并有聚焦测试证据；`GoalControlService` 等其他 legacy 控制路径仍直接写共享控制表，因此全局 guard 仍不能默认开启。
 - AC-9：部分。Acceptance bridge 可幂等重投；缺跨服务崩溃恢复和完整 Outbox 故障注入。
 - AC-10：部分。双 SSE、Envelope、去重和刷新已接线；缺过期游标稳定错误和浏览器 E2E。
 - AC-11：通过合同层；缺真实数据迁移演练。
@@ -182,14 +182,15 @@
 - Draft Knowledge、外部研究和 Agent 总结可能污染 RAG 或 Production 上下文，需要明确权威级别和推广审计。
 - 长篇生成会增加 Context、Candidate、知识版本和索引存储成本。
 - 持久 DAG、Outbox、SSE 重放、租约和多 AgentRun 之间存在竞态、重复投递、乱序和过期上下文风险。
-- 旧 Worker ownership 未收敛前无法默认启用 legacy write guard，AC-5/AC-8 仍受阻塞。
+- Worker ownership 已收敛，但旧 Workflow 写入口尚未迁完；在此之前不能默认启用 legacy write guard，AC-5/AC-8 仍受阻塞。
 - MAF/OpenAI SDK 持续演进，接口泄漏会造成框架版本锁定。
+- 用户于 2026-08-19 要求提交当前实现并归档任务；仍标记为 `[~]` / `[ ]` 的验收项保留为残余缺口，不因归档视为通过。
 
 ## 尚未解决的问题
 
 以下问题不改变已锁定的产品边界，但仍需代码库证据、兼容性探针或后续设计确认：
 
-1. 旧 `PostgresKernelTaskScheduler` 的 claim/complete/fail/renew 和相关 SQL/migration 何时迁入 `AgentControlDbContext`，以及何时默认启用 legacy write guard。
+1. `GoalControlService` pause/resume/cancel/safe-point 及其他遗留 production/recovery Artifact writer 的 Application-owned command 迁移，以及迁移完成后默认启用 legacy write guard。
 2. 真实 Worker → Candidate → 双审 → 人工验收 → Canon merge → Workflow projection 的 Testcontainers/浏览器单链路证据。
 3. Outbox、SSE replay、Canon merge、Task lease 和跨服务崩溃恢复的故障注入证据。
 4. `AcceptPrefix` 并发幂等从 read-before-insert 转为统一 request-result 的实现证据。

@@ -7,10 +7,13 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Canon;
+using TM.Web.NovelAgentWeb.Services.Context;
 using TM.Web.NovelAgentWeb.Services.DomainEvents;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Execution;
 using TM.Web.NovelAgentWeb.Services.Kernels;
+using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Services.Quality;
 using TM.Web.NovelAgentWeb.Services.Rag;
 using Xunit;
@@ -89,7 +92,11 @@ public sealed class KernelContractTests
                 It.IsAny<IReadOnlyList<KernelArtifactProposal>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoalSafePointResult(GoalSafePointDisposition.Continue, []));
-        var router = new KernelTaskExecutionRouter(db, new KernelRegistry([]), reducer, control.Object);
+        var contexts = new AgentContextAssembler(
+            db,
+            Mock.Of<IMemoryStore>(),
+            Mock.Of<IKnowledgeQueryTool>());
+        var router = new KernelTaskExecutionRouter(contexts, new KernelRegistry([]), reducer, control.Object);
 
         var result = await router.ExecuteAsync(claim);
 
@@ -579,8 +586,12 @@ public sealed class KernelContractTests
                 It.IsAny<IReadOnlyList<KernelArtifactProposal>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GoalSafePointResult(GoalSafePointDisposition.Continue, []));
-        var router = new KernelTaskExecutionRouter(
+        var contexts = new AgentContextAssembler(
             db,
+            Mock.Of<IMemoryStore>(),
+            Mock.Of<IKnowledgeQueryTool>());
+        var router = new KernelTaskExecutionRouter(
+            contexts,
             registry,
             reducer,
             control.Object,

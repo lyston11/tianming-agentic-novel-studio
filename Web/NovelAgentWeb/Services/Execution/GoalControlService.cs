@@ -152,7 +152,7 @@ public sealed class GoalControlService : IGoalControlService
         CancellationToken cancellationToken = default)
     {
         IDbContextTransaction? transaction = null;
-        if (_db.Database.IsRelational())
+        if (_db.Database.IsRelational() && _db.Database.CurrentTransaction == null)
             transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var mergedAcceptedPrefix = false;
         var transactionCommitted = false;

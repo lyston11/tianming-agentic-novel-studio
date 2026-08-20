@@ -38,6 +38,7 @@ public static class DependencyInjection
         services.AddScoped<IAgentTool, ConfirmCreativeGoalTool>();
         services.AddScoped<IGoalRepository>(x => x.GetRequiredService<EfAgentControlStore>());
         services.AddScoped<IProductionRepository>(x => x.GetRequiredService<EfAgentControlStore>());
+        services.AddScoped<ILegacyControlPlaneCommands, EfLegacyControlPlaneCommands>();
         services.AddScoped<IAgentEventWriter>(x => x.GetRequiredService<EfAgentControlStore>());
         services.AddScoped<IStreamEventReader>(x => x.GetRequiredService<EfAgentControlStore>());
         services.AddScoped<IWorkflowReadModel, EfWorkflowReadModel>();

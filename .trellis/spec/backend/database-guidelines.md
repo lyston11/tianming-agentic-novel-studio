@@ -1,54 +1,175 @@
 # Database Guidelines
 
-> Database patterns and conventions for this project.
+## Scenario: Novel Agent control plane on shared PostgreSQL tables
 
----
+### 1. Scope / Trigger
 
-## Overview
+Use this contract whenever code changes Goal, Production, KernelTask, Outbox,
+StreamEvent, Conversation, or Canon coordination. `AgentControlDbContext` owns
+the new control-plane writes; `NovelAgentDbContext` remains the legacy read and
+reliable-capability adapter. Both map selected existing PostgreSQL tables, so
+schema ownership and write ownership must stay explicit.
 
-<!--
-Document your project's database conventions here.
+### 2. Signatures
 
-Questions to answer:
-- What ORM/query library do you use?
-- How are migrations managed?
-- What are the naming conventions for tables/columns?
-- How do you handle transactions?
--->
+- Runtime registration: `AddNovelAgentInfrastructure(Action<DbContextOptionsBuilder>)`.
+- Migration context: `AgentControlDbContext` with history table
+  `__AgentControlMigrationsHistory`.
+- Command transaction: `IAgentUnitOfWork.ExecuteAsync<T>(Func<CancellationToken, Task<T>>, CancellationToken)`.
+- Worker completion: `PostgresKernelTaskScheduler.CompleteAsync(KernelTaskClaim, IReadOnlyList<string>, CancellationToken)`.
+- Compatibility command owner: `ILegacyControlPlaneCommands`, including
+  `SubmitGoalAsync`, `PersistCompiledGraphAsync`, `CreateArtifactAsync`,
+  `CreateGoalRevisionAsync`, batch transition, and task-failure operations.
+- Bridge event type: `novel_agent_acceptance_gate_reached`.
+- Bridge payload: `AcceptanceGateReachedPayload(UserId, ProjectId, GoalId,
+  ProductionId, TaskGraphVersionId, TaskId, BranchId)`.
 
-(To be filled by the team)
+### 3. Contracts
 
----
+- Production startup migrates `PostgresNovelAgentDbContext` first and
+  `AgentControlDbContext` second. The contexts use separate migration history
+  tables; neither context may independently create a semantic `_v2` copy of an
+  existing control table.
+- `AgentControlDbContext` is the write owner for `creative_goals`,
+  `goal_revisions`, `book_productions`, `production_batches`,
+  `task_graph_versions`, `kernel_tasks`, `domain_events`, and `outbox_events`.
+  The legacy context may read them and is protected by
+  `LegacyControlPlaneWriteGuard`.
+- Conversation/checkpoint/stream/lease tables are Agent-control-only tables and
+  must be created by the Agent migration assembly with tenant RLS.
+- Web compatibility controllers and services may preserve their public entry
+  points and legacy DTOs, but they only adapt inputs and call
+  `ILegacyControlPlaneCommands`. `EfLegacyControlPlaneCommands` owns EF mapping,
+  validation, and the `AgentControlDbContext` transaction. Do not retain a
+  second Web/legacy-context write beside the command.
+- A confirmed production is persisted as `planned`; its root task is also
+  `planned`. Only `ProductionApplicationService.StartAsync` moves the
+  production and batch to `running` and the root task to `ready`.
+- When the real worker makes an `AcceptanceGate` task `awaiting_user`, the task
+  state and `novel_agent_acceptance_gate_reached` outbox row are committed in
+  the same `AgentControlDbContext` transaction. The outbox consumer verifies
+  task, dependencies, graph, batch, branch, project, and user before calling
+  `ReachAcceptanceGateAsync`.
+- Duplicate bridge delivery is a no-op once Production is
+  `awaiting_acceptance`; it must not append a second domain or stream event.
+- Persisted multiword Production states use snake_case:
+  `awaiting_acceptance` and `merging_canon`. Domain enum names never leak as
+  `awaitingacceptance` or `mergingcanon`.
+- Canon merge remains a cross-DbContext outbox handshake. Never share a fake
+  transaction across the control and Canon write owners.
 
-## Query Patterns
+### 4. Validation & Error Matrix
 
-<!-- How should queries be written? Batch operations? -->
+| Condition | Required result |
+|---|---|
+| Compatibility adapter is constructed without an Application command | Fail with `InvalidOperationException`; never fall back to direct legacy-context writes |
+| Legacy graph has no `GoalRevisionId` | Preserve legacy behavior; do not create the new acceptance bridge event |
+| New graph reaches acceptance without a matching Production/Batch/Branch | Roll back task completion and outbox insertion |
+| Bridge payload scope differs from the outbox row | Reject delivery; do not advance Production |
+| Gate is not `awaiting_user` or dependencies are incomplete | Reject delivery as stale/invalid |
+| Same bridge row is delivered twice | Keep one `ProductionAwaitingAcceptance` event |
+| Canon branch is already `needs_decision` | Route to idempotent Canon rejection; do not call merge again |
+| Migration connection is missing | Fail startup; never migrate with the HTTP application role |
 
-(To be filled by the team)
+### 5. Good / Base / Bad Cases
 
----
+- Good: a legacy Goal confirmation, graph compile, batch transition, or manual
+  Artifact request enters through its existing Web API and commits through one
+  Infrastructure command transaction.
+- Good: worker completes both reviews, scheduler atomically persists the human
+  gate and bridge outbox, dispatcher advances the new Production once.
+- Base: old archived graph reaches its old human gate and no new bridge is
+  emitted because it has no new Goal Revision identity.
+- Bad: a controller, LLM runtime, or frontend writes Production status or marks
+  a task ready directly.
+- Bad: only one migration context is run in tests, hiding missing compatibility
+  columns on shared tables.
 
-## Migrations
+### 6. Tests Required
 
-<!-- How to create and run migrations -->
+- Application/unit: compatibility services pass tenant-scoped command records
+  and do not call `SaveChangesAsync` for control-plane state.
+- Infrastructure/integration: each compatibility command validates user/project
+  ownership and commits all related Goal/Revision/Production/Graph/Task/Artifact
+  changes atomically through `AgentControlDbContext`.
+- PostgreSQL integration: migrate both contexts, run task claim/completion,
+  assert the bridge outbox and final `awaiting_acceptance` Production state,
+  redeliver the same event, and assert one domain event.
+- Application/unit: Proposal confirmation remains `planned` until explicit
+  Start; repeated acceptance-gate delivery is idempotent.
+- Migration: generated SQL must not drop/recreate Canon, Knowledge, Chapter, or
+  existing control tables; new tenant tables must have RLS.
+- Guard: legacy writes to Goal/Production/Task/Artifact are rejected while
+  permitted Canon/Chapter adapters continue to work.
 
-(To be filled by the team)
+### 7. Wrong vs Correct
 
----
+#### Wrong
 
-## Naming Conventions
+```csharp
+gate.Status = "awaiting_user";
+await legacyDb.SaveChangesAsync(ct);
+await productions.ReachAcceptanceGateAsync(userId, productionId, ct);
+```
 
-<!-- Table names, column names, index names -->
+The process can crash between databases and permanently split task and
+Production state.
 
-(To be filled by the team)
+#### Correct
 
----
+```csharp
+gate.Status = "awaiting_user";
+legacyDb.OutboxEvents.Add(AcceptanceGateBridge(gate, production));
+await legacyDb.SaveChangesAsync(ct);
+```
 
-## Common Mistakes
+The dispatcher validates the persisted gate fact and idempotently advances the
+new Production in its own transaction.
 
-<!-- Database-related mistakes your team has made -->
+### Worker ownership cutover and remaining legacy gate
 
-(To be filled by the team)
+`AgentControlDbContext` owns Worker task claim, renew, complete, fail, dependent
+unblocking, failure transitions, and the atomic AcceptanceGate bridge. The
+`claim_kernel_task` function is delivered by the Agent migration history and is
+marked `AgentControlDbContext worker ownership`; the request application role
+cannot execute it.
+
+Required evidence for this boundary:
+
+- `PostgresKernelTaskScheduler` depends on `AgentControlDbContext`, not
+  `NovelAgentDbContext` or a legacy production transition service.
+- Completion and bridge insertion share one Agent-control transaction; lease
+  loss rolls back completion and dependent unblocking.
+- The bridge consumer re-checks user/project/goal/graph/task/dependencies, batch,
+  and branch before calling the new Production application service.
+- Duplicate bridge delivery is a no-op after `ProductionAwaitingAcceptance`.
+- PostgreSQL integration tests cover concurrent claim, expired-lease recovery,
+  renew, complete, fail, bridge delivery, duplicate delivery, and rollback.
+
+### Legacy command ownership cutover and remaining guard gate
+
+The compatibility entry points for Goal submission, Goal compilation, Workflow
+batch transition, task-failure progression, Canon-branch Artifact creation, and
+controller-created manual Artifacts now delegate to `ILegacyControlPlaneCommands`.
+The production implementation is `EfLegacyControlPlaneCommands`; Web adapters
+must not call `SaveChangesAsync` for these mutations or keep a dual-write path.
+
+`TargetArchitecture:EnforceLegacyControlPlaneReadOnly=false` still means the
+repository-wide cutover is incomplete. Other legacy control paths, including
+`GoalControlService` pause/resume/cancel/safe-point handling and remaining
+legacy production/recovery Artifact writers, still mutate shared control tables
+through `NovelAgentDbContext`. Keep the guard disabled until every legitimate
+writer has an Application-owned command; do not narrow the guard or add raw SQL
+or scoped bypasses merely to enable it.
+
+## Naming And Query Conventions
+
+- PostgreSQL tables and columns use snake_case; C# records use PascalCase.
+- Every user-scoped query includes `UserId` and the resource key. RLS is defense
+  in depth, not a replacement for ownership predicates.
+- JSON payload columns use `jsonb`; deserialize at the owning Adapter boundary.
+- Outbox idempotency keys include the stable aggregate/task identity and are
+  unique within user scope.
 
 ## Scenario: Concurrent Proposal confirmation
 

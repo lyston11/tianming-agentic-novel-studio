@@ -840,7 +840,10 @@ function renderRollbackEvidence(rollback?: WorkflowRollbackEvidence | null) {
   );
 }
 
-function renderCreativeInbox(intents: WorkflowCreativeIntentEvidence[]) {
+function renderCreativeInbox(
+  intents: WorkflowCreativeIntentEvidence[],
+  openRecoveryGoal: (intentId: string) => void,
+) {
   const visible = intents
     .filter((intent) => intent.normalizedIntent?.trim())
     .slice(0, 6);
@@ -862,7 +865,15 @@ function renderCreativeInbox(intents: WorkflowCreativeIntentEvidence[]) {
             <article key={intent.intentId} className={`workflow-creative-inbox-row ${intent.status}`}>
               <span>{creativeIntentLabel(intent)}</span>
               <strong title={intent.normalizedIntent}>{intent.normalizedIntent}</strong>
-              <em>{intent.status}</em>
+              {intent.source === 'legacy_recovery' && intent.status === 'candidate' ? (
+                <button
+                  type="button"
+                  className="ghost-button compact"
+                  onClick={() => openRecoveryGoal(intent.intentId)}
+                >
+                  进入会话确认
+                </button>
+              ) : <em>{intent.status}</em>}
             </article>
           ))}
         </div>
@@ -2553,7 +2564,9 @@ export default function WorkflowPage() {
                   </div>
 
                   <div className="workflow-production-dashboard-grid">
-                    {renderCreativeInbox(selectedCreativeIntents)}
+                    {renderCreativeInbox(selectedCreativeIntents, (intentId) => {
+                      navigate(`/agent?recoveryIntentId=${encodeURIComponent(intentId)}`);
+                    })}
                     {renderChapterCanonicalSummary(selectedChapter) ?? (
                       <section className="workflow-chapter-canonical-summary workflow-dashboard-empty-card" aria-label="章节生产链">
                         <div className="workflow-chapter-canonical-head">

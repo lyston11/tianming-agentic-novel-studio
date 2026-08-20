@@ -26,6 +26,7 @@ BACKEND_DIR="$PROJECT_ROOT/Web/NovelAgentWeb"
 FRONTEND_DIR="$PROJECT_ROOT/Web/NovelAgentWeb.Frontend"
 DOCKER_COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
 BACKEND_URL="http://localhost:5002"
+DOTNET="$PROJECT_ROOT/Scripts/dotnet"
 
 # Print functions
 print_header() {
@@ -72,18 +73,12 @@ check_prerequisites() {
 
     local missing_deps=()
 
-    # Check .NET 8
-    if command_exists dotnet; then
-        DOTNET_VERSION=$(dotnet --version | cut -d. -f1)
-        if [ "$DOTNET_VERSION" -ge 8 ]; then
-            print_substep ".NET SDK: $(dotnet --version) ✓"
-        else
-            print_warning ".NET SDK version is $DOTNET_VERSION, but 8.0+ is required"
-            missing_deps+=("dotnet-8")
-        fi
+    # Check the project-local .NET SDK pinned by global.json.
+    if [ -x "$PROJECT_ROOT/.dotnet/dotnet" ]; then
+        print_substep ".NET SDK: $($DOTNET --version) ✓"
     else
-        print_warning ".NET SDK not found"
-        missing_deps+=("dotnet-8")
+        print_warning "Project-local .NET SDK wrapper not found"
+        missing_deps+=("project-local-dotnet-10.0.400")
     fi
 
     # Check Node.js
@@ -130,7 +125,7 @@ check_prerequisites() {
         print_error "Missing required dependencies: ${missing_deps[*]}"
         echo ""
         echo "Please install missing dependencies:"
-        echo "  - .NET 8 SDK: https://dotnet.microsoft.com/download"
+        echo "  - Project-local .NET SDK 10.0.400: run ./Scripts/install-dotnet.sh"
         echo "  - Node.js 18+: https://nodejs.org/"
         echo "  - Docker: https://docs.docker.com/get-docker/"
         echo ""
@@ -148,14 +143,14 @@ run_migrations() {
     cd "$BACKEND_DIR" || error_exit "Backend directory not found: $BACKEND_DIR"
 
     # Check if EF Core tools are installed
-    if ! dotnet ef --version >/dev/null 2>&1; then
+    if ! "$DOTNET" ef --version >/dev/null 2>&1; then
         print_substep "Installing EF Core tools..."
-        dotnet tool install --global dotnet-ef || true
+        "$DOTNET" tool install --global dotnet-ef || true
     fi
 
     # Run migrations
     print_substep "Applying database migrations..."
-    dotnet ef database update --no-build || error_exit "Database migration failed"
+    "$DOTNET" ef database update --no-build || error_exit "Database migration failed"
 
     print_success "Database migrations complete"
     echo ""
@@ -208,13 +203,13 @@ build_backend() {
     cd "$BACKEND_DIR" || error_exit "Backend directory not found: $BACKEND_DIR"
 
     print_substep "Restoring NuGet packages..."
-    dotnet restore || error_exit "NuGet restore failed"
+    "$DOTNET" restore || error_exit "NuGet restore failed"
 
     print_substep "Building in Release mode..."
-    dotnet build -c Release --no-restore || error_exit "Backend build failed"
+    "$DOTNET" build -c Release --no-restore || error_exit "Backend build failed"
 
     print_substep "Publishing backend..."
-    dotnet publish -c Release -o ./publish --no-build || error_exit "Backend publish failed"
+    "$DOTNET" publish -c Release -o ./publish --no-build || error_exit "Backend publish failed"
 
     print_success "Backend build complete"
     echo ""
@@ -297,11 +292,11 @@ display_summary() {
     echo ""
     echo "1. Start the backend:"
     echo "   cd $BACKEND_DIR"
-    echo "   dotnet run --project NovelAgentWeb.csproj --urls $BACKEND_URL"
+    echo "   $DOTNET run --project NovelAgentWeb.csproj --urls $BACKEND_URL"
     echo ""
     echo "   Or use the published version:"
     echo "   cd $BACKEND_DIR/publish"
-    echo "   dotnet NovelAgentWeb.dll"
+    echo "   $DOTNET NovelAgentWeb.dll"
     echo ""
     echo "2. Access the application:"
     echo "   Frontend dev server: http://localhost:3002"

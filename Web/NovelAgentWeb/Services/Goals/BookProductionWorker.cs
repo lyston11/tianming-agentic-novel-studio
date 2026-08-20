@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Services.Auth;
 
@@ -61,17 +62,17 @@ public sealed class BookProductionWorker : BackgroundService
         if (ready == null || string.IsNullOrWhiteSpace(ready.CanonBranchId))
             return false;
 
-        var claimed = await db.ProductionBatches
-            .Where(item =>
-                item.Id == ready.BatchId &&
-                item.UserId == ready.UserId &&
-                (item.Status == "running" ||
-                 (item.Status == "accepting" && item.UpdatedAt < staleAcceptanceBefore)))
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Status, "accepting")
-                .SetProperty(item => item.AcceptanceActor, BookProductionWorkflow.AgentPolicyActor)
-                .SetProperty(item => item.UpdatedAt, DateTime.UtcNow), cancellationToken);
-        if (claimed != 1)
+        var controlPlane = scope.ServiceProvider.GetRequiredService<ILegacyControlPlaneCommands>();
+        var claimed = await controlPlane.BeginBatchAcceptanceAsync(
+            new LegacyBeginBatchAcceptanceCommand(
+                ready.UserId,
+                ready.GoalId,
+                ready.BatchId,
+                ready.CanonBranchId,
+                BookProductionWorkflow.AgentPolicyActor,
+                staleAcceptanceBefore),
+            cancellationToken);
+        if (claimed is null)
             return true;
 
         var backgroundUser = scope.ServiceProvider.GetRequiredService<IBackgroundUserContext>();

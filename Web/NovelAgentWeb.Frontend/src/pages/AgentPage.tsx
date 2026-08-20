@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ApiError,
   confirmGoalWorkflow,
@@ -116,7 +116,11 @@ function isMissingSessionError(err: unknown) {
 export default function AgentPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [input, setInput] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const recoveryIntentId = searchParams.get('recoveryIntentId');
+  const [input, setInput] = useState(() => recoveryIntentId
+    ? `请读取当前项目的 Recovery Goal 提案（${recoveryIntentId}），结合正式内容、知识库和记忆说明可恢复的目标；缺少的目标范围或验收条件先向我确认，不要恢复旧执行记录，也不要在我确认合同前开始生产。`
+    : '');
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState('');
@@ -142,6 +146,13 @@ export default function AgentPage() {
   const lastRuntimeEventIdRef = useRef<Record<string, string>>({});
   const runAnchorMessageIdsRef = useRef<Record<string, string>>({});
   const latestTurnAnchorMessageIdRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!recoveryIntentId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('recoveryIntentId');
+    setSearchParams(next, { replace: true });
+  }, [recoveryIntentId, searchParams, setSearchParams]);
 
   const {
     messages,

@@ -47,6 +47,7 @@ public sealed class DefaultCommitmentAssessmentModelClient : ICommitmentAssessme
             ProjectStateJson.Knowledge 来自唯一只读工具 Knowledge.Query，是当前知识库目录和本轮相关条目的权威快照。
             用户询问知识库有什么时，应在 rationale 中概括 Knowledge.directories 和 Knowledge.items；不得编造快照中不存在的条目。
             讨论创作目标时，应主动利用 Knowledge.items 中的相关事实，并在资料不足时明确指出缺少的知识类型。
+            ProjectStateJson.PendingIntents 是等待用户确认的持久提案。source=legacy_recovery 时，只能基于正式内容、知识库和记忆重新形成 CreativeGoalContract；不得恢复或重放旧 MissionPlan、旧 RuntimeRun 或 pending tool。章节范围、验收条件或授权不明确时必须先提问，并保持 requiresConfirmation=true。
             """;
         var user = JsonSerializer.Serialize(new
         {

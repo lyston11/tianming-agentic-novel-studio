@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Services.Auth;
 
 namespace TM.Web.NovelAgentWeb.Services.Goals;
@@ -20,17 +21,30 @@ public sealed class GoalCompiler : IGoalCompiler
     private readonly ICurrentUserService _currentUser;
     private readonly TaskGraphValidator _validator;
     private readonly IBookProductionService _bookProductions;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public GoalCompiler(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser,
+        TaskGraphValidator validator,
+        IBookProductionService bookProductions,
+        ILegacyControlPlaneCommands controlPlane)
+    {
+        _db = db;
+        _currentUser = currentUser;
+        _validator = validator;
+        _bookProductions = bookProductions;
+        _controlPlane = controlPlane;
+    }
 
     public GoalCompiler(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
         TaskGraphValidator validator,
         IBookProductionService bookProductions)
+        : this(db, currentUser, validator, bookProductions, LegacyControlPlaneCommands.Unconfigured)
     {
-        _db = db;
-        _currentUser = currentUser;
-        _validator = validator;
-        _bookProductions = bookProductions;
     }
 
     public async Task<TaskGraphDefinition> CompileAsync(
@@ -85,7 +99,7 @@ public sealed class GoalCompiler : IGoalCompiler
             .FirstOrDefaultAsync(cancellationToken);
         var currentBatch = await _bookProductions.GetCurrentBatchAsync(goal.Id, cancellationToken);
         var range = new ChapterRange(currentBatch.StartChapterNumber, currentBatch.EndChapterNumber);
-        var branch = await EnsureBatchStateAsync(goal, range, cancellationToken);
+        var branchIdForBatch = await EnsureBatchStateAsync(goal, range, cancellationToken);
         var nextVersion = (await _db.TaskGraphVersions
             .Where(item => item.UserId == userId && item.GoalId == goal.Id)
             .Select(item => (int?)item.Version)
@@ -104,83 +118,56 @@ public sealed class GoalCompiler : IGoalCompiler
                 .ToListAsync(cancellationToken))
                 .ToDictionary(TaskNodeId, StringComparer.Ordinal);
 
+        var graphId = Guid.NewGuid().ToString("N");
+        var createdAt = DateTimeOffset.UtcNow;
         var graphJson = JsonSerializer.Serialize(definition, JsonOptions);
-        var graphVersion = new TaskGraphVersion
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = goal.ProjectId,
-            GoalId = goal.Id,
-            GoalRevisionId = revisionId,
-            Version = nextVersion,
-            Status = "active",
-            GraphJson = graphJson,
-            ContentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(graphJson))).ToLowerInvariant(),
-            CreatedAt = DateTime.UtcNow
-        };
-        if (targetRevision != null)
-        {
-            var trackedRevision = await _db.GoalRevisions.SingleAsync(
-                item => item.Id == targetRevision.Id && item.UserId == userId,
-                cancellationToken);
-            trackedRevision.TaskGraphVersionId = graphVersion.Id;
-        }
-        if (previousGraph != null)
-        {
-            var trackedPreviousGraph = await _db.TaskGraphVersions
-                .SingleAsync(item => item.Id == previousGraph.Id, cancellationToken);
-            trackedPreviousGraph.Status = "superseded";
-
-            var previousNonTerminalTasks = await _db.KernelTasks
-                .Where(task =>
-                    task.TaskGraphVersionId == previousGraph.Id &&
-                    task.Status != "completed" &&
-                    task.Status != "reused" &&
-                    task.Status != "failed" &&
-                    task.Status != "cancelled")
-                .ToListAsync(cancellationToken);
-            foreach (var task in previousNonTerminalTasks)
-            {
-                task.Status = "cancelled";
-                task.LeaseOwner = null;
-                task.LeaseExpiresAt = null;
-                task.UpdatedAt = graphVersion.CreatedAt;
-            }
-        }
-        _db.TaskGraphVersions.Add(graphVersion);
-        _db.KernelTasks.AddRange(nodes.Select((node, index) =>
+        var contentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(graphJson))).ToLowerInvariant();
+        var compiledTasks = nodes.Select((node, index) =>
         {
             previousTasks.TryGetValue(node.Id, out var previousTask);
             var canReuse = revisionId != null &&
                 !invalidatedNodeIds.Contains(node.Id) &&
                 previousTask != null &&
                 previousTask.Status == "completed";
-            return new KernelTask
-            {
-                Id = $"{graphVersion.Id}:{node.Id}",
-                UserId = userId,
-                ProjectId = goal.ProjectId,
-                GoalId = goal.Id,
-                TaskGraphVersionId = graphVersion.Id,
-                BranchId = node.ChapterNumber.HasValue ||
-                    node.TaskType is BookProductionWorkflow.AcceptanceGate or BookProductionWorkflow.PrefixMerge
-                    ? branch.Id
-                    : null,
-                KernelName = node.KernelName,
-                TaskType = node.TaskType,
-                Status = canReuse ? "reused" : node.DependsOn.Count == 0 ? "ready" : "blocked",
-                DependencyTaskIdsJson = JsonSerializer.Serialize(node.DependsOn, JsonOptions),
-                InputArtifactIdsJson = "[]",
-                OutputArtifactIdsJson = canReuse ? previousTask!.OutputArtifactIdsJson : "[]",
-                IdempotencyKey = $"{graphVersion.Id}:{node.Id}",
-                MaxAttempts = KernelTaskFailurePolicy.MaxAttempts(node.TaskType),
-                Priority = index,
-                CreatedAt = graphVersion.CreatedAt,
-                UpdatedAt = graphVersion.CreatedAt
-            };
-        }));
-        await _db.SaveChangesAsync(cancellationToken);
-        await _bookProductions.BindCompiledBatchAsync(goal.Id, graphVersion.Id, branch.Id, cancellationToken);
+            var status = "blocked";
+            if (canReuse)
+                status = "reused";
+            else if (node.DependsOn.Count == 0)
+                status = "ready";
+
+            var branchId = node.ChapterNumber.HasValue ||
+                node.TaskType is BookProductionWorkflow.AcceptanceGate or BookProductionWorkflow.PrefixMerge
+                ? branchIdForBatch
+                : null;
+            return new LegacyCompiledTask(
+                node.Id,
+                node.TaskType,
+                node.KernelName,
+                status,
+                JsonSerializer.Serialize(node.DependsOn, JsonOptions),
+                "[]",
+                canReuse ? previousTask!.OutputArtifactIdsJson : "[]",
+                KernelTaskFailurePolicy.MaxAttempts(node.TaskType),
+                index,
+                node.ChapterNumber,
+                branchId,
+                canReuse);
+        }).ToArray();
+
+        await _controlPlane.PersistCompiledGraphAsync(new LegacyCompiledGraphCommand(
+            userId,
+            goal.ProjectId,
+            goal.Id,
+            revisionId,
+            graphId,
+            nextVersion,
+            graphJson,
+            contentHash,
+            branchIdForBatch,
+            range.Start,
+            range.End,
+            compiledTasks,
+            createdAt), cancellationToken);
         return definition;
     }
 
@@ -199,43 +186,25 @@ public sealed class GoalCompiler : IGoalCompiler
         return CreativeGoalRevisionProjector.Project(committedGoal, revisions);
     }
 
-    private async Task<CanonBranch> EnsureBatchStateAsync(
+    private async Task<string> EnsureBatchStateAsync(
         CreativeGoal goal,
         ChapterRange range,
         CancellationToken cancellationToken)
     {
-        var branch = await _db.CanonBranches.SingleOrDefaultAsync(item =>
-            item.UserId == goal.UserId &&
-            item.ProjectId == goal.ProjectId &&
-            item.GoalId == goal.Id &&
-            item.Status == "active",
-            cancellationToken);
-        if (branch == null)
-        {
-            branch = new CanonBranch
-            {
-                Id = Guid.NewGuid().ToString("N"),
-                UserId = goal.UserId,
-                ProjectId = goal.ProjectId,
-                GoalId = goal.Id,
-                CanonBaselineVersion = goal.CanonBaselineVersion,
-                Status = "active",
-                StartChapterNumber = range.Start,
-                EndChapterNumber = range.End,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-            _db.CanonBranches.Add(branch);
-        }
-        else if (branch.StartChapterNumber == range.Start && branch.EndChapterNumber <= range.End)
-        {
-            branch.EndChapterNumber = range.End;
-            branch.UpdatedAt = DateTime.UtcNow;
-        }
-        else if (branch.StartChapterNumber != range.Start || branch.EndChapterNumber != range.End)
+        var branch = await _db.CanonBranches
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item =>
+                item.UserId == goal.UserId &&
+                item.ProjectId == goal.ProjectId &&
+                item.GoalId == goal.Id &&
+                item.Status == "active",
+                cancellationToken);
+        if (branch is not null &&
+            (branch.StartChapterNumber != range.Start || branch.EndChapterNumber > range.End))
         {
             throw new InvalidOperationException("活动候选分支与 Goal 章节范围不一致。");
         }
+        var branchId = branch?.Id ?? Guid.NewGuid().ToString("N");
 
         var existingNumbers = await _db.Chapters.AsNoTracking()
             .Where(chapter =>
@@ -262,7 +231,8 @@ public sealed class GoalCompiler : IGoalCompiler
             });
         }
 
-        return branch;
+        await _db.SaveChangesAsync(cancellationToken);
+        return branchId;
     }
 
     private static HashSet<string> FindAffectedDescendants(

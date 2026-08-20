@@ -9,6 +9,7 @@ using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Canon;
 using TM.Web.NovelAgentWeb.Services.Content;
+using Tests.Unit.Support;
 using Xunit;
 
 namespace Tests.Unit.Services.Canon;
@@ -21,7 +22,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
         var candidate = await AddCandidateAsync(db, branches, branch.Id, 1, null);
@@ -49,7 +50,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var merger = CreateMerger(db, currentUser);
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
@@ -90,7 +91,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var merger = CreateMerger(db, currentUser);
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
@@ -120,7 +121,7 @@ public sealed class CanonBranchMergeTests
         await db.Database.EnsureCreatedAsync();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
         var candidate = await AddCandidateAsync(db, branches, branch.Id, 1, null);
@@ -154,7 +155,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var merger = CreateMerger(db, currentUser);
         var branch = await branches.CreateAsync("goal-1", 1, 3);
         await AddManualWorkflowTasksAsync(db, branch.Id);
@@ -222,7 +223,10 @@ public sealed class CanonBranchMergeTests
     {
         await using var db = CreateDb();
         await SeedProjectAsync(db);
-        var branches = new CanonBranchService(db, new StubCurrentUserService("user-1"));
+        var branches = new CanonBranchService(
+            db,
+            new StubCurrentUserService("user-1"),
+            new LegacyControlPlaneCommandTestDouble(db));
         var branch = await branches.CreateAsync("goal-1", 1, 3);
         var first = await AddCandidateAsync(db, branches, branch.Id, 1, null);
         var second = await AddCandidateAsync(db, branches, branch.Id, 2, first.Id);
@@ -238,7 +242,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var merger = CreateMerger(db, currentUser);
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
@@ -259,7 +263,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var merger = CreateMerger(db, currentUser);
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
@@ -284,7 +288,7 @@ public sealed class CanonBranchMergeTests
         await using var db = CreateDb();
         await SeedProjectAsync(db);
         var currentUser = new StubCurrentUserService("user-1");
-        var branches = new CanonBranchService(db, currentUser);
+        var branches = new CanonBranchService(db, currentUser, new LegacyControlPlaneCommandTestDouble(db));
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddManualWorkflowTasksAsync(db, branch.Id);
         var candidate = await AddCandidateAsync(db, branches, branch.Id, 1, null);
@@ -344,7 +348,10 @@ public sealed class CanonBranchMergeTests
     {
         await using var db = CreateDb();
         await SeedProjectAsync(db);
-        var branches = new CanonBranchService(db, new StubCurrentUserService("user-1"));
+        var branches = new CanonBranchService(
+            db,
+            new StubCurrentUserService("user-1"),
+            new LegacyControlPlaneCommandTestDouble(db));
         var branch = await branches.CreateAsync("goal-1", 1, 1);
         await AddCandidateAsync(db, branches, branch.Id, 1, null, "human", true);
 

@@ -13,17 +13,20 @@ public sealed class TargetArchitectureCutoverService
     private readonly MigrationVerifier _verifier;
     private readonly IVectorIndexRebuilder _vectors;
     private readonly IBackgroundUserContext _backgroundUsers;
+    private readonly ILegacyExecutionArchiveService _legacyArchives;
 
     public TargetArchitectureCutoverService(
         NovelAgentDbContext db,
         MigrationVerifier verifier,
         IVectorIndexRebuilder vectors,
-        IBackgroundUserContext backgroundUsers)
+        IBackgroundUserContext backgroundUsers,
+        ILegacyExecutionArchiveService legacyArchives)
     {
         _db = db;
         _verifier = verifier;
         _vectors = vectors;
         _backgroundUsers = backgroundUsers;
+        _legacyArchives = legacyArchives;
     }
 
     public async Task<TargetArchitectureCutoverReport> PreflightAndRebuildAsync(
@@ -34,6 +37,7 @@ public sealed class TargetArchitectureCutoverService
     {
         using var userScope = _backgroundUsers.Push(userId);
         var verification = await _verifier.VerifyUserAsync(sqlitePath, userId, cancellationToken);
+        await _legacyArchives.PrepareUserAsync(userId, cancellationToken).ConfigureAwait(false);
         var activeLegacyRuns = await _db.AgentRuntimeRuns.CountAsync(item =>
             item.UserId == userId && ActiveLegacyStatuses.Contains(item.Status), cancellationToken);
         var pendingOutbox = await _db.OutboxEvents.CountAsync(item =>

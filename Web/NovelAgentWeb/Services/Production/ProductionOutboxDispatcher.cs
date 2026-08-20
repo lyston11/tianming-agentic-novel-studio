@@ -11,6 +11,8 @@ using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using TM.Web.NovelAgentWeb.Services.Vectorization;
+using TM.Web.NovelAgentWeb.Services.Goals;
+using TM.Web.NovelAgentWeb.Services.AgentApplication;
 
 namespace TM.Web.NovelAgentWeb.Services.Production;
 
@@ -32,6 +34,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
     private readonly IAgentRuntimeEventService? _runtimeEvents;
     private readonly IBackgroundUserContext? _backgroundUsers;
     private readonly IBackgroundClaimConnectionFactory? _claimConnections;
+    private readonly IGoalProgressEventDelivery? _goalProgress;
+    private readonly INovelAgentOutboxHandler? _novelAgentOutbox;
     private readonly TimeSpan _processingLeaseTimeout;
     private readonly string _processingOwner = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
@@ -47,6 +51,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         IAgentRuntimeEventService? runtimeEvents = null,
         IBackgroundUserContext? backgroundUsers = null,
         IBackgroundClaimConnectionFactory? claimConnections = null,
+        IGoalProgressEventDelivery? goalProgress = null,
+        INovelAgentOutboxHandler? novelAgentOutbox = null,
         TimeSpan? processingLeaseTimeout = null)
     {
         _db = db;
@@ -60,6 +66,8 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
         _runtimeEvents = runtimeEvents;
         _backgroundUsers = backgroundUsers;
         _claimConnections = claimConnections;
+        _goalProgress = goalProgress;
+        _novelAgentOutbox = novelAgentOutbox;
         _processingLeaseTimeout = processingLeaseTimeout ?? DefaultProcessingLeaseTimeout;
         if (_processingLeaseTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(processingLeaseTimeout));
@@ -561,6 +569,20 @@ public sealed class ProductionOutboxDispatcher : IProductionOutboxDispatcher
 
     private async Task DispatchOneAsync(OutboxEvent evt, CancellationToken ct)
     {
+        if (_novelAgentOutbox?.CanHandle(evt) == true)
+        {
+            await _novelAgentOutbox.HandleAsync(evt, ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (evt.EventType == GoalProgressEventDelivery.OutboxEventType && evt.AggregateType == "creative_goal")
+        {
+            if (_goalProgress == null)
+                throw new InvalidOperationException("Goal progress outbox delivery is not registered.");
+            await _goalProgress.DeliverAsync(evt, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (evt.EventType == "project_domain_event" && evt.AggregateType == "domain_event")
         {
             await ValidateProjectDomainEventAsync(evt, ct).ConfigureAwait(false);

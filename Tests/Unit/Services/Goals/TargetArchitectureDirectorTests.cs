@@ -4,8 +4,10 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
+using TM.Web.NovelAgentWeb.Services.Context;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Knowledge;
+using TM.Web.NovelAgentWeb.Services.Kernels;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
 using Xunit;
@@ -59,7 +61,7 @@ public sealed class TargetArchitectureDirectorTests
                 "{}",
                 "{}"));
         var commitments = new RecordingCommitmentService(assessment);
-        var knowledge = new RecordingKnowledgeQueryTool();
+        var contexts = new RecordingAgentContextAssembler(chat);
         var sessions = new AgentSessionManager(db, currentUser, chat);
         var sessionApplication = new AgentSessionApplicationService(
             sessions,
@@ -70,8 +72,7 @@ public sealed class TargetArchitectureDirectorTests
             chat,
             new CollaborationMemoryService(db),
             commitments,
-            knowledge,
-            db);
+            contexts);
 
         var result = await director.TryHandleAsync("session-1", "那就按第二种方案形成三章目标", null, CancellationToken.None);
 
@@ -84,7 +85,7 @@ public sealed class TargetArchitectureDirectorTests
         Assert.Contains("knowledge:user-1:v3", commitments.Request.ProjectStateJson);
         Assert.Equal("Knowledge.Query", result.Response.Knowledge!.ToolName);
         Assert.Equal("retrieve", result.Response.Knowledge.Intent);
-        Assert.Equal("那就按第二种方案形成三章目标", knowledge.Request!.Query);
+        Assert.Equal("那就按第二种方案形成三章目标", contexts.Request!.Query);
         Assert.Empty(await db.CreativeGoals.ToListAsync());
         var dialogueState = Assert.Single(await db.SessionDialogueStates.ToListAsync());
         Assert.Equal(CollaborationMemoryKind.CommitmentJudgment.ToString(), dialogueState.MemoryKind);
@@ -115,18 +116,17 @@ public sealed class TargetArchitectureDirectorTests
         }
     }
 
-    private sealed class RecordingKnowledgeQueryTool : IKnowledgeQueryTool
+    private sealed class RecordingAgentContextAssembler(RecordingChatHistoryRepository chat) : IAgentContextAssembler
     {
-        public string Name => KnowledgeQueryTool.ToolName;
-        public KnowledgeQueryRequest? Request { get; private set; }
+        public AgentContextRequest? Request { get; private set; }
 
-        public Task<KnowledgeQueryResult> ExecuteAsync(
-            KnowledgeQueryRequest request,
+        public Task<AgentContextEnvelope> BuildAsync(
+            AgentContextRequest request,
             CancellationToken cancellationToken = default)
         {
             Request = request;
             var context = new AgentKnowledgeContext(
-                Name,
+                KnowledgeQueryTool.ToolName,
                 "retrieve",
                 "current_project",
                 "knowledge:user-1:v3",
@@ -136,8 +136,29 @@ public sealed class TargetArchitectureDirectorTests
                 [new AgentKnowledgeDirectory("Setting", "设定", 1, ["灯城规则"])],
                 [new AgentKnowledgeItem("knowledge-1", "Setting", "灯城规则", "灯城每夜熄灭一盏灯。", 0.9f, "manual", "imported")],
                 false);
-            return Task.FromResult(new KnowledgeQueryResult(context, [], [], []));
+            var memory = new AgentMemoryBundle(
+                new AgentMemoryContextDto(
+                    new ChatMemoryContext(null, [], chat.Appended.ToArray()),
+                    new SessionMemory(),
+                    new ProjectMemory(),
+                    new AuthorMemory(),
+                    new ExecutionMemory()),
+                []);
+            return Task.FromResult(new AgentContextEnvelope(
+                request.Profile,
+                new AgentProjectContext("project-1", "灯城", "", "", "", "active", 0, 0),
+                null,
+                memory,
+                context,
+                [],
+                chat.Appended.Select(item => new DialogueMessage(item.Role, item.Content)).ToArray(),
+                [new AgentContextSource("knowledge", "knowledge-1", "knowledge:user-1:v3")]));
         }
+
+        public Task<KernelExecutionContext> BuildKernelExecutionAsync(
+            KernelTaskClaim claim,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class RecordingChatHistoryRepository(IReadOnlyList<ChatHistoryTurnDto> initial) : IChatHistoryRepository

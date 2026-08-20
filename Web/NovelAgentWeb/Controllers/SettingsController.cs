@@ -226,14 +226,21 @@ public class SettingsController : ControllerBase
         [FromQuery] string? goalId = null,
         CancellationToken ct = default)
     {
-        var result = await _kernelModels.ResolveAsync(
-            _currentUserService.GetUserId(),
-            projectId,
-            kernelName,
-            preset,
-            goalId,
-            ct);
-        return Ok(result);
+        try
+        {
+            var result = await _kernelModels.ResolveAsync(
+                _currentUserService.GetUserId(),
+                projectId,
+                kernelName,
+                preset,
+                goalId,
+                ct);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return InvalidKernelModelConfiguration(ex);
+        }
     }
 
     [HttpPut("settings/projects/{projectId}/kernel-models/{kernelName}")]
@@ -243,27 +250,39 @@ public class SettingsController : ControllerBase
         [FromBody] KernelModelConfigurationDto dto,
         CancellationToken ct)
     {
-        var saved = await _kernelModels.SaveProjectConfigurationAsync(
-            new KernelModelConfigurationCommand(
-                _currentUserService.GetUserId(),
-                projectId,
-                kernelName,
-                dto.PresetName,
-                dto.Provider,
-                dto.BaseUrl,
-                dto.CredentialReference,
-                dto.Model,
-                dto.Temperature,
-                dto.MaxOutputTokens,
-                dto.TimeoutSeconds,
-                dto.Fallbacks ?? [],
-                dto.CustomInstructions,
-                dto.AdvancedSettingsEnabled,
-                dto.InputPricePerMillion,
-                dto.OutputPricePerMillion),
-            ct);
-        return Ok(saved);
+        try
+        {
+            var saved = await _kernelModels.SaveProjectConfigurationAsync(
+                new KernelModelConfigurationCommand(
+                    _currentUserService.GetUserId(),
+                    projectId,
+                    kernelName,
+                    dto.PresetName,
+                    dto.Provider,
+                    dto.BaseUrl,
+                    dto.CredentialReference,
+                    dto.Model,
+                    dto.Temperature,
+                    dto.MaxOutputTokens,
+                    dto.TimeoutSeconds,
+                    dto.Fallbacks ?? [],
+                    dto.CustomInstructions,
+                    dto.AdvancedSettingsEnabled,
+                    dto.InputPricePerMillion,
+                    dto.OutputPricePerMillion),
+                ct);
+            return Ok(saved);
+        }
+        catch (ArgumentException ex)
+        {
+            return InvalidKernelModelConfiguration(ex);
+        }
     }
+
+    private BadRequestObjectResult InvalidKernelModelConfiguration(ArgumentException exception) =>
+        BadRequest(ApiErrors.BadRequest(
+            exception.Message,
+            code: "KERNEL_MODEL_CONFIGURATION_INVALID"));
 
     private static string MaskKey(string? key)
     {

@@ -44,6 +44,16 @@ public sealed class TargetArchitecturePurityTests
     }
 
     [Fact]
+    public void KernelTaskScheduler_WritesOnlyThroughAgentControlOwner()
+    {
+        var source = Read("Web/NovelAgentWeb/Services/Goals/PostgresKernelTaskScheduler.cs");
+
+        Assert.Contains("AgentControlDbContext", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IBookProductionTransitionService", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GoalCompiler_IsDeterministicAndMovesCreativeAnalysisIntoDurableDag()
     {
         var source = Read("Web/NovelAgentWeb/Services/Goals/GoalCompiler.cs");
@@ -56,12 +66,107 @@ public sealed class TargetArchitecturePurityTests
     }
 
     [Fact]
+    public void Director_ReadsModelContextOnlyThroughContextAssembler()
+    {
+        var source = Read("Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs");
+
+        Assert.Contains("IAgentContextAssembler", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IKnowledgeQueryTool", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProjectCollaborationDecisions", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GoalWorkflowController_SubmitsProductionChangesThroughTransitionService()
+    {
+        var source = Read("Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs");
+
+        Assert.Contains("IBookProductionTransitionService", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IGoalControlService", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IBookProductionService", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LegacyControlPlaneCompatibilityWriters_DelegateWithoutSavingThroughWebDbContext()
+    {
+        var paths = new[]
+        {
+            "Web/NovelAgentWeb/Services/Goals/CreativeGoalService.cs",
+            "Web/NovelAgentWeb/Services/Goals/GoalCompiler.cs",
+            "Web/NovelAgentWeb/Services/Goals/BookProductionTransitionService.cs",
+            "Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs"
+        };
+
+        var forbiddenAdds = new[]
+        {
+            "CreativeGoals.Add",
+            "GoalRevisions.Add",
+            "BookProductions.Add",
+            "ProductionBatches.Add",
+            "TaskGraphVersions.Add",
+            "KernelTasks.Add",
+            "KernelArtifacts.Add"
+        };
+        foreach (var path in paths)
+        {
+            var source = Read(path);
+            Assert.Contains("ILegacyControlPlaneCommands", source, StringComparison.Ordinal);
+            Assert.All(forbiddenAdds, mutation => Assert.DoesNotContain(mutation, source, StringComparison.Ordinal));
+            if (!path.EndsWith("GoalCompiler.cs", StringComparison.Ordinal))
+                Assert.DoesNotContain("SaveChangesAsync", source, StringComparison.Ordinal);
+        }
+
+        var controller = Read("Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs");
+        Assert.DoesNotContain("KernelArtifacts.Add", controller, StringComparison.Ordinal);
+        var branches = Read("Web/NovelAgentWeb/Services/Canon/CanonBranchService.cs");
+        Assert.Contains("CreateArtifactAsync", branches, StringComparison.Ordinal);
+        Assert.DoesNotContain("new KernelArtifact", branches, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GoalProgressPublisher_WritesDurableOutboxWithoutDirectLiveDelivery()
+    {
+        var source = Read("Web/NovelAgentWeb/Services/Goals/GoalProgressEventPublisher.cs");
+        var publisher = source[..source.IndexOf("public interface IGoalProgressEventDelivery", StringComparison.Ordinal)];
+
+        Assert.Contains("_db.OutboxEvents.Add", publisher, StringComparison.Ordinal);
+        Assert.Contains("publish_goal_progress", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AgentSseEventBus", publisher, StringComparison.Ordinal);
+        Assert.DoesNotContain("IAgentRuntimeEventFanout", publisher, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConversationContext_IncludesPendingRecoveryIntents()
+    {
+        var assembler = Read("Web/NovelAgentWeb/Services/Context/AgentContextAssembler.cs");
+        var director = Read("Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs");
+
+        Assert.Contains("item.RequiresConfirmation", assembler, StringComparison.Ordinal);
+        Assert.Contains("AgentPendingIntentContext", assembler, StringComparison.Ordinal);
+        Assert.Contains("context.PendingIntents", director, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void KernelRouter_ReadsExecutionContextOnlyThroughContextAssembler()
+    {
+        var source = Read("Web/NovelAgentWeb/Services/Kernels/KernelTaskExecutionRouter.cs");
+
+        Assert.Contains("IAgentContextAssembler", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("KernelArtifacts.AsNoTracking", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GoalContextSnapshots.AsNoTracking", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void KernelPrompts_AlwaysContainEffectiveGoalContract()
     {
         var router = Read("Web/NovelAgentWeb/Services/Kernels/KernelTaskExecutionRouter.cs");
+        var contexts = Read("Web/NovelAgentWeb/Services/Context/AgentContextAssembler.cs");
         var client = Read("Web/NovelAgentWeb/Services/Kernels/DefaultKernelStructuredModelClient.cs");
 
-        Assert.Contains("CreativeGoalRevisionProjector.Project", router, StringComparison.Ordinal);
+        Assert.Contains("IAgentContextAssembler", router, StringComparison.Ordinal);
+        Assert.DoesNotContain("NovelAgentDbContext", router, StringComparison.Ordinal);
+        Assert.Contains("CreativeGoalRevisionProjector.Project", contexts, StringComparison.Ordinal);
         Assert.Contains("context.GoalContract", client, StringComparison.Ordinal);
         Assert.Contains("context.GoalContract", router, StringComparison.Ordinal);
     }

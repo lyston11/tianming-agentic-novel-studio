@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+dotnet_root="$repo_root/.dotnet"
+dotnet_bin="$dotnet_root/dotnet"
+
+if [ ! -x "$dotnet_bin" ]; then
+  printf '%s\n' "Project-local .NET SDK is missing: $dotnet_bin" >&2
+  printf '%s\n' "Install SDK 10.0.400 into .dotnet/ before running this wrapper." >&2
+  exit 1
+fi
+
+export DOTNET_ROOT="$dotnet_root"
+export PATH="$dotnet_root:$PATH"
+exec "$dotnet_bin" "$@"

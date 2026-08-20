@@ -19,6 +19,7 @@ import type {
   GoalChapterSummaryView,
   GoalChapterManualEditRequest,
 } from '../../../api/types';
+import { useNovelAgentWorkflowStream } from './useNovelAgentWorkflowStream';
 import { useGoalProgressStream } from './useGoalProgressStream';
 
 function latestCandidates(candidates: GoalChapterSummaryView[]) {
@@ -67,6 +68,11 @@ export function useGoalWorkflow(goalId: string) {
 
   const sourceSessionId = statusQuery.data?.goal.sourceSessionId ?? null;
   useGoalProgressStream({ goalId, sessionId: sourceSessionId, onGoalEvent: invalidate });
+  useNovelAgentWorkflowStream({
+    goalId,
+    projectId: statusQuery.data?.goal.projectId,
+    onWorkflowEvent: invalidate,
+  });
 
   const reworkMutation = useMutation({
     mutationFn: ({ chapterNumber, request }: { chapterNumber: number; request: GoalChapterReworkRequest }) =>

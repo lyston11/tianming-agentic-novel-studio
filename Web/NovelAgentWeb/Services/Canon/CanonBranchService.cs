@@ -6,6 +6,7 @@ using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Goals;
+using Tianming.NovelAgent.Application.Ports;
 
 namespace TM.Web.NovelAgentWeb.Services.Canon;
 
@@ -14,11 +15,24 @@ public sealed class CanonBranchService : ICanonBranchService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUser;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
 
-    public CanonBranchService(NovelAgentDbContext db, ICurrentUserService currentUser)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public CanonBranchService(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser,
+        ILegacyControlPlaneCommands controlPlane)
     {
         _db = db;
         _currentUser = currentUser;
+        _controlPlane = controlPlane;
+    }
+
+    public CanonBranchService(
+        NovelAgentDbContext db,
+        ICurrentUserService currentUser)
+        : this(db, currentUser, LegacyControlPlaneCommands.Unconfigured)
+    {
     }
 
     public async Task<CanonBranch> CreateAsync(
@@ -189,8 +203,8 @@ public sealed class CanonBranchService : ICanonBranchService
             CreatedAt = DateTime.UtcNow
         };
         _db.CandidateAcceptances.Add(acceptance);
-        await EnsureAcceptanceArtifactAsync(acceptance, task, actor, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
+        await EnsureAcceptanceArtifactAsync(acceptance, task, actor, cancellationToken);
         return acceptance;
     }
 
@@ -218,7 +232,9 @@ public sealed class CanonBranchService : ICanonBranchService
             throw new InvalidOperationException("候选章节验收主体与批次执行策略不匹配。");
         if (batch.Status is not ("running" or "accepting"))
             throw new InvalidOperationException("当前生产批次不在可验收状态。");
-        return await _db.KernelTasks.SingleOrDefaultAsync(task =>
+        return await _db.KernelTasks
+            .AsNoTracking()
+            .SingleOrDefaultAsync(task =>
             task.UserId == userId &&
             task.GoalId == goalId &&
             task.BranchId == branchId &&
@@ -234,52 +250,33 @@ public sealed class CanonBranchService : ICanonBranchService
         CancellationToken cancellationToken)
     {
         var artifactId = $"acceptance-decision:{acceptance.Id}";
-        var exists = await _db.KernelArtifacts.AnyAsync(item =>
-            item.Id == artifactId &&
-            item.UserId == acceptance.UserId &&
-            item.GoalId == acceptance.GoalId,
-            cancellationToken);
-        if (!exists)
+        var contentJson = JsonSerializer.Serialize(new
         {
-            var contentJson = JsonSerializer.Serialize(new
-            {
-                acceptanceId = acceptance.Id,
-                candidateChapterId = acceptance.CandidateChapterId,
-                candidateVersion = acceptance.CandidateVersion,
-                decision = acceptance.Decision,
-                decidedByUserId = acceptance.DecidedByUserId,
-                decidedAt = acceptance.CreatedAt
-            }, JsonOptions);
-            _db.KernelArtifacts.Add(new KernelArtifact
-            {
-                Id = artifactId,
-                UserId = acceptance.UserId,
-                ProjectId = acceptance.ProjectId,
-                GoalId = acceptance.GoalId,
-                TaskId = task.Id,
-                BranchId = acceptance.BranchId,
-                ArtifactType = "AcceptanceDecision",
-                SchemaVersion = 1,
-                ContentJson = contentJson,
-                ContentHash = Sha256(contentJson),
-                Status = "adopted",
-                Authorship = actor,
-                IsProtected = true,
-                CausationId = acceptance.Id,
-                CreatedAt = acceptance.CreatedAt
-            });
-        }
-        task.OutputArtifactIdsJson = AppendArtifactId(task.OutputArtifactIdsJson, artifactId);
-        task.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
-    }
-
-    private static string AppendArtifactId(string json, string artifactId)
-    {
-        var ids = JsonSerializer.Deserialize<List<string>>(json) ?? [];
-        if (!ids.Contains(artifactId, StringComparer.Ordinal))
-            ids.Add(artifactId);
-        return JsonSerializer.Serialize(ids);
+            acceptanceId = acceptance.Id,
+            candidateChapterId = acceptance.CandidateChapterId,
+            candidateVersion = acceptance.CandidateVersion,
+            decision = acceptance.Decision,
+            decidedByUserId = acceptance.DecidedByUserId,
+            decidedAt = acceptance.CreatedAt
+        }, JsonOptions);
+        await _controlPlane.CreateArtifactAsync(new LegacyArtifactCommand(
+            acceptance.UserId,
+            acceptance.ProjectId,
+            acceptance.GoalId,
+            task.Id,
+            artifactId,
+            acceptance.BranchId,
+            "AcceptanceDecision",
+            1,
+            contentJson,
+            Sha256(contentJson),
+            "adopted",
+            actor,
+            true,
+            null,
+            acceptance.Id,
+            acceptance.CreatedAt,
+            AttachToTaskOutput: true), cancellationToken);
     }
 
     private static string Sha256(string value) =>
