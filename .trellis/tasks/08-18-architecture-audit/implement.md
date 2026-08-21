@@ -1,6 +1,6 @@
 # 小说 Agent 架构实施计划
 
-状态：Executing（Slice 1～4 已通过；Slice 5 Node Pi Runtime 与聊天持久化收口已通过；Slice 6 待实施）
+状态：Executing（Slice 1～6 全部通过并已提交 8c7840eb；剩余为 cutover 前后续任务）
 更新时间：2026-08-21
 
 本计划把项目中立 Conversation、Pi Agent Runtime 和 Agent→Canon 闭环拆成当前任务内的六个顺序切片。用户已允许修改产品代码并明确不创建子任务；在最终规划复核和 `task.py start` 前仍不得修改产品代码。
@@ -115,22 +115,22 @@
 ASP.NET 项目目录与激活 Application contract 已完成并通过 focused Unit/Architecture/frontend checks；Node 薄宿主中的 discovery skill/resource 与两个原生 AgentTool 按设计在 Slice 5 的独立 Runtime 接入中实现。
 
 - [x] 增加 ASP.NET 内部只读项目目录 API，只返回最小元数据并按用户过滤。
-- [ ] 在 Node 薄宿主中提供项目发现 skill/resource 与原生 `list_accessible_projects` AgentTool。（Slice 5）
-- [ ] 让 Agent 输出候选项目卡/结构化候选；唯一候选也不得自动绑定。（Slice 5）
+- [x] 在 Node 薄宿主中提供项目发现 skill/resource 与原生 `list_accessible_projects` AgentTool。（Slice 5：`resources/project-discovery.md` + `src/tools.ts`）
+- [x] 让 Agent 输出候选项目卡/结构化候选；唯一候选也不得自动绑定。（Slice 5：发现 skill 指示展示候选；runtime.test.ts 断言唯一候选不自动绑定）
 - [x] 增加 `activate_project_context` AgentTool 和同源 ASP.NET Application command。（ASP.NET command 已完成；Node tool 在 Slice 5）
 - [x] 绑定输入记录 `sourceUserMessageId` 或 Web 确认动作 ID、idempotency key 和 binding version。
 - [x] ASP.NET 校验用户/Conversation/项目访问权和审计来源，不增加 LLM 语义评分器。
-- [ ] 缺少确认时返回可恢复 `confirmation_required` ToolResult；Pi Loop 继续运行。（Node ToolResult 在 Slice 5）
+- [x] 缺少确认时返回可恢复 `confirmation_required` ToolResult；Pi Loop 继续运行。（Slice 5：runtime.test.ts 断言不触达 ASP.NET 且 Loop 继续）
 - [x] 绑定成功只更新 Session active project context 并追加 `ProjectContextActivated` 审计消息。
-- [ ] `afterToolCall` 或宿主下一回合准备阶段加载 ProjectContextSnapshot 并启用项目工具；不得要求重新创建 Conversation。（Slice 5）
+- [x] 激活成功后同 Run 内刷新 binding/快照并切换工具集；不得要求重新创建 Conversation。（Slice 5：激活后 loadContext + replaceTools，runtime.test.ts 断言）
 
 验收：
 
-- [ ] Agent 可自动发现并展示候选。
-- [ ] 用户确认前无法读取项目业务状态或获得项目写工具。
-- [ ] 未确认不会 abort/terminate Run。
-- [ ] 用户确认后绑定幂等，且无 Goal/Production/Acceptance/Canon 副作用。
-- [ ] 项目无权访问、已删除、版本冲突均返回结构化可恢复结果。
+- [x] Agent 可自动发现并展示候选。（发现工具 + skill；runtime.test.ts）
+- [x] 用户确认前无法读取项目业务状态或获得项目写工具。（Unbound 仅暴露 list/activate；ASP.NET 激活前不加载项目数据）
+- [x] 未确认不会 abort/terminate Run。（confirmation_required 可恢复，Loop 继续）
+- [x] 用户确认后绑定幂等，且无 Goal/Production/Acceptance/Canon 副作用。（激活幂等测试 + E2E 断言绑定无领域副作用）
+- [x] 项目无权访问、已删除、版本冲突均返回结构化可恢复结果。（ActivationResult code 矩阵 + 控制器 HTTP 映射测试）
 
 回滚点：发现工具和绑定工具可以独立禁用；禁用时 Conversation 仍保持通用 Agent 能力，不能回退到创建时 projectId 绑定。
 
@@ -179,9 +179,9 @@ ASP.NET 项目目录与激活 Application contract 已完成并通过 focused Un
 
 ## 最终审计与交接同步
 
-- [ ] 依据实际代码与测试结果重写 `audit-report.md`，删除固定链式 Agent、自动整书启动和“两个子系统已完整”等过时结论。
-- [ ] 将 `handoff-summary.md` 更新为最终实现交接，或在文件顶部明确标记为历史材料并指向权威 PRD/design/report。
-- [ ] 在报告中区分已完成、失败/阻塞和明确延后项，并按 AC-1～AC-16 逐条给出证据。
+- [x] 依据实际代码与测试结果重写 `audit-report.md`，删除固定链式 Agent、自动整书启动和“两个子系统已完整”等过时结论。
+- [x] 将 `handoff-summary.md` 更新为最终实现交接，或在文件顶部明确标记为历史材料并指向权威 PRD/design/report。
+- [x] 在报告中区分已完成、失败/阻塞和明确延后项，并按 AC-1～AC-16 逐条给出证据。
 
 ## 验证命令（实施时按切片收窄）
 
