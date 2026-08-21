@@ -177,6 +177,22 @@ ASP.NET 项目目录与激活 Application contract 已完成并通过 focused Un
 
 回滚点：切片 6 只在前序合同和 Application/Database E2E 通过后接入更外层验证；任何阶段失败都保持 guard 关闭并回滚当前阶段适配，不删除已提交事实、不逆转 Canon 历史。
 
+## P1 后续（2026-08-21 启动）
+
+### AC-15 阶段 2：API/SSE E2E ✅
+
+- [x] `Tests/NovelAgentRegression/E2E/AgentToCanonApiSseE2ETests.cs`：真实 PostgreSQL 容器（双迁移历史 + novelagent_app/worker 角色）、宿主仅启用 ProductionOutboxHostedService、确定性 IConversationTextCompletionPort 脚本化决策；用户动作全部经认证 HTTP API（会话创建→Unbound 回合→显式激活→提案→确认→启动→章节验收→accept-prefix 幂等重）；SSE 会话/工作流流断言携带 ConversationTurnCompleted/GoalProposalCreated/GoalConfirmed/ProductionStarted/ProductionAwaitingAcceptance/CanonPrefixMerged；所有状态断言读 API Read Model/数据库而非 SSE payload；Canon 版本增加且正文可查询；含一次瞬态失败→退避重试。
+
+### Guard preflight：命令基础已落地，rewiring 待续
+
+- [x] 端口新增 6 个命令：PauseGoalAsync/ResumeGoalAsync/CancelGoalAsync/ReachSafePointAsync/PersistReworkGraphAsync（LegacyControlPlanePorts.cs + Unconfigured stub + EfLegacyControlPlaneCommands 实现，保留 Cancel 的 FOR UPDATE 行锁与幂等重试开关）。
+- [x] 盘点结论：BookProductionService 的 InitializeAsync/CompleteBatchAsync/FinalizeMergedBatchAsync/ContinueInteractiveAsync/BindCompiledBatchAsync/ChangeStrategyAsync 均无调用方（已被既有命令化改造取代）→ 直接删除即可，无需迁移。
+- [ ] Rewire：GoalControlService 四路径改调命令（Cancel 新时序：先 prefixMerge/discard 副作用，后命令收口控制面状态，已获架构师批准的原子性边界变化）。
+- [ ] Rewire：ReworkGraphCompiler → PersistReworkGraphAsync（含 graph.GraphJson/ContentHash 与 draft InputArtifactIdsJson 更新）。
+- [ ] Rewire：KernelArtifactStore / PrefixMergeService MergeRecord artifact / ModelExecutionRecoveryService artifact → CreateArtifactAsync。注意 PrefixMerge 的合并证据块还联动修改 workflowTask.OutputArtifactIdsJson（guard 实体），需一并纳入命令或设计跨上下文握手。
+- [ ] 删除 BookProductionService 死代码写入方法并同步接口/DI/测试。
+- [ ] 在 TestWebApplicationFactory 与 AgentToCanonApiSseE2ETests.Factory 启用 `TargetArchitecture:EnforceLegacyControlPlaneReadOnly=true`，全量回归至绿。
+
 ## 最终审计与交接同步
 
 - [x] 依据实际代码与测试结果重写 `audit-report.md`，删除固定链式 Agent、自动整书启动和“两个子系统已完整”等过时结论。

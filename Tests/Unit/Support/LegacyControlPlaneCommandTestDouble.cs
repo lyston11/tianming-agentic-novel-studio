@@ -574,4 +574,108 @@ public sealed class LegacyControlPlaneCommandTestDouble(NovelAgentDbContext db) 
 
     private sealed record Range(int Start, int End);
     private sealed record BookPlan(int BatchSize = 5);
+
+    public async Task<string> PauseGoalAsync(
+        LegacyGoalPauseCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var goal = await db.CreativeGoals.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.Id == command.GoalId, cancellationToken)
+            ?? throw new KeyNotFoundException("Goal 不存在或不属于当前用户。");
+        if (goal.Status is not ("committed" or "running" or "resumed" or "pause_requested"))
+            throw new InvalidOperationException("当前 Goal 状态不能请求暂停。");
+        var hasRunningTask = await db.KernelTasks.AnyAsync(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId && item.Status == "running",
+            cancellationToken);
+        if (hasRunningTask)
+        {
+            goal.Status = "pause_requested";
+        }
+        else
+        {
+            var claimableTasks = await db.KernelTasks.Where(item =>
+                item.UserId == command.UserId &&
+                item.GoalId == command.GoalId &&
+                (item.Status == "queued" || item.Status == "ready"))
+                .ToListAsync(cancellationToken);
+            foreach (var task in claimableTasks)
+                task.Status = "paused";
+            goal.Status = "paused";
+        }
+        var production = await db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
+        if (production != null)
+            production.Status = goal.Status;
+        goal.AggregateVersion++;
+        await db.SaveChangesAsync(cancellationToken);
+        return goal.Status;
+    }
+
+    public async Task ResumeGoalAsync(
+        LegacyGoalResumeCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var goal = await db.CreativeGoals.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.Id == command.GoalId, cancellationToken)
+            ?? throw new KeyNotFoundException("Goal 不存在或不属于当前用户。");
+        if (goal.Status != "paused")
+            throw new InvalidOperationException("只有已到达安全点的暂停 Goal 可以恢复。");
+        var tasks = await db.KernelTasks.Where(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId && item.Status == "paused")
+            .ToListAsync(cancellationToken);
+        foreach (var task in tasks)
+            task.Status = "ready";
+        goal.Status = "resumed";
+        goal.AggregateVersion++;
+        var production = await db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
+        if (production != null)
+            production.Status = "running";
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task CancelGoalAsync(
+        LegacyGoalCancelCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var goal = await db.CreativeGoals.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.Id == command.GoalId, cancellationToken)
+            ?? throw new KeyNotFoundException("Goal 不存在或不属于当前用户。");
+        if (goal.Status is "canceled" or "completed")
+        {
+            if (command.IdempotentRetry)
+                return;
+            throw new InvalidOperationException("Goal 已经结束，不能重复取消。");
+        }
+        var branch = await db.CanonBranches.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
+        if (branch != null && command.FinalBranchStatus is not null)
+            branch.Status = command.FinalBranchStatus;
+        var pendingTasks = await db.KernelTasks.Where(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId &&
+            (item.Status == "queued" || item.Status == "ready" || item.Status == "blocked" ||
+             item.Status == "paused" || item.Status == "running"))
+            .ToListAsync(cancellationToken);
+        foreach (var task in pendingTasks)
+            task.Status = "canceled";
+        goal.Status = "canceled";
+        goal.AggregateVersion++;
+        var production = await db.BookProductions.SingleOrDefaultAsync(item =>
+            item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
+        if (production != null)
+        {
+            production.Status = "canceled";
+            production.AggregateVersion++;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<LegacySafePointResult> ReachSafePointAsync(
+        LegacySafePointCommand command,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new LegacySafePointResult("Continue", []));
+
+    public Task PersistReworkGraphAsync(
+        LegacyReworkGraphCommand command,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

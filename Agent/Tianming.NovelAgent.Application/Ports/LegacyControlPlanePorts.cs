@@ -41,6 +41,26 @@ public interface ILegacyControlPlaneCommands
     Task ApplyTaskFailureAsync(
         LegacyTaskFailureCommand command,
         CancellationToken cancellationToken = default);
+
+    Task<string> PauseGoalAsync(
+        LegacyGoalPauseCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task ResumeGoalAsync(
+        LegacyGoalResumeCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task CancelGoalAsync(
+        LegacyGoalCancelCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task<LegacySafePointResult> ReachSafePointAsync(
+        LegacySafePointCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task PersistReworkGraphAsync(
+        LegacyReworkGraphCommand command,
+        CancellationToken cancellationToken = default);
 }
 
 public static class LegacyControlPlaneCommands
@@ -87,6 +107,26 @@ public static class LegacyControlPlaneCommands
 
         public Task ApplyTaskFailureAsync(
             LegacyTaskFailureCommand command,
+            CancellationToken cancellationToken = default) => Missing();
+
+        public Task<string> PauseGoalAsync(
+            LegacyGoalPauseCommand command,
+            CancellationToken cancellationToken = default) => Missing<string>();
+
+        public Task ResumeGoalAsync(
+            LegacyGoalResumeCommand command,
+            CancellationToken cancellationToken = default) => Missing();
+
+        public Task CancelGoalAsync(
+            LegacyGoalCancelCommand command,
+            CancellationToken cancellationToken = default) => Missing();
+
+        public Task<LegacySafePointResult> ReachSafePointAsync(
+            LegacySafePointCommand command,
+            CancellationToken cancellationToken = default) => Missing<LegacySafePointResult>();
+
+        public Task PersistReworkGraphAsync(
+            LegacyReworkGraphCommand command,
             CancellationToken cancellationToken = default) => Missing();
 
         private static Task Missing() => Task.FromException(Error());
@@ -235,6 +275,76 @@ public sealed record LegacyTaskFailureCommand(
     string GoalId,
     string GoalStatus,
     string ProductionStatus);
+
+public sealed record LegacyGoalPauseCommand(
+    string UserId,
+    string GoalId);
+
+public sealed record LegacyGoalResumeCommand(
+    string UserId,
+    string GoalId);
+
+public sealed record LegacyGoalCancelCommand(
+    string UserId,
+    string GoalId,
+    string? FinalBranchStatus,
+    bool IdempotentRetry);
+
+public sealed record LegacySafePointArtifact(
+    string ArtifactType,
+    int SchemaVersion,
+    string ContentJson,
+    string ContentHash,
+    string Authorship,
+    bool IsProtected);
+
+public sealed record LegacySafePointCommand(
+    string UserId,
+    string ProjectId,
+    string GoalId,
+    string TaskId,
+    string? BranchId,
+    string LeaseOwner,
+    IReadOnlyList<LegacySafePointArtifact> Artifacts);
+
+public sealed record LegacySafePointResult(
+    string Disposition,
+    IReadOnlyList<string> ArtifactIds);
+
+public sealed record LegacyReworkGraphIntentArtifact(
+    string ArtifactId,
+    string TaskId,
+    string? BranchId,
+    string ArtifactType,
+    int SchemaVersion,
+    string ContentJson,
+    string ContentHash,
+    string Status,
+    string Authorship);
+
+public sealed record LegacyReworkTask(
+    string Id,
+    string TaskType,
+    string KernelName,
+    string Status,
+    string DependencyTaskIdsJson,
+    string InputArtifactIdsJson,
+    string OutputArtifactIdsJson,
+    string IdempotencyKey,
+    int MaxAttempts,
+    int Priority);
+
+public sealed record LegacyReworkGraphCommand(
+    string UserId,
+    string ProjectId,
+    string GoalId,
+    string GraphId,
+    string UpdatedGraphJson,
+    string UpdatedGraphContentHash,
+    string DraftTaskId,
+    string DraftInputArtifactIdsJson,
+    LegacyReworkGraphIntentArtifact IntentArtifact,
+    IReadOnlyList<LegacyReworkTask> Tasks);
 
 public sealed record LegacyBookValidationArtifact(
     string ContentJson,
