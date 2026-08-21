@@ -445,6 +445,56 @@ if (app.Environment.IsEnvironment("Testing"))
     var db = scope.ServiceProvider.GetRequiredService<NovelAgentDbContext>();
     // The test host uses an isolated SQLite connection and materializes the current model.
     db.Database.EnsureCreated();
+
+    // The control-plane context shares the same test database. Production keeps
+    // the two models aligned on shared tables through Agent migrations that
+    // ALTER TABLE ADD COLUMN IF NOT EXISTS; mirror that here:
+    // 1. create agent-only tables,
+    // 2. add agent-owned columns missing from the legacy model's shared tables,
+    // 3. create indexes last so they can reference patched columns.
+    // A standalone options builder keeps script generation on a single-provider
+    // internal service provider, isolated from the application's mixed registrations.
+    var agentConnection = (Microsoft.Data.Sqlite.SqliteConnection)db.Database.GetDbConnection();
+    await using var agentDb = new AgentControlDbContext(
+        new DbContextOptionsBuilder<AgentControlDbContext>().UseSqlite(agentConnection).Options);
+    var agentScript = agentDb.Database.GenerateCreateScript()
+        .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
+        .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", StringComparison.Ordinal)
+        .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
+    var createTables = new List<string>();
+    var createIndexes = new List<string>();
+    foreach (var statement in agentScript.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (statement.Length == 0)
+            continue;
+        if (statement.StartsWith("CREATE TABLE", StringComparison.Ordinal))
+            createTables.Add(statement);
+        else if (statement.StartsWith("CREATE", StringComparison.Ordinal))
+            createIndexes.Add(statement);
+    }
+    foreach (var statement in createTables)
+        await agentDb.Database.ExecuteSqlRawAsync(statement);
+
+    foreach (var entityType in agentDb.Model.GetEntityTypes())
+    {
+        var table = entityType.GetTableName();
+        if (table is null || !SqliteTableExists(agentConnection, table))
+            continue;
+        var existingColumns = SqliteColumns(agentConnection, table);
+        foreach (var property in entityType.GetProperties())
+        {
+            var column = property.GetColumnName(Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier.Table(table, null));
+            if (column is null || existingColumns.Contains(column))
+                continue;
+            var notNull = property.IsNullable ? "" : SqliteColumnDefault(property.GetColumnType());
+            await agentDb.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {property.GetColumnType()}{notNull}");
+            existingColumns.Add(column);
+        }
+    }
+
+    foreach (var statement in createIndexes)
+        await agentDb.Database.ExecuteSqlRawAsync(statement);
 }
 else
 {
@@ -543,6 +593,35 @@ static string? CommandLineValue(string[] commandLineArgs, string name)
     return commandLineArgs
         .FirstOrDefault(argument => argument.StartsWith(prefix, StringComparison.Ordinal))
         ?[prefix.Length..];
+}
+
+static bool SqliteTableExists(Microsoft.Data.Sqlite.SqliteConnection connection, string table)
+{
+    using var command = connection.CreateCommand();
+    command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name";
+    command.Parameters.AddWithValue("$name", table);
+    return command.ExecuteScalar() is not null;
+}
+
+static HashSet<string> SqliteColumns(Microsoft.Data.Sqlite.SqliteConnection connection, string table)
+{
+    using var command = connection.CreateCommand();
+    command.CommandText = "SELECT name FROM pragma_table_info($table)";
+    command.Parameters.AddWithValue("$table", table);
+    using var reader = command.ExecuteReader();
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    while (reader.Read())
+        columns.Add(reader.GetString(0));
+    return columns;
+}
+
+static string SqliteColumnDefault(string storeType)
+{
+    // SQLite requires a non-NULL default when adding a NOT NULL column.
+    var normalized = storeType.ToLowerInvariant();
+    if (normalized.Contains("char") || normalized.Contains("text") || normalized.Contains("json"))
+        return " DEFAULT ''";
+    return " DEFAULT 0";
 }
 
 // Make Program class accessible to tests - must be public for WebApplicationFactory

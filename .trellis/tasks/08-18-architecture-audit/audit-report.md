@@ -94,12 +94,11 @@ type-check/test/build/冒烟、双提供方迁移前向+回滚脚本、`task.py 
 ## 4. 建议（P0/P1/P2，区分已实施/待实施/延后）
 
 ### 已实施（本任务）
-- P0：FK 插入顺序、bridge 终态幂等（§2）。
+- P0：FK 插入顺序、bridge 终态幂等；E2E 工厂未替换 AgentControlDbContext 导致 legacy 章节验收在无本地 PostgreSQL 的环境必然失败（连接拒绝被 Npgsql 归类为瞬态错误）——已将控制面上下文接入同一 SQLite 测试库并按生产语义补齐共享表列漂移与 agent 专有表，`GoalWorkflowApiTests` 恢复通过。
 - P1：freeze 重试预算、project_context_activations RLS（§2）。
 - P2：Pi 包版本锚定；聊天持久化单一真源收口。
 
 ### 待实施（cutover 前，建议下一任务）
-- **P0**：修复 `GoalWorkflow_ChapterEvidence_ReworkAndAcceptanceAreUserScopedAndIdempotent`（Npgsql transient 包装的章节验收 400；干净 HEAD 复现）。该路径属 legacy chapter evidence 流，是 cutover 回归门的一部分。
 - **P1**：API/SSE E2E 与 Playwright 浏览器 E2E（Slice 6 顺序验证的第二、三阶段）。
 - **P1**：剩余合法 legacy writer（GoalControlService 控制面、recovery Artifact writers）迁移后启用 `EnforceLegacyControlPlaneReadOnly` preflight。
 - **P2**：退役 `TargetArchitectureDirector`/`ChatHistoryRepository`/`AgentTurnCoordinator` 等迁移期代码；WorkflowPage 切换到新链路。
@@ -134,7 +133,7 @@ type-check/test/build/冒烟、双提供方迁移前向+回滚脚本、`task.py 
 
 ## 6. 已知问题与风险
 
-1. **历史缺陷（P0，先于本任务）**：legacy 章节验收 API 在 Npgsql Serializable 事务下返回 transient-failure 400。干净 HEAD（80a19384）确定性复现，与本任务改动无关。cutover 前必须根因修复并回归。
+1. ~~历史缺陷：legacy 章节验收 API 返回 transient-failure 400~~ **已修复（2026-08-21）**：根因是 E2E 工厂从未替换 `AddNovelAgentPostgresInfrastructure` 注册的 `AgentControlDbContext`，控制面写入在无本地 PostgreSQL 的环境必然失败（连接拒绝被 Npgsql 归类为瞬态错误）；且两模型在共享表上存在列漂移（生产由 Agent 迁移 `ADD COLUMN IF NOT EXISTS` 补齐）。修复：测试宿主将控制面上下文接入同一 SQLite 库，启动时按生产语义物化 agent 专有表、补齐共享表缺失列后再建索引（`TestWebApplicationFactory` + `Program.cs` Testing 分支）。
 2. **活跃 Run 跨请求 steering**：HTTP 协议每请求新建 Run；跨请求 steering/follow-up 需要活跃 Run 注册表，留待 API/SSE 层验证阶段一并设计。
 3. **迁移期双入口**：`/agent/chat` 兼容入口与 WorkflowPage 仍在服务旧前端面；已证明只写权威存储，但退役前仍是维护面。
 

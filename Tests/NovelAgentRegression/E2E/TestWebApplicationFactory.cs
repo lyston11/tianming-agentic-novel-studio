@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
+using Tianming.NovelAgent.Infrastructure.Persistence;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.Caching;
 using TM.Web.NovelAgentWeb.Services.Production;
@@ -63,6 +64,21 @@ public class TestWebApplicationFactory : WebApplicationFactory<TM.Web.NovelAgent
             services.AddDbContext<NovelAgentDbContext>(options =>
             {
                 options.UseSqlite(_connection);
+            });
+
+            // The control-plane context must share the same test database as the
+            // legacy context: production registers it against PostgreSQL, and
+            // without this replacement every ILegacyControlPlaneCommands call
+            // (e.g. chapter-acceptance artifacts) tries a live connection.
+            // EF Core 8+ keeps provider configuration as IDbContextOptionsConfiguration
+            // singletons that plain options removal does not clear.
+            services.RemoveAll<DbContextOptions<AgentControlDbContext>>();
+            services.RemoveAll<AgentControlDbContext>();
+            services.RemoveAll(typeof(Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptionsConfiguration<AgentControlDbContext>));
+            services.AddDbContext<AgentControlDbContext>((serviceProvider, options) =>
+            {
+                options.UseSqlite(_connection);
+                options.AddInterceptors(serviceProvider.GetRequiredService<AgentUserScopeConnectionInterceptor>());
             });
 
             services.RemoveAll<IVectorStore>();

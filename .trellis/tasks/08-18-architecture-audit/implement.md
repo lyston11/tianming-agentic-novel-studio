@@ -173,7 +173,7 @@ ASP.NET 项目目录与激活 Application contract 已完成并通过 focused Un
 3. bridge 事件在 production 已 Completed 后重投递会抛状态机异常；ReachAcceptanceGateAsync 对终态改为幂等 no-op。
 4. Slice 4 新增的 project_context_activations 表缺租户 RLS；新增 Web PostgreSQL 迁移 20260822000000 补齐 tenant_isolation 策略（前向/回滚脚本已验证）。
 
-已知历史遗留（先于本任务的未提交改动，在干净 HEAD 上确定性复现）：`GoalWorkflowApiTests.GoalWorkflow_ChapterEvidence_ReworkAndAcceptanceAreUserScopedAndIdempotent` 章节验收返回 Npgsql transient-failure 包装的 400；属 legacy chapter evidence 流，须在 cutover 前根因修复。
+已知历史遗留（已修复，2026-08-21）：`GoalWorkflowApiTests.GoalWorkflow_ChapterEvidence_ReworkAndAcceptanceAreUserScopedAndIdempotent` 章节验收返回 Npgsql transient-failure 包装的 400。根因：E2E 工厂从未替换 `AddNovelAgentPostgresInfrastructure` 注册的 `AgentControlDbContext`，控制面写入在无本地 PostgreSQL 的环境必然失败；且两模型在共享表上存在列漂移（生产由 Agent 迁移补列）。修复：测试宿主将控制面上下文接入同一 SQLite 库，启动时物化 agent 专有表、补齐共享表缺失列后再建索引。
 
 回滚点：切片 6 只在前序合同和 Application/Database E2E 通过后接入更外层验证；任何阶段失败都保持 guard 关闭并回滚当前阶段适配，不删除已提交事实、不逆转 Canon 历史。
 
