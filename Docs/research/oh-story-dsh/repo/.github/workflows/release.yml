@@ -1,0 +1,38 @@
+name: Release Candidate
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Verify and pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chrome for the official DSH Web smoke
+        run: pnpm exec playwright install --with-deps chrome
+      - run: pnpm verify:release
+      - run: pnpm pack:release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: oh-story-dsh-${{ github.ref_name }}
+          path: release/*.tgz
+          if-no-files-found: error

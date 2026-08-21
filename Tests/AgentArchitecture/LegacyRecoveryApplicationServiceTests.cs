@@ -109,7 +109,7 @@ public sealed class LegacyRecoveryApplicationServiceTests
 
         public Task SaveTurnAsync(
             string userId,
-            string projectId,
+            string? projectId,
             string sessionId,
             string idempotencyKey,
             string userMessageId,

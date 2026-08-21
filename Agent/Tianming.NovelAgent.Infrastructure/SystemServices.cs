@@ -47,7 +47,7 @@ public sealed class NullTransientAgentStream : ITransientAgentStream
 {
     public Task PublishTokenDeltaAsync(
         string userId,
-        string projectId,
+        ConversationBinding binding,
         string sessionId,
         string correlationId,
         string delta,

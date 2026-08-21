@@ -40,6 +40,7 @@ public sealed class NovelAgentResourceAuthorizer(NovelAgentDbContext db) : INove
         var exists = await db.AgentSessions.AsNoTracking().AnyAsync(session =>
             session.Id == sessionId &&
             session.UserId == userId &&
+            !session.IsArchived &&
             (projectId == null || session.ProjectId == projectId),
             cancellationToken);
         if (!exists)

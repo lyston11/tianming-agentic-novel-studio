@@ -146,6 +146,32 @@ export interface AppendNovelAgentTurnRequest {
   attachmentIds?: string[] | null;
 }
 
+export interface AccessibleProjectCatalogItem {
+  projectId: string;
+  title: string;
+  status: string;
+  updatedAt: string;
+  description?: string | null;
+}
+
+export interface ActivateNovelAgentProjectContextRequest {
+  projectId: string;
+  idempotencyKey: string;
+  expectedBindingVersion: number;
+  sourceUserMessageId?: string | null;
+  confirmationActionId?: string | null;
+}
+
+export interface ProjectContextActivationResult {
+  code: string;
+  succeeded: boolean;
+  recoverable: boolean;
+  message: string;
+  projectId?: string | null;
+  bindingVersion: number;
+  confirmedAt?: string | null;
+}
+
 export interface NovelAgentConversationDecision {
   kind: NovelAgentConversationDecisionKind;
   message: string;
@@ -267,7 +293,7 @@ export interface NovelAgentEventEnvelope<TData = unknown> {
   occurredAt: string;
   correlationId: string;
   causationId?: string | null;
-  projectId: string;
+  projectId: string | null;
   sessionId?: string | null;
   goalId?: string | null;
   productionId?: string | null;

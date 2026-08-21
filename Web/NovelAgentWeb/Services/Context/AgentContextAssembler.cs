@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
@@ -29,8 +31,41 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
         AgentContextRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (request.Profile != AgentContextProfile.Conversation)
-            throw new NotSupportedException($"上下文 Profile 尚未接入：{request.Profile}");
+        var snapshot = await BuildProjectSnapshotAsync(
+                new ProjectContextSnapshotRequest(
+                    request.UserId,
+                    request.ProjectId,
+                    request.SessionId,
+                    null,
+                    request.Query,
+                    request.KnowledgeLimit),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var dialogue = new List<DialogueMessage>();
+        if (!string.IsNullOrWhiteSpace(snapshot.Memory.Structured.Chat.MetaSummary))
+            dialogue.Add(new DialogueMessage("context", snapshot.Memory.Structured.Chat.MetaSummary));
+        dialogue.AddRange(snapshot.Memory.Structured.Chat.RecentSummaries
+            .Select(item => new DialogueMessage("context", item.Content)));
+        dialogue.AddRange(snapshot.Memory.Structured.Chat.RecentMessages
+            .Select(item => new DialogueMessage(item.Role, item.Content)));
+
+        return new AgentContextEnvelope(
+            request.Profile,
+            snapshot.Project,
+            snapshot.LatestGoal,
+            snapshot.Memory,
+            snapshot.Knowledge,
+            snapshot.PendingIntents,
+            dialogue,
+            snapshot.Sources);
+    }
+
+    public async Task<ProjectContextSnapshot> BuildProjectSnapshotAsync(
+        ProjectContextSnapshotRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureProjectScope(request.UserId, request.ProjectId, request.SessionId);
 
         var project = await _db.NovelProjects.AsNoTracking()
             .Where(item => item.Id == request.ProjectId && item.UserId == request.UserId)
@@ -42,19 +77,25 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
                 item.CoreHook ?? string.Empty,
                 item.Status,
                 item.WordCount,
-                _db.Chapters.Count(chapter => chapter.ProjectId == item.Id)))
+                _db.Chapters.Count(chapter => chapter.ProjectId == item.Id),
+                item.UpdatedAt))
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false)
             ?? throw new KeyNotFoundException("项目不存在或不属于当前用户。");
 
-        var latestGoal = await _db.CreativeGoals.AsNoTracking()
-            .Where(item => item.UserId == request.UserId && item.ProjectId == request.ProjectId)
+        var goalQuery = _db.CreativeGoals.AsNoTracking()
+            .Where(item => item.UserId == request.UserId && item.ProjectId == request.ProjectId);
+        if (!string.IsNullOrWhiteSpace(request.GoalId))
+            goalQuery = goalQuery.Where(item => item.Id == request.GoalId);
+
+        var latestGoal = await goalQuery
             .OrderByDescending(item => item.CreatedAt)
             .Select(item => new AgentGoalContext(
                 item.Id,
                 item.Status,
                 item.CollaborationMode,
-                item.HumanReadableObjective))
+                item.HumanReadableObjective,
+                item.AggregateVersion))
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -86,18 +127,11 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
                 item.NormalizedIntent,
                 item.TargetScope,
                 item.Status,
-                item.MetadataJson))
+                item.MetadataJson,
+                item.UpdatedAt))
             .Take(12)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-
-        var dialogue = new List<DialogueMessage>();
-        if (!string.IsNullOrWhiteSpace(memory.Structured.Chat.MetaSummary))
-            dialogue.Add(new DialogueMessage("context", memory.Structured.Chat.MetaSummary));
-        dialogue.AddRange(memory.Structured.Chat.RecentSummaries
-            .Select(item => new DialogueMessage("context", item.Content)));
-        dialogue.AddRange(memory.Structured.Chat.RecentMessages
-            .Select(item => new DialogueMessage(item.Role, item.Content)));
 
         var sources = memory.Records
             .Select(item => new AgentContextSource(
@@ -111,18 +145,40 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
             .Concat(pendingIntents.Select(item => new AgentContextSource(
                 $"intent:{item.Source}",
                 item.Id,
-                item.Status)))
-            .Append(new AgentContextSource("project", project.Id, project.Status))
-            .ToArray();
+                item.UpdatedAt.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture))))
+            .Append(new AgentContextSource(
+                "project",
+                project.Id,
+                project.UpdatedAt.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(request.BindingVersion))
+        {
+            sources.Add(new AgentContextSource(
+                "binding",
+                request.SessionId,
+                request.BindingVersion));
+        }
+        if (latestGoal != null)
+        {
+            sources.Add(new AgentContextSource(
+                "goal",
+                latestGoal.Id,
+                latestGoal.AggregateVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
 
-        return new AgentContextEnvelope(
-            request.Profile,
+        var allowedTools = new[]
+        {
+            _knowledge.Name,
+            "confirm_creative_goal"
+        };
+        return new ProjectContextSnapshot(
+            CalculateContextVersion(sources),
             project,
             latestGoal,
             memory,
             knowledge.Context,
             pendingIntents,
-            dialogue,
+            allowedTools,
             sources);
     }
 
@@ -130,13 +186,20 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
         KernelTaskClaim claim,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(claim.ProjectId))
+            throw new InvalidOperationException("Kernel execution requires a project id.");
+
         var task = await _db.KernelTasks.AsNoTracking().SingleAsync(item =>
             item.Id == claim.TaskId &&
             item.UserId == claim.UserId &&
+            item.ProjectId == claim.ProjectId &&
             item.TaskGraphVersionId == claim.TaskGraphVersionId,
             cancellationToken);
         var graphTasks = await _db.KernelTasks.AsNoTracking()
-            .Where(item => item.UserId == claim.UserId && item.TaskGraphVersionId == claim.TaskGraphVersionId)
+            .Where(item =>
+                item.UserId == claim.UserId &&
+                item.ProjectId == claim.ProjectId &&
+                item.TaskGraphVersionId == claim.TaskGraphVersionId)
             .ToListAsync(cancellationToken);
         var byNodeId = graphTasks.ToDictionary(TaskNodeId, StringComparer.Ordinal);
         var dependencyNodeIds = JsonSerializer.Deserialize<string[]>(task.DependencyTaskIdsJson) ?? [];
@@ -154,7 +217,10 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
         var inputArtifacts = artifactIds.Count == 0
             ? []
             : await _db.KernelArtifacts.AsNoTracking()
-                .Where(artifact => artifact.UserId == claim.UserId && artifactIds.Contains(artifact.Id))
+                .Where(artifact =>
+                    artifact.UserId == claim.UserId &&
+                    artifact.ProjectId == claim.ProjectId &&
+                    artifactIds.Contains(artifact.Id))
                 .Select(artifact => new KernelInputArtifact(
                     artifact.Id,
                     artifact.ArtifactType,
@@ -168,7 +234,9 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
             throw new InvalidOperationException("依赖 Artifact 缺失或不属于当前用户。");
 
         var snapshot = await _db.GoalContextSnapshots.AsNoTracking().SingleAsync(item =>
-            item.UserId == claim.UserId && item.GoalId == claim.GoalId,
+            item.UserId == claim.UserId &&
+            item.ProjectId == claim.ProjectId &&
+            item.GoalId == claim.GoalId,
             cancellationToken);
         var goalContract = await LoadGoalContractAsync(claim, cancellationToken).ConfigureAwait(false);
         return new KernelExecutionContext(claim, snapshot, goalContract, inputArtifacts);
@@ -181,10 +249,13 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
         var graph = await _db.TaskGraphVersions.AsNoTracking().SingleAsync(item =>
             item.Id == claim.TaskGraphVersionId &&
             item.UserId == claim.UserId &&
+            item.ProjectId == claim.ProjectId &&
             item.GoalId == claim.GoalId,
             cancellationToken);
         var committedGoal = await _db.CreativeGoals.AsNoTracking().SingleAsync(item =>
-            item.Id == claim.GoalId && item.UserId == claim.UserId,
+            item.Id == claim.GoalId &&
+            item.UserId == claim.UserId &&
+            item.ProjectId == claim.ProjectId,
             cancellationToken);
         int? targetRevisionNumber = null;
         if (graph.GoalRevisionId != null)
@@ -193,7 +264,8 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
                 .Where(item =>
                     item.Id == graph.GoalRevisionId &&
                     item.GoalId == claim.GoalId &&
-                    item.UserId == claim.UserId)
+                    item.UserId == claim.UserId &&
+                    item.ProjectId == claim.ProjectId)
                 .Select(item => (int?)item.RevisionNumber)
                 .SingleAsync(cancellationToken)
                 ?? throw new InvalidOperationException("任务图关联的 Goal Revision 缺少版本号。");
@@ -203,6 +275,7 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
                 .Where(item =>
                     item.GoalId == claim.GoalId &&
                     item.UserId == claim.UserId &&
+                    item.ProjectId == claim.ProjectId &&
                     item.RevisionNumber <= targetRevisionNumber.Value)
                 .OrderBy(item => item.RevisionNumber)
                 .ToListAsync(cancellationToken)
@@ -219,6 +292,28 @@ public sealed class AgentContextAssembler : IAgentContextAssembler
             goal.MustNotChangeJson,
             goal.AcceptancePolicyJson,
             goal.ReworkPolicyJson);
+    }
+
+    private static string CalculateContextVersion(IReadOnlyList<AgentContextSource> sources)
+    {
+        var material = string.Join(
+            '\n',
+            sources
+                .OrderBy(item => item.SourceType, StringComparer.Ordinal)
+                .ThenBy(item => item.SourceId, StringComparer.Ordinal)
+                .Select(item => $"{item.SourceType}:{item.SourceId}:{item.Version}"));
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+        return $"ctx-{hash[..24].ToLowerInvariant()}";
+    }
+
+    private static void EnsureProjectScope(string userId, string projectId, string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("A user id is required.", nameof(userId));
+        if (string.IsNullOrWhiteSpace(projectId))
+            throw new ArgumentException("A project id is required.", nameof(projectId));
+        if (string.IsNullOrWhiteSpace(sessionId))
+            throw new ArgumentException("A session id is required.", nameof(sessionId));
     }
 
     private static string TaskNodeId(KernelTask task)

@@ -43,8 +43,8 @@ public sealed class AgentSessionApplicationService : IAgentSessionApplicationSer
     public Task RemoveRuntimeSessionAsync(string sessionId, CancellationToken ct = default) =>
         _runtime.RemoveSessionAsync(sessionId, ct);
 
-    public Task<AgentSessionResponse> GetOrCreateSessionAsync(string? sessionId, string userId, string? projectId, string? idempotencyKey, CancellationToken cancellationToken = default) =>
-        _persistence.GetOrCreateSessionAsync(sessionId, userId, projectId, idempotencyKey, cancellationToken);
+    public Task<AgentSessionResponse> CreateUnboundSessionAsync(string userId, string? idempotencyKey, CancellationToken cancellationToken = default) =>
+        _persistence.CreateUnboundSessionAsync(userId, idempotencyKey, cancellationToken);
     public Task<AgentSessionResponse> GetSessionByIdAsync(string sessionId, string userId, bool isAdmin, CancellationToken cancellationToken = default) =>
         _persistence.GetSessionByIdAsync(sessionId, userId, isAdmin, cancellationToken);
     public Task<List<AgentSessionResponse>> ListUserSessionsAsync(string userId, bool isAdmin, bool includeArchived = false, CancellationToken cancellationToken = default) =>

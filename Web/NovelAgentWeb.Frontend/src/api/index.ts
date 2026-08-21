@@ -47,6 +47,9 @@ import type {
   GoalWorkflowStatusView,
   DirectorTurnView,
   AppendNovelAgentTurnRequest,
+  AccessibleProjectCatalogItem,
+  ActivateNovelAgentProjectContextRequest,
+  ProjectContextActivationResult,
   ConfirmNovelAgentProposalRequest,
   ConfirmNovelAgentProposalResult,
   NovelAgentConversationTurnResult,
@@ -386,12 +389,31 @@ export const continueGoalBatch = (goalId: string) =>
 
 // Novel Agent application boundary
 export const appendNovelAgentTurn = (
-  projectId: string,
   sessionId: string,
   request: AppendNovelAgentTurnRequest,
 ) => api<NovelAgentConversationTurnResult>(
-  `/novel-agent/conversations/${encodeURIComponent(sessionId)}/turns?projectId=${encodeURIComponent(projectId)}`,
+  `/novel-agent/conversations/${encodeURIComponent(sessionId)}/turns`,
   { method: 'POST', body: JSON.stringify(request) },
+);
+
+export const listAccessibleNovelAgentProjects = () =>
+  get<AccessibleProjectCatalogItem[]>('/novel-agent/projects/accessible');
+
+export const activateNovelAgentProjectContext = (
+  sessionId: string,
+  request: ActivateNovelAgentProjectContextRequest,
+) => api<ProjectContextActivationResult>(
+  `/novel-agent/conversations/${encodeURIComponent(sessionId)}/project-context/activate`,
+  {
+    method: 'POST',
+    headers: { 'Idempotency-Key': request.idempotencyKey },
+    body: JSON.stringify({
+      projectId: request.projectId,
+      expectedBindingVersion: request.expectedBindingVersion,
+      sourceUserMessageId: request.sourceUserMessageId,
+      confirmationActionId: request.confirmationActionId,
+    }),
+  },
 );
 
 export const confirmNovelAgentProposal = (
@@ -438,8 +460,8 @@ export const sendChat = (req: AgentChatRequest) =>
     body: JSON.stringify(req),
   });
 
-export const createAgentSession = (projectId?: string | null) =>
-  api<AgentSessionInfo>(`/agent/session${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`, {
+export const createAgentSession = () =>
+  api<AgentSessionInfo>('/agent/session', {
     method: 'POST',
     headers: { 'Idempotency-Key': buildActionIdempotencyKey('agent-session') },
   });

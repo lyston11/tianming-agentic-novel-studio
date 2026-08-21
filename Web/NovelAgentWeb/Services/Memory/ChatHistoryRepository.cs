@@ -321,7 +321,7 @@ namespace TM.Web.NovelAgentWeb.Services.Memory;
         {
             Id = sessionId,
             UserId = userId,
-            ProjectId = string.IsNullOrWhiteSpace(projectId) ? null : projectId,
+            ProjectId = null,
             Title = "新会话",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

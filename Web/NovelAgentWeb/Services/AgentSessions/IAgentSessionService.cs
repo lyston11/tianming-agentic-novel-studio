@@ -9,13 +9,11 @@ namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 public interface IAgentSessionService
 {
     /// <summary>
-    /// Get or create a session for the current user.
-    /// If sessionId is null, creates a new session.
+    /// Create an unbound session for the current user.
+    /// Project binding is a separate explicit context-activation operation.
     /// </summary>
-    Task<AgentSessionResponse> GetOrCreateSessionAsync(
-        string? sessionId,
+    Task<AgentSessionResponse> CreateUnboundSessionAsync(
         string userId,
-        string? projectId,
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
 

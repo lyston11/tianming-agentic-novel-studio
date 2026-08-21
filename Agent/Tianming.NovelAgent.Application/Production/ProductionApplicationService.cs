@@ -28,6 +28,12 @@ public sealed class ProductionApplicationService(
         var current = await GetAsync(userId, productionId, cancellationToken);
         if (current.Status == Tianming.NovelAgent.Domain.Production.ProductionStatus.AwaitingAcceptance)
             return;
+        // Duplicate acceptance-gate deliveries must stay no-ops even after the
+        // production reached a terminal state through a later user merge.
+        if (current.Status is Tianming.NovelAgent.Domain.Production.ProductionStatus.Completed
+            or Tianming.NovelAgent.Domain.Production.ProductionStatus.Failed
+            or Tianming.NovelAgent.Domain.Production.ProductionStatus.Cancelled)
+            return;
         await ChangeAsync(
             userId,
             productionId,

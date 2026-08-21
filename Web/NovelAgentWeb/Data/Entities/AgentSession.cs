@@ -10,6 +10,7 @@ public class AgentSession
     public string Id { get; set; } = null!;
     public string UserId { get; set; } = null!;
     public string? ProjectId { get; set; }
+    public long BindingVersion { get; set; }
     public string? IdempotencyKey { get; set; }
     public string Title { get; set; } = "新会话";
     public bool IsArchived { get; set; } = false;
@@ -23,4 +24,5 @@ public class AgentSession
     public NovelProject? Project { get; set; }
     public ICollection<AgentChatTurn> ChatTurns { get; set; } = new List<AgentChatTurn>();
     public ICollection<AgentChatSummary> ChatSummaries { get; set; } = new List<AgentChatSummary>();
+    public ICollection<ProjectContextActivation> ProjectContextActivations { get; set; } = new List<ProjectContextActivation>();
 }

@@ -373,6 +373,7 @@ namespace Tests.Unit.Services.Memory;
         {
             await setupDb.Database.EnsureCreatedAsync();
             setupDb.Users.Add(new User { Id = "user-1", Username = "u", Email = "u@example.com", PasswordHash = "h", Role = "author" });
+            setupDb.NovelProjects.Add(new NovelProject { Id = "project-1", UserId = "user-1", Title = "Project" });
             await setupDb.SaveChangesAsync();
         }
 
@@ -383,9 +384,10 @@ namespace Tests.Unit.Services.Memory;
             Mock.Of<IMemoryCacheService>(),
             NullLogger<ChatHistoryRepository>.Instance);
 
-        await repo.AppendAsync("user-1", null, "session-new", "user", "第一条消息", CancellationToken.None);
+        await repo.AppendAsync("user-1", "project-1", "session-new", "user", "第一条消息", CancellationToken.None);
 
-        Assert.True(await db.AgentSessions.AnyAsync(s => s.Id == "session-new" && s.UserId == "user-1"));
+        var createdSession = await db.AgentSessions.SingleAsync(s => s.Id == "session-new");
+        Assert.Null(createdSession.ProjectId);
         Assert.True(await db.AgentChatTurns.AnyAsync(t => t.SessionId == "session-new" && t.TurnIndex == 1));
     }
 

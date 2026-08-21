@@ -38,16 +38,14 @@ public sealed class NovelAgentApplicationController(
     [HttpPost("conversations/{sessionId}/turns")]
     public async Task<ActionResult<ConversationTurnResult>> AppendTurn(
         string sessionId,
-        [FromQuery] string projectId,
         [FromBody] AppendConversationTurnRequest request,
         CancellationToken cancellationToken)
     {
         var userId = currentUser.GetUserId();
         using var _ = userScope.Enter(userId);
-        await resources.RequireConversationAsync(userId, sessionId, projectId, cancellationToken);
+        await resources.RequireConversationAsync(userId, sessionId, null, cancellationToken);
         return Ok(await conversations.AppendTurnAsync(
             userId,
-            projectId,
             sessionId,
             request,
             cancellationToken));

@@ -17,7 +17,7 @@ namespace TM.Web.NovelAgentWeb.MigrationsPostgres
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.11")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1152,6 +1152,13 @@ namespace TM.Web.NovelAgentWeb.MigrationsPostgres
                     b.Property<string>("Id")
                         .HasColumnType("text")
                         .HasColumnName("id");
+
+                    b.Property<long>("BindingVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("binding_version");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -5544,6 +5551,68 @@ namespace TM.Web.NovelAgentWeb.MigrationsPostgres
                     b.ToTable("project_collaboration_decisions", (string)null);
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectContextActivation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<long>("BindingVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("binding_version");
+
+                    b.Property<string>("ConfirmationActionId")
+                        .HasColumnType("text")
+                        .HasColumnName("confirmation_action_id");
+
+                    b.Property<DateTime>("ConfirmedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("confirmed_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<long>("PreviousBindingVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("previous_binding_version");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourceUserMessageId")
+                        .HasColumnType("text")
+                        .HasColumnName("source_user_message_id");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId", "BindingVersion")
+                        .IsUnique()
+                        .HasDatabaseName("idx_project_context_activations_version");
+
+                    b.HasIndex("SessionId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("idx_project_context_activations_idempotency");
+
+                    b.ToTable("project_context_activations", (string)null);
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectDesignRule", b =>
                 {
                     b.Property<string>("Id")
@@ -7601,6 +7670,17 @@ namespace TM.Web.NovelAgentWeb.MigrationsPostgres
                     b.Navigation("Project");
                 });
 
+            modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectContextActivation", b =>
+                {
+                    b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.AgentSession", "Session")
+                        .WithMany("ProjectContextActivations")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Session");
+                });
+
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.ProjectFactSnapshot", b =>
                 {
                     b.HasOne("TM.Web.NovelAgentWeb.Data.Entities.Chapter", "Chapter")
@@ -7796,6 +7876,8 @@ namespace TM.Web.NovelAgentWeb.MigrationsPostgres
                     b.Navigation("ChatSummaries");
 
                     b.Navigation("ChatTurns");
+
+                    b.Navigation("ProjectContextActivations");
                 });
 
             modelBuilder.Entity("TM.Web.NovelAgentWeb.Data.Entities.Chapter", b =>

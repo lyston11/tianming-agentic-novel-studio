@@ -58,6 +58,7 @@ using Tianming.NovelAgent.Application.Workflow;
 using Tianming.NovelAgent.Infrastructure;
 using Tianming.NovelAgent.Infrastructure.Persistence;
 using TM.Web.NovelAgentWeb.Services.AgentApplication;
+using TM.Web.NovelAgentWeb.Services.Agent;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -151,6 +152,7 @@ builder.Services.AddScoped<IAgentMemoryContextService, AgentMemoryContextService
 builder.Services.AddScoped<ICollaborationMemoryService, CollaborationMemoryService>();
 builder.Services.AddScoped<IMemoryStore, UnifiedMemoryStore>();
 builder.Services.AddScoped<TM.Web.NovelAgentWeb.Services.Context.IAgentContextAssembler, TM.Web.NovelAgentWeb.Services.Context.AgentContextAssembler>();
+builder.Services.AddScoped<TM.Web.NovelAgentWeb.Services.Context.IConversationContextAssembler, TM.Web.NovelAgentWeb.Services.Context.ConversationContextAssembler>();
 builder.Services.AddScoped<ChatHistoryCompressor>();
 
 // Register Authentication Services
@@ -288,14 +290,31 @@ builder.Services.AddScoped<IBookValidationService, BookValidationService>();
 builder.Services.AddScoped<IChapterProductionLeaseService, ChapterProductionLeaseService>();
 builder.Services.AddScoped<IWritingModelCompletionService, DefaultWritingModelCompletionService>();
 builder.Services.AddScoped<IConversationTextCompletionPort, LegacyConversationTextCompletionAdapter>();
-builder.Services.AddScoped<IConversationAgentRuntime, StructuredConversationAgentRuntime>();
+builder.Services.Configure<PiRuntimeOptions>(builder.Configuration.GetSection(PiRuntimeOptions.SectionName));
+builder.Services.AddScoped<IPiRuntimeContextProvider, PiRuntimeContextProvider>();
+if (builder.Configuration.GetValue<bool>($"{PiRuntimeOptions.SectionName}:Enabled"))
+{
+    builder.Services.AddHttpClient<IConversationAgentRuntime, PiConversationAgentRuntime>((serviceProvider, client) =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<PiRuntimeOptions>>().Value;
+        client.BaseAddress = new Uri($"{options.BaseUrl.TrimEnd('/')}/", UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+    });
+}
+else
+{
+    builder.Services.AddScoped<IConversationAgentRuntime, StructuredConversationAgentRuntime>();
+}
 builder.Services.AddScoped<ConversationApplicationService>();
+builder.Services.AddScoped<ProjectContextApplicationService>();
+builder.Services.AddScoped<IProjectContextStore, ProjectContextStoreAdapter>();
 builder.Services.AddScoped<LegacyRecoveryApplicationService>();
 builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowCommandPort>(sp => sp.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<ProductionApplicationService>();
 builder.Services.AddScoped<ILegacyProjectSnapshotReader, LegacyProjectSnapshotReaderAdapter>();
 builder.Services.AddScoped<INovelAgentResourceAuthorizer, NovelAgentResourceAuthorizer>();
+builder.Services.AddScoped<IConversationSessionBindingReader, ConversationSessionBindingReaderAdapter>();
 builder.Services.AddScoped<INovelAgentOutboxHandler, NovelAgentOutboxHandler>();
 builder.Services.AddScoped<IAgentEditorialReviewModelClient, DefaultAgentEditorialReviewModelClient>();
 builder.Services.AddScoped<IChapterContinuityFactPersister, StoryBibleChapterContinuityFactPersister>();

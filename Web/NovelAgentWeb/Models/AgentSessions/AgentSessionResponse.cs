@@ -11,6 +11,7 @@ public class AgentSessionResponse
     public string Title { get; set; } = "新会话";
     public string Phase { get; set; } = "idle";
     public string ActiveProjectId { get; set; } = string.Empty;
+    public long BindingVersion { get; set; }
     public string? ActiveRunId { get; set; }
     public bool IsArchived { get; set; }
     public IReadOnlyList<string> RunHistory { get; set; } = Array.Empty<string>();

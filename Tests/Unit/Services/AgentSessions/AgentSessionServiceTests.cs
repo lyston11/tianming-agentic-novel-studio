@@ -1,4 +1,7 @@
+using Microsoft.Data.Sqlite;
+using Moq;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.Data;
@@ -8,79 +11,124 @@ using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using Xunit;
-
+using Tianming.NovelAgent.Application.Ports;
+using Tianming.NovelAgent.Contracts.Conversation;
+using Tianming.NovelAgent.Domain.Goals;
 namespace Tests.Unit.Services.AgentSessions;
 
 public class AgentSessionServiceTests
 {
     [Fact]
-    public async Task GetOrCreateSessionAsync_ReturnsFrontendContractFields()
+    public async Task CreateUnboundSessionAsync_ReturnsFrontendContractFieldsAndPersistsNoProjectBinding()
     {
         await using var db = CreateDb();
         var service = CreateService(db);
 
-        var response = await service.GetOrCreateSessionAsync(
-            null,
+        var response = await service.CreateUnboundSessionAsync(
             "user-1",
-            "project-1",
             idempotencyKey: null,
             CancellationToken.None);
 
-        Assert.Equal("project-1", response.ActiveProjectId);
+        Assert.Equal(string.Empty, response.ActiveProjectId);
         Assert.Null(response.ActiveRunId);
         Assert.Empty(response.Messages);
         Assert.NotNull(response.Memory);
         Assert.Equal(0, response.MessageCount);
+        var session = await db.AgentSessions.SingleAsync();
+        Assert.Null(session.ProjectId);
         Assert.DoesNotContain(
             response.GetType().GetProperties().Select(p => p.Name),
             name => string.Equals(name, "SessionData", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task GetOrCreateSessionAsync_WithSameIdempotencyKey_ReturnsExistingSession()
+    public async Task CreateUnboundSessionAsync_WithSameIdempotencyKey_ReturnsExistingSession()
     {
         await using var db = CreateDb();
         var service = CreateService(db);
 
-        var first = await service.GetOrCreateSessionAsync(
-            null,
+        var first = await service.CreateUnboundSessionAsync(
             "user-1",
-            "project-1",
             idempotencyKey: "session-create-key-001",
             CancellationToken.None);
-        var second = await service.GetOrCreateSessionAsync(
-            null,
+        var second = await service.CreateUnboundSessionAsync(
             "user-1",
-            "project-1",
             idempotencyKey: "session-create-key-001",
             CancellationToken.None);
 
         Assert.Equal(first.SessionId, second.SessionId);
         var session = await db.AgentSessions.SingleAsync();
         Assert.Equal("session-create-key-001", session.IdempotencyKey);
+        Assert.Null(session.ProjectId);
     }
 
     [Fact]
-    public async Task GetOrCreateSessionAsync_WithDifferentIdempotencyKeys_CreatesDifferentSessions()
+    public async Task CreateUnboundSessionAsync_WhenCompetingInsertWins_ReturnsWinner()
+    {
+        var connectionString = $"Data Source=session-race-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Foreign Keys=False";
+        await using var keepAlive = new SqliteConnection(connectionString);
+        await keepAlive.OpenAsync();
+        var setupOptions = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(keepAlive)
+            .Options;
+        await using (var setup = new NovelAgentDbContext(setupOptions))
+        {
+            await setup.Database.EnsureCreatedAsync();
+        }
+
+        const string idempotencyKey = "session-create-race-001";
+        const string winningSessionId = "winning-session";
+        var competitorOptions = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .Options;
+        var interceptor = new BeforeFirstSaveInterceptor(async cancellationToken =>
+        {
+            await using var competitor = new NovelAgentDbContext(competitorOptions);
+            competitor.AgentSessions.Add(new AgentSession
+            {
+                Id = winningSessionId,
+                UserId = "user-1",
+                ProjectId = null,
+                IdempotencyKey = idempotencyKey,
+                Title = "新会话"
+            });
+            await competitor.SaveChangesAsync(cancellationToken);
+        });
+        var losingOptions = new DbContextOptionsBuilder<NovelAgentDbContext>()
+            .UseSqlite(connectionString)
+            .AddInterceptors(interceptor)
+            .Options;
+        await using var losingDb = new NovelAgentDbContext(losingOptions);
+        var service = CreateService(losingDb);
+
+        var response = await service.CreateUnboundSessionAsync(
+            "user-1",
+            idempotencyKey,
+            CancellationToken.None);
+
+        Assert.Equal(winningSessionId, response.SessionId);
+        var session = await losingDb.AgentSessions.SingleAsync();
+        Assert.Null(session.ProjectId);
+    }
+
+    [Fact]
+    public async Task CreateUnboundSessionAsync_WithDifferentIdempotencyKeys_CreatesDifferentSessions()
     {
         await using var db = CreateDb();
         var service = CreateService(db);
 
-        var first = await service.GetOrCreateSessionAsync(
-            null,
+        var first = await service.CreateUnboundSessionAsync(
             "user-1",
-            "project-1",
             idempotencyKey: "session-create-key-001",
             CancellationToken.None);
-        var second = await service.GetOrCreateSessionAsync(
-            null,
+        var second = await service.CreateUnboundSessionAsync(
             "user-1",
-            "project-1",
             idempotencyKey: "session-create-key-002",
             CancellationToken.None);
 
         Assert.NotEqual(first.SessionId, second.SessionId);
         Assert.Equal(2, await db.AgentSessions.CountAsync());
+        Assert.All(await db.AgentSessions.ToListAsync(), session => Assert.Null(session.ProjectId));
     }
 
     [Fact]
@@ -97,18 +145,11 @@ public class AgentSessionServiceTests
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         });
-        db.AgentChatTurns.Add(new AgentChatTurn
-        {
-            Id = "turn-1",
-            UserId = "user-1",
-            ProjectId = "project-1",
-            SessionId = "session-1",
-            TurnIndex = 1,
-            Role = "user",
-            Content = "hello"
-        });
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var service = CreateService(db, new ConversationRuntimeMessageRecord(
+            "turn-1",
+            UserRecord("hello"),
+            DateTimeOffset.UtcNow));
 
         var response = await service.ListUserSessionsAsync("user-1", isAdmin: false, cancellationToken: CancellationToken.None);
 
@@ -131,31 +172,18 @@ public class AgentSessionServiceTests
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         });
-        db.AgentChatTurns.AddRange(
-            new AgentChatTurn
-            {
-                Id = "turn-user-1",
-                UserId = "user-1",
-                ProjectId = "project-1",
-                SessionId = "session-1",
-                TurnIndex = 1,
-                Role = "user",
-                Content = "继续第二章",
-                CreatedAt = new DateTime(2026, 6, 24, 14, 0, 0, DateTimeKind.Utc)
-            },
-            new AgentChatTurn
-            {
-                Id = "turn-agent-1",
-                UserId = "user-1",
-                ProjectId = "project-1",
-                SessionId = "session-1",
-                TurnIndex = 2,
-                Role = "assistant",
-                Content = "第二章正在处理",
-                CreatedAt = new DateTime(2026, 6, 24, 14, 0, 0, DateTimeKind.Utc)
-            });
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var createdAt = new DateTimeOffset(2026, 6, 24, 14, 0, 0, TimeSpan.Zero);
+        var service = CreateService(
+            db,
+            new ConversationRuntimeMessageRecord(
+                "turn-user-1",
+                new ConversationRuntimeMessage("user", "继续第二章"),
+                createdAt),
+            new ConversationRuntimeMessageRecord(
+                "turn-agent-1",
+                AssistantEnvelope("第二章正在处理"),
+                createdAt.AddSeconds(1)));
 
         var response = await service.GetSessionByIdAsync(
             "session-1",
@@ -178,7 +206,7 @@ public class AgentSessionServiceTests
     }
 
     [Fact]
-    public async Task GetSessionByIdAsync_RestoresPersistedKnowledgeContext()
+    public async Task GetSessionByIdAsync_ReplaysDurableTurnsWithoutLegacyKnowledgeContext()
     {
         await using var db = CreateDb();
         db.AgentSessions.Add(new AgentSession
@@ -189,30 +217,13 @@ public class AgentSessionServiceTests
             Title = "知识会话",
             SessionData = "{}"
         });
-        var knowledge = new AgentKnowledgeContext(
-            "Knowledge.Query",
-            "retrieve",
-            "current_project",
-            "knowledge:user-1:v5",
-            "revision-2",
-            "人物代价",
-            1,
-            [],
-            [new AgentKnowledgeItem("knowledge-1", "Character", "主角代价", "点灯会失忆。", 0.95f, "manual", "imported")],
-            false);
-        db.AgentChatTurns.Add(new AgentChatTurn
-        {
-            Id = "turn-knowledge",
-            UserId = "user-1",
-            ProjectId = "project-1",
-            SessionId = "session-knowledge",
-            TurnIndex = 1,
-            Role = "assistant",
-            Content = "已读取人物设定。",
-            KnowledgeContextJson = JsonSerializer.Serialize(knowledge)
-        });
         await db.SaveChangesAsync();
-        var service = CreateService(db);
+        var service = CreateService(
+            db,
+            new ConversationRuntimeMessageRecord(
+                "turn-assistant-1",
+                AssistantEnvelope("已读取人物设定。"),
+                DateTimeOffset.UtcNow));
 
         var response = await service.GetSessionByIdAsync(
             "session-knowledge",
@@ -220,10 +231,9 @@ public class AgentSessionServiceTests
             isAdmin: false,
             CancellationToken.None);
 
-        var restored = Assert.Single(response.Messages).Knowledge;
-        Assert.NotNull(restored);
-        Assert.Equal("knowledge:user-1:v5", restored!.KnowledgeVersion);
-        Assert.Equal("主角代价", Assert.Single(restored.Items).Title);
+        var restored = Assert.Single(response.Messages);
+        Assert.Equal("已读取人物设定。", restored.Content);
+        Assert.Null(restored.Knowledge);
     }
 
     [Fact]
@@ -341,6 +351,82 @@ public class AgentSessionServiceTests
         return new NovelAgentDbContext(options);
     }
 
-    private static AgentSessionService CreateService(NovelAgentDbContext db) =>
-        new(db, NullLogger<AgentSessionService>.Instance);
+    private static AgentSessionService CreateService(
+        NovelAgentDbContext db,
+        params ConversationRuntimeMessageRecord[] records) =>
+        new(db, new StubConversationStore(records), NullLogger<AgentSessionService>.Instance);
+
+    private sealed class StubConversationStore(IReadOnlyList<ConversationRuntimeMessageRecord> records)
+        : IConversationStore
+    {
+        public Task<ConversationTurnResult?> FindTurnResultAsync(
+            string userId,
+            string sessionId,
+            string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<ConversationTurnResult?>(null);
+
+        public Task SaveTurnAsync(
+            string userId,
+            string? projectId,
+            string sessionId,
+            string idempotencyKey,
+            string userMessageId,
+            string userMessage,
+            string assistantMessageId,
+            ConversationRuntimeResult runtimeResult,
+            GoalProposal? proposal,
+            ConversationTurnResult result,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<IReadOnlyList<ConversationRuntimeMessage>> ReadMessagesAsync(
+            string userId,
+            string sessionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ConversationRuntimeMessage>>([]);
+
+        public Task<IReadOnlyList<ConversationRuntimeMessageRecord>> ReadMessageRecordsAsync(
+            string userId,
+            string sessionId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ConversationRuntimeMessageRecord>>(records);
+
+        public Task<GoalProposal?> GetProposalAsync(
+            string userId,
+            string proposalId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<GoalProposal?>(null);
+
+        public Task UpdateProposalAsync(GoalProposal proposal, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    private static ConversationRuntimeMessage UserRecord(string content) =>
+        new("user", content);
+
+    private static ConversationRuntimeMessage AssistantEnvelope(string text) =>
+        new(
+            "assistant",
+            JsonSerializer.Serialize(new[] { new { type = "text", text } }),
+            CustomType: "pi.assistant.v1");
+
+    private sealed class BeforeFirstSaveInterceptor(Func<CancellationToken, Task> action) : SaveChangesInterceptor
+    {
+        private int _invoked;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _invoked, 1) == 0)
+            {
+                await action(cancellationToken);
+            }
+
+            return result;
+        }
+    }
+
 }

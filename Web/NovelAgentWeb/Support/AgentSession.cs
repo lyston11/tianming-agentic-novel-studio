@@ -131,7 +131,7 @@ public sealed class AgentSessionManager
                 Id = session.SessionId,
                 UserId = session.UserId,
                 Title = session.Title,
-                ProjectId = string.IsNullOrWhiteSpace(session.ActiveProjectId) ? null : session.ActiveProjectId,
+                ProjectId = null,
                 IsArchived = session.IsArchived,
                 SessionData = SerializeSessionData(session),
                 CreatedAt = session.CreatedAt,

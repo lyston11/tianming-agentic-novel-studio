@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "kind": "story",
+      "repository": "https://github.com/worldwonderer/oh-story-claudecode",
+      "commit": "6af052974fd86fbdbbafce3e363d643221c6ce27",
+      "sourcePath": "demo/长篇/让你管账号，你高燃混剪炸全网",
+      "localPath": "story/让你管账号，你高燃混剪炸全网"
+    },
+    {
+      "kind": "drama",
+      "repository": "https://github.com/worldwonderer/drama-skills",
+      "commit": "3b9f807cd384cd63324d0856d92950be4c95b40d",
+      "sourcePath": "examples/golden-project",
+      "localPath": "drama/善意不结账"
+    }
+  ]
+}

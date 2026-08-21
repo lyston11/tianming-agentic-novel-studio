@@ -99,7 +99,7 @@ public static class FirstBatchTaskGraphCompiler
         var prefix = $"chapter-{chapterNumber}";
         var nodes = new[]
         {
-            Node("freeze", TaskKind.FreezeContext, [], "GoalRevision", "FrozenContext"),
+            Node("freeze", TaskKind.FreezeContext, [], "GoalRevision", "FrozenContext", maxAttempts: 3),
             Node("analyze", TaskKind.AnalyzeRequirements, ["freeze"], "FrozenContext", "RequirementAnalysis", maxAttempts: 2),
             Node("plan", TaskKind.PlanBatch, ["analyze"], "RequirementAnalysis", "BatchPlan", maxAttempts: 2),
             Node($"{prefix}-context", TaskKind.CompileChapterContext, ["plan"], "BatchPlan", "ChapterContext"),

@@ -26,6 +26,8 @@ public sealed class EfAgentControlStore(
     IContextFreezer,
     ICanonLeaseManager
 {
+    private const string RuntimeMessagePrefix = "pi-envelope:";
+
     public async Task<T> ExecuteAsync<T>(
         Func<CancellationToken, Task<T>> action,
         CancellationToken cancellationToken)
@@ -61,9 +63,9 @@ public sealed class EfAgentControlStore(
         return record is null ? null : AgentJson.Deserialize<ConversationTurnResult>(record.ResultJson);
     }
 
-    public Task SaveTurnAsync(
+    public async Task SaveTurnAsync(
         string userId,
-        string projectId,
+        string? projectId,
         string sessionId,
         string idempotencyKey,
         string userMessageId,
@@ -75,27 +77,36 @@ public sealed class EfAgentControlStore(
         CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        db.ConversationMessages.AddRange(
-            new ConversationMessageRecord
+        db.ConversationMessages.Add(new ConversationMessageRecord
+        {
+            Id = userMessageId,
+            UserId = userId,
+            ProjectId = projectId,
+            SessionId = sessionId,
+            Role = "user",
+            Content = userMessage,
+            CreatedAt = now
+        });
+
+        var runtimeMessages = runtimeResult.Messages is { Count: > 0 }
+            ? runtimeResult.Messages
+            : [new ConversationRuntimeMessage("assistant", runtimeResult.AssistantMessage)];
+        for (var index = 0; index < runtimeMessages.Count; index++)
+        {
+            var message = runtimeMessages[index];
+            db.ConversationMessages.Add(new ConversationMessageRecord
             {
-                Id = userMessageId,
+                Id = index == runtimeMessages.Count - 1
+                    ? assistantMessageId
+                    : $"{assistantMessageId}:{index}",
                 UserId = userId,
                 ProjectId = projectId,
                 SessionId = sessionId,
-                Role = "user",
-                Content = userMessage,
-                CreatedAt = now
-            },
-            new ConversationMessageRecord
-            {
-                Id = assistantMessageId,
-                UserId = userId,
-                ProjectId = projectId,
-                SessionId = sessionId,
-                Role = "assistant",
-                Content = runtimeResult.AssistantMessage,
-                CreatedAt = now
+                Role = message.Role,
+                Content = RuntimeMessagePrefix + AgentJson.Serialize(message),
+                CreatedAt = now.AddTicks(index + 1)
             });
+        }
         db.ConversationTurns.Add(new ConversationTurnRecord
         {
             Id = userMessageId,
@@ -108,8 +119,73 @@ public sealed class EfAgentControlStore(
         });
         if (proposal is not null)
             db.GoalProposals.Add(ToRecord(proposal, hasher.Hash(proposal.Contract), now));
-        return Task.CompletedTask;
+
+        if (runtimeResult.Checkpoint is not null)
+        {
+            var checkpoint = runtimeResult.Checkpoint;
+            var record = await db.ConversationRuntimeCheckpoints.SingleOrDefaultAsync(
+                x => x.UserId == userId
+                    && x.SessionId == sessionId
+                    && x.Runtime == checkpoint.Runtime,
+                cancellationToken);
+            if (record is null)
+            {
+                record = new ConversationRuntimeCheckpointRecord
+                {
+                    Id = $"{userId}:{sessionId}:{checkpoint.Runtime}",
+                    UserId = userId,
+                    SessionId = sessionId,
+                    Runtime = checkpoint.Runtime,
+                    Version = 1
+                };
+                db.ConversationRuntimeCheckpoints.Add(record);
+            }
+            else
+            {
+                record.Version++;
+            }
+            record.ProjectId = projectId;
+            record.CheckpointJson = checkpoint.CheckpointJson;
+            record.UpdatedAt = now;
+        }
     }
+
+    private IReadOnlyList<ConversationRuntimeMessage> DecodeMessages(
+        IEnumerable<ConversationMessageRecord> records) =>
+        records.Select(record =>
+            record.Content.StartsWith(RuntimeMessagePrefix, StringComparison.Ordinal)
+                ? AgentJson.Deserialize<ConversationRuntimeMessage>(record.Content[RuntimeMessagePrefix.Length..])
+                : new ConversationRuntimeMessage(record.Role, record.Content))
+            .ToArray();
+
+    public async Task<IReadOnlyList<ConversationRuntimeMessage>> ReadMessagesAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var records = await ReadOrderedMessageRecordsAsync(userId, sessionId, cancellationToken);
+        return DecodeMessages(records);
+    }
+
+    public async Task<IReadOnlyList<ConversationRuntimeMessageRecord>> ReadMessageRecordsAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken) =>
+        (await ReadOrderedMessageRecordsAsync(userId, sessionId, cancellationToken))
+            .Select(record => new ConversationRuntimeMessageRecord(
+                record.Id,
+                DecodeMessages([record]).Single(),
+                record.CreatedAt))
+            .ToArray();
+
+    private Task<ConversationMessageRecord[]> ReadOrderedMessageRecordsAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken) => db.ConversationMessages.AsNoTracking()
+        .Where(x => x.UserId == userId && x.SessionId == sessionId)
+        .OrderBy(x => x.CreatedAt)
+        .ThenBy(x => x.Id)
+        .ToArrayAsync(cancellationToken);
 
     public async Task UpdateTurnResultAsync(
         string userId,
@@ -184,7 +260,10 @@ public sealed class EfAgentControlStore(
         db.CreativeGoals.Add(ToRecord(goal));
         foreach (var revision in goal.Revisions)
             db.GoalRevisions.Add(ToRecord(goal, revision));
-        await Task.CompletedTask;
+        // Physical FKs on the shared tables (book_productions → creative_goals)
+        // require the goal rows to exist before productions reference them; the
+        // EF model intentionally has no navigation, so flush in dependency order.
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UpdateAsync(CreativeGoal goal, CancellationToken cancellationToken)
@@ -221,21 +300,24 @@ public sealed class EfAgentControlStore(
         return id is null ? null : await GetProductionAsync(userId, id, cancellationToken);
     }
 
-    public Task AddAsync(
+    public async Task AddAsync(
         ProductionAggregate production,
         GoalContract contract,
         FrozenContextReference context,
         CancellationToken cancellationToken)
     {
         var branchId = $"branch:{production.Id}:1";
+        // Flush production-scoped rows before batches: physical FKs require
+        // creative_goals → book_productions → production_batches order.
         db.TaskGraphs.Add(ToTaskGraphRecord(production));
         db.KernelTasks.AddRange(production.Graph.Nodes.Select((node, priority) =>
             ToKernelTaskRecord(production, node, priority, branchId)));
         db.BookProductions.Add(ToProductionRecord(production, contract));
-        db.ProductionBatches.Add(ToProductionBatchRecord(production, contract, branchId));
         db.CanonBranches.Add(ToCanonBranchRecord(production, contract, branchId));
         db.GoalContextSnapshots.Add(ToGoalContextSnapshotRecord(production, contract, context));
-        return Task.CompletedTask;
+        await db.SaveChangesAsync(cancellationToken);
+        db.ProductionBatches.Add(ToProductionBatchRecord(production, contract, branchId));
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task UpdateAsync(ProductionAggregate production, CancellationToken cancellationToken)

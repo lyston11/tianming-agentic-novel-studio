@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Microsoft.Extensions.Logging.Abstractions;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.DTOs;
@@ -61,11 +62,11 @@ public sealed class TargetArchitectureDirectorTests
                 "{}",
                 "{}"));
         var commitments = new RecordingCommitmentService(assessment);
-        var contexts = new RecordingAgentContextAssembler(chat);
+        var contexts = new RecordingConversationContextAssembler(chat);
         var sessions = new AgentSessionManager(db, currentUser, chat);
         var sessionApplication = new AgentSessionApplicationService(
             sessions,
-            new AgentSessionService(db, NullLogger<AgentSessionService>.Instance));
+            new AgentSessionService(db, EmptyConversationStore(), NullLogger<AgentSessionService>.Instance));
         var director = new TargetArchitectureDirector(
             sessionApplication,
             currentUser,
@@ -95,6 +96,98 @@ public sealed class TargetArchitectureDirectorTests
         Assert.Equal("Knowledge.Query", chat.Appended[^1].Knowledge!.ToolName);
     }
 
+    [Fact]
+    public async Task TryHandleAsync_UnboundRepliesWithoutAssessingProjectCommitment()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+        {
+            Id = "session-unbound",
+            UserId = "user-1",
+            ProjectId = null,
+            SessionData = "{}"
+        });
+        await db.SaveChangesAsync();
+
+        var currentUser = new StubCurrentUserService("user-1");
+        var chat = new RecordingChatHistoryRepository([]);
+        var commitments = new RecordingCommitmentService(new CommitmentAssessment(
+            DialogueCommitmentState.Exploring,
+            GoalAuthorizationKind.None,
+            0,
+            false,
+            "must not be used",
+            null));
+        var sessions = new AgentSessionManager(db, currentUser, chat);
+        var director = new TargetArchitectureDirector(
+            new AgentSessionApplicationService(
+                sessions,
+                new AgentSessionService(db, EmptyConversationStore(), NullLogger<AgentSessionService>.Instance)),
+            currentUser,
+            chat,
+            new CollaborationMemoryService(db),
+            commitments,
+            new UnboundConversationContextAssembler(chat));
+
+        var result = await director.TryHandleAsync(
+            "session-unbound",
+            "我想先聊聊新故事的方向",
+            null,
+            CancellationToken.None);
+
+        Assert.False(result.StartBackground);
+        Assert.Equal("project_required", result.Response!.Phase);
+        Assert.Null(result.Response.Director);
+        Assert.Null(result.Response.Knowledge);
+        Assert.Null(commitments.Request);
+        Assert.Equal(2, chat.Appended.Count);
+        Assert.Equal("user", chat.Appended[0].Role);
+        Assert.Equal("assistant", chat.Appended[1].Role);
+        Assert.Empty(await db.SessionDialogueStates.ToListAsync());
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_ArchivedSession_IsRejectedBeforeAppendingUserTurn()
+    {
+        await using var db = CreateDb();
+        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+        {
+            Id = "session-archived",
+            UserId = "user-1",
+            ProjectId = null,
+            IsArchived = true,
+            SessionData = "{}"
+        });
+        await db.SaveChangesAsync();
+
+        var currentUser = new StubCurrentUserService("user-1");
+        var chat = new RecordingChatHistoryRepository([]);
+        var sessions = new AgentSessionManager(db, currentUser, chat);
+        var director = new TargetArchitectureDirector(
+            new AgentSessionApplicationService(
+                sessions,
+                new AgentSessionService(db, EmptyConversationStore(), NullLogger<AgentSessionService>.Instance)),
+            currentUser,
+            chat,
+            new CollaborationMemoryService(db),
+            new RecordingCommitmentService(new CommitmentAssessment(
+                DialogueCommitmentState.Exploring,
+                GoalAuthorizationKind.None,
+                0,
+                false,
+                "must not be used",
+                null)),
+            new UnboundConversationContextAssembler(chat));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => director.TryHandleAsync(
+            "session-archived",
+            "不应写入这条消息",
+            null,
+            CancellationToken.None));
+
+        Assert.Empty(chat.Appended);
+    }
+
     private static NovelAgentDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<NovelAgentDbContext>()
@@ -116,16 +209,16 @@ public sealed class TargetArchitectureDirectorTests
         }
     }
 
-    private sealed class RecordingAgentContextAssembler(RecordingChatHistoryRepository chat) : IAgentContextAssembler
+    private sealed class RecordingConversationContextAssembler(RecordingChatHistoryRepository chat) : IConversationContextAssembler
     {
-        public AgentContextRequest? Request { get; private set; }
+        public ConversationContextRequest? Request { get; private set; }
 
-        public Task<AgentContextEnvelope> BuildAsync(
-            AgentContextRequest request,
+        public Task<ConversationContext> BuildAsync(
+            ConversationContextRequest request,
             CancellationToken cancellationToken = default)
         {
             Request = request;
-            var context = new AgentKnowledgeContext(
+            var knowledge = new AgentKnowledgeContext(
                 KnowledgeQueryTool.ToolName,
                 "retrieve",
                 "current_project",
@@ -144,21 +237,50 @@ public sealed class TargetArchitectureDirectorTests
                     new AuthorMemory(),
                     new ExecutionMemory()),
                 []);
-            return Task.FromResult(new AgentContextEnvelope(
-                request.Profile,
-                new AgentProjectContext("project-1", "灯城", "", "", "", "active", 0, 0),
+            var snapshot = new ProjectContextSnapshot(
+                "ctx-v3",
+                new AgentProjectContext("project-1", "灯城", "", "", "", "active", 0, 0, DateTime.UtcNow),
                 null,
                 memory,
-                context,
+                knowledge,
                 [],
-                chat.Appended.Select(item => new DialogueMessage(item.Role, item.Content)).ToArray(),
-                [new AgentContextSource("knowledge", "knowledge-1", "knowledge:user-1:v3")]));
+                [KnowledgeQueryTool.ToolName, "confirm_creative_goal"],
+                [new AgentContextSource("knowledge", "knowledge-1", "knowledge:user-1:v3")]);
+            return Task.FromResult<ConversationContext>(new BoundConversationContext
+            {
+                UserId = request.UserId,
+                SessionId = request.SessionId,
+                SystemInstructions = "Use the bound project.",
+                Transcript = new ChatPromptWindowDto(null, [], chat.Appended.ToArray()),
+                GeneralCapabilities = [new ConversationCapability("conversation.respond", true)],
+                Binding = new ConversationBindingPointer("project-1", "1"),
+                ProjectSnapshot = snapshot
+            });
         }
+    }
 
-        public Task<KernelExecutionContext> BuildKernelExecutionAsync(
-            KernelTaskClaim claim,
+    private sealed class UnboundConversationContextAssembler(RecordingChatHistoryRepository chat)
+        : IConversationContextAssembler
+    {
+        public Task<ConversationContext> BuildAsync(
+            ConversationContextRequest request,
             CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            Task.FromResult<ConversationContext>(new UnboundConversationContext
+            {
+                UserId = request.UserId,
+                SessionId = request.SessionId,
+                SystemInstructions = "Use general conversation only.",
+                Transcript = new ChatPromptWindowDto(null, [], chat.Appended.ToArray()),
+                GeneralCapabilities = [new ConversationCapability("conversation.respond", true)],
+                AccessibleProjects =
+                [
+                    new AccessibleProjectContext(
+                        "project-1",
+                        "灯城",
+                        "active",
+                        DateTime.UtcNow)
+                ]
+            });
     }
 
     private sealed class RecordingChatHistoryRepository(IReadOnlyList<ChatHistoryTurnDto> initial) : IChatHistoryRepository
@@ -206,5 +328,14 @@ public sealed class TargetArchitectureDirectorTests
         public bool IsAdmin() => false;
         public bool IsAuthenticated() => true;
         public string? TryGetUserId() => userId;
+    }
+
+    private static Tianming.NovelAgent.Application.Ports.IConversationStore EmptyConversationStore()
+    {
+        var store = new Moq.Mock<Tianming.NovelAgent.Application.Ports.IConversationStore>();
+        store.Setup(x => x.ReadMessageRecordsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        return store.Object;
     }
 }

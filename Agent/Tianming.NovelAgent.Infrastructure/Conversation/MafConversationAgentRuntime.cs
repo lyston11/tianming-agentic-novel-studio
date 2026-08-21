@@ -7,11 +7,13 @@ using Tianming.NovelAgent.Domain.Goals;
 
 namespace Tianming.NovelAgent.Infrastructure.Conversation;
 
+public sealed record MafAgentInvocationResult(string Response, string CheckpointJson);
+
 public interface IMafAgentInvoker
 {
-    Task<string> RunAsync(
+    Task<MafAgentInvocationResult> RunAsync(
         string userId,
-        string projectId,
+        ConversationBinding binding,
         string sessionId,
         string message,
         CancellationToken cancellationToken);
@@ -20,19 +22,13 @@ public interface IMafAgentInvoker
 public interface IMafSessionCheckpointStore
 {
     Task<string?> LoadAsync(string userId, string sessionId, CancellationToken cancellationToken);
-    Task SaveAsync(
-        string userId,
-        string projectId,
-        string sessionId,
-        string checkpointJson,
-        CancellationToken cancellationToken);
 }
 
 public sealed class MafAIAgentInvoker(AIAgent agent, IMafSessionCheckpointStore checkpoints) : IMafAgentInvoker
 {
-    public async Task<string> RunAsync(
+    public async Task<MafAgentInvocationResult> RunAsync(
         string userId,
-        string projectId,
+        ConversationBinding binding,
         string sessionId,
         string message,
         CancellationToken cancellationToken)
@@ -56,13 +52,7 @@ public sealed class MafAIAgentInvoker(AIAgent agent, IMafSessionCheckpointStore 
             session,
             jsonSerializerOptions: null,
             cancellationToken);
-        await checkpoints.SaveAsync(
-            userId,
-            projectId,
-            sessionId,
-            serialized.GetRawText(),
-            cancellationToken);
-        return response.Text;
+        return new MafAgentInvocationResult(response.Text, serialized.GetRawText());
     }
 }
 
@@ -77,16 +67,16 @@ public sealed class MafConversationAgentRuntime(IMafAgentInvoker invoker) : ICon
         ConversationTurnContext context,
         CancellationToken cancellationToken)
     {
-        var response = await invoker.RunAsync(
+        var invocation = await invoker.RunAsync(
             context.UserId,
-            context.ProjectId,
+            context.Binding,
             context.SessionId,
             BuildContractPrompt(context),
             cancellationToken);
         MafDecision decision;
         try
         {
-            decision = JsonSerializer.Deserialize<MafDecision>(response, JsonOptions)
+            decision = JsonSerializer.Deserialize<MafDecision>(invocation.Response, JsonOptions)
                 ?? throw new JsonException("The MAF response was empty.");
         }
         catch (JsonException exception)
@@ -94,7 +84,8 @@ public sealed class MafConversationAgentRuntime(IMafAgentInvoker invoker) : ICon
             throw new InvalidOperationException("The conversation runtime returned an invalid decision contract.", exception);
         }
 
-        if (decision.Kind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision
+        if (context.Binding is BoundConversationBinding
+            && decision.Kind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision
             && decision.Contract is null)
         {
             throw new InvalidOperationException("A proposal decision must include a goal contract.");
@@ -106,15 +97,26 @@ public sealed class MafConversationAgentRuntime(IMafAgentInvoker invoker) : ICon
             decision.Contract,
             [],
             decision.Reason,
-            decision.ToolCalls ?? []);
+            decision.ToolCalls ?? [],
+            new ConversationRuntimeCheckpoint("maf", invocation.CheckpointJson));
     }
 
-    private static string BuildContractPrompt(ConversationTurnContext context) =>
-        "You are the conversation runtime for a novel production system. "
-        + "Discuss intent and return one JSON object with kind, message, reason, optional contract, and optional toolCalls. "
-        + "Never claim to start production or write canon. When the user explicitly commits to a proposed goal, "
-        + "return a confirm_creative_goal tool call; the Application layer executes it after Proposal persistence. "
-        + $"Project: {context.ProjectId}. User message: {context.Message}";
+    private static string BuildContractPrompt(ConversationTurnContext context) => context.Binding switch
+    {
+        UnboundConversationBinding =>
+            "You are the conversation runtime for a novel production system. "
+            + "Discuss intent and return one JSON object with kind, message, reason, optional contract, and optional toolCalls. "
+            + "This conversation is not bound to a project, so no project-writing tools are available. "
+            + "Never claim to start production or write canon. "
+            + $"User message: {context.Message}",
+        BoundConversationBinding bound =>
+            "You are the conversation runtime for a novel production system. "
+            + "Discuss intent and return one JSON object with kind, message, reason, optional contract, and optional toolCalls. "
+            + "Never claim to start production or write canon. When the user explicitly commits to a proposed goal, "
+            + "return a confirm_creative_goal tool call; the Application layer executes it after Proposal persistence. "
+            + $"Project: {bound.ProjectId}. User message: {context.Message}",
+        _ => throw new ArgumentOutOfRangeException(nameof(context))
+    };
 
     private sealed record MafDecision(
         ConversationDecisionKind Kind,

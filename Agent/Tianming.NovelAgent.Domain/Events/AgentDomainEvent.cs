@@ -7,7 +7,7 @@ public sealed record AgentDomainEvent(
     string AggregateId,
     long AggregateVersion,
     string UserId,
-    string ProjectId,
+    string? ProjectId,
     string? GoalId,
     string CorrelationId,
     string? CausationId,

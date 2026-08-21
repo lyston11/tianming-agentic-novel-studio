@@ -1,4 +1,6 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Tianming.NovelAgent.Infrastructure.Persistence;
 
@@ -25,6 +27,9 @@ public sealed class AgentControlDbContext(DbContextOptions<AgentControlDbContext
     public DbSet<OutboxEventRecord> OutboxEvents => Set<OutboxEventRecord>();
     public DbSet<CanonWriteLeaseRecord> CanonWriteLeases => Set<CanonWriteLeaseRecord>();
 
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+        optionsBuilder.ReplaceService<IMigrationsIdGenerator, AgentMigrationsIdGenerator>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureNewTables(modelBuilder);
@@ -44,6 +49,7 @@ public sealed class AgentControlDbContext(DbContextOptions<AgentControlDbContext
             modelBuilder,
             "agent_conversation_runtime_checkpoints");
         runtimeCheckpoints.Property(x => x.CheckpointJson).HasColumnType("jsonb");
+        runtimeCheckpoints.Property(x => x.ProjectId).IsRequired(false);
         runtimeCheckpoints.Property(x => x.Version).IsConcurrencyToken();
         runtimeCheckpoints.HasIndex(x => new { x.UserId, x.SessionId, x.Runtime }).IsUnique();
 
@@ -203,5 +209,43 @@ public sealed class AgentControlDbContext(DbContextOptions<AgentControlDbContext
             result.Append(char.ToLowerInvariant(current));
         }
         return result.ToString();
+    }
+}
+
+internal sealed class AgentMigrationsIdGenerator : IMigrationsIdGenerator
+{
+    private readonly Lock _lock = new();
+    private DateTime _lastTimestamp = DateTime.MinValue;
+
+    public string GenerateId(string name)
+    {
+        lock (_lock)
+        {
+            var now = DateTime.UtcNow;
+            var timestamp = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);
+            if (timestamp <= _lastTimestamp)
+                timestamp = _lastTimestamp.AddSeconds(1);
+            _lastTimestamp = timestamp;
+            return $"{timestamp.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)}_{name}";
+        }
+    }
+
+    public string GetName(string id)
+    {
+        var separator = id.IndexOf('_', StringComparison.Ordinal);
+        return separator < 0 ? id : id[(separator + 1)..];
+    }
+
+    public bool IsValidId(string value)
+    {
+        var separator = value.IndexOf('_', StringComparison.Ordinal);
+        if (separator is not (12 or 14) || separator == value.Length - 1)
+            return false;
+        for (var index = 0; index < separator; index++)
+        {
+            if (!char.IsAsciiDigit(value[index]))
+                return false;
+        }
+        return true;
     }
 }

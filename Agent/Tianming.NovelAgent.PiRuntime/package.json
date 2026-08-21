@@ -1,0 +1,25 @@
+{
+  "name": "@tianming/novel-agent-pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp -R resources dist/resources",
+    "start": "node dist/src/server.js",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "type-check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "0.57.1",
+    "@mariozechner/pi-ai": "0.57.1",
+    "@sinclair/typebox": "0.34.48"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

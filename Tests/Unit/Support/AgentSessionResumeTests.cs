@@ -57,6 +57,9 @@ public class AgentSessionResumeTests
 
         await manager.SaveSessionAsync(session);
 
+        var persisted = await db.AgentSessions.SingleAsync(s => s.Id == "session-1");
+        Assert.Null(persisted.ProjectId);
+
         var restored = await manager.GetSessionAsync("session-1");
 
         Assert.NotNull(restored);
@@ -72,6 +75,17 @@ public class AgentSessionResumeTests
     {
         await using var db = CreateDb();
         var manager = new AgentSessionManager(db, FixedUser("user-1"));
+        db.AgentSessions.Add(new TM.Web.NovelAgentWeb.Data.Entities.AgentSession
+        {
+            Id = "session-1",
+            UserId = "user-1",
+            Title = "已有会话",
+            SessionData = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
         var session = new AgentSession
         {
             SessionId = "session-1",
@@ -152,7 +166,7 @@ public class AgentSessionResumeTests
             DisplayPolicy: AgentRuntimeEventDisplayPolicy.Timeline));
         var sessions = new AgentSessionApplicationService(
             manager,
-            new AgentSessionService(db, NullLogger<AgentSessionService>.Instance));
+            new AgentSessionService(db, EmptyConversationStore(), NullLogger<AgentSessionService>.Instance));
         var service = new AgentSessionResumeService(sessions, db, runtimeEvents);
 
         var response = await service.ResumeAsync("session-1");
@@ -417,5 +431,14 @@ public class AgentSessionResumeTests
         currentUser.Setup(x => x.IsAuthenticated()).Returns(true);
         currentUser.Setup(x => x.IsAdmin()).Returns(false);
         return currentUser.Object;
+    }
+
+    private static Tianming.NovelAgent.Application.Ports.IConversationStore EmptyConversationStore()
+    {
+        var store = new Moq.Mock<Tianming.NovelAgent.Application.Ports.IConversationStore>();
+        store.Setup(x => x.ReadMessageRecordsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        return store.Object;
     }
 }

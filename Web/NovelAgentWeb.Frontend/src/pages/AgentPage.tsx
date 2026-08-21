@@ -9,7 +9,7 @@ import {
   getSessionActiveRuntimeRun,
   listAgentSessions,
   resumeAgentSession,
-  sendChat,
+  appendNovelAgentTurn,
   updateAgentSession,
 } from '../api';
 import type {
@@ -834,54 +834,38 @@ export default function AgentPage() {
     addLog(`用户: ${msg}`);
 
     try {
-      const res: AgentChatResponse = await sendChat({ message: msg, sessionId, clientMessageId: userMessageId });
-      const isRuntimeAck = res.phase === 'queued';
-      if (isRuntimeAck) {
-        const runId = res.runId ?? null;
-        if (runId) {
-          runAnchorMessageIdsRef.current[runId] = userMessageId;
-        }
-        setActiveRuntimeRunId(runId);
+      const res = await appendNovelAgentTurn(sessionId, {
+        idempotencyKey: userMessageId,
+        content: msg,
+      });
+      setActiveRuntimeRunId(null);
+      addAgentMessage(sessionId, res.decision.message);
+      if (res.decision.proposalId) {
         appendExecutionEvent({
-          id: `runtime-ack-${runId || Date.now()}`,
+          id: `proposal-${res.decision.proposalId}`,
           type: 'run_update',
-          title: '后台任务已启动',
-          detail: res.reply,
-          status: 'running',
-          runId,
+          title: '创作提案已生成',
+          detail: `提案等待用户确认（提案 ID: ${res.decision.proposalId}）`,
+          status: 'done',
+          runId: null,
           timestamp: new Date(),
         }, userMessageId);
       }
-      if (!isRuntimeAck) {
-        setActiveRuntimeRunId(null);
-        addAgentMessage(sessionId, res.reply, res.suggestions, res.runId ?? undefined, res.phase, res.decision, res.rag, res.memory, res.runtimeTrace, res.memoryAudit, res.knowledge);
-        setDirectorProposal(res.director?.proposedContract ? res.director : null);
-        setGoalConfirmError('');
-        setExecutionBlocks((prev) => prev.filter((block) => (
-          block.id !== pendingBlockId || block.events.length > 0 || block.previews.length > 0
-        )));
-      }
+      setGoalConfirmError('');
+      setExecutionBlocks((prev) => prev.filter((block) => (
+        block.id !== pendingBlockId || block.events.length > 0 || block.previews.length > 0
+      )));
       setResumeState({
         ...resumeState,
         pendingToolCall: null,
-        pendingConfirmation: res.pendingConfirmation ?? res.memory?.pendingConfirmation ?? null,
       });
-      const activeProjectId = res.activeProjectId
-        || res.memory?.missionPlan?.projectId
-        || res.missionPlan?.projectId
-        || null;
-      if (activeProjectId) {
-        setCurrentProjectId(activeProjectId);
-      }
       await reloadSessions();
       invalidateAgentState();
-      addLog(`Agent: ${res.phase}`);
-      if (!isRuntimeAck) {
-        inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1);
-        setSending(inFlightCountRef.current > 0);
-      }
+      addLog(`Agent: ${res.decision.kind}`);
+      inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1);
+      setSending(inFlightCountRef.current > 0);
     } catch (err) {
-      console.error('sendChat error:', err);
+      console.error('conversation turn error:', err);
       addAgentMessage(sessionId, `请求失败: ${err instanceof Error ? err.message : '未知错误'}`);
       appendExecutionEvent({
         id: `request-failed-${Date.now()}`,

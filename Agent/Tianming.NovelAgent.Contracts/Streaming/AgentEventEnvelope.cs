@@ -16,7 +16,7 @@ public sealed record AgentEventEnvelope<T>(
     DateTimeOffset OccurredAt,
     string CorrelationId,
     string? CausationId,
-    string ProjectId,
+    string? ProjectId,
     string? SessionId,
     string? GoalId,
     string? ProductionId,

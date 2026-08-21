@@ -10,6 +10,7 @@ namespace Tianming.NovelAgent.Application.Conversation;
 
 public sealed class ConversationApplicationService(
     IConversationAgentRuntime runtime,
+    IConversationSessionBindingReader sessionBindings,
     IConversationStore store,
     ITransientAgentStream transientStream,
     IAgentEventWriter events,
@@ -21,21 +22,21 @@ public sealed class ConversationApplicationService(
 {
     public async Task<ConversationTurnResult> AppendTurnAsync(
         string userId,
-        string projectId,
         string sessionId,
         AppendConversationTurnRequest request,
         CancellationToken cancellationToken = default)
     {
         Require(userId, nameof(userId));
-        Require(projectId, nameof(projectId));
         Require(sessionId, nameof(sessionId));
         Require(request.IdempotencyKey, nameof(request.IdempotencyKey));
         Require(request.Content, nameof(request.Content));
 
+        var binding = await sessionBindings.GetBindingAsync(userId, sessionId, cancellationToken);
         var existing = await store.FindTurnResultAsync(userId, sessionId, request.IdempotencyKey, cancellationToken);
         if (existing is not null)
         {
-            if (existing.Confirmation is null
+            if (binding is BoundConversationBinding bound
+                && existing.Confirmation is null
                 && existing.Decision.AutoConfirmRequested
                 && tools is not null
                 && !string.IsNullOrWhiteSpace(existing.Decision.ProposalId))
@@ -44,7 +45,7 @@ public sealed class ConversationApplicationService(
                     existing,
                     new AgentToolCall(ConfirmCreativeGoalTool.ToolName),
                     userId,
-                    projectId,
+                    bound.ProjectId,
                     sessionId,
                     existing.Decision.ProposalId!,
                     request.IdempotencyKey,
@@ -55,36 +56,51 @@ public sealed class ConversationApplicationService(
         }
 
         var correlationId = ids.NewId();
+        var userMessageId = ids.NewId();
         var runtimeResult = await runtime.RunTurnAsync(
             new ConversationTurnContext(
                 userId,
-                projectId,
+                binding,
                 sessionId,
                 request.Content,
                 request.AttachmentIds ?? [],
-                correlationId),
+                correlationId,
+                userMessageId),
             cancellationToken);
 
         foreach (var delta in runtimeResult.TokenDeltas)
-            await transientStream.PublishTokenDeltaAsync(userId, projectId, sessionId, correlationId, delta, cancellationToken);
+            await transientStream.PublishTokenDeltaAsync(
+                userId,
+                binding,
+                sessionId,
+                correlationId,
+                delta,
+                cancellationToken);
 
         var prepared = PrepareTurn(
             userId,
-            projectId,
+            binding,
             sessionId,
             request,
             runtimeResult,
-            correlationId);
+            correlationId,
+            userMessageId);
         var persisted = await PersistTurnAsync(prepared, cancellationToken);
 
-        if (!prepared.AutoConfirmRequested || tools is null || prepared.Proposal is null || prepared.RequestedTool is null)
+        if (binding is not BoundConversationBinding project
+            || !prepared.AutoConfirmRequested
+            || tools is null
+            || prepared.Proposal is null
+            || prepared.RequestedTool is null)
+        {
             return persisted;
+        }
 
         return await ExecuteToolAndPersistResultAsync(
             persisted,
             prepared.RequestedTool,
             userId,
-            projectId,
+            project.ProjectId,
             sessionId,
             prepared.Proposal.Id,
             request.IdempotencyKey,
@@ -94,24 +110,40 @@ public sealed class ConversationApplicationService(
 
     private PreparedTurn PrepareTurn(
         string userId,
-        string projectId,
+        ConversationBinding binding,
         string sessionId,
         AppendConversationTurnRequest request,
         ConversationRuntimeResult runtimeResult,
-        string correlationId)
+        string correlationId,
+        string userMessageId)
     {
         GoalProposal? proposal = null;
-        if (runtimeResult.DecisionKind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision)
+        var decisionKind = runtimeResult.DecisionKind;
+        if (binding is UnboundConversationBinding
+            && decisionKind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision)
+        {
+            decisionKind = ConversationDecisionKind.DiscussOnly;
+        }
+        else if (binding is BoundConversationBinding bound
+                 && decisionKind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision)
         {
             if (runtimeResult.ProposedContract is null)
                 throw new InvalidOperationException("A proposal decision requires a goal contract.");
-            proposal = new GoalProposal(ids.NewId(), userId, projectId, sessionId, runtimeResult.ProposedContract);
+            proposal = new GoalProposal(
+                ids.NewId(),
+                userId,
+                bound.ProjectId,
+                sessionId,
+                runtimeResult.ProposedContract);
             proposal.Propose();
         }
 
-        var requestedTool = runtimeResult.ToolCalls?.FirstOrDefault();
+        var requestedTool = binding is BoundConversationBinding
+            ? runtimeResult.ToolCalls?.FirstOrDefault(call =>
+                string.Equals(call.Name, ConfirmCreativeGoalTool.ToolName, StringComparison.Ordinal))
+            : null;
         var decision = new ConversationDecisionDto(
-            runtimeResult.DecisionKind,
+            decisionKind,
             runtimeResult.AssistantMessage,
             proposal?.Id,
             proposal is null ? null : JsonSerializer.Serialize(proposal.Contract),
@@ -121,9 +153,10 @@ public sealed class ConversationApplicationService(
                 && requestedTool is not null);
         return new PreparedTurn(
             userId,
-            projectId,
+            binding,
             sessionId,
             request.IdempotencyKey,
+            userMessageId,
             request.Content,
             runtimeResult,
             proposal,
@@ -138,10 +171,10 @@ public sealed class ConversationApplicationService(
         {
             await store.SaveTurnAsync(
                 prepared.UserId,
-                prepared.ProjectId,
+                GetProjectId(prepared.Binding),
                 prepared.SessionId,
                 prepared.IdempotencyKey,
-                prepared.Result.MessageId,
+                prepared.UserMessageId,
                 prepared.UserMessage,
                 ids.NewId(),
                 prepared.RuntimeResult,
@@ -156,7 +189,7 @@ public sealed class ConversationApplicationService(
                     prepared.Result.MessageId,
                     1,
                     prepared.UserId,
-                    prepared.ProjectId,
+                    GetProjectId(prepared.Binding),
                     null,
                     prepared.Result.CorrelationId,
                     prepared.Result.MessageId,
@@ -212,6 +245,13 @@ public sealed class ConversationApplicationService(
         }, cancellationToken);
     }
 
+    private static string? GetProjectId(ConversationBinding binding) => binding switch
+    {
+        UnboundConversationBinding => null,
+        BoundConversationBinding bound => bound.ProjectId,
+        _ => throw new ArgumentOutOfRangeException(nameof(binding))
+    };
+
     private static void Require(string value, string name)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -220,9 +260,10 @@ public sealed class ConversationApplicationService(
 
     private sealed record PreparedTurn(
         string UserId,
-        string ProjectId,
+        ConversationBinding Binding,
         string SessionId,
         string IdempotencyKey,
+        string UserMessageId,
         string UserMessage,
         ConversationRuntimeResult RuntimeResult,
         GoalProposal? Proposal,

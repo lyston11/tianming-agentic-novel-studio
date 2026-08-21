@@ -16,13 +16,12 @@ public sealed class NovelAgentApplicationControllerTests
     {
         var resources = new Mock<INovelAgentResourceAuthorizer>(MockBehavior.Strict);
         resources.Setup(item => item.RequireConversationAsync(
-                "user-1", "session-2", "project-2", It.IsAny<CancellationToken>()))
+                "user-1", "session-2", null, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new KeyNotFoundException("Conversation was not found."));
         var controller = CreateController(resources.Object);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() => controller.AppendTurn(
             "session-2",
-            "project-2",
             new AppendConversationTurnRequest("turn-1", "write"),
             CancellationToken.None));
 

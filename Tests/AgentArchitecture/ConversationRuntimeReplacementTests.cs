@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Tianming.NovelAgent.Application.Conversation;
 using Tianming.NovelAgent.Application.Ports;
 using Tianming.NovelAgent.Contracts.Conversation;
@@ -23,7 +25,7 @@ public sealed class ConversationRuntimeReplacementTests
         IConversationAgentRuntime runtime = new MafConversationAgentRuntime(invoker);
 
         var result = await runtime.RunTurnAsync(
-            new ConversationTurnContext("user", "project", "session", "Write chapter one", [], "correlation"),
+            new ConversationTurnContext("user", new BoundConversationBinding("project"), "session", "Write chapter one", [], "correlation"),
             CancellationToken.None);
 
         Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
@@ -37,8 +39,37 @@ public sealed class ConversationRuntimeReplacementTests
         IConversationAgentRuntime runtime = new MafConversationAgentRuntime(new StubInvoker("not-json"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RunTurnAsync(
-            new ConversationTurnContext("user", "project", "session", "hello", [], "correlation"),
+            new ConversationTurnContext("user", new BoundConversationBinding("project"), "session", "hello", [], "correlation"),
             CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Runtime_adapters_do_not_require_project_contracts_for_unbound_turns(bool useMaf)
+    {
+        var response = JsonSerializer.Serialize(new
+        {
+            kind = "proposeGoal",
+            message = "Continue clarifying",
+            reason = "Malformed project-only decision"
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        IConversationAgentRuntime runtime = useMaf
+            ? new MafConversationAgentRuntime(new StubInvoker(response))
+            : new StructuredConversationAgentRuntime(new StubCompletion(response));
+
+        var result = await runtime.RunTurnAsync(
+            new ConversationTurnContext(
+                "user",
+                new UnboundConversationBinding(),
+                "session",
+                "hello",
+                [],
+                "correlation"),
+            CancellationToken.None);
+
+        Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
+        Assert.Null(result.ProposedContract);
     }
 
     [Fact]
@@ -62,7 +93,13 @@ public sealed class ConversationRuntimeReplacementTests
         IConversationAgentRuntime runtime = new MafConversationAgentRuntime(new StubInvoker(response));
 
         var result = await runtime.RunTurnAsync(
-            new ConversationTurnContext("user", "project", "session", "start", [], "correlation"),
+            new ConversationTurnContext(
+                "user",
+                new BoundConversationBinding("project"),
+                "session",
+                "start",
+                [],
+                "correlation"),
             CancellationToken.None);
 
         var call = Assert.Single(result.ToolCalls!);
@@ -84,10 +121,50 @@ public sealed class ConversationRuntimeReplacementTests
         IConversationAgentRuntime runtime = new StructuredConversationAgentRuntime(new StubCompletion(response));
 
         var result = await runtime.RunTurnAsync(
-            new ConversationTurnContext("user", "project", "session", "start", [], "correlation"),
+            new ConversationTurnContext(
+                "user",
+                new BoundConversationBinding("project"),
+                "session",
+                "start",
+                [],
+                "correlation"),
             CancellationToken.None);
 
         Assert.Equal("confirm_creative_goal", Assert.Single(result.ToolCalls!).Name);
+    }
+
+    [Fact]
+    public async Task Maf_invoker_returns_checkpoint_that_resumes_after_committed_recreation()
+    {
+        var checkpoints = new RecordingCheckpointStore();
+        var firstClient = new StubChatClient("reply one");
+        var firstInvoker = new MafAIAgentInvoker(new ChatClientAgent(firstClient), checkpoints);
+
+        var first = await firstInvoker.RunAsync(
+            "user",
+            new UnboundConversationBinding(),
+            "session",
+            "first turn",
+            CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(first.CheckpointJson));
+        checkpoints.Commit(first.CheckpointJson);
+
+        var secondClient = new StubChatClient("reply two");
+        var restartedInvoker = new MafAIAgentInvoker(new ChatClientAgent(secondClient), checkpoints);
+        var second = await restartedInvoker.RunAsync(
+            "user",
+            new UnboundConversationBinding(),
+            "session",
+            "second turn",
+            CancellationToken.None);
+
+        Assert.Equal("reply two", second.Response);
+        Assert.Equal(2, checkpoints.LoadCount);
+        var resumedMessages = Assert.Single(secondClient.Requests);
+        Assert.Contains(resumedMessages, message => message.Text.Contains("first turn", StringComparison.Ordinal));
+        Assert.Contains(resumedMessages, message => message.Text.Contains("reply one", StringComparison.Ordinal));
+        Assert.Contains(resumedMessages, message => message.Text.Contains("second turn", StringComparison.Ordinal));
     }
 
     private static GoalContract NewContract() => new(
@@ -110,13 +187,57 @@ public sealed class ConversationRuntimeReplacementTests
 
     private sealed class StubInvoker(string response) : IMafAgentInvoker
     {
-        public Task<string> RunAsync(
+        public Task<MafAgentInvocationResult> RunAsync(
             string userId,
-            string projectId,
+            ConversationBinding binding,
             string sessionId,
             string message,
             CancellationToken cancellationToken) =>
-            Task.FromResult(response);
+            Task.FromResult(new MafAgentInvocationResult(response, "{}"));
+    }
+
+    private sealed class RecordingCheckpointStore : IMafSessionCheckpointStore
+    {
+        public int LoadCount { get; private set; }
+        private string? CheckpointJson { get; set; }
+
+        public Task<string?> LoadAsync(
+            string userId,
+            string sessionId,
+            CancellationToken cancellationToken)
+        {
+            LoadCount++;
+            return Task.FromResult(CheckpointJson);
+        }
+
+        public void Commit(string checkpointJson) => CheckpointJson = checkpointJson;
+    }
+
+    private sealed class StubChatClient(string response) : IChatClient
+    {
+        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add(messages.ToList());
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class StubCompletion(string response) : IConversationTextCompletionPort

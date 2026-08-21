@@ -70,7 +70,7 @@ public sealed class TargetArchitecturePurityTests
     {
         var source = Read("Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs");
 
-        Assert.Contains("IAgentContextAssembler", source, StringComparison.Ordinal);
+        Assert.Contains("IConversationContextAssembler", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IKnowledgeQueryTool", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ProjectCollaborationDecisions", source, StringComparison.Ordinal);
@@ -84,6 +84,27 @@ public sealed class TargetArchitecturePurityTests
         Assert.Contains("IBookProductionTransitionService", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IGoalControlService", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IBookProductionService", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentChatCompatEntry_PersistsOnlyThroughApplicationConversation()
+    {
+        var source = Read("Web/NovelAgentWeb/Controllers/AgentController.cs");
+
+        Assert.Contains("ConversationApplicationService", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AgentTurnCoordinator", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IChatHistoryRepository", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IAgentForegroundTurnRunner", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AgentSessionResume_ReplaysFromDurableConversationMessages()
+    {
+        var source = Read("Web/NovelAgentWeb/Services/AgentSessions/AgentSessionService.cs");
+
+        Assert.Contains("ReadMessageRecordsAsync", source, StringComparison.Ordinal);
+        Assert.Contains("pi.assistant.v1", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AgentChatTurns", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -143,7 +164,7 @@ public sealed class TargetArchitecturePurityTests
 
         Assert.Contains("item.RequiresConfirmation", assembler, StringComparison.Ordinal);
         Assert.Contains("AgentPendingIntentContext", assembler, StringComparison.Ordinal);
-        Assert.Contains("context.PendingIntents", director, StringComparison.Ordinal);
+        Assert.Contains("snapshot.PendingIntents", director, StringComparison.Ordinal);
     }
 
     [Fact]

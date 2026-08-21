@@ -16,7 +16,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
     private readonly IChatHistoryRepository _chatHistory;
     private readonly ICollaborationMemoryService _collaborationMemory;
     private readonly ICommitmentAssessmentService _commitments;
-    private readonly IAgentContextAssembler _contexts;
+    private readonly IConversationContextAssembler _contexts;
 
     public TargetArchitectureDirector(
         IAgentSessionApplicationService sessions,
@@ -24,7 +24,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
         IChatHistoryRepository chatHistory,
         ICollaborationMemoryService collaborationMemory,
         ICommitmentAssessmentService commitments,
-        IAgentContextAssembler contexts)
+        IConversationContextAssembler contexts)
     {
         _sessions = sessions;
         _currentUser = currentUser;
@@ -42,7 +42,10 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
     {
         var message = RequireText(userMessage, nameof(userMessage));
         var userId = _currentUser.GetUserId();
-        var session = await _sessions.GetRuntimeSessionAsync(sessionId, ct).ConfigureAwait(false);
+        var session = await _sessions.FindRuntimeSessionAsync(sessionId, ct).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Session {sessionId} was not found for the current user.");
+        if (session.IsArchived)
+            throw new InvalidOperationException($"Session {sessionId} is archived.");
         var projectId = session.ActiveProjectId;
 
         await _chatHistory.AppendAsync(
@@ -53,39 +56,44 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             message,
             ct).ConfigureAwait(false);
 
-        if (string.IsNullOrWhiteSpace(projectId))
+        var context = await _contexts.BuildAsync(
+                new ConversationContextRequest(userId, session.SessionId, message),
+                ct)
+            .ConfigureAwait(false);
+        if (context is UnboundConversationContext unbound)
         {
+            var suggestions = unbound.AccessibleProjects
+                .Take(3)
+                .Select(item => $"选择「{item.Title}」")
+                .Append("继续讨论")
+                .ToArray();
             return await ReplyAsync(
                 session,
-                "当前会话还没有绑定小说项目。请先选择项目，再继续讨论创作目标。",
-                ["选择项目"],
+                "当前会话还没有绑定小说项目。你可以继续澄清创作想法，或明确选择一个可访问项目。",
+                suggestions,
                 "project_required",
                 null,
                 null,
                 ct).ConfigureAwait(false);
         }
 
-        var context = await _contexts.BuildAsync(new AgentContextRequest(
-                AgentContextProfile.Conversation,
-                userId,
-                projectId,
-                session.SessionId,
-                message), ct)
-            .ConfigureAwait(false);
-
+        var bound = (BoundConversationContext)context;
+        projectId = bound.Binding.ProjectId;
+        var snapshot = bound.ProjectSnapshot;
         var assessment = await _commitments.AssessAsync(new CommitmentAssessmentRequest(
             projectId,
-            context.LatestGoal?.CollaborationMode ?? "coauthor",
-            context.Dialogue,
-            JsonSerializer.Serialize(context.Memory.Records, JsonOptions),
+            snapshot.LatestGoal?.CollaborationMode ?? "coauthor",
+            BuildDialogue(bound.Transcript),
+            JsonSerializer.Serialize(snapshot.Memory.Records, JsonOptions),
             JsonSerializer.Serialize(new
             {
-                context.Project,
-                context.LatestGoal,
-                StructuredMemory = context.Memory.Structured,
-                context.Knowledge,
-                context.PendingIntents,
-                context.Sources
+                snapshot.Version,
+                snapshot.Project,
+                LatestGoal = snapshot.LatestGoal,
+                StructuredMemory = snapshot.Memory.Structured,
+                snapshot.Knowledge,
+                snapshot.PendingIntents,
+                snapshot.Sources
             }, JsonOptions),
             ExplicitExecutionAction: false,
             ProposedContract: null), ct).ConfigureAwait(false);
@@ -112,7 +120,7 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             BuildSuggestions(assessment),
             Phase(assessment.State),
             director,
-            context.Knowledge,
+            snapshot.Knowledge,
             ct).ConfigureAwait(false);
     }
 
@@ -143,6 +151,16 @@ public sealed class TargetArchitectureDirector : IAgentForegroundTurnRunner
             ActiveProjectId: session.ActiveProjectId,
             Director: director,
             Knowledge: knowledge));
+    }
+
+    private static IReadOnlyList<DialogueMessage> BuildDialogue(ChatPromptWindowDto transcript)
+    {
+        var dialogue = new List<DialogueMessage>();
+        if (!string.IsNullOrWhiteSpace(transcript.MetaSummary))
+            dialogue.Add(new DialogueMessage("system", $"Conversation summary: {transcript.MetaSummary}"));
+        dialogue.AddRange(transcript.Summaries.Select(item => new DialogueMessage("system", item.Content)));
+        dialogue.AddRange(transcript.RecentMessages.Select(item => new DialogueMessage(item.Role, item.Content)));
+        return dialogue;
     }
 
     private static string BuildReply(CommitmentAssessment assessment)

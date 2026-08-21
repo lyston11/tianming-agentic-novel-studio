@@ -94,13 +94,54 @@ public interface IConversationTextCompletionPort
         CancellationToken cancellationToken);
 }
 
+public abstract record ConversationBinding;
+
+public sealed record UnboundConversationBinding : ConversationBinding;
+
+public sealed record BoundConversationBinding : ConversationBinding
+{
+    public BoundConversationBinding(string projectId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        ProjectId = projectId;
+    }
+
+    public string ProjectId { get; }
+}
+
 public sealed record ConversationTurnContext(
     string UserId,
-    string ProjectId,
+    ConversationBinding Binding,
     string SessionId,
     string Message,
     IReadOnlyList<string> AttachmentIds,
-    string CorrelationId);
+    string CorrelationId,
+    string? SourceUserMessageId = null);
+
+public interface IConversationSessionBindingReader
+{
+    Task<ConversationBinding> GetBindingAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken);
+}
+
+public sealed record ConversationRuntimeMessage(
+    string Role,
+    string Content,
+    string? ToolCallId = null,
+    string? ToolName = null,
+    string? ArgumentsJson = null,
+    string? DetailsJson = null,
+    bool IsError = false,
+    string? CustomType = null);
+
+public sealed record ConversationRuntimeCheckpoint(string Runtime, string CheckpointJson);
+
+public sealed record ConversationRuntimeMessageRecord(
+    string Id,
+    ConversationRuntimeMessage Message,
+    DateTimeOffset CreatedAt);
 
 public sealed record ConversationRuntimeResult(
     string AssistantMessage,
@@ -108,7 +149,9 @@ public sealed record ConversationRuntimeResult(
     GoalContract? ProposedContract,
     IReadOnlyList<string> TokenDeltas,
     string? Reason = null,
-    IReadOnlyList<AgentToolCall>? ToolCalls = null);
+    IReadOnlyList<AgentToolCall>? ToolCalls = null,
+    ConversationRuntimeCheckpoint? Checkpoint = null,
+    IReadOnlyList<ConversationRuntimeMessage>? Messages = null);
 
 public interface IConversationStore
 {
@@ -120,7 +163,7 @@ public interface IConversationStore
 
     Task SaveTurnAsync(
         string userId,
-        string projectId,
+        string? projectId,
         string sessionId,
         string idempotencyKey,
         string userMessageId,
@@ -130,6 +173,18 @@ public interface IConversationStore
         GoalProposal? proposal,
         ConversationTurnResult result,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ConversationRuntimeMessage>> ReadMessagesAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ConversationRuntimeMessage>>([]);
+
+    Task<IReadOnlyList<ConversationRuntimeMessageRecord>> ReadMessageRecordsAsync(
+        string userId,
+        string sessionId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ConversationRuntimeMessageRecord>>([]);
 
     Task UpdateTurnResultAsync(
         string userId,
@@ -209,7 +264,7 @@ public interface ITransientAgentStream
 {
     Task PublishTokenDeltaAsync(
         string userId,
-        string projectId,
+        ConversationBinding binding,
         string sessionId,
         string correlationId,
         string delta,

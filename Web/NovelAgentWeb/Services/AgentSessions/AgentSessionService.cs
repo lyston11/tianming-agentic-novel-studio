@@ -7,6 +7,7 @@ using TM.Web.NovelAgentWeb.Models.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Support;
 using AgentSessionEntity = TM.Web.NovelAgentWeb.Data.Entities.AgentSession;
+using ConversationRuntimeMessage = Tianming.NovelAgent.Application.Ports.ConversationRuntimeMessage;
 
 namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 
@@ -16,36 +17,24 @@ namespace TM.Web.NovelAgentWeb.Services.AgentSessions;
 public class AgentSessionService : IAgentSessionService
 {
     private readonly NovelAgentDbContext _dbContext;
+    private readonly Tianming.NovelAgent.Application.Ports.IConversationStore _conversationStore;
     private readonly ILogger<AgentSessionService> _logger;
 
     public AgentSessionService(
         NovelAgentDbContext dbContext,
+        Tianming.NovelAgent.Application.Ports.IConversationStore conversationStore,
         ILogger<AgentSessionService> logger)
     {
         _dbContext = dbContext;
+        _conversationStore = conversationStore;
         _logger = logger;
     }
 
-    public async Task<AgentSessionResponse> GetOrCreateSessionAsync(
-        string? sessionId,
+    public async Task<AgentSessionResponse> CreateUnboundSessionAsync(
         string userId,
-        string? projectId,
         string? idempotencyKey,
         CancellationToken cancellationToken = default)
     {
-        // If sessionId provided, try to get existing session
-        if (!string.IsNullOrEmpty(sessionId))
-        {
-            var existing = await _dbContext.AgentSessions
-                .WithUserFilter(userId)
-                .FirstOrDefaultAsync(s => s.Id == sessionId, cancellationToken);
-
-            if (existing != null)
-            {
-                return await MapToResponseAsync(existing, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
         var normalizedIdempotencyKey = EmptyToNull(idempotencyKey);
         if (normalizedIdempotencyKey != null)
         {
@@ -58,12 +47,12 @@ public class AgentSessionService : IAgentSessionService
                 return await MapToResponseAsync(existing, cancellationToken).ConfigureAwait(false);
         }
 
-        // Create new session
+        // Session creation is intentionally always unbound. Binding is a separate, explicit context operation.
         var session = new AgentSessionEntity
         {
             Id = Guid.NewGuid().ToString("N"),
             UserId = userId,
-            ProjectId = projectId,
+            ProjectId = null,
             IdempotencyKey = normalizedIdempotencyKey,
             Title = "新会话",
             SessionData = "{}",
@@ -90,10 +79,11 @@ public class AgentSessionService : IAgentSessionService
             throw;
         }
 
-        _logger.LogInformation("Created new agent session {SessionId} for user {UserId}", session.Id, userId);
+        _logger.LogInformation("Created new unbound agent session {SessionId} for user {UserId}", session.Id, userId);
 
         return await MapToResponseAsync(session, cancellationToken).ConfigureAwait(false);
     }
+
 
     private async Task<AgentSessionEntity?> FindSessionByIdempotencyKeyAsync(
         string userId,
@@ -210,32 +200,7 @@ public class AgentSessionService : IAgentSessionService
     {
         var data = DeserializeSessionData(session.SessionData);
         var projectId = session.ProjectId ?? string.Empty;
-        var turnRows = await _dbContext.AgentChatTurns
-            .AsNoTracking()
-            .Where(t => t.SessionId == session.Id && t.UserId == session.UserId)
-            .OrderBy(t => t.TurnIndex)
-            .Select(t => new
-            {
-                t.Id,
-                t.TurnIndex,
-                t.Role,
-                t.Content,
-                t.CreatedAt,
-                t.KnowledgeContextJson
-            })
-            .ToListAsync(ct)
-            .ConfigureAwait(false);
-        var messages = turnRows
-            .Select(t => new AgentConversationTurn
-            {
-                TurnId = t.Id,
-                TurnIndex = t.TurnIndex,
-                Role = t.Role,
-                Content = t.Content,
-                Knowledge = DeserializeKnowledgeContext(t.KnowledgeContextJson),
-                CreatedAt = t.CreatedAt
-            })
-            .ToList();
+        var messages = await ReadConversationTurnsAsync(session, ct).ConfigureAwait(false);
         var displayTitle = BuildDisplayTitle(session.Title, messages);
 
         return new AgentSessionResponse
@@ -244,6 +209,7 @@ public class AgentSessionService : IAgentSessionService
             Title = displayTitle,
             Phase = string.IsNullOrWhiteSpace(data.Phase) ? "idle" : data.Phase,
             ActiveProjectId = projectId,
+            BindingVersion = session.BindingVersion,
             ActiveRunId = null,
             IsArchived = session.IsArchived,
             RunHistory = data.RunHistory,
@@ -253,6 +219,74 @@ public class AgentSessionService : IAgentSessionService
             Memory = new AgentWorkingMemorySnapshot(),
             MessageCount = messages.Count
         };
+    }
+
+    /// <summary>
+    /// Replays the authoritative Application Conversation transcript (ConversationMessages in
+    /// AgentControl PostgreSQL) into chat bubbles. Tool-result and custom runtime envelopes are
+    /// not user-visible chat turns and are skipped.
+    /// </summary>
+    private async Task<List<AgentConversationTurn>> ReadConversationTurnsAsync(AgentSessionEntity session, CancellationToken ct)
+    {
+        var records = await _conversationStore.ReadMessageRecordsAsync(session.UserId, session.Id, ct)
+            .ConfigureAwait(false);
+        var messages = new List<AgentConversationTurn>(records.Count);
+        foreach (var (record, index) in records.Select((record, index) => (record, index)))
+        {
+            var message = record.Message;
+            string? content;
+            var role = NormalizeRole(message.Role);
+            if (role is null)
+                continue;
+            if (role == "assistant")
+                content = DecodeAssistantContent(message);
+            else
+                content = message.Content;
+            messages.Add(new AgentConversationTurn
+            {
+                TurnId = record.Id,
+                TurnIndex = index + 1,
+                Role = role,
+                Content = content,
+                Knowledge = null,
+                CreatedAt = record.CreatedAt.UtcDateTime
+            });
+        }
+
+        return messages;
+    }
+
+    private static string? NormalizeRole(string role) => role?.ToLowerInvariant() switch
+    {
+        "user" => "user",
+        "assistant" => "assistant",
+        _ => null
+    };
+
+    private static string DecodeAssistantContent(ConversationRuntimeMessage message)
+    {
+        if (!string.Equals(message.CustomType, "pi.assistant.v1", StringComparison.Ordinal))
+            return message.Content;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(message.Content);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return message.Content;
+            var text = string.Join(
+                "\n",
+                doc.RootElement.EnumerateArray()
+                    .Where(block => block.ValueKind == JsonValueKind.Object
+                        && string.Equals(block.GetProperty("type").GetString(), "text", StringComparison.Ordinal)
+                        && block.TryGetProperty("text", out var textProperty)
+                        && textProperty.ValueKind == JsonValueKind.String)
+                    .Select(block => block.GetProperty("text").GetString()));
+            return string.IsNullOrWhiteSpace(text) ? message.Content : text;
+        }
+        catch (JsonException)
+        {
+            return message.Content;
+        }
     }
 
     private static string BuildDisplayTitle(string? storedTitle, IReadOnlyList<AgentConversationTurn> messages)

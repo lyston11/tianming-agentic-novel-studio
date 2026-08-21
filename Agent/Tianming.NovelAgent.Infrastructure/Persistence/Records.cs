@@ -4,7 +4,7 @@ public sealed class ConversationMessageRecord
 {
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ProjectId { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public string SessionId { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
@@ -15,7 +15,7 @@ public sealed class ConversationTurnRecord
 {
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ProjectId { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public string SessionId { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
     public string ResultJson { get; set; } = "{}";
@@ -26,7 +26,7 @@ public sealed class ConversationRuntimeCheckpointRecord
 {
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ProjectId { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public string SessionId { get; set; } = string.Empty;
     public string Runtime { get; set; } = string.Empty;
     public string CheckpointJson { get; set; } = "{}";
@@ -299,7 +299,7 @@ public sealed class DomainEventRecord
 {
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ProjectId { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public string GoalId { get; set; } = string.Empty;
     public string? TaskId { get; set; }
     public string? BranchId { get; set; }
@@ -321,7 +321,7 @@ public sealed class AgentStreamEventRecord
 {
     public string Id { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ProjectId { get; set; } = string.Empty;
+    public string? ProjectId { get; set; }
     public string StreamKind { get; set; } = string.Empty;
     public string StreamId { get; set; } = string.Empty;
     public long Sequence { get; set; }

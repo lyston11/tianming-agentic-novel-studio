@@ -20,15 +20,8 @@ public sealed class StructuredConversationAgentRuntime(IConversationTextCompleti
     {
         var response = await completion.CompleteAsync(
             context.UserId,
-            """
-            You are the conversation runtime for a novel production system. Discuss and clarify creative intent.
-            Return exactly one JSON object with kind, message, reason, optional contract, and optional toolCalls. Allowed
-            kinds are discussOnly, proposeGoal, proposeRevision, needClarification, rejectUnsafe. Never claim that
-            production started and never write Canon. A proposal contract must include every GoalContract field. When
-            the user explicitly commits to a proposed goal, return proposeGoal with a confirm_creative_goal tool call;
-            the Application layer will execute it only after the Proposal is persisted.
-            """,
-            $"Project: {context.ProjectId}\nUser: {context.Message}",
+            BuildSystemPrompt(context.Binding),
+            BuildUserPrompt(context),
             cancellationToken);
 
         RuntimeDecision decision;
@@ -48,7 +41,8 @@ public sealed class StructuredConversationAgentRuntime(IConversationTextCompleti
                 []);
         }
 
-        if (decision.Kind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision)
+        if (context.Binding is BoundConversationBinding
+            && decision.Kind is ConversationDecisionKind.ProposeGoal or ConversationDecisionKind.ProposeRevision)
         {
             if (decision.Contract is null)
                 throw new InvalidOperationException("A proposal decision must include a goal contract.");
@@ -62,6 +56,32 @@ public sealed class StructuredConversationAgentRuntime(IConversationTextCompleti
             decision.Reason,
             decision.ToolCalls ?? []);
     }
+
+    private static string BuildSystemPrompt(ConversationBinding binding) => binding switch
+    {
+        UnboundConversationBinding => """
+            You are the conversation runtime for a novel production system. Discuss and clarify creative intent.
+            Return exactly one JSON object with kind, message, reason, optional contract, and optional toolCalls. Allowed
+            kinds are discussOnly, needClarification, and rejectUnsafe. Never claim that production started or write
+            Canon. This conversation is not bound to a project, so no project-writing tools are available.
+            """,
+        BoundConversationBinding => """
+            You are the conversation runtime for a novel production system. Discuss and clarify creative intent.
+            Return exactly one JSON object with kind, message, reason, optional contract, and optional toolCalls. Allowed
+            kinds are discussOnly, proposeGoal, proposeRevision, needClarification, rejectUnsafe. Never claim that
+            production started and never write Canon. A proposal contract must include every GoalContract field. When
+            the user explicitly commits to a proposed goal, return proposeGoal with a confirm_creative_goal tool call;
+            the Application layer will execute it only after the Proposal is persisted.
+            """,
+        _ => throw new ArgumentOutOfRangeException(nameof(binding))
+    };
+
+    private static string BuildUserPrompt(ConversationTurnContext context) => context.Binding switch
+    {
+        UnboundConversationBinding => $"Unbound conversation. User: {context.Message}",
+        BoundConversationBinding bound => $"Project: {bound.ProjectId}\nUser: {context.Message}",
+        _ => throw new ArgumentOutOfRangeException(nameof(context))
+    };
 
     private static string StripFence(string value)
     {

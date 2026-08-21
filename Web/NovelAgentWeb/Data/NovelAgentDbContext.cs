@@ -52,6 +52,7 @@ public class NovelAgentDbContext : DbContext
     public DbSet<AgentMemoryPromotion> AgentMemoryPromotions { get; set; } = null!;
     public DbSet<ProjectKnowledgeUsage> ProjectKnowledgeUsages { get; set; } = null!;
     public DbSet<AgentSession> AgentSessions { get; set; } = null!;
+    public DbSet<ProjectContextActivation> ProjectContextActivations { get; set; } = null!;
     public DbSet<StoryConstitution> StoryConstitutions { get; set; } = null!;
     public DbSet<VolumeArc> VolumeArcs { get; set; } = null!;
     public DbSet<ForeshadowEntry> ForeshadowEntries { get; set; } = null!;
@@ -1400,6 +1401,10 @@ public class NovelAgentDbContext : DbContext
             entity.Property(e => e.Id).HasColumnName("id");
             entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
             entity.Property(e => e.ProjectId).HasColumnName("project_id");
+            entity.Property(e => e.BindingVersion)
+                .HasColumnName("binding_version")
+                .HasDefaultValue(0L)
+                .IsConcurrencyToken();
             entity.Property(e => e.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(160);
             entity.Property(e => e.Title).HasColumnName("title").IsRequired().HasDefaultValue("新会话");
             entity.Property(e => e.IsArchived).HasColumnName("is_archived").HasDefaultValue(false);
@@ -1418,6 +1423,32 @@ public class NovelAgentDbContext : DbContext
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.AgentSessions)
                 .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProjectContextActivation>(entity =>
+        {
+            entity.ToTable("project_context_activations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.UserId).HasColumnName("user_id").IsRequired();
+            entity.Property(e => e.SessionId).HasColumnName("session_id").IsRequired();
+            entity.Property(e => e.ProjectId).HasColumnName("project_id").IsRequired();
+            entity.Property(e => e.SourceUserMessageId).HasColumnName("source_user_message_id");
+            entity.Property(e => e.ConfirmationActionId).HasColumnName("confirmation_action_id");
+            entity.Property(e => e.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(160).IsRequired();
+            entity.Property(e => e.PreviousBindingVersion).HasColumnName("previous_binding_version");
+            entity.Property(e => e.BindingVersion).HasColumnName("binding_version");
+            entity.Property(e => e.ConfirmedAt).HasColumnName("confirmed_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(e => new { e.SessionId, e.IdempotencyKey })
+                .IsUnique()
+                .HasDatabaseName("idx_project_context_activations_idempotency");
+            entity.HasIndex(e => new { e.SessionId, e.BindingVersion })
+                .IsUnique()
+                .HasDatabaseName("idx_project_context_activations_version");
+            entity.HasOne(e => e.Session)
+                .WithMany(session => session.ProjectContextActivations)
+                .HasForeignKey(e => e.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
