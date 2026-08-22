@@ -128,3 +128,24 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 仓库重构：四部分代码基础
+
+**Date**: 2026-08-22
+**Task**: 仓库重构：四部分代码基础
+**Branch**: `codex/unify-agent-context-production`
+
+### Summary
+
+按用户确认方案重构仓库：Agent 两 Node 包迁出为根目录 tianming-ai / tianming-agent-core（file: 依赖改 ../tianming-ai，重装后 3/3 与 10/10 全绿）；其余全部旧代码/文档/配置 git mv 进 old/ 冻结（历史 100% rename 保留）；权威架构文档上移根目录并更新路径；新建 tianming-novel-agent 与 tianming-web 骨架 README；pi-agent/ 存 badlogic/pi-mono v0.57.1 浅克隆参考源码（gitignored）。PiRuntime 回归从 old/ 路径 4/4 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e379a24` | (see git log) |
+
+### Status
+
+[OK] **Completed**
