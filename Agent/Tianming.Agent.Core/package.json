@@ -1,0 +1,23 @@
+{
+  "name": "@tianming/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "type-check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "@tianming/agent-ai": "file:../Tianming.Agent.Ai"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}

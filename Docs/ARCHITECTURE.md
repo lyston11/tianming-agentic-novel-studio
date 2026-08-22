@@ -2,7 +2,8 @@
 
 **状态：** 已实施并通过全量验收
 **更新时间：** 2026-07-31
-**完整规范：** `Docs/superpowers/specs/2026-07-12-novel-agent-target-architecture.md`
+**Agent Loop 基线：** `Docs/AGENT_CORE_ARCHITECTURE.md`（2026-08-22 起，Core-first 分层权威）
+**完整规范：** `Docs/superpowers/specs/2026-07-12-novel-agent-target-architecture.md`（已降级为历史整合计划）
 **验收记录：** `Docs/superpowers/tests/2026-07-13-novel-agent-target-architecture-acceptance.md`
 
 本文是当前生产架构入口。旧的 SQLite、文件正文、通用 ReAct 小说生产 loop 和平级业务工具编排均不再是生产路径。

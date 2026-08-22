@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend/Node architecture and verification guidance for the new Agent AI/Core packages."}
+{"file":".trellis/spec/frontend/index.md","reason":"Web boundary and frontend integration constraints for keeping tianming-web separate from Agent Core."}
+{"file":".trellis/workflow.md","reason":"Trellis phase and quality-gate requirements for this complex architecture task."}
+{"file":"Docs/research/oh-story-dsh/ANALYSIS.md","reason":"Repository research evidence for dsh-story skills, roles, hooks, tracking state, and limits."}

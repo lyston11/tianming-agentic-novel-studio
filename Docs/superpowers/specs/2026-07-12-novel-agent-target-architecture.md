@@ -1,7 +1,8 @@
 # 天命小说 Agent 目标架构设计
 
-**状态：** 已实施并于 2026-07-19 通过全量验收
+**状态：** 历史整合计划（已降级为背景资料）
 **日期：** 2026-07-12  
+**降级说明：** 自 2026-08-22 起，本文描述的"统一上下文/固定生产链"方案不再是当前架构真源。Agent Loop 架构以 Core-first 重置为准，权威文档见 `Docs/AGENT_CORE_ARCHITECTURE.md`（Trellis 任务 `.trellis/tasks/08-22-tianming-agent-core-foundation`）。本文仅作历史背景与决策溯源使用。
 **替代范围：** 本文替代 `Docs/superpowers/specs` 中此前所有以通用 ReAct、平级业务工具、SQLite 生产库和重叠多层事实记忆为基础的设计。
 
 ## 1. 目标

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verify package boundaries, dependency direction, error handling, and tests."}
+{"file":".trellis/spec/frontend/index.md","reason":"Verify the Web shell remains outside Core and no browser infrastructure is added in this task."}
+{"file":"Docs/research/oh-story-dsh/ANALYSIS.md","reason":"Review documented borrowed patterns and ensure no fixed workflow is copied into Core."}
