@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
-    "@tianming/agent-ai": "file:../Tianming.Agent.Ai"
+    "@tianming/agent-ai": "file:../tianming-ai"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

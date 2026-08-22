@@ -78,3 +78,6 @@ logs/
 .env
 .env.*
 !.env.example
+
+# Third-party reference snapshot (re-obtainable: git clone --depth 1 --branch v0.57.1 https://github.com/badlogic/pi-mono.git pi-agent)
+/pi-agent/

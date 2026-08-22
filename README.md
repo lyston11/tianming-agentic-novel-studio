@@ -5,6 +5,8 @@
 [![React](https://img.shields.io/badge/React-19.2-blue.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
 
+> **[2026-08-22 仓库重构]** 本仓库已切换为 Core-first 四层布局（`tianming-ai` / `tianming-agent-core` / `tianming-novel-agent` / `tianming-web`，见 `AGENT_CORE_ARCHITECTURE.md`）；下文描述的完整系统代码与文档已整体移入 `old/` 冻结为 legacy。Pi 参考源码在 `pi-agent/`（v0.57.1 快照）。
+>
 > AI 不会天然记得一本千万字小说。这个项目做的事情是：把故事变成系统能管理的数据，让 Agent 按状态、账本和创作约束推进长篇小说。
 
 **Tianming Agentic Novel Studio** 是一个基于 AI Agent 的长篇小说创作工作台，支持多用户协作、向量检索和智能内容生成。系统通过结构化的故事管理、伏笔账本和 RAG 技术，帮助创作者管理复杂的长篇叙事。

@@ -20,13 +20,13 @@
 └──────────────────────────────┬───────────────────────────────┘
                                │ generic AgentCore contract
 ┌──────────────────────────────▼───────────────────────────────┐
-│ tianming-agent-core → Agent/Tianming.Agent.Core              │
+│ tianming-agent-core（仓库根目录同名文件夹）                     │
 │ message state / loop / serial tools / events / abort /        │
 │ steering / follow-up / natural stop / maxTurns 安全上限        │
 └──────────────────────────────┬───────────────────────────────┘
                                │ model port（streamFn 注入）
 ┌──────────────────────────────▼───────────────────────────────┐
-│ tianming-ai → Agent/Tianming.Agent.Ai                        │
+│ tianming-ai（仓库根目录同名文件夹）                            │
 │ 项目模型调用边界；第一阶段 adapter = @mariozechner/pi-ai@0.57.1 │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -37,15 +37,15 @@
 
 | 层 | 包名 | 路径 | 依赖 |
 |---|---|---|---|
-| AI 边界 | `@tianming/agent-ai` | `Agent/Tianming.Agent.Ai` | `@mariozechner/pi-ai@0.57.1`（精确固定）、`@sinclair/typebox` |
-| 通用 Core | `@tianming/agent-core` | `Agent/Tianming.Agent.Core` | 仅 `@tianming/agent-ai`（file:）+ `@sinclair/typebox` |
+| AI 边界 | `@tianming/agent-ai` | `tianming-ai/` | `@mariozechner/pi-ai@0.57.1`（精确固定）、`@sinclair/typebox` |
+| 通用 Core | `@tianming/agent-core` | `tianming-agent-core/` | 仅 `@tianming/agent-ai`（file:）+ `@sinclair/typebox` |
 
 两个包都是独立 Node ESM 包（Node >=22、TypeScript 5.9、各自 lockfile），未被任何生产 caller 引用前不改变线上行为。
 
 ## 2. 各层运行时边界
 
 - **tianming-web**：前端是 UI/API/SSE 壳，不依赖 Node 包或模型 provider；ASP.NET 是认证、授权、Session/Conversation durable truth、领域事务、Outbox、Worker 和 Read Model 的唯一权威。
-- **Novel Agent Runtime**（迁移期宿主为 `Agent/Tianming.NovelAgent.PiRuntime`）：只通过内部 API 使用已授权的 Application 能力；未来切换为新 Core 的宿主 adapter。
+- **Novel Agent Runtime**（迁移期宿主为 `old/Agent/Tianming.NovelAgent.PiRuntime`（legacy 隔离区））：只通过内部 API 使用已授权的 Application 能力；未来切换为新 Core 的宿主 adapter。
 - **Core event 不是 durable truth**：事件只是宿主观察面；Web/Application 负责把消息映射为 PostgreSQL 持久化和 SSE。
 - **模型调用只经 `@tianming/agent-ai`**：provider registry、token 计费、OAuth、HTTP provider、模型发现全部留在 pi-ai 内，项目内其他层禁止直接 import pi-ai。
 
@@ -71,7 +71,7 @@
 
 不照搬（第一阶段约束）：
 
-1. **不直接依赖 `@mariozechner/pi-agent-core`**——避免本阶段沦为换名包装；Tianming Core 的公共契约由本项目测试锁定（`Agent/Tianming.Agent.Core/test/`）。
+1. **不直接依赖 `@mariozechner/pi-agent-core`**——避免本阶段沦为换名包装；Tianming Core 的公共契约由本项目测试锁定（`tianming-agent-core/test/`）。
 2. 不引入 AgentHarness/durable session/resume 协议——pi-agent-core 0.57.1 中这些 API 明确抛 `HarnessNotImplemented`，不能支撑集成。
 3. 不导入 pi-coding-agent 宿主生态（skills/permissions/themes 等）；novel-domain 行为后续通过 tools/hooks/context 围绕 Core 实现。
 4. pi-ai 版本固定 0.57.1（npm `@earendil-works/pi-*` 命名空间自 0.74 才存在且 API 已演化），不得升级到未验证版本。
@@ -86,13 +86,13 @@
 
 以下路径冻结为 legacy，不再接受新 Agent 能力；本阶段不要求删除：
 
-- `Agent/Tianming.NovelAgent.PiRuntime` 直接持有 pi-agent-core `Agent` 的 turn path；
+- `old/Agent/Tianming.NovelAgent.PiRuntime` 直接持有 pi-agent-core `Agent` 的 turn path；
 - C# MAF adapter、Structured Runtime、TargetArchitectureDirector；
 - legacy Web turn path 及其控制面写入者。
 
 删除条件（必须同时满足）：生产 callers 为零、替代路径有 targeted regression、历史数据/迁移仍可读取、完整回归通过。
 
-当前未迁移 legacy caller：`Agent/Tianming.NovelAgent.PiRuntime/src/runtime.ts`（仍使用 pi-agent-core Agent）。新包就位后的迁移顺序见第 7 节。
+当前未迁移 legacy caller：`old/Agent/Tianming.NovelAgent.PiRuntime/src/runtime.ts`（仍使用 pi-agent-core Agent）。新包就位后的迁移顺序见第 7 节。
 
 ## 7. 后续迁移顺序
 
