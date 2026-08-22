@@ -107,3 +107,24 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Tianming Agent Core 分层基线落地
+
+**Date**: 2026-08-22
+**Task**: Tianming Agent Core 分层基线落地
+**Branch**: `codex/unify-agent-context-production`
+
+### Summary
+
+实现 08-22 任务：新增 @tianming/agent-ai（固定 pi-ai 0.57.1 的受控模型边界）与 @tianming/agent-core（通用 Agent Loop：natural stop、串行工具、steering/follow-up、abort、maxTurns、10 种稳定事件），13 个确定性测试全绿，PiRuntime 回归 4/4 通过；写入 Docs/AGENT_CORE_ARCHITECTURE.md 基线并将 2026-07-12 目标架构 spec 降级为历史计划。子代理通道两次空响应后改内联实现，check 阶段补齐多工具串行测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e3b14f4d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
