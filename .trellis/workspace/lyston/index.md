@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-08-19
+- **Total Sessions**: 2
+- **Last Active**: 2026-08-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~28 | Active |
+| `journal-1.md` | ~109 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-08-22 | 架构审计任务收口：Agent→Canon 闭环、guard 启用与遗留缺陷修复 | `8c7840eb`, `497dba7d`, `2ce58c18`, `5b45b18a`, `f7d52a2f` | `codex/unify-agent-context-production` |
 | 1 | 2026-08-19 | Agent workflow proposal integration | `d9bae690` | `codex/unify-agent-context-production` |
 <!-- @@@/auto:session-history -->
 

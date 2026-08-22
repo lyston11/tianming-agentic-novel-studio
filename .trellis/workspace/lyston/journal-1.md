@@ -82,3 +82,28 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Status
 
 [ARCHIVED] **Closed at the user's request with residual acceptance gaps documented in task notes**
+
+
+## Session 2: 架构审计任务收口：Agent→Canon 闭环、guard 启用与遗留缺陷修复
+
+**Date**: 2026-08-22
+**Task**: 架构审计任务收口：Agent→Canon 闭环、guard 启用与遗留缺陷修复
+**Branch**: `codex/unify-agent-context-production`
+
+### Summary
+
+完成 08-18-architecture-audit 六切片并归档：Unbound Session/Conversation、项目发现与显式绑定、独立 Node Pi Runtime（pi-agent-core 0.57.1）、聊天持久化收口到 ConversationMessages。新增三层 E2E：Application/DB（真实双迁移 PostgreSQL+单 Worker）、API/SSE（托管 Outbox+SSE 仅通知）。修复评审阻断项：Rework 嵌套事务（移除控制器 Serializable 包装）、E2E 工厂 AgentControlDbContext 未替换导致的 legacy 验收 400、PrefixMerge 跨上下文 kernel_tasks 双写 40001。全部合法 legacy writer 迁移至 Application command 后在两个 E2E 工厂启用 EnforceLegacyControlPlaneReadOnly=true，回归 159/159+Unit 837/837+Architecture 29/29 全绿。剩余：Playwright 浏览器 E2E（AC-15 阶段 3，仓库无既有基础设施）与迁移期代码退役（TargetArchitectureDirector 等），已在 audit-report.md 待实施清单记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8c7840eb` | (see git log) |
+| `497dba7d` | (see git log) |
+| `2ce58c18` | (see git log) |
+| `5b45b18a` | (see git log) |
+| `f7d52a2f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
