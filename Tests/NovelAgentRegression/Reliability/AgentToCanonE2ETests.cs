@@ -245,7 +245,8 @@ public sealed class AgentToCanonE2ETests : IAsyncLifetime
             novelDb,
             currentUser,
             new ContentDocumentService(novelDb),
-            new ThrowingConflictModel()), productions, userScope);
+            new ThrowingConflictModel(),
+            new EfLegacyControlPlaneCommands(agentDb, store, clock, ids, userScope)), productions, userScope);
         var delivered = await PumpOutboxAsync(novelDb, handler);
         Assert.Contains(delivered, x => x.EventType == NovelAgentOutboxHandler.AcceptanceGateReachedEventType);
         Assert.Equal("awaiting_acceptance", await agentDb.BookProductions.Select(x => x.Status).SingleAsync());

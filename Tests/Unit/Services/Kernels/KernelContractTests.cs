@@ -85,7 +85,7 @@ public sealed class KernelContractTests
             db,
             currentUser,
             new DomainContractValidator(db, currentUser),
-            new KernelArtifactStore(db));
+            new KernelArtifactStore(db, new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db)));
         var control = new Mock<IGoalControlService>();
         control.Setup(service => service.ReachSafePointAsync(
                 claim,
@@ -577,7 +577,7 @@ public sealed class KernelContractTests
             db,
             currentUser,
             new DomainContractValidator(db, currentUser),
-            new KernelArtifactStore(db));
+            new KernelArtifactStore(db, new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db)));
         var modelExecutionScopes = new KernelModelExecutionScopeAccessor();
         var registry = new KernelRegistry([new StubKernel(modelExecutionScopes)]);
         var control = new Mock<IGoalControlService>();

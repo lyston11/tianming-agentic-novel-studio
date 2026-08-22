@@ -187,11 +187,11 @@ ASP.NET 项目目录与激活 Application contract 已完成并通过 focused Un
 
 - [x] 端口新增 6 个命令：PauseGoalAsync/ResumeGoalAsync/CancelGoalAsync/ReachSafePointAsync/PersistReworkGraphAsync（LegacyControlPlanePorts.cs + Unconfigured stub + EfLegacyControlPlaneCommands 实现，保留 Cancel 的 FOR UPDATE 行锁与幂等重试开关）。
 - [x] 盘点结论：BookProductionService 的 InitializeAsync/CompleteBatchAsync/FinalizeMergedBatchAsync/ContinueInteractiveAsync/BindCompiledBatchAsync/ChangeStrategyAsync 均无调用方（已被既有命令化改造取代）→ 直接删除即可，无需迁移。
-- [ ] Rewire：GoalControlService 四路径改调命令（Cancel 新时序：先 prefixMerge/discard 副作用，后命令收口控制面状态，已获架构师批准的原子性边界变化）。
-- [ ] Rewire：ReworkGraphCompiler → PersistReworkGraphAsync（含 graph.GraphJson/ContentHash 与 draft InputArtifactIdsJson 更新）。
-- [ ] Rewire：KernelArtifactStore / PrefixMergeService MergeRecord artifact / ModelExecutionRecoveryService artifact → CreateArtifactAsync。注意 PrefixMerge 的合并证据块还联动修改 workflowTask.OutputArtifactIdsJson（guard 实体），需一并纳入命令或设计跨上下文握手。
-- [ ] 删除 BookProductionService 死代码写入方法并同步接口/DI/测试。
-- [ ] 在 TestWebApplicationFactory 与 AgentToCanonApiSseE2ETests.Factory 启用 `TargetArchitecture:EnforceLegacyControlPlaneReadOnly=true`，全量回归至绿。
+- [x] Rewire：GoalControlService 四路径改调命令（Cancel 新时序：先 prefixMerge/discard 副作用，后命令收口控制面状态；Rework 端点移除控制器层 Serializable 事务包装——命令是控制面事务唯一所有者）。
+- [x] Rewire：ReworkGraphCompiler → PersistReworkGraphAsync（graph.GraphJson/ContentHash、draft InputArtifactIdsJson、意图 artifact、5 个返工任务单事务持久化；失败时补偿删除早提交的 intent 并重抛）。
+- [x] Rewire：KernelArtifactStore / PrefixMergeService MergeRecord artifact / ModelExecutionRecoveryService artifact → CreateArtifactAsync（AttachToTaskOutput 统一负责 workflowTask 输出追加，移除本地 tracked 写避免跨上下文 40001 序列化冲突）。
+- [x] 删除 BookProductionService 死代码写入方法并同步接口/DI/测试（InitializeAsync/CompleteBatchAsync/FinalizeMergedBatchAsync/ContinueInteractiveAsync/BindCompiledBatchAsync/ChangeStrategyAsync 全部无调用方；接口收缩为只读 GetCurrentBatchAsync）。
+- [x] 在 TestWebApplicationFactory 与 AgentToCanonApiSseE2ETests.Factory 启用 `TargetArchitecture:EnforceLegacyControlPlaneReadOnly=true`；全量回归 159/159（含 guard 开启状态）、Unit 837/837、Architecture 29/29。
 
 ## 最终审计与交接同步
 

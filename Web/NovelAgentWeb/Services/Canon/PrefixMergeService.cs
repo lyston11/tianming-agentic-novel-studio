@@ -1,3 +1,4 @@
+using Tianming.NovelAgent.Application.Ports;
 using System.Text.Json;
 using System.Data;
 using System.Security.Cryptography;
@@ -19,17 +20,20 @@ public sealed class PrefixMergeService : IPrefixMergeService
     private readonly ICurrentUserService _currentUser;
     private readonly IContentDocumentService _documents;
     private readonly ICanonMergeConflictModelClient _conflictModel;
+    private readonly Tianming.NovelAgent.Application.Ports.ILegacyControlPlaneCommands _controlPlane;
 
     public PrefixMergeService(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
         IContentDocumentService documents,
-        ICanonMergeConflictModelClient conflictModel)
+        ICanonMergeConflictModelClient conflictModel,
+        Tianming.NovelAgent.Application.Ports.ILegacyControlPlaneCommands controlPlane)
     {
         _db = db;
         _currentUser = currentUser;
         _documents = documents;
         _conflictModel = conflictModel;
+        _controlPlane = controlPlane;
     }
 
     public async Task<BranchMergeRecord> MergeAcceptedPrefixAsync(
@@ -176,29 +180,30 @@ public sealed class PrefixMergeService : IPrefixMergeService
                 record.MergedByUserId,
                 mergedAt = record.CreatedAt
             }, JsonOptions);
-            var mergeArtifact = new KernelArtifact
-            {
-                Id = $"merge-record:{record.Id}",
-                UserId = userId,
-                ProjectId = branch.ProjectId,
-                GoalId = branch.GoalId,
-                TaskId = workflowTask.Id,
-                BranchId = branch.Id,
-                ArtifactType = "MergeRecord",
-                SchemaVersion = 1,
-                ContentJson = mergeContentJson,
-                ContentHash = Sha256(mergeContentJson),
-                Status = "adopted",
-                Authorship = "human",
-                IsProtected = true,
-                CausationId = record.Id,
-                CreatedAt = record.CreatedAt
-            };
-            _db.KernelArtifacts.Add(mergeArtifact);
-            workflowTask.OutputArtifactIdsJson = AppendArtifactId(
-                workflowTask.OutputArtifactIdsJson,
-                mergeArtifact.Id);
-            workflowTask.UpdatedAt = record.CreatedAt;
+            // The MergeRecord evidence artifact is control-plane state and is
+            // owned by the Application command; AttachToTaskOutput also appends
+            // the artifact id to the prefix-merge task output.
+            await _controlPlane.CreateArtifactAsync(new LegacyArtifactCommand(
+                userId,
+                branch.ProjectId,
+                branch.GoalId,
+                workflowTask.Id,
+                $"merge-record:{record.Id}",
+                branch.Id,
+                "MergeRecord",
+                1,
+                mergeContentJson,
+                Sha256(mergeContentJson),
+                "adopted",
+                "human",
+                IsProtected: true,
+                ModelExecutionId: null,
+                CausationId: record.Id,
+                record.CreatedAt,
+                AttachToTaskOutput: true), cancellationToken);
+            // workflowTask output/updated_at are applied by the command's
+            // AttachToTaskOutput; a local tracked write here would double-update
+            // the same kernel_tasks row and serialize-conflict across contexts.
             branch.CanonBaselineVersion = record.NewCanonVersion;
             branch.UpdatedAt = record.CreatedAt;
             if (record.EndChapterNumber == branch.EndChapterNumber)

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
+using Tianming.NovelAgent.Application.Ports;
 
 namespace TM.Web.NovelAgentWeb.Services.Execution;
 
@@ -67,11 +68,12 @@ public sealed class ModelExecutionRecoveryService : IModelExecutionRecoveryServi
     private readonly NovelAgentDbContext _db;
     private readonly IModelExecutionOutcomeResolver _provider;
     private readonly IGoalBudgetService _budget;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
 
     public ModelExecutionRecoveryService(
         NovelAgentDbContext db,
         IModelExecutionOutcomeResolver provider)
-        : this(db, provider, new GoalBudgetService(db))
+        : this(db, provider, new GoalBudgetService(db), LegacyControlPlaneCommands.Unconfigured)
     {
     }
 
@@ -79,10 +81,20 @@ public sealed class ModelExecutionRecoveryService : IModelExecutionRecoveryServi
         NovelAgentDbContext db,
         IModelExecutionOutcomeResolver provider,
         IGoalBudgetService budget)
+        : this(db, provider, budget, LegacyControlPlaneCommands.Unconfigured)
+    {
+    }
+
+    public ModelExecutionRecoveryService(
+        NovelAgentDbContext db,
+        IModelExecutionOutcomeResolver provider,
+        IGoalBudgetService budget,
+        ILegacyControlPlaneCommands controlPlane)
     {
         _db = db;
         _provider = provider;
         _budget = budget;
+        _controlPlane = controlPlane;
     }
 
     public async Task<ModelExecutionRecoveryResult> RecoverAsync(
@@ -199,22 +211,25 @@ public sealed class ModelExecutionRecoveryService : IModelExecutionRecoveryServi
         var task = await _db.KernelTasks.AsNoTracking().SingleAsync(item =>
             item.Id == execution.TaskId && item.UserId == execution.UserId,
             cancellationToken);
-        var artifact = new KernelArtifact
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = execution.UserId,
-            ProjectId = execution.ProjectId,
-            GoalId = execution.GoalId,
-            TaskId = execution.TaskId,
-            BranchId = task.BranchId,
-            ArtifactType = artifactType,
-            ContentJson = contentJson,
-            ContentHash = contentHash,
-            Status = "unadopted",
-            Authorship = "agent",
-            ModelExecutionId = execution.Id
-        };
-        _db.KernelArtifacts.Add(artifact);
-        return artifact.Id;
+        var artifactId = Guid.NewGuid().ToString("N");
+        await _controlPlane.CreateArtifactAsync(new LegacyArtifactCommand(
+            execution.UserId,
+            execution.ProjectId,
+            execution.GoalId,
+            execution.TaskId,
+            artifactId,
+            task.BranchId,
+            artifactType,
+            SchemaVersion: 1,
+            contentJson,
+            contentHash,
+            "unadopted",
+            "agent",
+            IsProtected: false,
+            execution.Id,
+            CausationId: null,
+            DateTime.UtcNow),
+            cancellationToken);
+        return artifactId;
     }
 }

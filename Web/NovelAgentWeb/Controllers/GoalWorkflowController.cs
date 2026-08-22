@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -290,33 +289,34 @@ public sealed class GoalWorkflowController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ArgumentException("返工请求必须提供幂等键。", nameof(request));
-        return await InSerializableTransactionAsync<IActionResult>(async () =>
-        {
-            await RequireGoalAsync(goalId, cancellationToken);
-            var compiled = await _reworkCompiler.CompileAsync(new ReworkGraphCompileRequest(
-                goalId,
-                chapterNumber,
-                request.CandidateChapterId,
-                request.CandidateVersion,
-                request.SessionId,
-                request.UserDescription,
-                request.SelectionStart,
-                request.SelectionEnd,
-                request.SelectedText,
-                request.IdempotencyKey), cancellationToken);
-            await _progress.PublishAsync(new GoalProgressEventRequest(
-                _currentUser.GetUserId(),
-                goalId,
-                AgentSseEventType.GoalStateChanged,
-                $"第 {chapterNumber} 章返工任务已进入队列。",
-                TaskId: compiled.TaskId,
-                ChapterNumber: chapterNumber,
-                Action: "rework_queued"), cancellationToken);
-            return Ok(new GoalChapterReworkResponse(
-                compiled.TaskId,
-                compiled.IntentArtifactId,
-                compiled.Status));
-        }, cancellationToken);
+        // No controller-side transaction here: PersistReworkGraphAsync owns the
+        // control-plane transaction on AgentControlDbContext, and nesting it
+        // inside this legacy-context transaction breaks non-concurrent
+        // providers (SQLite) while providing no cross-context atomicity.
+        await RequireGoalAsync(goalId, cancellationToken);
+        var compiled = await _reworkCompiler.CompileAsync(new ReworkGraphCompileRequest(
+            goalId,
+            chapterNumber,
+            request.CandidateChapterId,
+            request.CandidateVersion,
+            request.SessionId,
+            request.UserDescription,
+            request.SelectionStart,
+            request.SelectionEnd,
+            request.SelectedText,
+            request.IdempotencyKey), cancellationToken);
+        await _progress.PublishAsync(new GoalProgressEventRequest(
+            _currentUser.GetUserId(),
+            goalId,
+            AgentSseEventType.GoalStateChanged,
+            $"第 {chapterNumber} 章返工任务已进入队列。",
+            TaskId: compiled.TaskId,
+            ChapterNumber: chapterNumber,
+            Action: "rework_queued"), cancellationToken);
+        return Ok(new GoalChapterReworkResponse(
+            compiled.TaskId,
+            compiled.IntentArtifactId,
+            compiled.Status));
     }
 
     [HttpPost("{goalId}/workflow/chapters/{chapterNumber:int}/manual-edit")]
@@ -534,28 +534,6 @@ public sealed class GoalWorkflowController : ControllerBase
     private static string Sha256(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    private async Task<T> InSerializableTransactionAsync<T>(
-        Func<Task<T>> action,
-        CancellationToken cancellationToken)
-    {
-        if (!_db.Database.IsRelational() || _db.Database.CurrentTransaction != null)
-            return await action();
-
-        await using var transaction = await _db.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            cancellationToken);
-        try
-        {
-            var result = await action();
-            await transaction.CommitAsync(cancellationToken);
-            return result;
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-    }
 }
 
 public sealed record GoalWorkflowConfirmationResponse(

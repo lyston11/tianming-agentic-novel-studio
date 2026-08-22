@@ -1070,13 +1070,6 @@ public sealed class EfLegacyControlPlaneCommands(
             graph.GraphJson = command.UpdatedGraphJson;
             graph.ContentHash = command.UpdatedGraphContentHash;
 
-            var draft = await db.KernelTasks.SingleAsync(item =>
-                item.Id == command.DraftTaskId &&
-                item.UserId == command.UserId &&
-                item.TaskGraphVersionId == command.GraphId, ct);
-            draft.InputArtifactIdsJson = command.DraftInputArtifactIdsJson;
-            draft.UpdatedAt = clock.UtcNow;
-
             db.KernelArtifacts.Add(new KernelArtifactRecord
             {
                 Id = command.IntentArtifact.ArtifactId,
@@ -1106,7 +1099,9 @@ public sealed class EfLegacyControlPlaneCommands(
                     TaskType = task.TaskType,
                     Status = task.Status,
                     DependencyTaskIdsJson = task.DependencyTaskIdsJson,
-                    InputArtifactIdsJson = task.InputArtifactIdsJson,
+                    InputArtifactIdsJson = task.Id == command.DraftTaskId
+                        ? command.DraftInputArtifactIdsJson
+                        : task.InputArtifactIdsJson,
                     OutputArtifactIdsJson = task.OutputArtifactIdsJson,
                     IdempotencyKey = task.IdempotencyKey,
                     MaxAttempts = task.MaxAttempts,

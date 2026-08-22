@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
 using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Auth;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.Kernels;
 
@@ -40,15 +41,18 @@ public sealed class ReworkGraphCompiler : IReworkGraphCompiler
     private readonly NovelAgentDbContext _db;
     private readonly ICurrentUserService _currentUser;
     private readonly IReworkIntentService _intents;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
 
     public ReworkGraphCompiler(
         NovelAgentDbContext db,
         ICurrentUserService currentUser,
-        IReworkIntentService intents)
+        IReworkIntentService intents,
+        ILegacyControlPlaneCommands controlPlane)
     {
         _db = db;
         _currentUser = currentUser;
         _intents = intents;
+        _controlPlane = controlPlane;
     }
 
     public async Task<ReworkGraphCompileResult> CompileAsync(
@@ -124,25 +128,31 @@ public sealed class ReworkGraphCompiler : IReworkGraphCompiler
         var nodes = BuildNodes(prefix, request.ChapterNumber);
         ValidateNodes(nodes);
         var now = DateTime.UtcNow;
-        var tasks = nodes.Select((node, index) => new KernelTask
-        {
-            Id = $"{graph.Id}:{node.Id}",
-            UserId = userId,
-            ProjectId = goal.ProjectId,
-            GoalId = goal.Id,
-            TaskGraphVersionId = graph.Id,
-            BranchId = candidate.BranchId,
-            KernelName = node.KernelName,
-            TaskType = node.TaskType,
-            Status = node.DependsOn.Count == 0 ? "ready" : "blocked",
-            DependencyTaskIdsJson = JsonSerializer.Serialize(node.DependsOn, JsonOptions),
-            InputArtifactIdsJson = node.Id.EndsWith("-draft", StringComparison.Ordinal)
+        var definition = JsonSerializer.Deserialize<TaskGraphDefinition>(graph.GraphJson, JsonOptions)
+            ?? throw new InvalidOperationException("活动任务图内容无效。");
+        var updatedDefinition = definition with { Nodes = definition.Nodes.Concat(nodes).ToArray() };
+        var updatedGraphJson = JsonSerializer.Serialize(updatedDefinition, JsonOptions);
+        var updatedHash = Sha256(updatedGraphJson);
+        var draftNodeId = nodes[0].Id;
+        var draftTaskId = $"{graph.Id}:{draftNodeId}";
+        var intentArtifactId = Guid.NewGuid().ToString("N");
+        var intentContentHash = Sha256(intentJson);
+        var draftInputArtifactIdsJson = JsonSerializer.Serialize(
+            new[] { contextArtifactId, candidate.CurrentArtifactId, intentArtifactId }, JsonOptions);
+
+        var tasks = nodes.Select((node, index) => new LegacyReworkTask(
+            $"{graph.Id}:{node.Id}",
+            node.TaskType,
+            node.KernelName,
+            node.DependsOn.Count == 0 ? "ready" : "blocked",
+            JsonSerializer.Serialize(node.DependsOn, JsonOptions),
+            node.Id.EndsWith("-draft", StringComparison.Ordinal)
                 ? JsonSerializer.Serialize(new[] { contextArtifactId, candidate.CurrentArtifactId }, JsonOptions)
                 : node.Id.EndsWith("-adopt", StringComparison.Ordinal)
                     ? JsonSerializer.Serialize(new[] { contextArtifactId }, JsonOptions)
                     : "[]",
-            OutputArtifactIdsJson = "[]",
-            IdempotencyKey = index switch
+            "[]",
+            index switch
             {
                 0 => taskKey,
                 1 => $"{taskKey}:continuity",
@@ -151,39 +161,57 @@ public sealed class ReworkGraphCompiler : IReworkGraphCompiler
                 4 => $"{taskKey}:summary",
                 _ => throw new ArgumentOutOfRangeException(nameof(index))
             },
-            MaxAttempts = KernelTaskFailurePolicy.MaxAttempts(node.TaskType),
-            Priority = 100 + index,
-            CreatedAt = now,
-            UpdatedAt = now
-        }).ToArray();
-        var draft = tasks[0];
-        var intentArtifact = new KernelArtifact
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            UserId = userId,
-            ProjectId = goal.ProjectId,
-            GoalId = goal.Id,
-            TaskId = draft.Id,
-            BranchId = candidate.BranchId,
-            ArtifactType = "ReworkIntent",
-            ContentJson = intentJson,
-            ContentHash = Sha256(intentJson),
-            Status = "adopted",
-            Authorship = "human",
-            CreatedAt = now
-        };
-        draft.InputArtifactIdsJson = JsonSerializer.Serialize(
-            new[] { contextArtifactId, candidate.CurrentArtifactId, intentArtifact.Id }, JsonOptions);
+            KernelTaskFailurePolicy.MaxAttempts(node.TaskType),
+            100 + index)).ToList();
 
-        var definition = JsonSerializer.Deserialize<TaskGraphDefinition>(graph.GraphJson, JsonOptions)
-            ?? throw new InvalidOperationException("活动任务图内容无效。");
-        var updatedDefinition = definition with { Nodes = definition.Nodes.Concat(nodes).ToArray() };
-        graph.GraphJson = JsonSerializer.Serialize(updatedDefinition, JsonOptions);
-        graph.ContentHash = Sha256(graph.GraphJson);
-        _db.KernelArtifacts.Add(intentArtifact);
-        _db.KernelTasks.AddRange(tasks);
-        await _db.SaveChangesAsync(cancellationToken);
-        return new(draft.Id, intentArtifact.Id, draft.Status);
+        // Control-plane persistence is owned by the Application command: it
+        // updates the active graph, wires the draft task inputs, inserts the
+        // intent artifact and appends the rework tasks in one transaction.
+        var draftStatus = tasks[0].Status;
+        try
+        {
+            await _controlPlane.PersistReworkGraphAsync(new LegacyReworkGraphCommand(
+            userId,
+            goal.ProjectId,
+            goal.Id,
+            graph.Id,
+            updatedGraphJson,
+            updatedHash,
+            draftTaskId,
+            draftInputArtifactIdsJson,
+            new LegacyReworkGraphIntentArtifact(
+                intentArtifactId,
+                draftTaskId,
+                candidate.BranchId,
+                "ReworkIntent",
+                1,
+                intentJson,
+                intentContentHash,
+                "adopted",
+                "human"),
+            tasks),
+                cancellationToken);
+        }
+        catch
+        {
+            // The intent was committed by the rework-intent service before the
+            // control-plane command ran on its own context; compensate so a
+            // failed rework leaves no dangling executing attempt.
+            // Drop the failed control-plane batch from the tracker before
+            // compensating, otherwise SaveChanges replays the conflict.
+            _db.ChangeTracker.Clear();
+            var committedIntent = await _db.ReworkIntents
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == intent.Id, cancellationToken);
+            if (committedIntent is not null)
+            {
+                _db.ReworkIntents.Remove(committedIntent);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            throw;
+        }
+
+        return new(draftTaskId, intentArtifactId, draftStatus);
     }
 
     private static TaskGraphNode[] BuildNodes(string prefix, int chapterNumber)

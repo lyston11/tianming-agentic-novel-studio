@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TM.Web.NovelAgentWeb.Data;
-using TM.Web.NovelAgentWeb.Data.Entities;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Services.Goals;
 
 namespace TM.Web.NovelAgentWeb.Services.DomainEvents;
@@ -8,10 +8,12 @@ namespace TM.Web.NovelAgentWeb.Services.DomainEvents;
 public sealed class KernelArtifactStore : IKernelArtifactStore
 {
     private readonly NovelAgentDbContext _db;
+    private readonly ILegacyControlPlaneCommands _controlPlane;
 
-    public KernelArtifactStore(NovelAgentDbContext db)
+    public KernelArtifactStore(NovelAgentDbContext db, ILegacyControlPlaneCommands controlPlane)
     {
         _db = db;
+        _controlPlane = controlPlane;
     }
 
     public async Task<IReadOnlyList<string>> AddOrReuseAsync(
@@ -38,25 +40,26 @@ public sealed class KernelArtifactStore : IKernelArtifactStore
                 continue;
             }
 
-            var artifact = new KernelArtifact
-            {
-                Id = Guid.NewGuid().ToString("N"),
-                UserId = claim.UserId,
-                ProjectId = claim.ProjectId,
-                GoalId = claim.GoalId,
-                TaskId = claim.TaskId,
-                BranchId = claim.BranchId,
-                ArtifactType = proposal.ArtifactType,
-                SchemaVersion = proposal.SchemaVersion,
-                ContentJson = proposal.ContentJson,
-                ContentHash = proposal.ContentHash,
-                Status = "adopted",
-                Authorship = proposal.Authorship,
-                IsProtected = proposal.IsProtected,
-                CreatedAt = DateTime.UtcNow
-            };
-            _db.KernelArtifacts.Add(artifact);
-            ids.Add(artifact.Id);
+            var artifactId = Guid.NewGuid().ToString("N");
+            await _controlPlane.CreateArtifactAsync(new LegacyArtifactCommand(
+                claim.UserId,
+                claim.ProjectId,
+                claim.GoalId,
+                claim.TaskId,
+                artifactId,
+                claim.BranchId,
+                proposal.ArtifactType,
+                proposal.SchemaVersion,
+                proposal.ContentJson,
+                proposal.ContentHash,
+                "adopted",
+                proposal.Authorship,
+                proposal.IsProtected,
+                ModelExecutionId: null,
+                CausationId: null,
+                DateTime.UtcNow),
+                cancellationToken);
+            ids.Add(artifactId);
         }
 
         return ids;

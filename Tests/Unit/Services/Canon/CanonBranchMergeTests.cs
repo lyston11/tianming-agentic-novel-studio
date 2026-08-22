@@ -136,7 +136,8 @@ public sealed class CanonBranchMergeTests
             db,
             currentUser,
             new ContentDocumentService(db, redis.Object),
-            new StubMergeConflictModel(CanonMergeConflictReview.NoConflict()));
+            new StubMergeConflictModel(CanonMergeConflictReview.NoConflict()),
+            new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db));
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => merger.MergeAcceptedPrefixAsync(branch.Id));
@@ -330,7 +331,8 @@ public sealed class CanonBranchMergeTests
             db,
             currentUser,
             new ContentDocumentService(db),
-            model);
+            model,
+            new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db));
 
         var error = await Assert.ThrowsAsync<CanonMergeConflictException>(
             () => merger.MergeAcceptedPrefixAsync(branch.Id));
@@ -416,7 +418,8 @@ public sealed class CanonBranchMergeTests
         db,
         currentUser,
         new ContentDocumentService(db),
-        new StubMergeConflictModel(CanonMergeConflictReview.NoConflict()));
+        new StubMergeConflictModel(CanonMergeConflictReview.NoConflict()),
+        new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db));
 
     private static async Task AddInterveningMergeAsync(
         NovelAgentDbContext db,

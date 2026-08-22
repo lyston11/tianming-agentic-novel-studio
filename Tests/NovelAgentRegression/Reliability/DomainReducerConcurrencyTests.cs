@@ -68,7 +68,7 @@ public sealed class DomainReducerConcurrencyTests : IAsyncLifetime
             db,
             currentUser,
             new DomainContractValidator(db, currentUser),
-            new KernelArtifactStore(db));
+            new KernelArtifactStore(db, Tianming.NovelAgent.Application.Ports.LegacyControlPlaneCommands.Unconfigured));
     }
 
     private PostgresNovelAgentDbContext CreateDb()

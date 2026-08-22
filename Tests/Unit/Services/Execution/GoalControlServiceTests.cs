@@ -11,9 +11,12 @@ using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Content;
 using TM.Web.NovelAgentWeb.Services.DomainEvents;
 using TM.Web.NovelAgentWeb.Services.Execution;
+using Tianming.NovelAgent.Application.Ports;
 using TM.Web.NovelAgentWeb.Services.Goals;
 using TM.Web.NovelAgentWeb.Services.VectorStore;
 using Xunit;
+
+using Tests.Unit.Support;
 
 namespace Tests.Unit.Services.Execution;
 
@@ -148,8 +151,10 @@ public sealed class GoalControlServiceTests
                 It.IsAny<Dictionary<string, object>>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        var controlPlane = new LegacyControlPlaneCommandTestDouble(db);
         var service = new GoalControlService(
             db,
+            controlPlane,
             prefix.Object,
             cache.Object,
             vectors.Object,
@@ -179,8 +184,14 @@ public sealed class GoalControlServiceTests
         });
     }
 
+    /// <summary>
+    /// Approved behavioral change: the canon-side prefix merge commits in its
+    /// own transaction before the control-plane cancellation command runs.
+    /// A failure between them leaves the merge committed and the goal still
+    /// running; retrying the cancellation completes it (merge is idempotent).
+    /// </summary>
     [Fact]
-    public async Task CancelAsync_MergePrefixRollsBackMergeWhenFinalCancellationWriteFails()
+    public async Task CancelAsync_MergePrefixCommitsBeforeControlPlaneCancellationAndRetryCompletes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -194,9 +205,12 @@ public sealed class GoalControlServiceTests
             db,
             new StubCurrentUserService(),
             new ContentDocumentService(db),
-            new NoConflictMergeModel());
+            new NoConflictMergeModel(),
+            new LegacyControlPlaneCommandTestDouble(db));
+        var controlPlane = new LegacyControlPlaneCommandTestDouble(db);
         var service = new GoalControlService(
             db,
+            controlPlane,
             prefix,
             Mock.Of<IDistributedCacheService>(),
             Mock.Of<IVectorStore>(),
@@ -210,17 +224,26 @@ public sealed class GoalControlServiceTests
 
         db.ChangeTracker.Clear();
         Assert.Equal("running", (await db.CreativeGoals.SingleAsync()).Status);
-        Assert.Equal("active", (await db.CanonBranches.SingleAsync()).Status);
-        Assert.Equal("candidate", (await db.CandidateChapters.SingleAsync()).Status);
-        Assert.Equal("ready", (await db.KernelTasks.SingleAsync(task => task.Id == "pending-task")).Status);
-        Assert.Empty(await db.BranchMergeRecords.ToListAsync());
-        Assert.Empty(await db.KernelArtifacts.Where(artifact => artifact.ArtifactType == "MergeRecord").ToListAsync());
-        Assert.Empty(await db.ChapterVersions.ToListAsync());
-        Assert.Empty(await db.ContentDocuments.ToListAsync());
+        Assert.Single(await db.BranchMergeRecords.ToListAsync());
+
+        // Retry: the prefix merge replays idempotently and cancellation lands.
+        db.FailCanceledGoalWrites = false;
+        db.ChangeTracker.Clear();
+        await service.CancelAsync(
+            "user-1",
+            "goal-atomic",
+            GoalCancellationStrategy.MergeAcceptedPrefix);
+
+        db.ChangeTracker.Clear();
+        Assert.Equal("canceled", (await db.CreativeGoals.SingleAsync()).Status);
+        Assert.Equal("merged", (await db.CanonBranches.SingleAsync()).Status);
+        Assert.Equal("canceled", (await db.KernelTasks.SingleAsync(task => task.Id == "pending-task")).Status);
+        Assert.Single(await db.BranchMergeRecords.ToListAsync());
     }
 
     private static GoalControlService CreateService(NovelAgentDbContext db) => new(
         db,
+        new LegacyControlPlaneCommandTestDouble(db),
         Mock.Of<IPrefixMergeService>(),
         Mock.Of<IDistributedCacheService>(),
         Mock.Of<IVectorStore>(),

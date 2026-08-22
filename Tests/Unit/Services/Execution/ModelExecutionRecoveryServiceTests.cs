@@ -5,6 +5,8 @@ using TM.Web.NovelAgentWeb.Data.Entities;
 using TM.Web.NovelAgentWeb.Services.Execution;
 using Xunit;
 
+using Tests.Unit.Support;
+
 namespace Tests.Unit.Services.Execution;
 
 public sealed class ModelExecutionRecoveryServiceTests
@@ -21,7 +23,7 @@ public sealed class ModelExecutionRecoveryServiceTests
                 ProviderExecutionOutcomeStatus.Found,
                 "{\"text\":\"迟到正文\"}",
                 "late-hash"));
-        var service = new ModelExecutionRecoveryService(db, provider.Object);
+        var service = new ModelExecutionRecoveryService(db, provider.Object, new GoalBudgetService(db), new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db));
 
         var result = await service.RecoverAsync("user-1", "execution-1");
 
@@ -45,7 +47,7 @@ public sealed class ModelExecutionRecoveryServiceTests
         var provider = new Mock<IModelExecutionOutcomeResolver>();
         provider.Setup(item => item.QueryAsync(It.IsAny<ModelExecution>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProviderExecutionOutcome(ProviderExecutionOutcomeStatus.NotFound, null, null));
-        var service = new ModelExecutionRecoveryService(db, provider.Object);
+        var service = new ModelExecutionRecoveryService(db, provider.Object, new GoalBudgetService(db), new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db));
 
         var first = await service.RecoverAsync("user-1", "execution-1");
         Assert.Equal(ModelExecutionRecoveryAction.RetryScheduled, first.Action);

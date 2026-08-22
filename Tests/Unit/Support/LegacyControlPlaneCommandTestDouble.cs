@@ -599,13 +599,22 @@ public sealed class LegacyControlPlaneCommandTestDouble(NovelAgentDbContext db) 
                 (item.Status == "queued" || item.Status == "ready"))
                 .ToListAsync(cancellationToken);
             foreach (var task in claimableTasks)
+            {
                 task.Status = "paused";
+                task.LeaseOwner = null;
+                task.LeaseExpiresAt = null;
+                task.UpdatedAt = DateTime.UtcNow;
+            }
             goal.Status = "paused";
         }
         var production = await db.BookProductions.SingleOrDefaultAsync(item =>
             item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
         if (production != null)
+        {
             production.Status = goal.Status;
+            production.UpdatedAt = DateTime.UtcNow;
+            production.AggregateVersion++;
+        }
         goal.AggregateVersion++;
         await db.SaveChangesAsync(cancellationToken);
         return goal.Status;
@@ -620,17 +629,30 @@ public sealed class LegacyControlPlaneCommandTestDouble(NovelAgentDbContext db) 
             ?? throw new KeyNotFoundException("Goal 不存在或不属于当前用户。");
         if (goal.Status != "paused")
             throw new InvalidOperationException("只有已到达安全点的暂停 Goal 可以恢复。");
+        var snapshotExists = await db.GoalContextSnapshots.AnyAsync(item =>
+            item.UserId == command.UserId &&
+            item.GoalId == command.GoalId &&
+            item.ProjectId == goal.ProjectId, cancellationToken);
+        if (!snapshotExists)
+            throw new InvalidOperationException("Goal 快照缺失，恢复前必须由用户决定如何重建基线。");
         var tasks = await db.KernelTasks.Where(item =>
             item.UserId == command.UserId && item.GoalId == command.GoalId && item.Status == "paused")
             .ToListAsync(cancellationToken);
         foreach (var task in tasks)
+        {
             task.Status = "ready";
+            task.UpdatedAt = DateTime.UtcNow;
+        }
         goal.Status = "resumed";
         goal.AggregateVersion++;
         var production = await db.BookProductions.SingleOrDefaultAsync(item =>
             item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
         if (production != null)
+        {
             production.Status = "running";
+            production.UpdatedAt = DateTime.UtcNow;
+            production.AggregateVersion++;
+        }
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -650,14 +672,31 @@ public sealed class LegacyControlPlaneCommandTestDouble(NovelAgentDbContext db) 
         var branch = await db.CanonBranches.SingleOrDefaultAsync(item =>
             item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
         if (branch != null && command.FinalBranchStatus is not null)
+        {
             branch.Status = command.FinalBranchStatus;
+            branch.UpdatedAt = DateTime.UtcNow;
+        }
+        if (branch != null && command.FinalBranchStatus == "discarded")
+        {
+            var branchArtifacts = await db.KernelArtifacts.Where(item =>
+                item.UserId == command.UserId &&
+                item.GoalId == command.GoalId &&
+                item.BranchId == branch.Id)
+                .ToListAsync(cancellationToken);
+            db.KernelArtifacts.RemoveRange(branchArtifacts);
+        }
         var pendingTasks = await db.KernelTasks.Where(item =>
             item.UserId == command.UserId && item.GoalId == command.GoalId &&
             (item.Status == "queued" || item.Status == "ready" || item.Status == "blocked" ||
              item.Status == "paused" || item.Status == "running"))
             .ToListAsync(cancellationToken);
         foreach (var task in pendingTasks)
+        {
             task.Status = "canceled";
+            task.LeaseOwner = null;
+            task.LeaseExpiresAt = null;
+            task.UpdatedAt = DateTime.UtcNow;
+        }
         goal.Status = "canceled";
         goal.AggregateVersion++;
         var production = await db.BookProductions.SingleOrDefaultAsync(item =>
@@ -665,17 +704,145 @@ public sealed class LegacyControlPlaneCommandTestDouble(NovelAgentDbContext db) 
         if (production != null)
         {
             production.Status = "canceled";
+            production.UpdatedAt = DateTime.UtcNow;
             production.AggregateVersion++;
+            var batches = await db.ProductionBatches.Where(item =>
+                item.UserId == command.UserId &&
+                item.BookProductionId == production.Id &&
+                item.Status != "completed")
+                .ToListAsync(cancellationToken);
+            foreach (var batch in batches)
+            {
+                batch.Status = "canceled";
+                batch.UpdatedAt = DateTime.UtcNow;
+            }
         }
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public Task<LegacySafePointResult> ReachSafePointAsync(
+    public async Task<LegacySafePointResult> ReachSafePointAsync(
         LegacySafePointCommand command,
-        CancellationToken cancellationToken = default) =>
-        Task.FromResult(new LegacySafePointResult("Continue", []));
+        CancellationToken cancellationToken = default)
+    {
+        var goal = await db.CreativeGoals.SingleAsync(item =>
+            item.Id == command.GoalId &&
+            item.UserId == command.UserId &&
+            item.ProjectId == command.ProjectId, cancellationToken);
+        var disposition = goal.Status switch
+        {
+            "pause_requested" => "Paused",
+            "canceled" => "Canceled",
+            "budget_exceeded" => "BudgetExceeded",
+            _ => "Continue"
+        };
+        var ids = new List<string>(command.Artifacts.Count);
+        if (disposition != "Continue")
+        {
+            foreach (var proposal in command.Artifacts)
+            {
+                var artifactId = Guid.NewGuid().ToString("N");
+                db.KernelArtifacts.Add(new KernelArtifact
+                {
+                    Id = artifactId,
+                    UserId = command.UserId,
+                    ProjectId = command.ProjectId,
+                    GoalId = command.GoalId,
+                    TaskId = command.TaskId,
+                    BranchId = command.BranchId,
+                    ArtifactType = proposal.ArtifactType,
+                    SchemaVersion = proposal.SchemaVersion,
+                    ContentJson = proposal.ContentJson,
+                    ContentHash = proposal.ContentHash,
+                    Status = "unadopted",
+                    Authorship = proposal.Authorship,
+                    IsProtected = proposal.IsProtected
+                });
+                ids.Add(artifactId);
+            }
+            var task = await db.KernelTasks.SingleAsync(item =>
+                item.Id == command.TaskId &&
+                item.UserId == command.UserId &&
+                item.LeaseOwner == command.LeaseOwner, cancellationToken);
+            task.Status = disposition switch
+            {
+                "Paused" => "paused",
+                "BudgetExceeded" => "budget_exceeded",
+                _ => "canceled"
+            };
+            task.OutputArtifactIdsJson = JsonSerializer.Serialize(ids);
+            task.LeaseOwner = null;
+            task.LeaseExpiresAt = null;
+            task.UpdatedAt = DateTime.UtcNow;
+            if (disposition == "Paused")
+            {
+                goal.Status = "paused";
+                goal.AggregateVersion++;
+                var production = await db.BookProductions.SingleOrDefaultAsync(item =>
+                    item.UserId == command.UserId && item.GoalId == command.GoalId, cancellationToken);
+                if (production != null)
+                {
+                    production.Status = "paused";
+                    production.UpdatedAt = DateTime.UtcNow;
+                    production.AggregateVersion++;
+                }
+            }
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        return new LegacySafePointResult(disposition, ids);
+    }
 
-    public Task PersistReworkGraphAsync(
+    public async Task PersistReworkGraphAsync(
         LegacyReworkGraphCommand command,
-        CancellationToken cancellationToken = default) => Task.CompletedTask;
+        CancellationToken cancellationToken = default)
+    {
+        var graph = await db.TaskGraphVersions.SingleAsync(item =>
+            item.Id == command.GraphId &&
+            item.UserId == command.UserId &&
+            item.ProjectId == command.ProjectId &&
+            item.GoalId == command.GoalId, cancellationToken);
+        graph.GraphJson = command.UpdatedGraphJson;
+        graph.ContentHash = command.UpdatedGraphContentHash;
+
+        db.KernelArtifacts.Add(new KernelArtifact
+        {
+            Id = command.IntentArtifact.ArtifactId,
+            UserId = command.UserId,
+            ProjectId = command.ProjectId,
+            GoalId = command.GoalId,
+            TaskId = command.IntentArtifact.TaskId,
+            BranchId = command.IntentArtifact.BranchId,
+            ArtifactType = command.IntentArtifact.ArtifactType,
+            SchemaVersion = command.IntentArtifact.SchemaVersion,
+            ContentJson = command.IntentArtifact.ContentJson,
+            ContentHash = command.IntentArtifact.ContentHash,
+            Status = command.IntentArtifact.Status,
+            Authorship = command.IntentArtifact.Authorship
+        });
+        foreach (var task in command.Tasks)
+        {
+            var inputArtifactIdsJson = task.Id == command.DraftTaskId
+                ? command.DraftInputArtifactIdsJson
+                : task.InputArtifactIdsJson;
+            db.KernelTasks.Add(new KernelTask
+            {
+                Id = task.Id,
+                UserId = command.UserId,
+                ProjectId = command.ProjectId,
+                GoalId = command.GoalId,
+                TaskGraphVersionId = command.GraphId,
+                BranchId = command.IntentArtifact.BranchId,
+                KernelName = task.KernelName,
+                TaskType = task.TaskType,
+                Status = task.Status,
+                DependencyTaskIdsJson = task.DependencyTaskIdsJson,
+                InputArtifactIdsJson = inputArtifactIdsJson,
+                OutputArtifactIdsJson = task.OutputArtifactIdsJson,
+                IdempotencyKey = task.IdempotencyKey,
+                MaxAttempts = task.MaxAttempts,
+                Priority = task.Priority
+            });
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
 }

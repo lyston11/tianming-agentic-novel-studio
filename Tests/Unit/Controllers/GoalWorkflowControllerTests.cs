@@ -662,7 +662,8 @@ public sealed class GoalWorkflowControllerTests
         var reworkCompiler = new ReworkGraphCompiler(
             db,
             current.Object,
-            rework ?? Mock.Of<IReworkIntentService>());
+            rework ?? Mock.Of<IReworkIntentService>(),
+            controlPlane ?? new LegacyControlPlaneCommandTestDouble(db));
         return new GoalWorkflowController(
             db,
             current.Object,

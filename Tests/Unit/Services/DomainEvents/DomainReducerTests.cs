@@ -322,7 +322,7 @@ public sealed class DomainReducerTests
             db,
             currentUser,
             new DomainContractValidator(db, currentUser),
-            new KernelArtifactStore(db));
+            new KernelArtifactStore(db, new Tests.Unit.Support.LegacyControlPlaneCommandTestDouble(db)));
     }
 
     private static NovelAgentDbContext CreateDb()

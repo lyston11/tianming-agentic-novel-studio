@@ -98,9 +98,12 @@ type-check/test/build/冒烟、双提供方迁移前向+回滚脚本、`task.py 
 - P1：freeze 重试预算、project_context_activations RLS（§2）。
 - P2：Pi 包版本锚定；聊天持久化单一真源收口。
 
+### 已实施（2026-08-21 第二批）
+- P1（AC-15 阶段 2）：API/SSE E2E 通过——真实 PostgreSQL 容器 + 托管 Outbox 服务 + 认证 HTTP API 全链路，SSE 仅通知、Read Model 权威。
+- P1：全部合法 legacy writer 迁移完成（GoalControlService 暂停/恢复/取消/安全点、ReworkGraphCompiler、KernelArtifactStore、PrefixMergeService MergeRecord 证据、ModelExecutionRecoveryService），`EnforceLegacyControlPlaneReadOnly` 已在两个 E2E 工厂开启并以全量回归 159/159 验证。
+
 ### 待实施（cutover 前，建议下一任务）
-- **P1**：API/SSE E2E 与 Playwright 浏览器 E2E（Slice 6 顺序验证的第二、三阶段）。
-- **P1**：剩余合法 legacy writer（GoalControlService 控制面、recovery Artifact writers）迁移后启用 `EnforceLegacyControlPlaneReadOnly` preflight。
+- **P1**：Playwright 浏览器 E2E（AC-15 第三阶段；SSE 重连/失败恢复与状态刷新的浏览器级验证）。
 - **P2**：退役 `TargetArchitectureDirector`/`ChatHistoryRepository`/`AgentTurnCoordinator` 等迁移期代码；WorkflowPage 切换到新链路。
 
 ### 明确延后（PRD Out of Scope）
@@ -133,6 +136,7 @@ type-check/test/build/冒烟、双提供方迁移前向+回滚脚本、`task.py 
 
 ## 6. 已知问题与风险
 
+0. **Guard preflight 已启用（2026-08-21）**：`EnforceLegacyControlPlaneReadOnly=true` 在两个 E2E 工厂生效，全量回归证明无遗留直写方。
 1. ~~历史缺陷：legacy 章节验收 API 返回 transient-failure 400~~ **已修复（2026-08-21）**：根因是 E2E 工厂从未替换 `AddNovelAgentPostgresInfrastructure` 注册的 `AgentControlDbContext`，控制面写入在无本地 PostgreSQL 的环境必然失败（连接拒绝被 Npgsql 归类为瞬态错误）；且两模型在共享表上存在列漂移（生产由 Agent 迁移 `ADD COLUMN IF NOT EXISTS` 补齐）。修复：测试宿主将控制面上下文接入同一 SQLite 库，启动时按生产语义物化 agent 专有表、补齐共享表缺失列后再建索引（`TestWebApplicationFactory` + `Program.cs` Testing 分支）。
 2. **活跃 Run 跨请求 steering**：HTTP 协议每请求新建 Run；跨请求 steering/follow-up 需要活跃 Run 注册表，留待 API/SSE 层验证阶段一并设计。
 3. **迁移期双入口**：`/agent/chat` 兼容入口与 WorkflowPage 仍在服务旧前端面；已证明只写权威存储，但退役前仍是维护面。
