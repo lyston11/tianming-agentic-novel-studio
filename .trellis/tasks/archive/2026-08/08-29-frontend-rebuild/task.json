@@ -1,0 +1,30 @@
+{
+  "id": "frontend-rebuild",
+  "name": "frontend-rebuild",
+  "title": "tianming-web/frontend 基于 learngraph 栈全量重建前端",
+  "description": "在 tianming-web/frontend/ 用 learngraph 前端技术栈（React19+Tailwind4+shadcn+react-query+vitest+oxlint）重建小说工作台前端，对接 old/ 冻结后端 :5002；旧前端留 old/ 作对照。",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": null,
+  "package": "tianming-web",
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": "codex/unify-agent-context-production",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "tianming-web/frontend/README.md",
+    "AGENT_CORE_ARCHITECTURE.md",
+    ".trellis/spec/frontend/state-management.md"
+  ],
+  "notes": "用户拍板：位置 tianming-web/frontend/（对齐四层布局），方式=基于 learngraph 全量重建。技术底座与旧前端同源（React19/Vite8/TS6），types.ts(2817行) 与 runtime-events.ts(894行) 原样移植。SSE 三流按 state-management.md 合同实现。差距清单见 frontend/README.md。",
+  "meta": {}
+}

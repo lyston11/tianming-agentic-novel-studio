@@ -149,3 +149,37 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: tianming-web/frontend 全量重建前端（learngraph 栈）
+
+**Date**: 2026-08-29
+**Task**: tianming-web/frontend 全量重建前端（learngraph 栈）
+**Branch**: `codex/unify-agent-context-production`
+
+### Summary
+
+基于 learngraph 栈在 tianming-web/frontend/ 全量重建前端，对接 old 后端 :5002；六大功能域落地，17 测试+四件套全绿
+
+### Main Changes
+
+- 新建 tianming-web/frontend：React19+Tailwind4+shadcn(ui 28)+react-query+oxlint+vitest，无 zustand（module store）
+- api 层移植：types.ts 2817 行 + runtime-events 894 行原样搬移；client 含信封合同/幂等键/GET 重试/SSE 工厂；auth-store 兼容旧 persist 格式
+- 六大功能域：auth/library(书城+阅读器+版本回滚)/materials(知识库浏览器)/agent(SSE 执行块+streamdown 流式)/workflow(Goal 验收台+双 SSE)/settings
+- SSE 三流遵循 state-management.md 合同；index.css 以 shadcn oklch token 承载旧版中式色板
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] typecheck/lint/build 全绿；vitest 17/17（信封/幂等/退避/401/auth store）；dev 3002 冒烟 200
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- tianming-web 后端就位后切 API 基址；Conversation Runtime 接通后接 Conversation SSE 流
