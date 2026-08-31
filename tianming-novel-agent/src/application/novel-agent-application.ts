@@ -8,7 +8,6 @@ import {
   type ConfirmGoalCommand,
   type WorkflowProjection,
   NovelCommandError,
-  proposalContentHash,
 } from "../contracts.js";
 import type { NovelApplicationPorts, RuntimeEventSink } from "../ports.js";
 import { chapterWriterRole, assertRoleTools } from "../roles/chapter-writer.js";
@@ -50,19 +49,7 @@ export class NovelAgentApplication {
     });
     const chapterNumber = snapshot.previousChapterNumber + 1;
     const idempotencyKey = input.idempotencyKey ?? `turn:${input.conversationId}:${input.correlationId}`;
-    const expectedProposalHash = proposalContentHash({
-      projectId: input.projectId,
-      conversationId: input.conversationId,
-      createdBy: input.userId,
-      intent: "write_chapter_candidate",
-      chapterNumber,
-      chapterBrief: input.message.trim(),
-      acceptanceCriteria: ["章节号与目标一致", "角色与伏笔引用存在", "正文非空"],
-      executionMode: "interactive_batch",
-      requiresConfirmation: true,
-      sourceMessageIds: [input.correlationId],
-      proposalVersion: 1,
-    });
+    let proposalSubmissionError: unknown;
     const model = createFakeProposalModel({
       projectId: input.projectId,
       conversationId: input.conversationId,
@@ -82,6 +69,9 @@ export class NovelAgentApplication {
         contextPort: this.ports,
         proposalPort: this.ports,
         candidatePort: this.ports,
+        onProposalSubmissionError: (error) => {
+          proposalSubmissionError = error;
+        },
       })],
       maxTurns: 3,
     });
@@ -97,12 +87,13 @@ export class NovelAgentApplication {
     const run = await core.prompt(input.message);
     unsubscribe();
     await Promise.all(pendingEvents);
+    if (proposalSubmissionError !== undefined) {
+      if (proposalSubmissionError instanceof NovelCommandError) throw proposalSubmissionError;
+      throw new NovelCommandError("model_error", "Proposal submission failed.");
+    }
     const proposal = await this.ports.findProposalByIdempotency(actor, idempotencyKey);
     if (!proposal) {
       throw new NovelCommandError("model_error", "Proposal model completed without submitting a proposal.");
-    }
-    if (proposal.contentHash !== expectedProposalHash) {
-      throw new NovelCommandError("conflict", "Proposal idempotency key was reused for different content.");
     }
     return { proposal, coreRunReason: run.reason };
   }

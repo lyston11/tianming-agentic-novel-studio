@@ -1,6 +1,7 @@
 import {
   NovelCommandError,
   clone,
+  proposalContentHash,
   type AcceptCandidateCommand,
   type Acceptance,
   type AcceptanceResult,
@@ -13,6 +14,7 @@ import {
   type GoalCommitResult,
   type GoalProposal,
   type GoalRevision,
+  type ProposeGoalInput,
   type NovelContextPackage,
   type NovelProjectSnapshot,
   type Production,
@@ -20,11 +22,18 @@ import {
   type Task,
   type WorkflowProjection,
   type CanonMergeResult,
-} from "../contracts.js";
-import type { NovelApplicationPorts } from "../ports.js";
-import { InMemoryContextProvider } from "../context/context-provider.js";
+} from "../../src/contracts.js";
+import type { NovelApplicationPorts } from "../../src/ports.js";
+import { InMemoryContextProvider } from "../../src/context/context-provider.js";
 
-export class InMemoryNovelStore implements NovelApplicationPorts {
+/**
+ * Test-only adapter for the vertical slice.
+ *
+ * This class simulates the C# Application/Infrastructure port so the package
+ * can exercise deterministic command semantics without claiming production
+ * ownership of durable state, transactions, or Canon writes.
+ */
+export class InMemoryNovelTestStore implements NovelApplicationPorts {
   public readonly contextProvider: InMemoryContextProvider;
   private readonly proposals = new Map<string, GoalProposal>();
   private readonly proposalKeys = new Map<string, string>();
@@ -77,11 +86,33 @@ export class InMemoryNovelStore implements NovelApplicationPorts {
     return clone(packageValue);
   }
 
-  public async saveProposal(proposal: GoalProposal, idempotencyKey: string): Promise<GoalProposal> {
-    return this.enqueue(() => this.saveProposalUnsafe(proposal, idempotencyKey));
+  public async submitProposalIntent(input: ProposeGoalInput): Promise<GoalProposal> {
+    const proposalBase = {
+      projectId: input.actor.projectId,
+      conversationId: input.conversationId,
+      createdBy: input.actor.userId,
+      intent: input.intent,
+      chapterNumber: input.chapterNumber,
+      chapterBrief: input.chapterBrief,
+      acceptanceCriteria: clone(input.acceptanceCriteria),
+      executionMode: input.executionMode,
+      requiresConfirmation: true as const,
+      sourceMessageIds: clone(input.sourceMessageIds),
+      proposalVersion: 1,
+    };
+    const proposal: GoalProposal = {
+      proposalId: `proposal-${input.conversationId}-${input.idempotencyKey}`,
+      ...proposalBase,
+      contentHash: proposalContentHash(proposalBase),
+      status: "proposed",
+      revisionId: `revision-${input.conversationId}-${input.idempotencyKey}`,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    return this.enqueue(() => this.submitProposalIntentUnsafe(proposal, input.idempotencyKey));
   }
 
-  private async saveProposalUnsafe(proposal: GoalProposal, idempotencyKey: string): Promise<GoalProposal> {
+  private async submitProposalIntentUnsafe(proposal: GoalProposal, idempotencyKey: string): Promise<GoalProposal> {
     const key = this.key(proposal.projectId, proposal.createdBy, idempotencyKey);
     const existingId = this.proposalKeys.get(key);
     if (existingId) {
@@ -440,6 +471,7 @@ export class InMemoryNovelStore implements NovelApplicationPorts {
     const canon = candidate ? this.canonical.get(candidate.candidateId) ?? null : null;
     this.projections.set(actor.projectId, {
       projectId: actor.projectId, userId: actor.userId, proposal, goal, goalRevision: revision, production, batch, task,
+      proposals: [...this.proposals.values()].filter((value) => value.projectId === actor.projectId && value.createdBy === actor.userId),
       contextPackage: context, candidate, review, acceptance, canonicalChapter: canon?.canonicalChapter ?? null,
       characterStates: canon?.characterStates ?? (task ? [...(this.contexts.get(task.taskId)?.characterStates ?? [])] : []),
       foreshadowEntries: canon?.foreshadowEntries ?? (task ? [...(this.contexts.get(task.taskId)?.foreshadowEntries ?? [])] : []),
@@ -449,7 +481,7 @@ export class InMemoryNovelStore implements NovelApplicationPorts {
   }
 
   private emptyProjection(actor: ActorScope): WorkflowProjection {
-    return { projectId: actor.projectId, userId: actor.userId, proposal: null, goal: null, goalRevision: null, production: null, batch: null, task: null, contextPackage: null, candidate: null, review: null, acceptance: null, canonicalChapter: null, characterStates: [], foreshadowEntries: [], projectionVersion: 0, sourceCandidateId: null, sourceCandidateVersion: null, sourceContextPackageHash: null };
+    return { projectId: actor.projectId, userId: actor.userId, proposal: null, proposals: [], goal: null, goalRevision: null, production: null, batch: null, task: null, contextPackage: null, candidate: null, review: null, acceptance: null, canonicalChapter: null, characterStates: [], foreshadowEntries: [], projectionVersion: 0, sourceCandidateId: null, sourceCandidateVersion: null, sourceContextPackageHash: null };
   }
   private recordGoalCommit(input: ConfirmGoalCommand, result: GoalCommitResult): void {
     this.confirmationResults.set(this.key(input.actor.projectId, input.actor.userId, input.idempotencyKey), clone(result));

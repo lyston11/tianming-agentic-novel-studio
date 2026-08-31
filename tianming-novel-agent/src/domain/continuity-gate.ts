@@ -12,6 +12,7 @@ export interface ContinuityGateInput {
   readonly contextPackage: NovelContextPackage;
 }
 
+/** Pure candidate preflight; the C# ChapterGatekeeper owns the production gate. */
 export function runContinuityGate(input: ContinuityGateInput): Review {
   const findings: ReviewFinding[] = [];
   const characters = new Set(input.contextPackage.characterStates.map((state) => state.characterId));

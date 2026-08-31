@@ -3,7 +3,6 @@ import type { AgentCoreTool, ToolExecutionOptions } from "@tianming/agent-core";
 import {
   NovelCommandError,
   clone,
-  proposalContentHash,
   type ActorScope,
   type CandidateChapter,
   type ChapterCandidateIntent,
@@ -58,6 +57,7 @@ export interface DomainToolDependencies {
   readonly candidatePort: CandidatePort;
   readonly proposal?: GoalProposal;
   readonly contextPackage?: NovelContextPackage;
+  readonly onProposalSubmissionError?: (error: unknown) => void;
 }
 
 export function createReadContextTool(dependencies: DomainToolDependencies): AgentCoreTool {
@@ -95,25 +95,23 @@ export function createProposeGoalTool(dependencies: DomainToolDependencies): Age
         idempotencyKey: string;
       };
       assertActorProject(dependencies.actor, input.projectId);
-      const proposalBase = {
-        projectId: input.projectId,
-        conversationId: input.conversationId,
-        createdBy: dependencies.actor.userId,
-        intent: "write_chapter_candidate" as const,
-        chapterNumber: input.chapterNumber,
-        chapterBrief: input.chapterBrief,
-        acceptanceCriteria: input.acceptanceCriteria,
-        executionMode: "interactive_batch" as const,
-        requiresConfirmation: true as const,
-        sourceMessageIds: input.sourceMessageIds,
-        proposalVersion: 1,
-      };
-      return dependencies.proposalPort.saveProposal({
-        proposalId: `proposal-${input.conversationId}-${input.idempotencyKey}`,
-        ...proposalBase,
-        contentHash: proposalContentHash(proposalBase),
-        createdAt: new Date(0).toISOString(),
-      }, input.idempotencyKey);
+      try {
+        return await dependencies.proposalPort.submitProposalIntent({
+          actor: dependencies.actor,
+          correlationId: dependencies.correlationId,
+          conversationId: input.conversationId,
+          intent: "write_chapter_candidate",
+          chapterNumber: input.chapterNumber,
+          chapterBrief: input.chapterBrief,
+          acceptanceCriteria: input.acceptanceCriteria,
+          executionMode: "interactive_batch",
+          sourceMessageIds: input.sourceMessageIds,
+          idempotencyKey: input.idempotencyKey,
+        });
+      } catch (error) {
+        dependencies.onProposalSubmissionError?.(error);
+        throw error;
+      }
     },
   };
 }

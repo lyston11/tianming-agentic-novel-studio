@@ -5,7 +5,6 @@ export * from "./roles/chapter-writer.js";
 export * from "./skills/chapter-writing.js";
 export * from "./tools/domain-tools.js";
 export * from "./domain/continuity-gate.js";
-export * from "./store/in-memory-store.js";
 export * from "./runtime/fake-model.js";
 export * from "./runtime/event-mapper.js";
 export * from "./application/novel-agent-application.js";

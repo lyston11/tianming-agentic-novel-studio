@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { InMemoryNovelTestStore } from "./fixtures/in-memory-novel-test-store.js";
 import {
-  InMemoryNovelStore,
-  InMemoryRuntimeEventSink,
   NovelAgentApplication,
   NovelCommandError,
   createReadContextTool,
@@ -11,11 +10,12 @@ import {
   type CharacterState,
   type ForeshadowEntry,
 } from "../src/index.js";
+import { InMemoryRuntimeEventSink } from "../src/runtime/event-mapper.js";
 
 const actor: ActorScope = { projectId: "project-1", userId: "author-1" };
 
 async function createHarness() {
-  const store = new InMemoryNovelStore();
+  const store = new InMemoryNovelTestStore();
   const character: CharacterState = {
     characterId: "character-1",
     name: "沈砚",

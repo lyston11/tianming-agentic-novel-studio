@@ -9,7 +9,6 @@ import type {
   CandidateChapter,
   ChapterCandidateIntent,
   CompleteConversationTurn,
-  ConfirmGoalProposalCommand,
   ConfirmGoalCommand,
   ConversationMessageRecord,
   ConversationRecord,
@@ -19,23 +18,18 @@ import type {
   ConversationTurn,
   FreezeContextRequest,
   Goal,
-  GoalCommitIntent,
   GoalCommitResult,
   GoalProposal,
-  GoalProposalRevision,
-  GoalProposalTransition,
   GoalRevision,
   NovelContextPackage,
   NovelProjectSnapshot,
   Production,
-  ReviseProposalCommand,
-  DecideProposalCommand,
+  ProposeGoalInput,
   Review,
   RuntimeCheckpointRecord,
   RuntimeRunRecord,
   Task,
   WorkflowProjection,
-  CanonMergeResult,
   Id,
   ProjectId,
   UserId,
@@ -57,26 +51,10 @@ export interface NovelContextPort {
 }
 
 export interface ProposalPort {
-  saveProposal(proposal: GoalProposal, idempotencyKey: string): Promise<GoalProposal>;
+  /** Submit proposal content to the durable Application owner; no local lifecycle state is changed. */
+  submitProposalIntent(input: ProposeGoalInput): Promise<GoalProposal>;
   getProposal(proposalId: Id, actor: ActorScope): Promise<GoalProposal | null>;
   findProposalByIdempotency(actor: ActorScope, idempotencyKey: string): Promise<GoalProposal | null>;
-}
-
-/**
- * Application-owned proposal lifecycle. The confirmation result is an intent
- * for the durable control plane; it is deliberately not a Goal/Production
- * commit and cannot start a model or worker.
- */
-export interface GoalProposalCommands {
-  propose(input: import("./contracts.js").ProposeGoalInput): Promise<GoalProposal>;
-  revise(input: ReviseProposalCommand): Promise<GoalProposal>;
-  reject(input: DecideProposalCommand): Promise<GoalProposal>;
-  discard(input: DecideProposalCommand): Promise<GoalProposal>;
-  confirmProposal(input: ConfirmGoalProposalCommand): Promise<GoalCommitIntent>;
-  listProposals(actor: ActorScope): Promise<readonly GoalProposal[]>;
-  listProposalRevisions(proposalId: Id, actor: ActorScope): Promise<readonly GoalProposalRevision[]>;
-  listProposalTransitions(proposalId: Id, actor: ActorScope): Promise<readonly GoalProposalTransition[]>;
-  getConfirmationIntent(actor: ActorScope, idempotencyKey: string): Promise<GoalCommitIntent | null>;
 }
 
 /** Narrow durable boundary for Conversation/Turn/runtime provenance. */
@@ -124,15 +102,6 @@ export interface RuntimeEventSink {
   append(message: import("./contracts.js").DurableRuntimeMessage): Promise<void>;
 }
 
-export interface CanonPort {
-  mergeAcceptedCandidate(input: {
-    actor: ActorScope;
-    candidate: CandidateChapter;
-    contextPackage: NovelContextPackage;
-    acceptance: Acceptance;
-  }): Promise<CanonMergeResult>;
-}
-
 /**
  * Application-facing aggregate port. A real Web host can implement these
  * interfaces with a transaction/Outbox adapter without changing Novel Agent.
@@ -141,12 +110,10 @@ export interface NovelApplicationPorts
   extends NovelProjectPort,
     NovelContextPort,
     ProposalPort,
-    GoalProposalCommands,
     ProductionCommandPort,
     CandidatePort,
     TaskCommandPort,
-    WorkflowQueryPort,
-    CanonPort {
+    WorkflowQueryPort {
   getGoal(goalId: Id, actor: ActorScope): Promise<Goal | null>;
   getGoalRevision(goalRevisionId: Id, actor: ActorScope): Promise<GoalRevision | null>;
   getProduction(productionId: Id, actor: ActorScope): Promise<Production | null>;
