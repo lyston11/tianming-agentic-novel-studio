@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"检查前端改动是否符合规范入口。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查 AC-7 的约定是否成文，且生成视图与手写残留的边界是否清晰。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端只新增了导出命令，未改 DTO 形状、路由或业务逻辑。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查 types.ts 的收缩是复用生成类型而非再造一层等价手写包装。"}
+{"file":".trellis/tasks/08-31-api-contract-codegen/prd.md","reason":"核对 AC-4 的可证伪证据：改一个后端 DTO 字段后 gen:check 必须失败、恢复后必须通过。"}

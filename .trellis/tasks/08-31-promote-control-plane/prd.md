@@ -95,6 +95,15 @@ System.IO.DirectoryNotFoundException : Repository root not found.
 
 ## 7. 后续任务（不在本任务）
 
-1. **有序退役**：按 `AGENT_CORE_ARCHITECTURE.md` §6 的四条件删 MAF adapter、Structured Runtime、`TargetArchitectureDirector`、legacy Web turn path、`/agent/chat`。每删一项跑全回归。
-2. **TS 边界收敛**：`tianming-novel-agent` 只保留 Skill / Role / DomainTool / ContextProvider / Hook；`store/in-memory-store.ts`、`application/`、`domain/continuity-gate.ts` 的 durable/确定性职责归 C#。含修复当前 type-check 失败（见 notes.md）。
+已建卡的：
+
+| 任务 | 与本任务的关系 |
+|---|---|
+| `08-31-fill-spec-and-test-policy` | 大部分可并行先做；仅 `backend/frontend directory-structure` 两件必须等本任务定下布局 |
+| `08-31-api-contract-codegen` | **必须在本任务之后**：后端路径、`openapi.json` 落盘位置与前端相对路径都依赖迁移后布局 |
+
+待建卡的：
+
+1. **有序退役**：按 `AGENT_CORE_ARCHITECTURE.md` §6 的四条件删 MAF adapter、Structured Runtime、`TargetArchitectureDirector`、legacy Web turn path、`/agent/chat`。每删一项跑全回归。顺带统一目录名与命名空间（见 notes.md §7）。
+2. **TS 边界收敛**：`tianming-novel-agent` 只保留 Skill / Role / DomainTool / ContextProvider / Hook；`store/in-memory-store.ts`、`application/`、`domain/continuity-gate.ts` 的 durable/确定性职责归 C#。含决定 `domain/proposal-lifecycle.ts` 与 `old/Agent/.../GoalProposal.cs` 的双真源归属，以及修复当前 5 个 type-check 失败（见 notes.md §6.1）。
 3. **08-30 缺口核查**：逐条核对 idempotency key、fence token、expected-version/hash、`outcome_unknown` 等语义在现有实现中的真实缺口，只补缺口，不重建。

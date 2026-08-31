@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"本任务要补齐后端 spec 并修正索引状态，先读入口了解现有条目与状态标记。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"这是仓库唯一已充分填写的后端 spec（184 行真实内容），作为补齐其余 spec 的写法与详细度基准。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"测试价值边界与禁止兼容分支两条规则要加入此文件；需先了解现有结构与场景写法。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"这是唯一已填写的前端 spec，作为补齐其余前端 spec 的基准；其 SSE 三流契约也是 type-safety 的相邻约定。"}
+{"file":".trellis/spec/guides/index.md","reason":"文档纪律声明要加在 spec 顶部，需与既有 guides 的组织方式一致。"}
+{"file":".trellis/tasks/08-31-promote-control-plane/prd.md","reason":"两个 directory-structure spec 必须反映迁移后的布局，须先确认目标布局与执行顺序约束。"}

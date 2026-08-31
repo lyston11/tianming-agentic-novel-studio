@@ -1,0 +1,50 @@
+{
+  "id": "fill-spec-and-test-policy",
+  "name": "fill-spec-and-test-policy",
+  "title": "补齐 spec 与测试价值规则：修复子代理被注入空规范",
+  "description": "8 个 .trellis/spec 文件仍是空模板，其中 backend/error-handling.md 被全部 7 个 08-30 任务的 implement.jsonl 与 check.jsonl 引用，子代理实际收到的是 (To be filled by the team)。按仓库真实代码补齐这些 spec，并参照 EcomGen AGENTS.md 引入测试价值边界规则与禁止兼容分支规则。",
+  "status": "planning",
+  "dev_type": "docs",
+  "scope": ".trellis/spec",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/backend/error-handling.md",
+    ".trellis/spec/backend/logging-guidelines.md",
+    ".trellis/spec/backend/directory-structure.md",
+    ".trellis/spec/backend/quality-guidelines.md",
+    ".trellis/spec/backend/index.md",
+    ".trellis/spec/frontend/type-safety.md",
+    ".trellis/spec/frontend/quality-guidelines.md",
+    ".trellis/spec/frontend/component-guidelines.md",
+    ".trellis/spec/frontend/hook-guidelines.md",
+    ".trellis/spec/frontend/directory-structure.md",
+    ".trellis/spec/frontend/index.md",
+    ".trellis/tasks/00-bootstrap-guidelines/prd.md",
+    ".trellis/tasks/08-31-fill-spec-and-test-policy/prd.md"
+  ],
+  "notes": "8 个 spec 是空模板；backend/error-handling.md 被全部 7 个 08-30 任务的 implement.jsonl 与 check.jsonl 引用，Trellis hook 会把它注入子代理提示，子代理实际收到 (To be filled by the team)。frontend/index.md 与 frontend/type-safety.md 同样被 3 个任务引用且为模板。两个 directory-structure spec 必须排在 08-31-promote-control-plane 之后；其余可先做。完成后应能收口 00-bootstrap-guidelines（其三个 checkbox 正是此事）。不改业务代码、不删既有测试。",
+  "meta": {
+    "acceptanceSummary": "所有被 jsonl 清单引用的 spec 真实内容 > 40 行且无 (To be filled by the team)；每份补齐的 spec 至少引用 2 个仓库真实文件路径；测试价值边界与禁止兼容分支两条规则落地；两个 index 无 To fill 残留；00-bootstrap-guidelines 可收口。",
+    "partialDependsOn": "08-31-promote-control-plane（仅 backend/frontend directory-structure 两件）",
+    "evidence": {
+      "emptyStubsInjected": "backend/error-handling.md 仅 16 行真实内容，被 7/7 个 08-30 任务的 implement.jsonl 与 check.jsonl 同时引用",
+      "specFillStatus": "11 个 spec 中仅 database-guidelines(184) / quality-guidelines(111) / state-management(63) 已填；其余 8 个为模板",
+      "costAlreadyPaid": "TargetArchitecturePurityTests 16 个失败因路径变更静默 9 天未发现；journal 仍记 Unit 837/837",
+      "ecomgenRules": "EcomGen/AGENTS.md 测试价值与 TDD 边界一节；AGENTS.md:56 禁止未经要求的兼容分支；ARCHITECTURE.md:3 文档描述已落地约定而非规划稿"
+    },
+    "keyRisk": "把理想模式写进 spec 会让子代理写出与仓库不符的代码；AC-2 强制每份 spec 引用 2 个真实路径"
+  }
+}

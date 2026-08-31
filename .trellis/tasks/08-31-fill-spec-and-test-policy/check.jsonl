@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"作为详细度基准，检查新补齐的 spec 是否达到同等具体程度而非泛泛而谈。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 AC-4 测试价值规则与 AC-5 禁止兼容分支规则是否真正落地且可执行。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查前端新补 spec 与既有 SSE/状态契约无矛盾。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查补齐的 spec 未与既有 guides 重复表述，遵循复用优先。"}
+{"file":".trellis/tasks/08-31-fill-spec-and-test-policy/prd.md","reason":"核对 AC-1（引用的 spec 真实行数 > 40 且无 To be filled 残留）与 AC-2（每份 spec 至少引用 2 个真实文件路径）。"}

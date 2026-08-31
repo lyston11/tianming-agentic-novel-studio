@@ -1,0 +1,43 @@
+{
+  "id": "api-contract-codegen",
+  "name": "api-contract-codegen",
+  "title": "API 契约单一真源：OpenAPI 生成前端类型 + 对账门禁",
+  "description": "参照 EcomGen 的契约链，用后端已有的 Swashbuckle OpenAPI 作为唯一真源生成前端 TS 类型，替换 tianming-web/frontend/src/api/types.ts 的 2817 行手写类型，并加一个不修改工作区的对账门禁（gen:check）防止契约漂移。",
+  "status": "planning",
+  "dev_type": "refactor",
+  "scope": "tianming-web",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "tianming-web/frontend/src/api/types.ts",
+    "tianming-web/frontend/src/api/client.ts",
+    "tianming-web/frontend/package.json",
+    "old/Web/NovelAgentWeb/Program.cs",
+    "old/Web/NovelAgentWeb/NovelAgentWeb.csproj",
+    ".trellis/spec/frontend/type-safety.md",
+    ".trellis/tasks/08-31-api-contract-codegen/prd.md"
+  ],
+  "notes": "必须在 08-31-promote-control-plane 之后执行（后端路径与 openapi 产物位置依赖迁移后布局）。后端 OpenAPI 生产端已存在：Swashbuckle 6.5.0 + AddSwaggerGen (Program.cs:86) + UseSwagger/UseSwaggerUI (Program.cs:566-567)。缺的只是生成 TS 类型与对账门禁。方向与 EcomGen 相反：tianming 是 C#-first，C# DTO 是真源，不引入 TypeBox。不改后端 DTO/路由/业务逻辑，不动 SSE 运行时归一化。",
+  "meta": {
+    "acceptanceSummary": "后端可重复导出 OpenAPI 到版本控制文件；前端 gen:api 生成类型；gen:check 不修改工作区即可对账；改一个后端 DTO 字段后 gen:check 必须失败、恢复后必须通过；types.ts 手写部分收缩且残留注明原因；前端 typecheck/lint/test 17 个不回归。",
+    "dependsOn": "08-31-promote-control-plane",
+    "evidence": {
+      "producerExists": "Swashbuckle.AspNetCore 6.5.0 (csproj:78), AddSwaggerGen (Program.cs:86), UseSwagger+UseSwaggerUI (Program.cs:566-567)",
+      "consumerMissing": "tianming-web/frontend/package.json scripts 无任何 codegen；src/api/types.ts 2817 行手写（api 层共 4345 行）",
+      "ecomgenReference": "EcomGen/package.json gen:openapi / gen:check / verify-contracts / lint:openapi + scripts/generate-openapi.mjs + AGENTS.md:17"
+    },
+    "keyRisk": "Swashbuckle 6.5.0 对 .NET 10 的输出需实测；必要时换 Microsoft.AspNetCore.OpenApi 并记录为独立决定"
+  }
+}
