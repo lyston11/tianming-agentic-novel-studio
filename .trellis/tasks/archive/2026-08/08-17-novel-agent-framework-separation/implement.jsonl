@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The implementation crosses Domain, Application, persistence, Web, SSE, frontend, and legacy adapters; use the guide to keep contracts and validation owned at one boundary."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The task must reuse existing Canon, Knowledge, Chapter, model, event, and state behavior rather than cloning Web services into new projects."}
+{"file":".trellis/tasks/08-17-novel-agent-framework-separation/research/current-architecture-evidence.md","reason":"Provides the verified existing project layout, Goal/Production models, legacy boundary, reusable services, and migration constraints with file references."}
+{"file":".trellis/tasks/08-17-novel-agent-framework-separation/research/toolchain-and-framework-constraints.md","reason":"Defines the .NET 10, MAF, OpenAI SDK, typed DAG, and compatibility probes that must be preserved during implementation."}

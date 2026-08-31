@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check single control-plane write owner, transaction, state, and duplicate confirmation contracts."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check that the extended conversation result does not create a second frontend server-state owner; existing Workflow query remains authoritative."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check runtime payload, Application tool boundary, persistence, and API serialization end to end."}
+{"check":"dotnet build TianmingAgenticNovelStudio.slnx --no-restore -warnaserror","result":"passed","details":"SDK 10.0.400 temporary install; 0 warnings, 0 errors."}
+{"check":"dotnet test AgentArchitecture","result":"passed","details":"22 passed, including concurrent same-idempotency confirmation regression."}
+{"check":"dotnet test Unit","result":"passed","details":"798 passed."}
+{"check":"dotnet test AgentKernelRegression","result":"passed"}
+{"check":"dotnet test NovelAgentRegression","result":"passed","details":"157 passed."}
+{"check":"frontend test / lint / tsc / vite build","result":"passed","details":"7 tests passed; ESLint, TypeScript build, and Vite build passed. Vite emitted only the existing large-chunk warning."}
+{"check":"cross-layer architecture audit","result":"passed","details":"No EF, Web, MAF, OpenAI, or infrastructure references in Domain/Contracts/Application; Workflow capability is the only confirmation boundary."}
+{"check":"git diff --check","result":"passed"}

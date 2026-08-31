@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Preserve PostgreSQL source-of-truth, control-plane write ownership, transaction, outbox, idempotency, and legacy cutover contracts."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Preserve REST/React Query authority and SSE-as-notification semantics across Conversation and Production UI flows."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace Session, Conversation, Node runtime, Application, Worker, SSE, and browser contracts end to end."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing Application services, ports, projections, and typed boundary contracts instead of adding parallel orchestration paths."}
+{"file":".trellis/tasks/08-18-architecture-audit/research/agent-workflow-integration-analysis.md","reason":"Primary code-backed architecture research for the Agent-to-Canon integration, migration risks, and ownership boundaries."}
+{"file":".trellis/tasks/08-18-architecture-audit/research/god-classes.md","reason":"Evidence for large-file and module-responsibility findings, including the AgentCore model-aggregation correction."}

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify database authority, transaction boundaries, outbox reliability, idempotency, and legacy writer cutover recommendations."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify API/React Query remains authoritative and SSE does not become client-side business state."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check contracts and validation across Web, Node runtime, Application, persistence, Worker, SSE, and browser layers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that recommendations reuse existing owners and do not introduce duplicate loops, stores, services, or event models."}
+{"file":".trellis/tasks/08-18-architecture-audit/research/agent-workflow-integration-analysis.md","reason":"Cross-check final findings and priorities against the primary source-inspection evidence."}
+{"file":".trellis/tasks/08-18-architecture-audit/research/god-classes.md","reason":"Cross-check structural-smell claims and avoid misclassifying model aggregation or generated files as god classes."}

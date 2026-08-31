@@ -5,6 +5,10 @@
 [![React](https://img.shields.io/badge/React-19.2-blue.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
 
+> **[2026-08-22 仓库重构]** 本仓库已切换为 Core-first 四层布局（`tianming-ai` / `tianming-agent-core` / `tianming-novel-agent` / `tianming-web`，见 `AGENT_CORE_ARCHITECTURE.md`）；下文描述的完整系统代码与文档已整体移入 `old/` 冻结为 legacy。Pi 参考源码在 `pi-agent/`（v0.57.1 快照）。
+>
+> **[2026-08-29 前端重建]** 新前端已在 `tianming-web/frontend/` 落地（React 19 + Tailwind 4 + shadcn + react-query，dev 端口 3002 代理到 old/ 后端 5002），见 `tianming-web/frontend/README.md`；`old/Web/NovelAgentWeb.Frontend` 冻结为对照。下文 README 描述的运行方式属于 legacy 系统。
+>
 > AI 不会天然记得一本千万字小说。这个项目做的事情是：把故事变成系统能管理的数据，让 Agent 按状态、账本和创作约束推进长篇小说。
 
 **Tianming Agentic Novel Studio** 是一个基于 AI Agent 的长篇小说创作工作台，支持多用户协作、向量检索和智能内容生成。系统通过结构化的故事管理、伏笔账本和 RAG 技术，帮助创作者管理复杂的长篇叙事。
@@ -86,7 +90,7 @@ NovelAgent 重点维护这些长期状态：
 
 ### 前置要求
 
-- .NET SDK 8.0+
+- Project-local .NET SDK 10.0.400 (run `./Scripts/install-dotnet.sh` once, then use `./Scripts/dotnet`)
 - Node.js 18.0+
 - Docker 24.0+ (用于 Qdrant)
 - npm 9.0+
@@ -125,15 +129,13 @@ curl http://localhost:6333/health
 #### 2. 数据库迁移
 
 ```bash
-cd Web/NovelAgentWeb
-dotnet ef database update
+./Scripts/dotnet ef database update
 ```
 
 #### 3. 构建并启动后端
 
 ```bash
-cd Web/NovelAgentWeb
-ASPNETCORE_URLS=http://+:5002 dotnet run
+ASPNETCORE_URLS=http://+:5002 ./Scripts/dotnet run --project Web/NovelAgentWeb/NovelAgentWeb.csproj
 ```
 
 后端开发端口固定为 `http://localhost:5002`。
@@ -415,15 +417,13 @@ export Qdrant__Host="qdrant-server"
 ### 运行单元测试
 
 ```bash
-cd Tests/NovelAgentRegression
-dotnet test
+./Scripts/dotnet test Tests/NovelAgentRegression/NovelAgentRegression.csproj
 ```
 
 ### 核心回归测试
 
 ```bash
-cd Tests/NovelAgentRegression
-dotnet run
+./Scripts/dotnet run --project Tests/NovelAgentRegression/NovelAgentRegression.csproj
 ```
 
 回归测试覆盖：
@@ -443,8 +443,7 @@ dotnet run
 
 ```bash
 # 启动后端
-cd Web/NovelAgentWeb
-ASPNETCORE_URLS=http://+:5002 dotnet run
+ASPNETCORE_URLS=http://+:5002 ./Scripts/dotnet run --project Web/NovelAgentWeb/NovelAgentWeb.csproj
 
 # 启动前端（另一个终端）
 cd Web/NovelAgentWeb.Frontend
@@ -461,8 +460,7 @@ cd Web/NovelAgentWeb.Frontend
 npm run build
 
 # 发布后端
-cd ../NovelAgentWeb
-dotnet publish -c Release -o ../../publish
+./Scripts/dotnet publish Web/NovelAgentWeb/NovelAgentWeb.csproj -c Release -o publish
 ```
 
 ### 验证部署
@@ -496,8 +494,7 @@ ASPNETCORE_URLS=http://+:5002 ./NovelAgentWeb
 docker-compose up -d qdrant
 
 # 2. 启动后端
-cd Web/NovelAgentWeb
-ASPNETCORE_URLS=http://+:5002 dotnet run
+ASPNETCORE_URLS=http://+:5002 ./Scripts/dotnet run --project Web/NovelAgentWeb/NovelAgentWeb.csproj
 
 # 3. 启动前端开发服务器
 cd Web/NovelAgentWeb.Frontend
@@ -596,8 +593,7 @@ npm run dev
 
 **A:** 使用当前项目内的 EF Core migration。旧 JSON/向量迁移脚本已经移除，不再作为兼容入口：
 ```bash
-cd Web/NovelAgentWeb
-dotnet ef database update
+./Scripts/dotnet ef database update
 ```
 
 ### Q: Qdrant 连接失败怎么办？
@@ -622,9 +618,9 @@ npm run build
 
 **A:** 检查 EF Core 工具是否安装：
 ```bash
-dotnet tool install --global dotnet-ef
-dotnet ef migrations list
-dotnet ef database update
+./Scripts/dotnet tool install --global dotnet-ef
+./Scripts/dotnet ef migrations list
+./Scripts/dotnet ef database update
 ```
 
 更多问题请参考 [docs/DEPLOYMENT.md#troubleshooting](docs/DEPLOYMENT.md#troubleshooting)。

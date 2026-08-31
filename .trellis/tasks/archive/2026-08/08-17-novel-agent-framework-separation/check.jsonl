@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check end-to-end contract ownership, typed decoding, event replay, database round trips, and frontend/backend consistency."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that the new projects adapt reliable existing capabilities and do not create duplicate state machines, payload parsing, constants, or storage logic."}
+{"file":".trellis/tasks/08-17-novel-agent-framework-separation/research/current-architecture-evidence.md","reason":"Verify no existing Goal/Production, Canon, legacy projection, provider, or test behavior was accidentally ignored or duplicated."}
+{"file":".trellis/tasks/08-17-novel-agent-framework-separation/research/toolchain-and-framework-constraints.md","reason":"Verify package boundaries, target framework, SDK isolation, and required compatibility probes against the locked technical choices."}

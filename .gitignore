@@ -25,6 +25,8 @@ PHASE1_COMPLETION_REPORT.md
 v2.8.7-升级说明.txt
 
 # .NET build output
+.dotnet/
+.dotnet-download.*
 bin/
 obj/
 TestResults/
@@ -76,3 +78,6 @@ logs/
 .env
 .env.*
 !.env.example
+
+# Third-party reference snapshot (re-obtainable: git clone --depth 1 --branch v0.57.1 https://github.com/badlogic/pi-mono.git pi-agent)
+/pi-agent/
