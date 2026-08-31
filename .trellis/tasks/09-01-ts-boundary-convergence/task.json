@@ -3,7 +3,7 @@
   "name": "ts-boundary-convergence",
   "title": "TS 边界收敛：durable 职责归 C#，修复 type-check 与双真源",
   "description": "把 tianming-novel-agent 收敛回 AGENT_CORE_ARCHITECTURE.md §1 定义的五项职责（Skill/Role/DomainTool/ContextProvider/Hook）。裁决 proposal-lifecycle.ts 与 old/Agent GoalProposal.cs 的双真源归属，处置 in-memory-store.ts 的 durable 职责，修复当前 5 个 type-check 错误。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "refactor",
   "scope": "tianming-novel-agent",
   "package": null,

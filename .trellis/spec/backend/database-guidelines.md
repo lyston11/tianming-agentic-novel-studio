@@ -171,6 +171,110 @@ or scoped bypasses merely to enable it.
 - Outbox idempotency keys include the stable aggregate/task identity and are
   unique within user scope.
 
+## Scenario: Novel Agent proposal-intent boundary
+
+### 1. Scope / Trigger
+
+Use this contract when the TypeScript `tianming-novel-agent` package submits a
+proposal, candidate, review, confirmation, acceptance, or workflow query to
+the C# control plane. The package is an orchestration and domain-adapter layer;
+it must not become a second owner of proposal lifecycle, Canon merge, ledger
+updates, or durable workflow projections.
+
+### 2. Signatures
+
+- `ProposalPort.submitProposalIntent(input: ProposeGoalInput): Promise<GoalProposal>`
+- `ProductionCommandPort.confirmGoal(input: ConfirmGoalCommand): Promise<GoalCommitResult>`
+- `CandidatePort.submitCandidateIntent(input: ChapterCandidateIntent): Promise<CandidateChapter>`
+- `CandidatePort.saveReview(review: Review): Promise<Review>`
+- `WorkflowQueryPort.get(request: { actor: ActorScope }): Promise<WorkflowProjection>`
+
+The C# implementation of these ports owns authorization, persistence,
+transactions, idempotency, and read-model projection. TS may run a pure
+candidate preflight (`runContinuityGate`) but may only submit its result through
+the port; the C# `ChapterGatekeeper` remains the production gate authority.
+
+### 3. Contracts
+
+- `submitProposalIntent` receives actor scope, correlation ID, conversation ID,
+  intent, chapter fields, source message IDs, and idempotency key. It returns
+  the durable `GoalProposal`; TS does not construct lifecycle metadata.
+- Confirmation creates the proposal decision and related Goal, Revision,
+  Production, Batch, and Task in the same C# control-plane transaction.
+- Candidate acceptance returns a host-owned acceptance/Canon result. TS does
+  not expose a `CanonPort` or mutate `CharacterState`, `ForeshadowEntry`, or
+  `WorkflowProjection`.
+- `tianming-novel-agent/src/` may import only generic Core types and novel
+  contracts/ports; database, Redis, Qdrant, and direct Pi imports are forbidden.
+- `test/fixtures/InMemoryNovelTestStore` is a deterministic test adapter only;
+  its in-memory durable simulation is not evidence of PostgreSQL behavior.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| Proposal idempotency key and content match | Return the existing durable proposal |
+| Proposal idempotency key is reused for different content | Return `conflict`; do not create a second proposal |
+| Confirmation is stale, out of scope, or not a valid transition | Return the host command error; write no partial Goal/Production state |
+| Candidate fails the TS preflight | Return a failed Review through the port; do not accept or merge Canon |
+| Candidate acceptance is repeated with the same key | Return the existing host acceptance result |
+| Caller attempts a direct Canon/ledger/projection mutation from TS | No production port exists for that mutation; reject the design |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a DomainTool passes `ProposeGoalInput` to `submitProposalIntent` and
+  consumes the C# result without creating a proposal object locally.
+- Base: a test-only adapter simulates the port and preserves the vertical-slice
+  negative cases while its file and README clearly mark it as non-production.
+- Bad: reintroducing `proposal-lifecycle.ts`, a `CanonPort`, or a source-level
+  in-memory `WorkflowProjection` builder to make the adapter convenient.
+
+### 6. Tests Required
+
+- Type-check `tianming-novel-agent` and assert the package builds without a
+  proposal lifecycle module, Canon port, or forbidden provider/database import.
+- Vertical slice: assert idempotency conflict, pre-confirmation isolation,
+  continuity blocking, rejection without Canon merge, stale/scope rejection,
+  frozen-context use, terminal-candidate protection, failure transitions,
+  concurrent confirmation, acceptance idempotency, and runtime event replay.
+- Core/AI regression: `tianming-agent-core` remains 10/10 and `tianming-ai`
+  remains 3/3 after the boundary change.
+- Static boundary audit: assert the production `src/` tree has no
+  `proposal-lifecycle.ts`, `src/store/`, direct Pi/database imports, or local
+  Canon/ledger/projection implementation.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const proposal = createProposedProposal(content, proposalId, context);
+await localStore.saveProposal(proposal);
+```
+
+This recreates the C# lifecycle and makes the TS store a competing durable
+truth.
+
+#### Correct
+
+```typescript
+return proposalPort.submitProposalIntent({
+  actor,
+  correlationId,
+  conversationId,
+  intent,
+  chapterNumber,
+  chapterBrief,
+  acceptanceCriteria,
+  executionMode,
+  sourceMessageIds,
+  idempotencyKey,
+});
+```
+
+The C# Application/Infrastructure adapter validates scope and idempotency and
+commits durable state at its transaction boundary.
+
 ## Scenario: Concurrent Proposal confirmation
 
 ### 1. Scope / Trigger
