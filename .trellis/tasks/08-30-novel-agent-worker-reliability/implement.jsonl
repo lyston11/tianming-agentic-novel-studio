@@ -1,0 +1,7 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Worker 跨 scheduler、数据库、Provider、Novel Agent、Outbox 和 Canon result command，必须明确数据流与 owner。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"状态 reducer、错误分类、retry policy、fence validator 和 provider fingerprint 必须集中，避免多 Worker 分叉。"}
+{"file":".trellis/spec/backend/index.md","reason":"Worker/数据库/错误/质量规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"claim/renew/complete、lease/fence、transaction、Outbox 和 concurrent delivery 的直接合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"retryable、terminal、cancelled、outcome_unknown、late result 和 conflict 需要统一错误分类。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审查 Worker/Application ownership、Novel Agent import boundary 和负向测试。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"父任务研究记录 legacy/EcomGen Worker 迁移边界和当前同步运行缺口。"}

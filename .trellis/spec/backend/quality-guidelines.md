@@ -1,51 +1,161 @@
 # Quality Guidelines
 
-> Code quality standards for backend development.
+> Code quality standards for backend and cross-layer development.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's quality standards here.
+The novel-agent vertical slice uses a TypeScript domain adapter around the generic
+`@tianming/agent-core` loop. It is intentionally deterministic and in-memory for
+contract testing; production persistence and delivery guarantees belong to the Web
+Application/Domain/Worker layer and must not be implied by the fake adapter.
 
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
+## Scenario: Novel Agent vertical-slice adapter
 
-(To be filled by the team)
+### 1. Scope / Trigger
+
+Apply this contract when adding or changing the novel-domain adapter, its roles,
+skills, context package, domain tools, candidate/review/acceptance flow, or Core
+event translation.
+
+### 2. Signatures
+
+- `NovelApplicationPorts`: the Application-facing port aggregate for project,
+  context, proposal, candidate, production commands, workflow, and Canon operations.
+- `NovelAgentApplication.handleConversationTurn(input: ConversationTurn)`:
+  runs the proposal flow and returns a `GoalProposal` produced through the
+  `propose_goal` tool.
+- `NovelAgentApplication.confirmGoal(input: ConfirmGoalCommand)`:
+  creates the confirmed Goal/Revision/Production/Batch/Task and freezes context.
+- `NovelAgentApplication.runChapterTask(input)`:
+  runs the `chapter-writer` role and returns CandidateChapter plus Review.
+- `NovelAgentApplication.acceptCandidate(input: AcceptCandidateCommand)`:
+  is the only entry point that can invoke Canon merge.
+- `NovelContextPort.freezeForChapter(input)`:
+  returns an immutable `NovelContextPackage` with a canonical SHA-256 hash.
+
+### 3. Contracts
+
+- Every command carries `ActorScope` (`projectId`, `userId`) and
+  `correlationId`; every write command also carries an `idempotencyKey` and,
+  where applicable, an expected candidate version and context hash.
+- `NovelContextPackage` is an execution snapshot, not a source of truth. Canon,
+  Goal, Production, Candidate, and Workflow Projection retain separate ownership.
+- A CandidateChapter may enter `awaiting_acceptance` only after a passed
+  continuity Review whose context hash matches the frozen package.
+- Canon merge creates one `CanonicalChapter`, updates the referenced character
+  and foreshadow versions, marks the candidate merged, and refreshes projection.
+- Runtime events are mapped to durable-message-shaped records with stable
+  `runId + sequence`; mapping does not advance domain state.
+- `tianming-novel-agent` may import `@tianming/agent-core` only. It must not
+  import `@mariozechner/pi-*`, Web/ASP.NET code, or database clients.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| Actor project/user scope does not match | `NovelCommandError("forbidden")`; no write |
+| Proposal idempotency key repeats with the same content | Return the original proposal |
+| Proposal idempotency key repeats with different content | `NovelCommandError("conflict")`; no replacement |
+| Goal confirmation is repeated with the same key | Return the original commit result |
+| Candidate context hash differs from the frozen package | Continuity failure or acceptance conflict; no Canon merge |
+| Candidate version differs from `expectedCandidateVersion` | `NovelCommandError("conflict")`; no write |
+| Review is missing or failed | Reject acceptance with `invalid_transition`; Canon remains unchanged |
+| Acceptance decision is rejected | Persist rejection and block production/task; Canon remains unchanged |
+| Runtime event is replayed with the same `runId + sequence` | Deduplicate; preserve one durable message |
+
+### 5. Good / Base / Bad Cases
+
+- Good: AgentCore emits `propose_goal`; the domain tool calls `ProposalPort`,
+  then the application reads the persisted proposal by idempotency key.
+- Good: a chapter is generated against a frozen package, passes the continuity
+  gate, waits for human acceptance, and only then reaches the Canon port.
+- Base: the deterministic fake model and `InMemoryNovelStore` prove state and
+  hash contracts without claiming PostgreSQL transaction semantics.
+- Bad: the model, role, or frontend changes Production/Task/Candidate status
+  directly instead of submitting an application command or intent.
+- Bad: `agent_end` is treated as successful production completion, or an in-memory
+  Core listener is treated as durable SSE replay.
+- Bad: a domain tool reaches into EF, a database client, Redis, Qdrant, or Canon
+  storage instead of calling its narrow port.
+
+### 6. Tests Required
+
+- Vertical slice: assert Proposal → Confirm → frozen ContextPackage → Candidate
+  → passed Review → awaiting acceptance → Acceptance → Canon and projection.
+- Boundary tests: assert no Production before confirmation, failed continuity
+  blocks acceptance, rejection blocks production, and stale versions are rejected.
+- Authorization tests: assert cross-project and cross-user reads/writes return
+  `forbidden` without partial state.
+- Idempotency tests: assert same-key/same-content returns the same result and
+  same-key/different-content returns `conflict`.
+- Runtime tests: assert event sequence starts at one, ends with `agent_end`,
+  replays after a cursor, and deduplicates repeated sequence numbers.
+- Import/scope audit: assert Novel Agent has no direct Pi import, database write,
+  Redis/Qdrant integration, or legacy-directory mutation.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+candidate.status = "merged";
+await db.save(candidate);
+```
+
+This lets an AgentCore/runtime path bypass review, acceptance, authorization, and
+any future transaction or outbox boundary.
+
+#### Correct
+
+```ts
+await application.acceptCandidate({
+  actor,
+  actorId,
+  correlationId,
+  candidateId,
+  decision: "accepted",
+  expectedCandidateVersion,
+  contextPackageHash,
+  idempotencyKey,
+});
+```
+
+The application command validates scope, version, review, and idempotency before
+calling the Canon port. The in-memory implementation is only a deterministic test
+adapter; a production adapter must preserve the same contract transactionally.
 
 ---
 
 ## Forbidden Patterns
 
-<!-- Patterns that should never be used and why -->
-
-(To be filled by the team)
-
----
+- Direct database, Redis, Qdrant, or provider access from a Novel Agent role or
+  domain tool.
+- Direct Pi imports outside `tianming-ai`.
+- Treating a fake model/store as evidence that production durability exists.
+- Adding novel-domain objects to `tianming-agent-core` to shortcut an adapter.
 
 ## Required Patterns
 
-<!-- Patterns that must always be used -->
-
-(To be filled by the team)
-
----
+- Keep dependencies directed Web/Application → Novel Agent → Agent Core → AI.
+- Carry actor scope, correlation, idempotency, and expected versions across writes.
+- Keep acceptance as the only Candidate-to-Canon transition.
+- Keep WorkflowProjection derived and read-only.
 
 ## Testing Requirements
 
-<!-- What level of testing is expected -->
-
-(To be filled by the team)
-
----
+New domain contracts and state transitions require deterministic unit or vertical
+slice coverage. Every bug fix requires a regression assertion for the failed
+boundary. Package test, type-check, and build commands must pass before archiving a
+Trellis task.
 
 ## Code Review Checklist
 
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+- Does the change preserve the dependency direction and direct-import boundary?
+- Are state transitions owned by the Application/Domain adapter rather than Core?
+- Are scope, idempotency, version, content hash, and correlation checks explicit?
+- Can a failed gate, abort, duplicate command, or replay leave partial state?
+- Does the test prove the relevant negative path as well as the happy path?
+- Does the documentation distinguish deterministic test adapters from deferred
+  PostgreSQL, Outbox/SSE, Worker lease/fence/RLS, provider, and E2E work?

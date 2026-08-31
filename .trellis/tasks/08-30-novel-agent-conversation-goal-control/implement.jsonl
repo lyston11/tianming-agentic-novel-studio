@@ -1,0 +1,7 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Conversation、Novel Agent proposal adapter、Application command 和数据库持久化跨越多个边界，需要统一数据格式、验证和 provenance。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Proposal 状态 reducer、canonical hash、idempotency 和 payload decoder 应只有一个 owner，避免 Controller/adapter 重复实现。"}
+{"file":".trellis/spec/backend/index.md","reason":"Conversation/Goal command 属于后端 Application/Domain 边界，需要加载后端规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"并发 Proposal confirmation、transaction、unique scope 和 AgentControlDbContext contract 是本 child 的持久化前置。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Proposal conflict、forbidden、not-found、invalid-transition 和 cancellation 需要统一错误矩阵。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Novel Agent adapter 不直连数据库/Pi，并保持 acceptance/state ownership 边界。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"父任务研究证据记录当前 vertical slice、legacy 语义和 EcomGen 的迁移边界。"}

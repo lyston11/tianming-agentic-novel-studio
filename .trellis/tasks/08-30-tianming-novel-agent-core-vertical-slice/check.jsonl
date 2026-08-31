@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查跨层依赖方向、状态写入 owner、Core event 到 durable message/SSE 数据流和边界一致性。"}
+{"file":".trellis/spec/backend/index.md","reason":"检查若触及 Web/Application、领域事务、Worker、API 和持久化，确保遵循后端规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查幂等、revision、scope、事务与 Outbox 设计是否与项目数据库规则一致，且未虚报分布式可靠性。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查未授权、跨项目、版本冲突、模型错误、取消和 tool error result 的可观察处理。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查模块边界、测试、静态检查和禁止模式。"}
+{"file":".trellis/spec/frontend/index.md","reason":"若任务触及现有前端 workflow/agent UI，检查其状态与数据获取边界。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查前端只消费 projection/SSE，不在客户端推进 Goal/Production/Canon 状态机。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查新的 API/SSE DTO 是否通过类型安全边界。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-core-vertical-slice/research/repository-evidence.md","reason":"检查实现是否尊重当前权威架构、legacy 隔离、历史语义降级和 EcomGen 独立边界。"}

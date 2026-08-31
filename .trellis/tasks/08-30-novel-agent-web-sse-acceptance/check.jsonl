@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审查 DTO→query/cache、SSE→cursor/invalidate、command→projection 的跨层一致性。"}
+{"file":".trellis/spec/backend/index.md","reason":"审查后端 transport/ownership/error 规范。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审查 Outbox/projection 上游状态、ownership 和 duplicate delivery。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审查 HTTP/SSE 错误和越权不泄漏行为。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审查 backend DTO adapter 不旁路 Application/Domain。"}
+{"file":".trellis/spec/frontend/index.md","reason":"审查前端 API/hook/component/type 层规范。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"审查 React Query truth、SSE cursor、transient isolation 和 shared invalidation。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"审查 decoder/type guard、legacy mapper 和 raw payload cast。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"审查新旧 Web DTO/stream 与父任务边界。"}

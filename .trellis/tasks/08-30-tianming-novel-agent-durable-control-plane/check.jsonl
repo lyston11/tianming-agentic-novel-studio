@@ -1,0 +1,10 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"最终检查全链路数据格式、验证责任、source event、projection 和 stream cursor。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"最终检查跨子任务是否重复实现状态机、payload parsing、dedupe 或 invalidate。"}
+{"file":".trellis/spec/backend/index.md","reason":"最终检查所有受影响 backend layer 的 quality checklist。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"最终检查 migration、RLS、transaction、planned/start、lease/fence、Outbox 和 legacy write guard。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"最终检查跨层错误分类和 no-partial-write/unknown outcome 行为。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"最终检查 Core/Novel Agent/Worker/Canon/Web ownership、imports、negative tests 和生产声明。"}
+{"file":".trellis/spec/frontend/index.md","reason":"最终检查前端受影响层的 API/hook/component/type 质量门。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"最终检查 REST truth、SSE notification、stream separation、cursor 和 React Query ownership。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"最终检查 DTO decoder、typed envelope 和无本地 raw payload casts。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"最终审计子任务是否误改 old/EcomGen 或把 fake/in-memory 误报生产能力。"}

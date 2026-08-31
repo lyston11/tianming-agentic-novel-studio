@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审查 Review/Acceptance/Canon/Outbox/Projection/SSE 的跨层数据完整性和事件来源。"}
+{"file":".trellis/spec/backend/index.md","reason":"审查后端质量和数据库规范覆盖。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审查事务、CAS、Outbox、cross-context handshake、RLS 和 duplicate delivery。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审查 gate/conflict/needs_decision/late result/rollback 错误映射。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审查 Acceptance/Canon ownership、immutable artifacts 和 regression tests。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"确认没有把 in-memory/legacy/EcomGen 当作生产 Outbox 证据。"}

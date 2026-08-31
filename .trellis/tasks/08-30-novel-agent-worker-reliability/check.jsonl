@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 claim → provider → result → Outbox 的跨层完整性、事件来源和错误传递。"}
+{"file":".trellis/spec/backend/index.md","reason":"检查后端 Worker/数据库规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 lease/fence transaction、CAS、bridge/Outbox 和 RLS。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查 unknown/late/cancel/retry/terminal 错误是否可观察且不伪造成功。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 worker 不能直写 Canon/Production，且保留测试适配器边界。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"审查 EcomGen 只作为工程模式样本，old runtime 不被恢复。"}

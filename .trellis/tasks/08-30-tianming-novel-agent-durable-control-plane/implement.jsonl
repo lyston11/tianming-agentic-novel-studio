@@ -1,0 +1,10 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"父任务跨 Conversation、Application、PostgreSQL、Worker、Canon/Outbox、REST/SSE 与 frontend，需要统一 data flow 和 source of truth。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"父任务要求状态 reducer、DTO decoder、CAS、idempotency、event dedupe 和 projection 只有单一 owner。"}
+{"file":".trellis/spec/backend/index.md","reason":"父任务覆盖 backend Application/Domain/Database/Worker/API 规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"控制面 ownership、planned/start、RLS、transaction、Outbox、Worker lease/fence 和 concurrent confirmation 是父任务主约束。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"统一处理 forbidden/not-found/conflict/invalid-transition/cancelled/outcome_unknown/merge_conflict 与 HTTP 映射。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验证 Core/Novel Agent/Web 边界、状态 owner、测试和 fake-vs-production 声明。"}
+{"file":".trellis/spec/frontend/index.md","reason":"父任务包含 Web/SSE/Acceptance 前端子任务，需要 frontend layer 入口。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"REST projection truth、独立 stream、cursor replay、SSE invalidate-only 和 transient isolation 是集成约束。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"父任务需要稳定 Web DTO、SSE envelope、decoder/type guard 和 legacy mapper。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"父任务实施需依据当前 vertical slice、backend/frontend 现状、old 语义和 EcomGen 工程审计。"}

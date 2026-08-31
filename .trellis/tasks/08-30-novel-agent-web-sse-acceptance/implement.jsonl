@@ -1,0 +1,10 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Web DTO、Application command、Outbox stream、SSE 和 React Query 跨层传递，需统一 envelope、验证和 source of truth。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"API decoder、SSE sequence validation、shared invalidate 和 legacy mapper 应集中，避免组件重复 cast/状态机。"}
+{"file":".trellis/spec/backend/index.md","reason":"backend API/Outbox/ownership 错误边界。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"SSE 上游 Outbox、ownership、transaction 和 duplicate delivery contract。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"HTTP 202/403/404/409/422 和 SSE connection error 映射。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Application ownership、projection truth 和 no direct frontend/domain writes。"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端 API、hooks、组件和类型边界入口。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"REST truth、SSE notification、stream identity、cursor 和 React Query invalidation 直接合同。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"DTO decoder、typed event envelope 和禁止 local casts 的前置规范。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"父任务记录当前 Web/frontend 未接线事实和 legacy/EcomGen 隔离。"}

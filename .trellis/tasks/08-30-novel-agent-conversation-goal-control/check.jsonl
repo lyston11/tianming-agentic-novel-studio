@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审查 Conversation → Proposal → Goal command 的跨层数据完整性和单一 payload owner。"}
+{"file":".trellis/spec/backend/index.md","reason":"审查后端 Application/Domain 边界和 command/query 所有权。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审查并发确认 transaction、unique result、scope predicate 和 no-partial-write。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审查冲突、未授权、取消和终态错误的可观察行为。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审查 import boundary、状态 owner、idempotency 和测试覆盖。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"审查 child 是否遵循父任务的 legacy/EcomGen 隔离和生产边界。"}

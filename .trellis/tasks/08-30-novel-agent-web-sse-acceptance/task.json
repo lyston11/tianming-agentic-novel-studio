@@ -1,0 +1,29 @@
+{
+  "id": "novel-agent-web-sse-acceptance",
+  "name": "novel-agent-web-sse-acceptance",
+  "title": "Novel Agent Web SSE and Acceptance Workbench",
+  "description": "将控制面接入稳定 Web DTO、REST command/projection、可游标 SSE，并让前端以 projection 为真源提供 Proposal、Review、Acceptance、Rework 交互。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "tianming-web,frontend,sse",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-tianming-novel-agent-durable-control-plane",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dependency": "all preceding child tasks",
+    "implementationStatus": "planning"
+  }
+}

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review → Acceptance → Canon → DomainEvent/Outbox → Projection/SSE 跨越多个写读边界，需要明确 payload owner 与事务。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review finding decoder、state reducer、idempotency、Outbox consumer dedupe 和 CAS validator 需要单一 owner。"}
+{"file":".trellis/spec/backend/index.md","reason":"Review/Canon/Outbox 属于后端领域与数据库规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Canon write owner、cross-DbContext handshake、Outbox atomicity、RLS 和 duplicate delivery 是直接合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"gate failure、merge conflict、needs_decision、duplicate、late result 和 rollback 需要统一错误语义。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审查 Candidate immutable、Acceptance boundary、projection ownership 和测试要求。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/research/repository-evidence.md","reason":"父任务研究记录 old Canon/Review/Rework 语义与当前 vertical slice 缺口。"}

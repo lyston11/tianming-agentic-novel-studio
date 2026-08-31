@@ -1,0 +1,29 @@
+{
+  "id": "novel-agent-conversation-goal-control",
+  "name": "novel-agent-conversation-goal-control",
+  "title": "Durable Conversation and Goal Proposal Control",
+  "description": "建立持久化 Conversation/ConversationTurn/assistant message/run provenance 与 GoalProposal 生命周期、确认/拒绝/修订语义，明确一个项目多提案与单 active production 的约束。",
+  "status": "in_progress",
+  "dev_type": "feature",
+  "scope": "tianming-novel-agent,tianming-web,conversation",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-tianming-novel-agent-durable-control-plane",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dependency": "none; output consumed by postgres control plane",
+    "implementationStatus": "planning"
+  }
+}

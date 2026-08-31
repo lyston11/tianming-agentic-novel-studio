@@ -1,0 +1,29 @@
+{
+  "id": "novel-agent-review-canon-outbox",
+  "name": "novel-agent-review-canon-outbox",
+  "title": "Review Canon Merge and Outbox",
+  "description": "补齐硬门禁/软审查证据、EditorialDraft/Rework、Acceptance 原子接受、Canon version-vector CAS、Domain Event 与 Outbox 事务及投影更新。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "tianming-web,tianming-novel-agent,canon,outbox",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-tianming-novel-agent-durable-control-plane",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dependency": "conversation-goal-control + postgres-control-plane + worker result contract",
+    "implementationStatus": "planning"
+  }
+}

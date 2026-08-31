@@ -1,0 +1,29 @@
+{
+  "id": "novel-agent-postgres-control-plane",
+  "name": "novel-agent-postgres-control-plane",
+  "title": "PostgreSQL Novel Agent Control Plane",
+  "description": "实现 AgentControlDbContext、控制面表映射、Goal/Production/Batch/TaskGraph/Task/Candidate/Acceptance 的事务与租户 RLS 边界，落实 planned/start 状态合同。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "tianming-web,postgresql,control-plane",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-tianming-novel-agent-durable-control-plane",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dependency": "conversation-goal-control",
+    "implementationStatus": "planning"
+  }
+}

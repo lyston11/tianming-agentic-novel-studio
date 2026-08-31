@@ -1,0 +1,29 @@
+{
+  "id": "novel-agent-worker-reliability",
+  "name": "novel-agent-worker-reliability",
+  "title": "Worker Execution Reliability and Recovery",
+  "description": "实现 TaskAttempt、claim/lease/fence/cancel、ProviderRequest、retry 与 outcome_unknown/reconcile 的 Worker 执行合同，防止重复调用和迟到结果覆盖。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "tianming-web,worker,provider",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-tianming-novel-agent-durable-control-plane",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dependency": "conversation-goal-control + postgres-control-plane",
+    "implementationStatus": "planning"
+  }
+}

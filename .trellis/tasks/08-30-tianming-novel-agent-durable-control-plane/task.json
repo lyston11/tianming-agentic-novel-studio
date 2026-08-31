@@ -1,0 +1,58 @@
+{
+  "id": "tianming-novel-agent-durable-control-plane",
+  "name": "tianming-novel-agent-durable-control-plane",
+  "title": "Tianming Novel Agent Durable Control Plane",
+  "description": "将已确认的 Tianming 小说 Agent 设计转化为可分阶段实施的 Durable Web/Application Control Plane：持久化会话与 GoalProposal 生命周期、PostgreSQL 控制面、TaskAttempt/lease/fence/provider recovery、Review/Acceptance/Canon/Outbox，以及 REST/SSE/前端 projection 接线。父任务只拥有跨子任务的合同、依赖和最终集成验收，不直接替代子任务实现。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "tianming-novel-agent,tianming-agent-core,tianming-ai,tianming-web,postgresql,outbox,worker,frontend",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-30-novel-agent-conversation-goal-control",
+    "08-30-novel-agent-postgres-control-plane",
+    "08-30-novel-agent-worker-reliability",
+    "08-30-novel-agent-review-canon-outbox",
+    "08-30-novel-agent-web-sse-acceptance"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    "AGENT_CORE_ARCHITECTURE.md",
+    "tianming-agent-core/",
+    "tianming-ai/",
+    "tianming-novel-agent/",
+    "tianming-web/",
+    ".trellis/spec/backend/database-guidelines.md",
+    ".trellis/spec/backend/quality-guidelines.md",
+    ".trellis/spec/frontend/state-management.md",
+    "old/Agent/Tianming.NovelAgent.Domain/",
+    "old/Services/Framework/AI/NovelAgent/",
+    "old/Web/NovelAgentWeb/",
+    "EcomGen/"
+  ],
+  "notes": "规划任务。父任务不启动实现；先完成子任务规划和依赖收敛。不得修改 EcomGen、删除/迁移 old 或把 AgentCore 变成小说业务状态机。",
+  "meta": {
+    "productBoundary": "REST commands and projections own durable business truth; SSE is notification only; AgentCore events are observation only.",
+    "migrationRule": "Migrate old novel semantics and EcomGen engineering patterns selectively; reimplement Tianming contracts.",
+    "childPlan": [
+      "novel-agent-conversation-goal-control",
+      "novel-agent-postgres-control-plane",
+      "novel-agent-worker-reliability",
+      "novel-agent-review-canon-outbox",
+      "novel-agent-web-sse-acceptance"
+    ],
+    "integrationAcceptance": "A user-scoped conversation proposal can be durably confirmed and started, dispatched through a fenced worker, reviewed and accepted into Canon transactionally, and observed through typed REST projection plus replayable SSE without client-side state ownership.",
+    "implementationPolicy": "Start only one child at a time; child dependencies are explicit in each child artifact. Parent remains planning until all children are implemented, checked, and integrated.",
+    "outOfScope": "Whole-book generation, unrestricted dynamic DAG, multi-agent orchestration, full RAG, legacy deletion, EcomGen integration, and browser E2E infrastructure unless a child explicitly proves an existing low-cost path."
+  }
+}

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨越 Novel Agent、Core、Web/Application、Worker 与前端事件边界，需要按跨层数据流和所有权检查设计与实现。"}
+{"file":".trellis/spec/backend/index.md","reason":"触及 Web/Application、领域写入、事务、Outbox、Worker 与 API 边界时，先加载后端规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Goal/Production/Candidate/Canon、幂等、版本、事务和 Outbox 后续接线必须遵守仓库数据库边界。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"command rejection、scope/版本冲突、abort 和 durable error result 需要遵守后端错误处理约定。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端 Application/Domain/Worker 实现与质量检查需要加载项目质量禁用模式。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-core-vertical-slice/research/repository-evidence.md","reason":"实现阶段需要区分当前 Core/AI/Novel Agent、legacy、历史设计和 EcomGen 边界，避免任务漂移。"}
