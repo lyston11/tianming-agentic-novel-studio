@@ -2,6 +2,8 @@
 
 > **Purpose**: Expand your thinking to catch things you might not have considered.
 
+> These guides describe reasoning patterns for the repository as it exists. They are not planning documents; source-backed layer specs remain the authority for implemented conventions.
+
 ---
 
 ## Why Thinking Guides?
