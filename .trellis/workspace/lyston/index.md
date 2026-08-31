@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-08-29
+- **Total Sessions**: 6
+- **Last Active**: 2026-09-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~185 | Active |
+| `journal-1.md` | ~206 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-09-01 | Fill Trellis specs and test policy | `034f14cb` | `lyston11/08-31-fill-spec-and-test-policy` |
 | 5 | 2026-08-29 | tianming-web/frontend 全量重建前端（learngraph 栈） | - | `codex/unify-agent-context-production` |
 | 4 | 2026-08-22 | 仓库重构：四部分代码基础 | `4e379a24` | `codex/unify-agent-context-production` |
 | 3 | 2026-08-22 | Tianming Agent Core 分层基线落地 | `e3b14f4d` | `codex/unify-agent-context-production` |

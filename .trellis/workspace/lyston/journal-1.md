@@ -183,3 +183,24 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Next Steps
 
 - tianming-web 后端就位后切 API 基址；Conversation Runtime 接通后接 Conversation SSE 流
+
+
+## Session 6: Fill Trellis specs and test policy
+
+**Date**: 2026-09-01
+**Task**: Fill Trellis specs and test policy
+**Branch**: `lyston11/08-31-fill-spec-and-test-policy`
+
+### Summary
+
+补齐 backend/frontend 八份真实规范与索引；加入测试价值边界、兼容分支退役条件和文档纪律声明；更新 bootstrap 清单。通过 task.py validate、git diff --check、前端 17 个测试、typecheck、lint 和 build；归档任务提交为 f2a8156d。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `034f14cb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
