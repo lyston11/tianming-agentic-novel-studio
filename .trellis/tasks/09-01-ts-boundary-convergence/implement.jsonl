@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务的核心就是判定职责该落在哪一层（durable truth 归 C#、领域适配归 TS），必须按跨层所有权规则检查每次搬迁。"}
+{"file":".trellis/spec/backend/index.md","reason":"裁决可能把提案生命周期归到 C# 侧并需要 internal API 落点，须遵守后端规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"判断哪些职责属于 durable truth 的依据；提案确认必须与 Goal/Production 创建同事务，该约束由数据库边界规则界定。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"删除代码与收窄 port 时判定何为正当收敛、何为破坏行为覆盖。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"TS 侧类型边界与生成/手写职责划分的既有约定。"}
+{"file":".trellis/tasks/08-31-promote-control-plane/notes.md","reason":"§6.1 记录了 5 个 type-check 错误的精确根因、proposal-lifecycle.ts 与 GoalProposal.cs 的双真源问题，以及 §6.2 的 npm 空壳装包与 dist 构建顺序陷阱。"}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"删除对象全是后端 C# 组件与 DI 注册，先加载后端规范入口。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"退役必须判定何为死代码、何为活兜底路径；也据此判断删除是否夹带行为变更。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"§6 删除条件之一是历史数据/迁移仍可读取；本任务不删表不写迁移，需按数据库边界规则确认 MAF checkpoint 存储的处置。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"IConversationAgentRuntime 跨 Application/Infrastructure/Web 三层，需按跨层所有权判断删除影响面与守卫断言该放哪一层。"}
+{"file":".trellis/tasks/09-01-retire-legacy-runtimes/prd.md","reason":"§3 记录了四个退役项各自的条件达标实测结果与精确行号，实施前必须据此分批，不得越过未达标项。"}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查已满足判定是否真的符合事务、幂等与版本边界，而非仅有同名符号存在。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 §3.3 三条件门未被绕过，本任务未演变为控制面重写。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查 outcome_unknown 与授权错误语义的判定依据成立。"}
+{"file":".trellis/tasks/09-01-reliability-gap-check/prd.md","reason":"核对 AC-1（12 条无留白）、AC-2（每条已满足附可运行测试与结果）、AC-3（TaskAttempt 有明确结论）、AC-4（五子任务状态已变更或归档）。"}

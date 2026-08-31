@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查只删了条件已满足的项，未误删 StructuredConversationAgentRuntime 等活兜底路径。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 AC-5：MAF 相关持久化表未被删除，历史数据仍可读取。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查守卫断言扩展到了 Infrastructure 程序集，而非只守 Application。"}
+{"file":".trellis/tasks/09-01-retire-legacy-runtimes/prd.md","reason":"核对 AC-1（四条件逐项留痕）、AC-3（守卫可证伪：加回 MAF 包引用必须让测试失败）、AC-6（批次 B 三项调查结论成文）。"}

@@ -1,0 +1,56 @@
+{
+  "id": "reliability-gap-check",
+  "name": "reliability-gap-check",
+  "title": "可靠性语义缺口核查：只补真缺口，不重建控制面",
+  "description": "逐条核对 08-30 五子任务 PRD 声称需要建设的可靠性语义在现有实现中的真实状态。实测 idempotency key、fence token、outcome_unknown、lease/claim、ProviderRequest 均已落地，TaskAttempt 全仓零命中。本任务产出差异报告并只补真缺口。",
+  "status": "planning",
+  "dev_type": "docs",
+  "scope": "tianming-web,old",
+  "package": null,
+  "priority": "P2",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-09-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/prd.md",
+    ".trellis/tasks/08-31-promote-control-plane/notes.md",
+    "old/Web/NovelAgentWeb/Services/Goals/KernelTaskWorker.cs",
+    "old/Web/NovelAgentWeb/Services/Goals/ProductionOutboxHostedService.cs",
+    "old/Web/NovelAgentWeb/Services/Execution/ModelExecutionRecoveryService.cs",
+    "old/Agent/Tianming.NovelAgent.Infrastructure/Persistence/EfAgentControlStore.cs",
+    "old/Tests/NovelAgentRegression/Reliability/KernelTaskClaimTests.cs",
+    "old/Tests/NovelAgentRegression/Reliability/AgentToCanonE2ETests.cs",
+    ".trellis/tasks/09-01-reliability-gap-check/prd.md"
+  ],
+  "notes": "把 08-30 五子任务从\"重建\"改为\"核查\"。实测 idempotency key、fence token、outcome_unknown、lease/claim、ProviderRequest、Outbox、租户 RLS、全链路 E2E 均已在 old/ 落地并通过真库测试（NovelAgentRegression 159/159、KernelTaskClaimTests PG 9/9）。TaskAttempt 全仓零命中，是唯一确认的真缺口，需判断现有 lease/claim + MaxAttempts=3 是否已覆盖其意图。产出 research/ac-coverage-matrix.md；只补同时满足\"有明确失败场景 + 不新增表 + 有定向回归\"三条件的缺口，其余转卡。必须在迁移之后（路径会变），并消费 09-01-ts-boundary-convergence 的裁决。",
+  "meta": {
+    "acceptanceSummary": "AC-P01～P12 全部 12 条有判定+证据路径+可运行测试名，无留白；TaskAttempt 有明确结论；五个子任务状态已变更或归档，不留假待办；真缺口已补或已转卡并写明依赖；回归不降。",
+    "dependsOn": "08-31-promote-control-plane; consumes 09-01-ts-boundary-convergence verdict",
+    "measuredCoverage": {
+      "implemented": [
+        "idempotency key",
+        "fence token",
+        "outcome_unknown",
+        "lease/claim/heartbeat",
+        "ProviderRequest",
+        "Outbox",
+        "tenant RLS",
+        "full-chain E2E"
+      ],
+      "missing": [
+        "TaskAttempt — grep 全仓零命中"
+      ],
+      "evidenceTests": "NovelAgentRegression 159/159 (Docker+PG Testcontainers); KernelTaskClaimTests 9/9; AgentArchitecture 29/29"
+    },
+    "keyRisk": "把\"代码里有这个名字\"当成\"语义已实现\"；AC-2 要求每条已满足判定都附能跑通的测试，并写出\"若未实现会怎样\""
+  }
+}

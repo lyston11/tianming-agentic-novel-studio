@@ -1,0 +1,48 @@
+{
+  "id": "retire-legacy-runtimes",
+  "name": "retire-legacy-runtimes",
+  "title": "有序退役 legacy runtime：MAF adapter 优先，按 §6 四条件逐项删除",
+  "description": "按 AGENT_CORE_ARCHITECTURE.md §6 的四个删除条件（生产 callers 为零、替代路径有 targeted regression、历史数据可读、完整回归通过）逐项退役 legacy runtime。实测 MAF adapter 已满足前两条可先删；TargetArchitectureDirector 与 StructuredConversationAgentRuntime 仍有生产注册，需先解除依赖。",
+  "status": "planning",
+  "dev_type": "refactor",
+  "scope": "tianming-web,old",
+  "package": null,
+  "priority": "P2",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-09-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "AGENT_CORE_ARCHITECTURE.md",
+    "old/Agent/Tianming.NovelAgent.Infrastructure/Conversation/MafConversationAgentRuntime.cs",
+    "old/Agent/Tianming.NovelAgent.Infrastructure/DependencyInjection.cs",
+    "old/Agent/Tianming.NovelAgent.Infrastructure/Tianming.NovelAgent.Infrastructure.csproj",
+    "old/Tests/AgentArchitecture/ConversationRuntimeReplacementTests.cs",
+    "old/Web/NovelAgentWeb/Program.cs",
+    "old/Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs",
+    "old/Web/NovelAgentWeb/Controllers/AgentController.cs",
+    "old/Agent/Tianming.NovelAgent.PiRuntime/",
+    ".trellis/tasks/09-01-retire-legacy-runtimes/prd.md"
+  ],
+  "notes": "必须在 08-31-promote-control-plane 之后（迁移会改全部路径，且迁移 AC-5 要求 .cs 改动仅限路径解析文件）。实测：MAF adapter 生产 callers 为零（Program.cs 从未调用 AddMafConversationRuntime），且 ConversationRuntimeReplacementTests.cs:33 已有守卫断言 —— 条件 1、2 满足，可删。TargetArchitectureDirector（Program.cs:194、:385 注册为 IAgentForegroundTurnRunner）、StructuredConversationAgentRuntime（Program.cs:306，PiRuntime:Enabled 为假时的默认实现）、PiRuntime 直接持有 pi-agent-core、/agent/chat（AgentController.cs:49）均有生产 callers，条件 1 不满足，本任务只调查不删。不删表不写迁移。",
+  "meta": {
+    "acceptanceSummary": "MAF adapter 代码与 Microsoft.Agents.AI 包引用清除；守卫断言扩展到 Infrastructure 程序集且可证伪；回归不降（29/29、159/159、Unit 迁移后基线）；另三项未达标项各有调用图与影响评估成文；§6 冻结清单同步。",
+    "dependsOn": "08-31-promote-control-plane",
+    "conditionStatus": {
+      "maf": "条件1 ✅ 生产callers为零 / 条件2 ✅ 已有守卫断言（但只守 Application 程序集，需扩展到 Infrastructure）→ 可删",
+      "targetArchitectureDirector": "条件1 ❌ Program.cs:194 + :385 注册为 IAgentForegroundTurnRunner 现役实现",
+      "structuredConversationAgentRuntime": "条件1 ❌ Program.cs:306 是 PiRuntime:Enabled 为假时的默认兜底，删除是产品可用性决定",
+      "piRuntimePiAgentCore": "条件1 ❌ package.json:16 + src/runtime.ts:1 直接依赖；替代路径待 09-01-ts-boundary-convergence 就绪",
+      "agentChatCompat": "待核验新前端是否仍调用 AgentController.cs:49"
+    },
+    "keyRisk": "守卫断言只覆盖 Application，MAF 依赖可能从 Infrastructure 回流；AC-3 要求加回包引用必须让测试失败"
+  }
+}

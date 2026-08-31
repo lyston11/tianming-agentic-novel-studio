@@ -1,0 +1,47 @@
+{
+  "id": "ts-boundary-convergence",
+  "name": "ts-boundary-convergence",
+  "title": "TS 边界收敛：durable 职责归 C#，修复 type-check 与双真源",
+  "description": "把 tianming-novel-agent 收敛回 AGENT_CORE_ARCHITECTURE.md §1 定义的五项职责（Skill/Role/DomainTool/ContextProvider/Hook）。裁决 proposal-lifecycle.ts 与 old/Agent GoalProposal.cs 的双真源归属，处置 in-memory-store.ts 的 durable 职责，修复当前 5 个 type-check 错误。",
+  "status": "planning",
+  "dev_type": "refactor",
+  "scope": "tianming-novel-agent",
+  "package": null,
+  "priority": "P1",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-09-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "AGENT_CORE_ARCHITECTURE.md",
+    "tianming-novel-agent/src/domain/proposal-lifecycle.ts",
+    "tianming-novel-agent/src/store/in-memory-store.ts",
+    "tianming-novel-agent/src/application/novel-agent-application.ts",
+    "tianming-novel-agent/src/domain/continuity-gate.ts",
+    "tianming-novel-agent/src/ports.ts",
+    "tianming-novel-agent/src/tools/domain-tools.ts",
+    "old/Agent/Tianming.NovelAgent.Domain/Goals/GoalProposal.cs",
+    ".trellis/tasks/08-31-promote-control-plane/notes.md",
+    ".trellis/tasks/09-01-ts-boundary-convergence/prd.md"
+  ],
+  "notes": "修复 main 上的已知坏状态：tianming-novel-agent 的 npm run type-check 有 5 个错误（commit e1f2fdab 已标 KNOWN BROKEN），而 npm test 11/11 通过因为 tsx 运行期擦除类型。第一步是裁决 proposal-lifecycle.ts 与 old/Agent GoalProposal.cs 的双真源归属，倾向归 C#（confirmProposal 必须与 Goal/Production 创建同事务，事务在 AgentControlDbContext）。装包陷阱：镜像源会产出空的 @types/node 空壳需 --force 重装；上游 dist 是 gitignored，须按 ai→core→novel-agent 顺序 install+build。",
+  "meta": {
+    "acceptanceSummary": "提案生命周期与 continuity gate 归属有书面裁决；无双真源；durable 职责（Canon merge/账本/projection）从 TS 移除；type-check 零错误；11 项行为语义仍有覆盖且逐条说明在哪一侧；Core/AI 测试不回归（3/3、10/10）。",
+    "blocksOthers": "09-01-reliability-gap-check 消费本任务的裁决结论；PiRuntime 退役需要本任务先让替代路径就绪",
+    "measuredState": {
+      "typeCheck": "5 errors — in-memory-store(3), domain-tools(1), test(1)",
+      "tests": "11/11 pass (tsx erases types)",
+      "upstream": "tianming-ai 3/3, tianming-agent-core 10/10",
+      "dualSource": "src/domain/proposal-lifecycle.ts vs old/Agent/Tianming.NovelAgent.Domain/Goals/GoalProposal.cs"
+    },
+    "keyRisk": "删 proposal-lifecycle.ts 会丢失其中已想清楚的 expectedVersion/hash 校验与终态不可确认等边界条件；须先转为需求条目交给 gap-check 核对 C# 侧"
+  }
+}

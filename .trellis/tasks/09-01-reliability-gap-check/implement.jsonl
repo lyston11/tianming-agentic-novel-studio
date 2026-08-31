@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核查对象是幂等、fence token、lease、事务与 Outbox 语义，必须按仓库数据库边界规则判定是否真已满足。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"AC-P07 的 outcome_unknown 与 AC-P05 的 not-found/forbidden 语义判定依赖后端错误处理约定。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"§3.3 的三条件门（有失败场景、不新增表、有定向回归）需按质量规范执行，避免核查滑向重构。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"12 条 AC 横跨 Conversation、控制面、Worker、Canon、Outbox 与前端，需按跨层数据流逐条定位真实实现者。"}
+{"file":".trellis/tasks/08-30-tianming-novel-agent-durable-control-plane/prd.md","reason":"AC-P01 到 AC-P12 的原文是本任务的核查清单来源。"}
+{"file":".trellis/tasks/08-31-promote-control-plane/notes.md","reason":"§3 的实测测试基线与 §2 的依赖闭包是判定已满足/未满足的证据起点。"}

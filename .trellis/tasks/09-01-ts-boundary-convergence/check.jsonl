@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查搬迁后依赖方向未反转、durable 职责不再留在 TS 层、Core 未被塞入小说字段。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查裁决理由成立：提案确认与 Goal/Production 创建的同事务约束是否被正确用作归属依据。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查删除未造成行为覆盖丢失，AC-5 的逐条说明是否真实。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否消除了双真源而非又造出一层等价包装。"}
+{"file":".trellis/tasks/09-01-ts-boundary-convergence/prd.md","reason":"核对 AC-2（无双真源）、AC-3（durable 职责移除）、AC-4（type-check 零错误）与 AC-5（11 项行为语义仍有覆盖）。"}
