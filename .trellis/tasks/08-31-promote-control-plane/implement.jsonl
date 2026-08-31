@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"迁移对象是 ASP.NET 后端与 Agent 分层项目，须先加载后端规范入口确认目录与项目边界约定。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"本任务本质是目录重排，必须遵守仓库既定的后端文件归属规则，避免搬出新的边界不一致。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"迁移不得夹带业务改动；需按质量规范判定哪些改动属于允许的路径修复、哪些属于越界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"迁移会影响 Web→Novel Agent→Core→AI 的物理布局与依赖方向，需按跨层所有权检查不变式未被打破。"}
+{"file":".trellis/tasks/08-31-promote-control-plane/notes.md","reason":"实测基线、依赖闭包、16 个既有失败的根因与环境陷阱都在此；实现前必读以免重复踩坑或误判回归。"}

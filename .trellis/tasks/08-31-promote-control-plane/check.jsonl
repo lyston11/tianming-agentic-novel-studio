@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查迁移后的后端布局与项目引用是否仍符合后端规范入口。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"检查 tianming-web/backend 下的目录归属是否合规，未产生新的重叠边界。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 AC-5：.cs 改动是否严格限于声明的路径解析文件与跨界引用，无夹带业务逻辑修改。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查依赖方向与各层所有权在迁移后保持不变，Core/AI 未被反向依赖。"}
+{"file":".trellis/tasks/08-31-promote-control-plane/notes.md","reason":"核对测试结果是否达到实测基线（29/29、159/159、Unit 由 821 恢复为 837），区分既有缺陷与新引入回归。"}

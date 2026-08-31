@@ -1,0 +1,57 @@
+{
+  "id": "promote-control-plane",
+  "name": "promote-control-plane",
+  "title": "控制面提升：durable control plane 迁出 old/ 进 tianming-web/backend",
+  "description": "把 old/Agent 四项目 + old/Web/NovelAgentWeb + old/Tests 以 git mv 迁入 tianming-web/backend/，只改 ProjectReference/slnx/global.json 路径，零业务代码改动，全部既有测试保持通过。目标是停止重建已通过测试的控制面，让四层布局与真实运行系统一致。",
+  "status": "planning",
+  "dev_type": "refactor",
+  "scope": "tianming-web,old",
+  "package": null,
+  "priority": "P0",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "AGENT_CORE_ARCHITECTURE.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "README.md",
+    "old/Agent/",
+    "old/Web/NovelAgentWeb/",
+    "old/Tests/",
+    "old/global.json",
+    "old/Scripts/dotnet",
+    "old/TianmingAgenticNovelStudio.slnx",
+    "tianming-web/",
+    ".trellis/tasks/08-31-promote-control-plane/prd.md",
+    ".trellis/tasks/08-31-promote-control-plane/design.md",
+    ".trellis/tasks/08-31-promote-control-plane/implement.md",
+    ".trellis/tasks/08-31-promote-control-plane/notes.md"
+  ],
+  "notes": "纯结构迁移：只改路径，不改业务逻辑。前置条件是项目本地 SDK 10.0.400（系统 dotnet 为 8.0.127，不满足 global.json）与 Docker（NovelAgentRegression 的 Testcontainers）。不删 legacy、不改 schema、不动 tianming-novel-agent 的 TS 边界、不碰 EcomGen/ 与 .zcode/。08-30 那批父/子任务在本任务完成后降级为缺口核查清单，不作废。",
+  "meta": {
+    "acceptanceSummary": "old/Agent 四项目 + old/Web/NovelAgentWeb + old/Tests 以 git mv 迁入 tianming-web/backend/；AgentArchitecture 29/29 与 NovelAgentRegression 159/159 不回归，Unit 从 821/837 恢复为 837/837；.cs 改动仅限 3 个路径解析文件与 4 处 old/Services 跨界引用；后端从新路径以 :5002 启动且前端 :3002 冒烟通过。",
+    "measuredBaseline": {
+      "date": "2026-08-31",
+      "AgentArchitecture": "29/29 passed",
+      "NovelAgentRegression": "159/159 passed (real Docker + PostgreSQL Testcontainers)",
+      "Unit": "821/837 — 16 pre-existing failures in TargetArchitecturePurityTests, root cause RepositoryRoot() path invariant broken by the 2026-08-22 restructure",
+      "AgentKernelRegression": "not executed by dotnet test — OutputType=Exe console runner"
+    },
+    "keyFinding": "durable 控制面不可分离：AgentToCanonE2ETests 依赖 14 个 TM.Web 命名空间，Worker/scheduler 在 Web/Services/Goals。只提升 old/Agent 拿不到那三个 E2E。",
+    "followUpTasks": [
+      "有序退役 MAF adapter / TargetArchitectureDirector / Structured Runtime / legacy Web turn path / /agent/chat（按 AGENT_CORE_ARCHITECTURE.md §6 四条件）",
+      "tianming-novel-agent TS 边界收敛，含修复当前 5 个 type-check 错误（in-memory-store 的 durable 职责归 C#）",
+      "08-30 五子任务缺口核查：只补 idempotency/fence/expected-version/outcome_unknown 等真实缺口，不重建"
+    ]
+  }
+}
