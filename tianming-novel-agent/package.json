@@ -1,5 +1,5 @@
 {
-  "name": "@tianming/agent-core",
+  "name": "@tianming/novel-agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
+      "default": "./dist/src/index.js"
     }
   },
   "engines": {
@@ -21,10 +21,10 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
-    "@tianming/agent-ai": "file:../tianming-ai"
+    "@tianming/agent-core": "file:../tianming-agent-core"
   },
   "devDependencies": {
-    "@types/node": "24.10.1",
+    "@types/node": "^24.10.1",
     "tsx": "4.21.0",
     "typescript": "5.9.3"
   }

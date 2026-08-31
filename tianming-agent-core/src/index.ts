@@ -12,4 +12,12 @@ export type {
   PromptOptions,
   RunResult,
   ToolExecutionOptions,
+  AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
+  Context,
+  Message,
+  Model,
+  ToolResultMessage,
+  UserMessage,
 } from "./types.js";
