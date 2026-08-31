@@ -183,3 +183,25 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Next Steps
 
 - tianming-web 后端就位后切 API 基址；Conversation Runtime 接通后接 Conversation SSE 流
+
+
+## Session 6: TS 边界收敛任务完成
+
+**Date**: 2026-09-01
+**Task**: TS 边界收敛任务完成
+**Branch**: `lyston11/09-01-ts-boundary-convergence`
+
+### Summary
+
+完成 Novel Agent TS 边界收敛：提案生命周期归 C#，删除 TS reducer，隔离测试内存替身，收窄 ports 并补齐规范记录。AI 3/3、Core 10/10、Novel Agent type-check/build/11 tests、Trellis validate 和 diff check 全部通过。任务已提交并归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6564aaa9` | (see git log) |
+| `37eb3e18` | (see git log) |
+
+### Status
+
+[OK] **Completed**
