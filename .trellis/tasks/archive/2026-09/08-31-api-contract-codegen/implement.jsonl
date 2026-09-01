@@ -2,4 +2,4 @@
 {"file":".trellis/spec/frontend/type-safety.md","reason":"本任务的 AC-7 要把生成视图不得手改的约定写入此文件；实施前需知其现状（当前为空模板，由 08-31-fill-spec-and-test-policy 补齐）。"}
 {"file":".trellis/spec/backend/index.md","reason":"需要在后端侧新增 OpenAPI 导出命令与产物落盘位置，须遵守后端规范入口。"}
 {"file":".trellis/spec/backend/quality-guidelines.md","reason":"判定哪些改动属于允许的契约生成接线、哪些属于越界改动后端 DTO 或业务逻辑。"}
-{"file":".trellis/tasks/08-31-promote-control-plane/prd.md","reason":"本任务必须在控制面迁移之后执行；后端路径、openapi 产物位置与前端相对路径都依赖迁移后的布局。"}
+{"file":".trellis/tasks/archive/2026-09/08-31-promote-control-plane/prd.md","reason":"本任务必须在控制面迁移之后执行；后端路径、openapi 产物位置与前端相对路径都依赖迁移后的布局。"}

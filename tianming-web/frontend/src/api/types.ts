@@ -1,3 +1,10 @@
+import type { components } from './schema';
+
+// Types below that alias `Schema[...]` are generated from the backend's
+// openapi.json (npm run gen:api) rather than hand-maintained. `npm run gen:check`
+// fails when schema.d.ts drifts from the committed contract.
+type Schema = components['schemas'];
+
 // ============================================================
 // Enums
 // ============================================================
@@ -146,13 +153,7 @@ export interface AppendNovelAgentTurnRequest {
   attachmentIds?: string[] | null;
 }
 
-export interface AccessibleProjectCatalogItem {
-  projectId: string;
-  title: string;
-  status: string;
-  updatedAt: string;
-  description?: string | null;
-}
+export type AccessibleProjectCatalogItem = Schema['AccessibleProjectCatalogItem'];
 
 export interface ActivateNovelAgentProjectContextRequest {
   projectId: string;
@@ -162,15 +163,7 @@ export interface ActivateNovelAgentProjectContextRequest {
   confirmationActionId?: string | null;
 }
 
-export interface ProjectContextActivationResult {
-  code: string;
-  succeeded: boolean;
-  recoverable: boolean;
-  message: string;
-  projectId?: string | null;
-  bindingVersion: number;
-  confirmedAt?: string | null;
-}
+export type ProjectContextActivationResult = Schema['ProjectContextActivationResult'];
 
 export interface NovelAgentConversationDecision {
   kind: NovelAgentConversationDecisionKind;
@@ -201,32 +194,9 @@ export interface ConfirmNovelAgentProposalResult {
   correlationId: string;
 }
 
-export interface CreateLegacyRecoveryProposalRequest {
-  sessionId: string;
-  idempotencyKey: string;
-  objective: string;
-  mode: 'SingleChapter' | 'InteractiveBatch' | 'AutonomousBook';
-  startChapter: number;
-  endChapter: number;
-  successCriteria: string[];
-  mustPreserve?: string[] | null;
-  mustHappen?: string[] | null;
-  mustNotChange?: string[] | null;
-  acceptancePolicy?: string;
-  reworkPolicy?: string;
-  totalCostLimit?: number;
-}
+export type CreateLegacyRecoveryProposalRequest = Schema['CreateLegacyRecoveryProposalRequest'];
 
-export interface CreateLegacyRecoveryProposalResult {
-  proposalId: string;
-  contractHash: string;
-  evidence: {
-    formalChapterVersionIds: string[];
-    confirmedDecisionIds: string[];
-    knowledgeIds: string[];
-  };
-  correlationId: string;
-}
+export type CreateLegacyRecoveryProposalResult = Schema['CreateLegacyRecoveryProposalResult'];
 
 export interface NovelAgentWorkflowProposalView {
   id: string;
@@ -301,20 +271,7 @@ export interface NovelAgentEventEnvelope<TData = unknown> {
   data: TData;
 }
 
-export interface CreativeGoalContract {
-  goalType: string;
-  collaborationMode: string;
-  humanReadableObjective: string;
-  targetChapterRangeJson: string;
-  successCriteria: string[];
-  mustPreserve: string[];
-  mustHappen: string[];
-  mustNotChange: string[];
-  acceptancePolicyJson: string;
-  reworkPolicyJson: string;
-  executionStrategy: BookExecutionStrategy;
-  bookPlanJson: string;
-}
+export type CreativeGoalContract = Schema['CreativeGoalContract'];
 
 export type BookExecutionStrategy = 'full_auto' | 'interactive_batch';
 
@@ -449,16 +406,7 @@ export interface GoalChapterDetailView {
   citations: GoalKnowledgeCitationView[];
 }
 
-export interface GoalChapterReworkRequest {
-  candidateChapterId: string;
-  candidateVersion: number;
-  sessionId: string;
-  userDescription: string;
-  selectionStart?: number | null;
-  selectionEnd?: number | null;
-  selectedText: string;
-  idempotencyKey: string;
-}
+export type GoalChapterReworkRequest = Schema['GoalChapterReworkRequest'];
 
 export interface GoalChapterReworkResponse {
   taskId: string;
@@ -466,11 +414,7 @@ export interface GoalChapterReworkResponse {
   status: string;
 }
 
-export interface GoalChapterManualEditRequest {
-  candidateChapterId: string;
-  candidateVersion: number;
-  content: string;
-}
+export type GoalChapterManualEditRequest = Schema['GoalChapterManualEditRequest'];
 
 export interface GoalChapterManualEditResponse {
   candidateChapterId: string;
@@ -1203,142 +1147,29 @@ export interface NovelProjectInfo {
   updatedAt: string;
 }
 
-export interface ChapterResponse {
-  id: string;
-  projectId: string;
-  volumeId: string | null;
-  title: string;
-  chapterNumber: number;
-  status: string;
-  wordCount: number;
-  content?: string | null;
-  productionChains: WorkflowProductionChain[];
-  productionEvidence: ChapterProductionEvidenceResponse;
-  createdAt: string;
-  updatedAt: string;
-}
+export type ChapterResponse = Schema['ChapterResponse'];
 
-export interface ChapterProductionEvidenceResponse {
-  revisionPlans: ChapterRevisionPlanEvidenceResponse[];
-  latestFactSnapshot?: ChapterFactSnapshotEvidenceResponse | null;
-  outboxEvents: ChapterOutboxEvidenceResponse[];
-}
+export type ChapterProductionEvidenceResponse = Schema['ChapterProductionEvidenceResponse'];
 
-export interface ChapterRevisionPlanEvidenceResponse {
-  id: string;
-  source: string;
-  planType: string;
-  targetScope: string;
-  targetChapterId: string;
-  targetChapterLogicalId: string;
-  targetChapterDisplayName: string;
-  status: string;
-  riskLevel: string;
-  recommendation: string;
-  affectedChapterIds: string[];
-  invalidatedPackageIds: string[];
-  updatedAt: string;
-}
+export type ChapterRevisionPlanEvidenceResponse = Schema['ChapterRevisionPlanEvidenceResponse'];
 
-export interface ChapterFactSnapshotEvidenceResponse {
-  id: string;
-  chapterVersionId: string;
-  versionNumber: number;
-  source: string;
-  snapshotPreview: string;
-  createdAt: string;
-}
+export type ChapterFactSnapshotEvidenceResponse = Schema['ChapterFactSnapshotEvidenceResponse'];
 
-export interface ChapterOutboxEvidenceResponse {
-  id: string;
-  eventType: string;
-  aggregateType: string;
-  aggregateId: string;
-  status: string;
-  attempts: number;
-  lastError: string;
-  nextAttemptAt?: string | null;
-  completedAt?: string | null;
-  updatedAt: string;
-}
+export type ChapterOutboxEvidenceResponse = Schema['ChapterOutboxEvidenceResponse'];
 
-export interface ChapterVersionResponse {
-  id: string;
-  chapterId: string;
-  contentDocumentId: string;
-  versionNumber: number;
-  title: string;
-  wordCount: number;
-  status: string;
-  runtimeRunId?: string | null;
-  packageId?: string | null;
-  kernelVersion?: string | null;
-  promptVersion?: string | null;
-  gateReportJson?: string | null;
-  agentReviewJson?: string | null;
-  rebuiltFromPackageIds: string[];
-  isCurrent: boolean;
-  contentPreview: string;
-  createdAt: string;
-}
+export type ChapterVersionResponse = Schema['ChapterVersionResponse'];
 
-export interface ChapterVersionDiffBlock {
-  kind: 'unchanged' | 'changed' | 'added' | 'removed' | string;
-  leftText: string;
-  rightText: string;
-}
+export type ChapterVersionDiffBlock = Schema['ChapterVersionDiffBlock'];
 
-export interface ChapterVersionCreativeIntentAlignment {
-  intentId: string;
-  normalizedIntent: string;
-  targetScope: string;
-  targetChapterId: string;
-  impactLevel: string;
-  source: string;
-  status: string;
-}
+export type ChapterVersionCreativeIntentAlignment = Schema['ChapterVersionCreativeIntentAlignment'];
 
-export interface ChapterVersionRevisionPlanAlignment {
-  revisionPlanId: string;
-  planType: string;
-  targetScope: string;
-  targetChapterId: string;
-  targetChapterLogicalId: string;
-  targetChapterDisplayName: string;
-  status: string;
-  affectedChapterIds: string[];
-  invalidatedPackageIds: string[];
-  riskLevel: string;
-  recommendation: string;
-}
+export type ChapterVersionRevisionPlanAlignment = Schema['ChapterVersionRevisionPlanAlignment'];
 
-export interface ChapterVersionAgentReviewCheckAlignment {
-  key: string;
-  name: string;
-  status: string;
-  message: string;
-  evidence: string[];
-}
+export type ChapterVersionAgentReviewCheckAlignment = Schema['ChapterVersionAgentReviewCheckAlignment'];
 
-export interface ChapterVersionProductionAlignment {
-  leftPackageId: string;
-  rightPackageId: string;
-  agentReviewDecision: string;
-  rebuiltFromPackageIds: string[];
-  acceptedCreativeIntents: ChapterVersionCreativeIntentAlignment[];
-  sourceRevisionPlans: ChapterVersionRevisionPlanAlignment[];
-  agentReviewChecks: ChapterVersionAgentReviewCheckAlignment[];
-}
+export type ChapterVersionProductionAlignment = Schema['ChapterVersionProductionAlignment'];
 
-export interface ChapterVersionCompareResponse {
-  chapterId: string;
-  left: ChapterVersionResponse;
-  right: ChapterVersionResponse;
-  wordCountDelta: number;
-  summary: string;
-  diffBlocks: ChapterVersionDiffBlock[];
-  productionAlignment: ChapterVersionProductionAlignment;
-}
+export type ChapterVersionCompareResponse = Schema['ChapterVersionCompareResponse'];
 
 export interface ChapterCreateRequest {
   projectId: string;
@@ -1739,47 +1570,11 @@ export interface WorkflowToolInputArtifactSummary {
   recommendedActions: string[];
 }
 
-export interface WorkflowProductionChain {
-  id: string;
-  chapterId: string;
-  chapterLogicalId: string;
-  chapterDisplayName: string;
-  runtimeRunId: string;
-  packageId: string;
-  status: string;
-  summary: string;
-  updatedAt: string;
-  chapterVersionId: string;
-  chapterVersionNumber: number;
-  factSnapshotId: string;
-  factSnapshotVersion: number;
-  revisionPlanIds: string[];
-  rebuildLinks: WorkflowPackageRebuildLinkEvidence[];
-  steps: WorkflowProductionChainStep[];
-  evidence?: WorkflowProductionChainEvidence | null;
-}
+export type WorkflowProductionChain = Schema['WorkflowProductionChain'];
 
-export interface WorkflowProductionChainEvidence {
-  gate?: WorkflowGateEvidence | null;
-  factSnapshot?: WorkflowFactSnapshotEvidence | null;
-  agentReview?: WorkflowAgentReviewSummaryEvidence | null;
-  chapterChangeCount: number;
-  chapterChangeArtifactIds: string[];
-}
+export type WorkflowProductionChainEvidence = Schema['WorkflowProductionChainEvidence'];
 
-export interface WorkflowProductionChainStep {
-  key: string;
-  label: string;
-  status: string;
-  eventId: string;
-  eventType: string;
-  stage: string;
-  artifactType: string;
-  artifactId: string;
-  message: string;
-  createdAt: string;
-  outboxEventId: string;
-}
+export type WorkflowProductionChainStep = Schema['WorkflowProductionChainStep'];
 
 export interface WorkflowProductionEventSummary {
   id: string;
@@ -1841,39 +1636,11 @@ export interface WorkflowProductionEvidenceSummary {
   outbox?: WorkflowOutboxEvidence | null;
 }
 
-export interface WorkflowGateEvidence {
-  status: string;
-  protocolPassed: boolean;
-  factSnapshotPassed: boolean;
-  blueprintPassed: boolean;
-  ragPassed: boolean;
-  changesDetected: boolean;
-  issues: string[];
-  repairHints: string[];
-}
+export type WorkflowGateEvidence = Schema['WorkflowGateEvidence'];
 
-export interface WorkflowFactSnapshotEvidence {
-  protagonistName: string;
-  protagonistIdentity: string;
-  protagonistStatus: string;
-  currentLocation: string;
-  systemState: string;
-  equipmentState: string;
-  keyEvents: string[];
-  endingState: string;
-  nextChapterMustCarry: string[];
-}
+export type WorkflowFactSnapshotEvidence = Schema['WorkflowFactSnapshotEvidence'];
 
-export interface WorkflowAgentReviewSummaryEvidence {
-  decision: string;
-  overallResult: string;
-  problems: string[];
-  suggestions: string[];
-  meetsAcceptedCreativeIntents?: boolean | null;
-  continuityRisk: string;
-  chapterPacing: string;
-  recommendedAction: string;
-}
+export type WorkflowAgentReviewSummaryEvidence = Schema['WorkflowAgentReviewSummaryEvidence'];
 
 export interface WorkflowMemoryReadEvidence {
   id: string;
@@ -1900,15 +1667,7 @@ export interface WorkflowMemoryPromotionEvidence {
   createdAt: string;
 }
 
-export interface WorkflowPackageRebuildLinkEvidence {
-  oldPackageId: string;
-  oldPackageStatus: string;
-  newPackageId: string;
-  newPackageStatus: string;
-  newPackageKind: string;
-  chapterId: string;
-  runtimeRunId: string;
-}
+export type WorkflowPackageRebuildLinkEvidence = Schema['WorkflowPackageRebuildLinkEvidence'];
 
 export interface WorkflowOutboxEvidence {
   outboxEventId: string;
@@ -2113,11 +1872,7 @@ export interface CharacterMaintenanceResult {
 // Agent Session & SSE Types
 // ============================================================
 
-export interface AgentChatRequest {
-  message?: string;
-  sessionId?: string;
-  clientMessageId?: string;
-}
+export type AgentChatRequest = Schema['AgentChatRequest'];
 
 export interface AgentChatResponse {
   reply: string;
@@ -2719,10 +2474,7 @@ export interface AgentSessionSummary {
   messageCount: number;
 }
 
-export interface AgentSessionUpdateRequest {
-  title?: string;
-  isArchived?: boolean;
-}
+export type AgentSessionUpdateRequest = Schema['AgentSessionUpdateRequest'];
 
 export interface RuntimeRunDto {
   runId: string;

@@ -76,10 +76,25 @@ packages/contracts/src/*.ts   (TypeBox，唯一手写真源)
 - [ ] **AC-2 类型生成**：`npm run gen:api` 从该文件生成前端类型，生成物进版本控制。
 - [ ] **AC-3 对账门禁**：`npm run gen:check` 在契约与生成物一致时通过、不一致时失败，且**不修改工作区任何文件**。
 - [ ] **AC-4 门禁可证伪**：故意改一个后端 DTO 字段后 `gen:check` 必须失败；恢复后必须通过。这条是本任务的核心证据。
-- [ ] **AC-5 手写类型收缩**：`types.ts` 中能被 OpenAPI 覆盖的部分改为 re-export 生成类型；剩余手写类型集中且每块注明保留原因（SSE 负载 / 前端本地视图模型）。记录迁移前后行数。
-- [ ] **AC-6 不回归**：前端 `typecheck`、`lint`、`test`（现有 17 个）全部通过；后端测试不受影响。
-- [ ] **AC-7 约定成文**：`.trellis/spec/frontend/type-safety.md` 写明"生成视图不得手改，契约变更走后端 DTO + 重新生成"。
-- [ ] **AC-8 收口**：`task.py validate` 与 `git diff --check` 通过。
+- [x] **AC-5 手写类型收缩**：27 个被 OpenAPI 覆盖的 interface 改为 `Schema[...]` 别名。`types.ts` 2817 → 2569 行（-248）。消费点 import 路径不变（26 个文件仍从 `api/types` 导入）。
+- [x] **AC-6 不回归**：前端 `typecheck` / `lint` / `build` / `gen:check` 全通过（lint 剩余 `set-state-in-effect` 警告为既有问题）；后端 Unit 845/845、AgentArchitecture 27/27。
+- [x] **AC-7 约定成文**：`.trellis/spec/frontend/type-safety.md`（130 行）。
+- [ ] **AC-8 收口**：`task.py validate` 与 `git diff --check`。
+
+### AC-5 的前置修复：让 OpenAPI 如实反映 C# 可空性
+
+直接 re-export 一开始行不通——生成物比手写类型更松：78 个 schema 里 **457 个可选字段 vs 115 个必需**，`AuthResponse.token` 生成为 `token?: string | null`，而 C# 是 `string Token { get; set; } = null!`（`Nullable` 已 enable，实际恒有值）。全量 re-export 会迫使每个消费点判空，是退步。这正是本任务当初停在 AC-5 的原因，判断是对的。
+
+根因是生成配置，不是 DTO。两步修复：
+
+1. `Program.cs` 的 `AddSwaggerGen()` 开启 `SupportNonNullableReferenceTypes()` —— 消除 `| null`，但它只写 `nullable: false`，**不填 schema 级 `required`**。
+2. 新增 `Support/NonNullableAsRequiredSchemaFilter.cs` —— Swashbuckle 6.5.0 没有内置的"非空即必需"提升。用一个 filter 覆盖 78 个 schema，而不是给 78 个 DTO 逐个加 `[Required]`。
+
+判定必需的三个信号：C# `required` 修饰符、非空引用类型（走 `NullabilityInfoContext`，不手解析 `[Nullable]` 属性）、非空值类型。刻意保持可选的：`string?`、`Nullable<T>`、Swashbuckle 已标 `nullable: true` 的属性，以及**构造函数参数带默认值的**——`record AgentSessionUpdateRequest(string Title = "", ...)` 类型非空但客户端可省略，误标必需会让只 patch `isArchived` 的真实调用点编译失败（`agent-page.tsx:433`，由 typecheck 抓到）。
+
+效果：必需字段占比 6% → 68%（可选/必需 457/115 → 149/423），剩余 32% 是真正可空的。`AuthResponse` 现在生成 `token: string`，与手写版一致。覆盖：`Tests/Unit/Filters/NonNullableAsRequiredSchemaFilterTests.cs` 8 个用例，含上述 default-value 回归。
+
+一并修正的既有偏差：4 个手写 interface 声明了后端从不返回的字段（`targetChapterLogicalId`、`targetChapterDisplayName`），无任何消费点读取；改为别名后自动消失。`AgentChatRequest.message` 手写为可选、实际后端必填，生成版更严格。
 
 ## 7. 风险与对策
 

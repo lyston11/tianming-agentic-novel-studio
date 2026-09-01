@@ -78,7 +78,9 @@ docker compose -f old/docker-compose.yml up -d
 `NovelAgentRegression` 需要 Docker（Testcontainers 起真 PostgreSQL）。
 `AgentKernelRegression` 是 `OutputType=Exe` 控制台 runner，**`dotnet test` 不执行它**，必须 `dotnet run`。
 
-当前基线（2026-09-01 实测）：Unit 837/837、AgentArchitecture 29/29、NovelAgentRegression 159/159、AgentKernelRegression 6/6。
+当前基线（2026-09-01 实测）：Unit 845/845、AgentArchitecture 27/27、NovelAgentRegression 159/159、AgentKernelRegression 6/6。
+
+（AgentArchitecture 从 29 降到 27 是 `a55a28f3` 退役 MAF adapter 时合并了断言，不是回归。）
 
 ## 核心架构
 

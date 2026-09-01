@@ -9,18 +9,21 @@
             "type": "integer"
           },
           "branchId": {
-            "nullable": true,
             "type": "string"
           },
           "correlationId": {
-            "nullable": true,
             "type": "string"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "acceptedThroughChapter",
+          "branchId",
+          "correlationId",
+          "idempotencyKey"
+        ],
         "type": "object"
       },
       "AccessibleProjectCatalogItem": {
@@ -31,15 +34,12 @@
             "type": "string"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "title": {
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
@@ -47,6 +47,12 @@
             "type": "string"
           }
         },
+        "required": [
+          "projectId",
+          "status",
+          "title",
+          "updatedAt"
+        ],
         "type": "object"
       },
       "ActivateProjectContextRequest": {
@@ -61,7 +67,6 @@
             "type": "integer"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "sourceUserMessageId": {
@@ -69,6 +74,10 @@
             "type": "string"
           }
         },
+        "required": [
+          "expectedBindingVersion",
+          "projectId"
+        ],
         "type": "object"
       },
       "AgentChatRequest": {
@@ -79,11 +88,9 @@
             "type": "string"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "sessionId": {
-            "nullable": true,
             "type": "string"
           }
         },
@@ -97,7 +104,6 @@
             "type": "boolean"
           },
           "title": {
-            "nullable": true,
             "type": "string"
           }
         },
@@ -114,14 +120,16 @@
             "type": "array"
           },
           "content": {
-            "nullable": true,
             "type": "string"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "content",
+          "idempotencyKey"
+        ],
         "type": "object"
       },
       "AuthResponse": {
@@ -132,35 +140,41 @@
             "type": "string"
           },
           "token": {
-            "nullable": true,
             "type": "string"
           },
           "user": {
             "$ref": "#/components/schemas/AuthUser"
           }
         },
+        "required": [
+          "expiresAt",
+          "token",
+          "user"
+        ],
         "type": "object"
       },
       "AuthUser": {
         "additionalProperties": false,
         "properties": {
           "email": {
-            "nullable": true,
             "type": "string"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "role": {
-            "nullable": true,
             "type": "string"
           },
           "username": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "email",
+          "id",
+          "role",
+          "username"
+        ],
         "type": "object"
       },
       "CancelGoalRequest": {
@@ -170,33 +184,39 @@
             "$ref": "#/components/schemas/GoalCancellationStrategy"
           }
         },
+        "required": [
+          "strategy"
+        ],
         "type": "object"
       },
       "CancelProductionRequest": {
         "additionalProperties": false,
         "properties": {
           "reason": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "reason"
+        ],
         "type": "object"
       },
       "ChangeBookExecutionStrategyRequest": {
         "additionalProperties": false,
         "properties": {
           "executionStrategy": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "executionStrategy"
+        ],
         "type": "object"
       },
       "ChapterFactSnapshotEvidenceResponse": {
         "additionalProperties": false,
         "properties": {
           "chapterVersionId": {
-            "nullable": true,
             "type": "string"
           },
           "createdAt": {
@@ -204,15 +224,12 @@
             "type": "string"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "snapshotPreview": {
-            "nullable": true,
             "type": "string"
           },
           "source": {
-            "nullable": true,
             "type": "string"
           },
           "versionNumber": {
@@ -220,17 +237,23 @@
             "type": "integer"
           }
         },
+        "required": [
+          "chapterVersionId",
+          "createdAt",
+          "id",
+          "snapshotPreview",
+          "source",
+          "versionNumber"
+        ],
         "type": "object"
       },
       "ChapterOutboxEvidenceResponse": {
         "additionalProperties": false,
         "properties": {
           "aggregateId": {
-            "nullable": true,
             "type": "string"
           },
           "aggregateType": {
-            "nullable": true,
             "type": "string"
           },
           "attempts": {
@@ -243,15 +266,12 @@
             "type": "string"
           },
           "eventType": {
-            "nullable": true,
             "type": "string"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "lastError": {
-            "nullable": true,
             "type": "string"
           },
           "nextAttemptAt": {
@@ -260,7 +280,6 @@
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
@@ -268,6 +287,16 @@
             "type": "string"
           }
         },
+        "required": [
+          "aggregateId",
+          "aggregateType",
+          "attempts",
+          "eventType",
+          "id",
+          "lastError",
+          "status",
+          "updatedAt"
+        ],
         "type": "object"
       },
       "ChapterProductionEvidenceResponse": {
@@ -280,17 +309,19 @@
             "items": {
               "$ref": "#/components/schemas/ChapterOutboxEvidenceResponse"
             },
-            "nullable": true,
             "type": "array"
           },
           "revisionPlans": {
             "items": {
               "$ref": "#/components/schemas/ChapterRevisionPlanEvidenceResponse"
             },
-            "nullable": true,
             "type": "array"
           }
         },
+        "required": [
+          "outboxEvents",
+          "revisionPlans"
+        ],
         "type": "object"
       },
       "ChapterResponse": {
@@ -309,29 +340,24 @@
             "type": "string"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "productionChains": {
             "items": {
               "$ref": "#/components/schemas/WorkflowProductionChain"
             },
-            "nullable": true,
             "type": "array"
           },
           "productionEvidence": {
             "$ref": "#/components/schemas/ChapterProductionEvidenceResponse"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "title": {
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
@@ -347,6 +373,18 @@
             "type": "integer"
           }
         },
+        "required": [
+          "chapterNumber",
+          "createdAt",
+          "id",
+          "productionChains",
+          "productionEvidence",
+          "projectId",
+          "status",
+          "title",
+          "updatedAt",
+          "wordCount"
+        ],
         "type": "object"
       },
       "ChapterRevisionPlanEvidenceResponse": {
@@ -356,46 +394,36 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "invalidatedPackageIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "planType": {
-            "nullable": true,
             "type": "string"
           },
           "recommendation": {
-            "nullable": true,
             "type": "string"
           },
           "riskLevel": {
-            "nullable": true,
             "type": "string"
           },
           "source": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "targetChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "targetScope": {
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
@@ -403,6 +431,19 @@
             "type": "string"
           }
         },
+        "required": [
+          "affectedChapterIds",
+          "id",
+          "invalidatedPackageIds",
+          "planType",
+          "recommendation",
+          "riskLevel",
+          "source",
+          "status",
+          "targetChapterId",
+          "targetScope",
+          "updatedAt"
+        ],
         "type": "object"
       },
       "ChapterVersionAgentReviewCheckAlignment": {
@@ -412,40 +453,40 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "key": {
-            "nullable": true,
             "type": "string"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "name": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "evidence",
+          "key",
+          "message",
+          "name",
+          "status"
+        ],
         "type": "object"
       },
       "ChapterVersionCompareResponse": {
         "additionalProperties": false,
         "properties": {
           "chapterId": {
-            "nullable": true,
             "type": "string"
           },
           "diffBlocks": {
             "items": {
               "$ref": "#/components/schemas/ChapterVersionDiffBlock"
             },
-            "nullable": true,
             "type": "array"
           },
           "left": {
@@ -458,7 +499,6 @@
             "$ref": "#/components/schemas/ChapterVersionResponse"
           },
           "summary": {
-            "nullable": true,
             "type": "string"
           },
           "wordCountDelta": {
@@ -466,58 +506,71 @@
             "type": "integer"
           }
         },
+        "required": [
+          "chapterId",
+          "diffBlocks",
+          "left",
+          "productionAlignment",
+          "right",
+          "summary",
+          "wordCountDelta"
+        ],
         "type": "object"
       },
       "ChapterVersionCreativeIntentAlignment": {
         "additionalProperties": false,
         "properties": {
           "impactLevel": {
-            "nullable": true,
             "type": "string"
           },
           "intentId": {
-            "nullable": true,
             "type": "string"
           },
           "normalizedIntent": {
-            "nullable": true,
             "type": "string"
           },
           "source": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "targetChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "targetScope": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "impactLevel",
+          "intentId",
+          "normalizedIntent",
+          "source",
+          "status",
+          "targetChapterId",
+          "targetScope"
+        ],
         "type": "object"
       },
       "ChapterVersionDiffBlock": {
         "additionalProperties": false,
         "properties": {
           "kind": {
-            "nullable": true,
             "type": "string"
           },
           "leftText": {
-            "nullable": true,
             "type": "string"
           },
           "rightText": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "kind",
+          "leftText",
+          "rightText"
+        ],
         "type": "object"
       },
       "ChapterVersionProductionAlignment": {
@@ -527,43 +580,45 @@
             "items": {
               "$ref": "#/components/schemas/ChapterVersionCreativeIntentAlignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "agentReviewChecks": {
             "items": {
               "$ref": "#/components/schemas/ChapterVersionAgentReviewCheckAlignment"
             },
-            "nullable": true,
             "type": "array"
           },
           "agentReviewDecision": {
-            "nullable": true,
             "type": "string"
           },
           "leftPackageId": {
-            "nullable": true,
             "type": "string"
           },
           "rebuiltFromPackageIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "rightPackageId": {
-            "nullable": true,
             "type": "string"
           },
           "sourceRevisionPlans": {
             "items": {
               "$ref": "#/components/schemas/ChapterVersionRevisionPlanAlignment"
             },
-            "nullable": true,
             "type": "array"
           }
         },
+        "required": [
+          "acceptedCreativeIntents",
+          "agentReviewChecks",
+          "agentReviewDecision",
+          "leftPackageId",
+          "rebuiltFromPackageIds",
+          "rightPackageId",
+          "sourceRevisionPlans"
+        ],
         "type": "object"
       },
       "ChapterVersionResponse": {
@@ -574,15 +629,12 @@
             "type": "string"
           },
           "chapterId": {
-            "nullable": true,
             "type": "string"
           },
           "contentDocumentId": {
-            "nullable": true,
             "type": "string"
           },
           "contentPreview": {
-            "nullable": true,
             "type": "string"
           },
           "createdAt": {
@@ -594,7 +646,6 @@
             "type": "string"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "isCurrent": {
@@ -616,7 +667,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "runtimeRunId": {
@@ -624,11 +674,9 @@
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "title": {
-            "nullable": true,
             "type": "string"
           },
           "versionNumber": {
@@ -640,6 +688,19 @@
             "type": "integer"
           }
         },
+        "required": [
+          "chapterId",
+          "contentDocumentId",
+          "contentPreview",
+          "createdAt",
+          "id",
+          "isCurrent",
+          "rebuiltFromPackageIds",
+          "status",
+          "title",
+          "versionNumber",
+          "wordCount"
+        ],
         "type": "object"
       },
       "ChapterVersionRevisionPlanAlignment": {
@@ -649,45 +710,47 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "invalidatedPackageIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "planType": {
-            "nullable": true,
             "type": "string"
           },
           "recommendation": {
-            "nullable": true,
             "type": "string"
           },
           "revisionPlanId": {
-            "nullable": true,
             "type": "string"
           },
           "riskLevel": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "targetChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "targetScope": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "affectedChapterIds",
+          "invalidatedPackageIds",
+          "planType",
+          "recommendation",
+          "revisionPlanId",
+          "riskLevel",
+          "status",
+          "targetChapterId",
+          "targetScope"
+        ],
         "type": "object"
       },
       "CommitCreativeGoalRequest": {
@@ -700,41 +763,48 @@
             "$ref": "#/components/schemas/CreateCreativeGoalCommand"
           }
         },
+        "required": [
+          "assessment",
+          "command"
+        ],
         "type": "object"
       },
       "CommitmentAssessmentRequest": {
         "additionalProperties": false,
         "properties": {
           "acceptedDecisionsJson": {
-            "nullable": true,
             "type": "string"
           },
           "collaborationMode": {
-            "nullable": true,
             "type": "string"
           },
           "dialogue": {
             "items": {
               "$ref": "#/components/schemas/DialogueMessage"
             },
-            "nullable": true,
             "type": "array"
           },
           "explicitExecutionAction": {
             "type": "boolean"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "projectStateJson": {
-            "nullable": true,
             "type": "string"
           },
           "proposedContract": {
             "$ref": "#/components/schemas/CreativeGoalContract"
           }
         },
+        "required": [
+          "acceptedDecisionsJson",
+          "collaborationMode",
+          "dialogue",
+          "explicitExecutionAction",
+          "projectId",
+          "projectStateJson"
+        ],
         "type": "object"
       },
       "ConfirmGoalProposalRequest": {
@@ -745,32 +815,36 @@
             "type": "string"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "idempotencyKey"
+        ],
         "type": "object"
       },
       "ConfirmGoalProposalResult": {
         "additionalProperties": false,
         "properties": {
           "correlationId": {
-            "nullable": true,
             "type": "string"
           },
           "goalId": {
-            "nullable": true,
             "type": "string"
           },
           "goalRevisionId": {
-            "nullable": true,
             "type": "string"
           },
           "productionId": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "correlationId",
+          "goalId",
+          "goalRevisionId",
+          "productionId"
+        ],
         "type": "object"
       },
       "ConversationDecisionDto": {
@@ -783,7 +857,6 @@
             "$ref": "#/components/schemas/ConversationDecisionKind"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "proposalHash": {
@@ -799,6 +872,10 @@
             "type": "string"
           }
         },
+        "required": [
+          "kind",
+          "message"
+        ],
         "type": "object"
       },
       "ConversationDecisionKind": {
@@ -818,14 +895,12 @@
             "$ref": "#/components/schemas/ConfirmGoalProposalResult"
           },
           "correlationId": {
-            "nullable": true,
             "type": "string"
           },
           "decision": {
             "$ref": "#/components/schemas/ConversationDecisionDto"
           },
           "messageId": {
-            "nullable": true,
             "type": "string"
           },
           "toolError": {
@@ -833,6 +908,11 @@
             "type": "string"
           }
         },
+        "required": [
+          "correlationId",
+          "decision",
+          "messageId"
+        ],
         "type": "object"
       },
       "CreateChapterRequest": {
@@ -857,7 +937,6 @@
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "pattern": "^(draft|published|archived)$",
             "type": "string"
           },
@@ -875,6 +954,7 @@
           "chapterNumber",
           "content",
           "projectId",
+          "status",
           "title"
         ],
         "type": "object"
@@ -964,15 +1044,12 @@
             "$ref": "#/components/schemas/CreativeGoalContract"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "sourceSessionId": {
-            "nullable": true,
             "type": "string"
           },
           "totalCostLimit": {
@@ -980,67 +1057,77 @@
             "type": "number"
           }
         },
+        "required": [
+          "contract",
+          "idempotencyKey",
+          "projectId",
+          "sourceSessionId",
+          "totalCostLimit"
+        ],
         "type": "object"
       },
       "CreateCreativeIntentApiRequest": {
         "additionalProperties": false,
         "properties": {
           "conflictStatus": {
-            "nullable": true,
             "type": "string"
           },
           "impactLevel": {
-            "nullable": true,
             "type": "string"
           },
           "metadataJson": {
-            "nullable": true,
             "type": "string"
           },
           "normalizedIntent": {
-            "nullable": true,
             "type": "string"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "rawContent": {
-            "nullable": true,
             "type": "string"
           },
           "requiresConfirmation": {
             "type": "boolean"
           },
           "runId": {
-            "nullable": true,
             "type": "string"
           },
           "sessionId": {
-            "nullable": true,
             "type": "string"
           },
           "source": {
-            "nullable": true,
             "type": "string"
           },
           "targetChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "targetCharacterName": {
-            "nullable": true,
             "type": "string"
           },
           "targetScope": {
-            "nullable": true,
             "type": "string"
           },
           "targetVolumeId": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "conflictStatus",
+          "impactLevel",
+          "metadataJson",
+          "normalizedIntent",
+          "projectId",
+          "rawContent",
+          "requiresConfirmation",
+          "runId",
+          "sessionId",
+          "source",
+          "targetChapterId",
+          "targetCharacterName",
+          "targetScope",
+          "targetVolumeId"
+        ],
         "type": "object"
       },
       "CreateKnowledgeDirectoryRequest": {
@@ -1108,7 +1195,6 @@
         "additionalProperties": false,
         "properties": {
           "acceptancePolicy": {
-            "nullable": true,
             "type": "string"
           },
           "endChapter": {
@@ -1116,7 +1202,6 @@
             "type": "integer"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           },
           "missionPlanId": {
@@ -1148,7 +1233,6 @@
             "type": "array"
           },
           "objective": {
-            "nullable": true,
             "type": "string"
           },
           "pendingToolExecutionIds": {
@@ -1159,7 +1243,6 @@
             "type": "array"
           },
           "reworkPolicy": {
-            "nullable": true,
             "type": "string"
           },
           "runtimeRunId": {
@@ -1167,7 +1250,6 @@
             "type": "string"
           },
           "sessionId": {
-            "nullable": true,
             "type": "string"
           },
           "startChapter": {
@@ -1178,7 +1260,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "totalCostLimit": {
@@ -1186,27 +1267,39 @@
             "type": "number"
           }
         },
+        "required": [
+          "endChapter",
+          "idempotencyKey",
+          "mode",
+          "objective",
+          "sessionId",
+          "startChapter",
+          "successCriteria"
+        ],
         "type": "object"
       },
       "CreateLegacyRecoveryProposalResult": {
         "additionalProperties": false,
         "properties": {
           "contractHash": {
-            "nullable": true,
             "type": "string"
           },
           "correlationId": {
-            "nullable": true,
             "type": "string"
           },
           "evidence": {
             "$ref": "#/components/schemas/LegacyRecoveryEvidence"
           },
           "proposalId": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "contractHash",
+          "correlationId",
+          "evidence",
+          "proposalId"
+        ],
         "type": "object"
       },
       "CreateMaterialRequest": {
@@ -1412,105 +1505,110 @@
         "additionalProperties": false,
         "properties": {
           "acceptancePolicyJson": {
-            "nullable": true,
             "type": "string"
           },
           "bookPlanJson": {
-            "nullable": true,
             "type": "string"
           },
           "collaborationMode": {
-            "nullable": true,
             "type": "string"
           },
           "executionStrategy": {
-            "nullable": true,
             "type": "string"
           },
           "goalType": {
-            "nullable": true,
             "type": "string"
           },
           "humanReadableObjective": {
-            "nullable": true,
             "type": "string"
           },
           "mustHappen": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "mustNotChange": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "mustPreserve": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "reworkPolicyJson": {
-            "nullable": true,
             "type": "string"
           },
           "successCriteria": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "targetChapterRangeJson": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "acceptancePolicyJson",
+          "collaborationMode",
+          "goalType",
+          "humanReadableObjective",
+          "mustHappen",
+          "mustNotChange",
+          "mustPreserve",
+          "reworkPolicyJson",
+          "successCriteria",
+          "targetChapterRangeJson"
+        ],
         "type": "object"
       },
       "DecideCreativeIntentApiRequest": {
         "additionalProperties": false,
         "properties": {
           "conflictStatus": {
-            "nullable": true,
             "type": "string"
           },
           "decisionReason": {
-            "nullable": true,
             "type": "string"
           },
           "markExecuted": {
             "type": "boolean"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "conflictStatus",
+          "decisionReason",
+          "markExecuted",
+          "projectId",
+          "status"
+        ],
         "type": "object"
       },
       "DialogueMessage": {
         "additionalProperties": false,
         "properties": {
           "content": {
-            "nullable": true,
             "type": "string"
           },
           "role": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "content",
+          "role"
+        ],
         "type": "object"
       },
       "GoalCancellationStrategy": {
@@ -1525,7 +1623,6 @@
         "additionalProperties": false,
         "properties": {
           "candidateChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "candidateVersion": {
@@ -1533,13 +1630,16 @@
             "type": "integer"
           }
         },
+        "required": [
+          "candidateChapterId",
+          "candidateVersion"
+        ],
         "type": "object"
       },
       "GoalChapterManualEditRequest": {
         "additionalProperties": false,
         "properties": {
           "candidateChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "candidateVersion": {
@@ -1547,17 +1647,20 @@
             "type": "integer"
           },
           "content": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "candidateChapterId",
+          "candidateVersion",
+          "content"
+        ],
         "type": "object"
       },
       "GoalChapterReworkRequest": {
         "additionalProperties": false,
         "properties": {
           "candidateChapterId": {
-            "nullable": true,
             "type": "string"
           },
           "candidateVersion": {
@@ -1565,11 +1668,9 @@
             "type": "integer"
           },
           "idempotencyKey": {
-            "nullable": true,
             "type": "string"
           },
           "selectedText": {
-            "nullable": true,
             "type": "string"
           },
           "selectionEnd": {
@@ -1583,24 +1684,32 @@
             "type": "integer"
           },
           "sessionId": {
-            "nullable": true,
             "type": "string"
           },
           "userDescription": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "candidateChapterId",
+          "candidateVersion",
+          "idempotencyKey",
+          "selectedText",
+          "sessionId",
+          "userDescription"
+        ],
         "type": "object"
       },
       "GoalPrefixMergeRequest": {
         "additionalProperties": false,
         "properties": {
           "branchId": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "branchId"
+        ],
         "type": "object"
       },
       "IncrementKnowledgeUsageRequest": {
@@ -1639,11 +1748,9 @@
             "type": "string"
           },
           "credentialReference": {
-            "nullable": true,
             "type": "string"
           },
           "customInstructions": {
-            "nullable": true,
             "type": "string"
           },
           "fallbacks": {
@@ -1663,7 +1770,6 @@
             "type": "integer"
           },
           "model": {
-            "nullable": true,
             "type": "string"
           },
           "outputPricePerMillion": {
@@ -1671,11 +1777,9 @@
             "type": "number"
           },
           "presetName": {
-            "nullable": true,
             "type": "string"
           },
           "provider": {
-            "nullable": true,
             "type": "string"
           },
           "temperature": {
@@ -1699,7 +1803,6 @@
             "type": "string"
           },
           "credentialReference": {
-            "nullable": true,
             "type": "string"
           },
           "inputPricePerMillion": {
@@ -1707,7 +1810,6 @@
             "type": "number"
           },
           "model": {
-            "nullable": true,
             "type": "string"
           },
           "outputPricePerMillion": {
@@ -1715,10 +1817,14 @@
             "type": "number"
           },
           "provider": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "credentialReference",
+          "model",
+          "provider"
+        ],
         "type": "object"
       },
       "LegacyRecoveryEvidence": {
@@ -1728,24 +1834,26 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "formalChapterVersionIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "knowledgeIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           }
         },
+        "required": [
+          "confirmedDecisionIds",
+          "formalChapterVersionIds",
+          "knowledgeIds"
+        ],
         "type": "object"
       },
       "LoginRequest": {
@@ -1781,6 +1889,9 @@
             "type": "boolean"
           }
         },
+        "required": [
+          "hasRunningTask"
+        ],
         "type": "object"
       },
       "ProblemDetails": {
@@ -1818,7 +1929,6 @@
             "type": "integer"
           },
           "code": {
-            "nullable": true,
             "type": "string"
           },
           "confirmedAt": {
@@ -1827,7 +1937,6 @@
             "type": "string"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "projectId": {
@@ -1841,6 +1950,13 @@
             "type": "boolean"
           }
         },
+        "required": [
+          "bindingVersion",
+          "code",
+          "message",
+          "recoverable",
+          "succeeded"
+        ],
         "type": "object"
       },
       "RegisterRequest": {
@@ -1878,32 +1994,34 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "constraintChangesJson": {
-            "nullable": true,
             "type": "string"
           },
           "invalidatedArtifactIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "reason": {
-            "nullable": true,
             "type": "string"
           },
           "reusableArtifactIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           }
         },
+        "required": [
+          "affectedNodeIds",
+          "constraintChangesJson",
+          "invalidatedArtifactIds",
+          "reason",
+          "reusableArtifactIds"
+        ],
         "type": "object"
       },
       "RollbackChapterVersionApiRequest": {
@@ -1920,15 +2038,12 @@
         "additionalProperties": false,
         "properties": {
           "chapterId": {
-            "nullable": true,
             "type": "string"
           },
           "currentDocumentId": {
-            "nullable": true,
             "type": "string"
           },
           "currentVersionId": {
-            "nullable": true,
             "type": "string"
           },
           "currentVersionNumber": {
@@ -1939,25 +2054,32 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "projectId": {
-            "nullable": true,
             "type": "string"
           },
           "runtimeRunId": {
-            "nullable": true,
             "type": "string"
           },
           "success": {
             "type": "boolean"
           }
         },
+        "required": [
+          "chapterId",
+          "currentDocumentId",
+          "currentVersionId",
+          "currentVersionNumber",
+          "invalidatedPackageIds",
+          "message",
+          "projectId",
+          "runtimeRunId",
+          "success"
+        ],
         "type": "object"
       },
       "SearchKnowledgeRequest": {
@@ -1982,7 +2104,8 @@
         },
         "required": [
           "projectId",
-          "query"
+          "query",
+          "topK"
         ],
         "type": "object"
       },
@@ -1990,19 +2113,15 @@
         "additionalProperties": false,
         "properties": {
           "apiKey": {
-            "nullable": true,
             "type": "string"
           },
           "baseUrl": {
-            "nullable": true,
             "type": "string"
           },
           "model": {
-            "nullable": true,
             "type": "string"
           },
           "provider": {
-            "nullable": true,
             "type": "string"
           }
         },
@@ -2308,7 +2427,6 @@
         "additionalProperties": false,
         "properties": {
           "agentDefaultRisk": {
-            "nullable": true,
             "type": "string"
           },
           "agentLoopAutoProceed": {
@@ -2323,19 +2441,15 @@
             "type": "integer"
           },
           "defaultGenre": {
-            "nullable": true,
             "type": "string"
           },
           "embeddingModel": {
-            "nullable": true,
             "type": "string"
           },
           "embeddingProvider": {
-            "nullable": true,
             "type": "string"
           },
           "language": {
-            "nullable": true,
             "type": "string"
           },
           "llmApiKey": {
@@ -2363,10 +2477,22 @@
             "type": "number"
           },
           "theme": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "agentDefaultRisk",
+          "agentLoopAutoProceed",
+          "agentLoopMaxSteps",
+          "defaultChapterWordCount",
+          "defaultGenre",
+          "embeddingModel",
+          "embeddingProvider",
+          "language",
+          "llmMaxTokens",
+          "llmTemperature",
+          "theme"
+        ],
         "type": "object"
       },
       "ViolationSeverity": {
@@ -2382,15 +2508,12 @@
         "additionalProperties": false,
         "properties": {
           "chapterPacing": {
-            "nullable": true,
             "type": "string"
           },
           "continuityRisk": {
-            "nullable": true,
             "type": "string"
           },
           "decision": {
-            "nullable": true,
             "type": "string"
           },
           "meetsAcceptedCreativeIntents": {
@@ -2398,76 +2521,83 @@
             "type": "boolean"
           },
           "overallResult": {
-            "nullable": true,
             "type": "string"
           },
           "problems": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "recommendedAction": {
-            "nullable": true,
             "type": "string"
           },
           "suggestions": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           }
         },
+        "required": [
+          "chapterPacing",
+          "continuityRisk",
+          "decision",
+          "overallResult",
+          "problems",
+          "recommendedAction",
+          "suggestions"
+        ],
         "type": "object"
       },
       "WorkflowFactSnapshotEvidence": {
         "additionalProperties": false,
         "properties": {
           "currentLocation": {
-            "nullable": true,
             "type": "string"
           },
           "endingState": {
-            "nullable": true,
             "type": "string"
           },
           "equipmentState": {
-            "nullable": true,
             "type": "string"
           },
           "keyEvents": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "nextChapterMustCarry": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "protagonistIdentity": {
-            "nullable": true,
             "type": "string"
           },
           "protagonistName": {
-            "nullable": true,
             "type": "string"
           },
           "protagonistStatus": {
-            "nullable": true,
             "type": "string"
           },
           "systemState": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "currentLocation",
+          "endingState",
+          "equipmentState",
+          "keyEvents",
+          "nextChapterMustCarry",
+          "protagonistIdentity",
+          "protagonistName",
+          "protagonistStatus",
+          "systemState"
+        ],
         "type": "object"
       },
       "WorkflowGateEvidence": {
@@ -2486,7 +2616,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "protocolPassed": {
@@ -2499,67 +2628,73 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "blueprintPassed",
+          "changesDetected",
+          "factSnapshotPassed",
+          "issues",
+          "protocolPassed",
+          "ragPassed",
+          "repairHints",
+          "status"
+        ],
         "type": "object"
       },
       "WorkflowPackageRebuildLinkEvidence": {
         "additionalProperties": false,
         "properties": {
           "chapterId": {
-            "nullable": true,
             "type": "string"
           },
           "newPackageId": {
-            "nullable": true,
             "type": "string"
           },
           "newPackageKind": {
-            "nullable": true,
             "type": "string"
           },
           "newPackageStatus": {
-            "nullable": true,
             "type": "string"
           },
           "oldPackageId": {
-            "nullable": true,
             "type": "string"
           },
           "oldPackageStatus": {
-            "nullable": true,
             "type": "string"
           },
           "runtimeRunId": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "chapterId",
+          "newPackageId",
+          "newPackageKind",
+          "newPackageStatus",
+          "oldPackageId",
+          "oldPackageStatus",
+          "runtimeRunId"
+        ],
         "type": "object"
       },
       "WorkflowProductionChain": {
         "additionalProperties": false,
         "properties": {
           "chapterDisplayName": {
-            "nullable": true,
             "type": "string"
           },
           "chapterId": {
-            "nullable": true,
             "type": "string"
           },
           "chapterLogicalId": {
-            "nullable": true,
             "type": "string"
           },
           "chapterVersionId": {
-            "nullable": true,
             "type": "string"
           },
           "chapterVersionNumber": {
@@ -2570,7 +2705,6 @@
             "$ref": "#/components/schemas/WorkflowProductionChainEvidence"
           },
           "factSnapshotId": {
-            "nullable": true,
             "type": "string"
           },
           "factSnapshotVersion": {
@@ -2578,51 +2712,61 @@
             "type": "integer"
           },
           "id": {
-            "nullable": true,
             "type": "string"
           },
           "packageId": {
-            "nullable": true,
             "type": "string"
           },
           "rebuildLinks": {
             "items": {
               "$ref": "#/components/schemas/WorkflowPackageRebuildLinkEvidence"
             },
-            "nullable": true,
             "type": "array"
           },
           "revisionPlanIds": {
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "runtimeRunId": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/WorkflowProductionChainStep"
             },
-            "nullable": true,
             "type": "array"
           },
           "summary": {
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "chapterDisplayName",
+          "chapterId",
+          "chapterLogicalId",
+          "chapterVersionId",
+          "chapterVersionNumber",
+          "evidence",
+          "factSnapshotId",
+          "factSnapshotVersion",
+          "id",
+          "packageId",
+          "rebuildLinks",
+          "revisionPlanIds",
+          "runtimeRunId",
+          "status",
+          "steps",
+          "summary",
+          "updatedAt"
+        ],
         "type": "object"
       },
       "WorkflowProductionChainEvidence": {
@@ -2635,7 +2779,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "chapterChangeCount": {
@@ -2649,56 +2792,62 @@
             "$ref": "#/components/schemas/WorkflowGateEvidence"
           }
         },
+        "required": [
+          "chapterChangeArtifactIds",
+          "chapterChangeCount"
+        ],
         "type": "object"
       },
       "WorkflowProductionChainStep": {
         "additionalProperties": false,
         "properties": {
           "artifactId": {
-            "nullable": true,
             "type": "string"
           },
           "artifactType": {
-            "nullable": true,
             "type": "string"
           },
           "createdAt": {
-            "nullable": true,
             "type": "string"
           },
           "eventId": {
-            "nullable": true,
             "type": "string"
           },
           "eventType": {
-            "nullable": true,
             "type": "string"
           },
           "key": {
-            "nullable": true,
             "type": "string"
           },
           "label": {
-            "nullable": true,
             "type": "string"
           },
           "message": {
-            "nullable": true,
             "type": "string"
           },
           "outboxEventId": {
-            "nullable": true,
             "type": "string"
           },
           "stage": {
-            "nullable": true,
             "type": "string"
           },
           "status": {
-            "nullable": true,
             "type": "string"
           }
         },
+        "required": [
+          "artifactId",
+          "artifactType",
+          "createdAt",
+          "eventId",
+          "eventType",
+          "key",
+          "label",
+          "message",
+          "outboxEventId",
+          "stage",
+          "status"
+        ],
         "type": "object"
       }
     }

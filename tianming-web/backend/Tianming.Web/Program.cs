@@ -83,7 +83,19 @@ builder.Services.AddControllers(options =>
     });
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Honour C# nullable annotations when emitting `required`. Without this,
+    // Swashbuckle marks every property optional, so a non-nullable
+    // `string Token { get; set; } = null!` is exported as `token?: string | null`
+    // and the generated TS types come out looser than the hand-written ones
+    // they are meant to replace.
+    options.SupportNonNullableReferenceTypes();
+
+    // SupportNonNullableReferenceTypes only sets `nullable: false`; it does not add
+    // anything to `required`, which is what decides optionality in generated clients.
+    options.SchemaFilter<NonNullableAsRequiredSchemaFilter>();
+});
 
 // Add HttpClientFactory for Qdrant health check
 builder.Services.AddHttpClient();

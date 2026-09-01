@@ -4536,224 +4536,224 @@ export interface components {
     schemas: {
         AcceptPrefixRequest: {
             /** Format: int32 */
-            acceptedThroughChapter?: number;
-            branchId?: string | null;
-            correlationId?: string | null;
-            idempotencyKey?: string | null;
+            acceptedThroughChapter: number;
+            branchId: string;
+            correlationId: string;
+            idempotencyKey: string;
         };
         AccessibleProjectCatalogItem: {
             description?: string | null;
-            projectId?: string | null;
-            status?: string | null;
-            title?: string | null;
+            projectId: string;
+            status: string;
+            title: string;
             /** Format: date-time */
-            updatedAt?: string;
+            updatedAt: string;
         };
         ActivateProjectContextRequest: {
             confirmationActionId?: string | null;
             /** Format: int64 */
-            expectedBindingVersion?: number;
-            projectId?: string | null;
+            expectedBindingVersion: number;
+            projectId: string;
             sourceUserMessageId?: string | null;
         };
         AgentChatRequest: {
             clientMessageId?: string | null;
-            message?: string | null;
-            sessionId?: string | null;
+            message?: string;
+            sessionId?: string;
         };
         AgentSessionUpdateRequest: {
             isArchived?: boolean | null;
-            title?: string | null;
+            title?: string;
         };
         AppendConversationTurnRequest: {
             attachmentIds?: string[] | null;
-            content?: string | null;
-            idempotencyKey?: string | null;
+            content: string;
+            idempotencyKey: string;
         };
         AuthResponse: {
             /** Format: date-time */
-            expiresAt?: string;
-            token?: string | null;
-            user?: components["schemas"]["AuthUser"];
+            expiresAt: string;
+            token: string;
+            user: components["schemas"]["AuthUser"];
         };
         AuthUser: {
-            email?: string | null;
-            id?: string | null;
-            role?: string | null;
-            username?: string | null;
+            email: string;
+            id: string;
+            role: string;
+            username: string;
         };
         CancelGoalRequest: {
-            strategy?: components["schemas"]["GoalCancellationStrategy"];
+            strategy: components["schemas"]["GoalCancellationStrategy"];
         };
         CancelProductionRequest: {
-            reason?: string | null;
+            reason: string;
         };
         ChangeBookExecutionStrategyRequest: {
-            executionStrategy?: string | null;
+            executionStrategy: string;
         };
         ChapterFactSnapshotEvidenceResponse: {
-            chapterVersionId?: string | null;
+            chapterVersionId: string;
             /** Format: date-time */
-            createdAt?: string;
-            id?: string | null;
-            snapshotPreview?: string | null;
-            source?: string | null;
+            createdAt: string;
+            id: string;
+            snapshotPreview: string;
+            source: string;
             /** Format: int32 */
-            versionNumber?: number;
+            versionNumber: number;
         };
         ChapterOutboxEvidenceResponse: {
-            aggregateId?: string | null;
-            aggregateType?: string | null;
+            aggregateId: string;
+            aggregateType: string;
             /** Format: int32 */
-            attempts?: number;
+            attempts: number;
             /** Format: date-time */
             completedAt?: string | null;
-            eventType?: string | null;
-            id?: string | null;
-            lastError?: string | null;
+            eventType: string;
+            id: string;
+            lastError: string;
             /** Format: date-time */
             nextAttemptAt?: string | null;
-            status?: string | null;
+            status: string;
             /** Format: date-time */
-            updatedAt?: string;
+            updatedAt: string;
         };
         ChapterProductionEvidenceResponse: {
             latestFactSnapshot?: components["schemas"]["ChapterFactSnapshotEvidenceResponse"];
-            outboxEvents?: components["schemas"]["ChapterOutboxEvidenceResponse"][] | null;
-            revisionPlans?: components["schemas"]["ChapterRevisionPlanEvidenceResponse"][] | null;
+            outboxEvents: components["schemas"]["ChapterOutboxEvidenceResponse"][];
+            revisionPlans: components["schemas"]["ChapterRevisionPlanEvidenceResponse"][];
         };
         ChapterResponse: {
             /** Format: int32 */
-            chapterNumber?: number;
+            chapterNumber: number;
             content?: string | null;
             /** Format: date-time */
-            createdAt?: string;
-            id?: string | null;
-            productionChains?: components["schemas"]["WorkflowProductionChain"][] | null;
-            productionEvidence?: components["schemas"]["ChapterProductionEvidenceResponse"];
-            projectId?: string | null;
-            status?: string | null;
-            title?: string | null;
+            createdAt: string;
+            id: string;
+            productionChains: components["schemas"]["WorkflowProductionChain"][];
+            productionEvidence: components["schemas"]["ChapterProductionEvidenceResponse"];
+            projectId: string;
+            status: string;
+            title: string;
             /** Format: date-time */
-            updatedAt?: string;
+            updatedAt: string;
             volumeId?: string | null;
             /** Format: int32 */
-            wordCount?: number;
+            wordCount: number;
         };
         ChapterRevisionPlanEvidenceResponse: {
-            affectedChapterIds?: string[] | null;
-            id?: string | null;
-            invalidatedPackageIds?: string[] | null;
-            planType?: string | null;
-            recommendation?: string | null;
-            riskLevel?: string | null;
-            source?: string | null;
-            status?: string | null;
-            targetChapterId?: string | null;
-            targetScope?: string | null;
+            affectedChapterIds: string[];
+            id: string;
+            invalidatedPackageIds: string[];
+            planType: string;
+            recommendation: string;
+            riskLevel: string;
+            source: string;
+            status: string;
+            targetChapterId: string;
+            targetScope: string;
             /** Format: date-time */
-            updatedAt?: string;
+            updatedAt: string;
         };
         ChapterVersionAgentReviewCheckAlignment: {
-            evidence?: string[] | null;
-            key?: string | null;
-            message?: string | null;
-            name?: string | null;
-            status?: string | null;
+            evidence: string[];
+            key: string;
+            message: string;
+            name: string;
+            status: string;
         };
         ChapterVersionCompareResponse: {
-            chapterId?: string | null;
-            diffBlocks?: components["schemas"]["ChapterVersionDiffBlock"][] | null;
-            left?: components["schemas"]["ChapterVersionResponse"];
-            productionAlignment?: components["schemas"]["ChapterVersionProductionAlignment"];
-            right?: components["schemas"]["ChapterVersionResponse"];
-            summary?: string | null;
+            chapterId: string;
+            diffBlocks: components["schemas"]["ChapterVersionDiffBlock"][];
+            left: components["schemas"]["ChapterVersionResponse"];
+            productionAlignment: components["schemas"]["ChapterVersionProductionAlignment"];
+            right: components["schemas"]["ChapterVersionResponse"];
+            summary: string;
             /** Format: int32 */
-            wordCountDelta?: number;
+            wordCountDelta: number;
         };
         ChapterVersionCreativeIntentAlignment: {
-            impactLevel?: string | null;
-            intentId?: string | null;
-            normalizedIntent?: string | null;
-            source?: string | null;
-            status?: string | null;
-            targetChapterId?: string | null;
-            targetScope?: string | null;
+            impactLevel: string;
+            intentId: string;
+            normalizedIntent: string;
+            source: string;
+            status: string;
+            targetChapterId: string;
+            targetScope: string;
         };
         ChapterVersionDiffBlock: {
-            kind?: string | null;
-            leftText?: string | null;
-            rightText?: string | null;
+            kind: string;
+            leftText: string;
+            rightText: string;
         };
         ChapterVersionProductionAlignment: {
-            acceptedCreativeIntents?: components["schemas"]["ChapterVersionCreativeIntentAlignment"][] | null;
-            agentReviewChecks?: components["schemas"]["ChapterVersionAgentReviewCheckAlignment"][] | null;
-            agentReviewDecision?: string | null;
-            leftPackageId?: string | null;
-            rebuiltFromPackageIds?: string[] | null;
-            rightPackageId?: string | null;
-            sourceRevisionPlans?: components["schemas"]["ChapterVersionRevisionPlanAlignment"][] | null;
+            acceptedCreativeIntents: components["schemas"]["ChapterVersionCreativeIntentAlignment"][];
+            agentReviewChecks: components["schemas"]["ChapterVersionAgentReviewCheckAlignment"][];
+            agentReviewDecision: string;
+            leftPackageId: string;
+            rebuiltFromPackageIds: string[];
+            rightPackageId: string;
+            sourceRevisionPlans: components["schemas"]["ChapterVersionRevisionPlanAlignment"][];
         };
         ChapterVersionResponse: {
             agentReviewJson?: string | null;
-            chapterId?: string | null;
-            contentDocumentId?: string | null;
-            contentPreview?: string | null;
+            chapterId: string;
+            contentDocumentId: string;
+            contentPreview: string;
             /** Format: date-time */
-            createdAt?: string;
+            createdAt: string;
             gateReportJson?: string | null;
-            id?: string | null;
-            isCurrent?: boolean;
+            id: string;
+            isCurrent: boolean;
             kernelVersion?: string | null;
             packageId?: string | null;
             promptVersion?: string | null;
-            rebuiltFromPackageIds?: string[] | null;
+            rebuiltFromPackageIds: string[];
             runtimeRunId?: string | null;
-            status?: string | null;
-            title?: string | null;
+            status: string;
+            title: string;
             /** Format: int32 */
-            versionNumber?: number;
+            versionNumber: number;
             /** Format: int32 */
-            wordCount?: number;
+            wordCount: number;
         };
         ChapterVersionRevisionPlanAlignment: {
-            affectedChapterIds?: string[] | null;
-            invalidatedPackageIds?: string[] | null;
-            planType?: string | null;
-            recommendation?: string | null;
-            revisionPlanId?: string | null;
-            riskLevel?: string | null;
-            status?: string | null;
-            targetChapterId?: string | null;
-            targetScope?: string | null;
+            affectedChapterIds: string[];
+            invalidatedPackageIds: string[];
+            planType: string;
+            recommendation: string;
+            revisionPlanId: string;
+            riskLevel: string;
+            status: string;
+            targetChapterId: string;
+            targetScope: string;
         };
         CommitCreativeGoalRequest: {
-            assessment?: components["schemas"]["CommitmentAssessmentRequest"];
-            command?: components["schemas"]["CreateCreativeGoalCommand"];
+            assessment: components["schemas"]["CommitmentAssessmentRequest"];
+            command: components["schemas"]["CreateCreativeGoalCommand"];
         };
         CommitmentAssessmentRequest: {
-            acceptedDecisionsJson?: string | null;
-            collaborationMode?: string | null;
-            dialogue?: components["schemas"]["DialogueMessage"][] | null;
-            explicitExecutionAction?: boolean;
-            projectId?: string | null;
-            projectStateJson?: string | null;
+            acceptedDecisionsJson: string;
+            collaborationMode: string;
+            dialogue: components["schemas"]["DialogueMessage"][];
+            explicitExecutionAction: boolean;
+            projectId: string;
+            projectStateJson: string;
             proposedContract?: components["schemas"]["CreativeGoalContract"];
         };
         ConfirmGoalProposalRequest: {
             confirmationNote?: string | null;
-            idempotencyKey?: string | null;
+            idempotencyKey: string;
         };
         ConfirmGoalProposalResult: {
-            correlationId?: string | null;
-            goalId?: string | null;
-            goalRevisionId?: string | null;
-            productionId?: string | null;
+            correlationId: string;
+            goalId: string;
+            goalRevisionId: string;
+            productionId: string;
         };
         ConversationDecisionDto: {
             autoConfirmRequested?: boolean;
-            kind?: components["schemas"]["ConversationDecisionKind"];
-            message?: string | null;
+            kind: components["schemas"]["ConversationDecisionKind"];
+            message: string;
             proposalHash?: string | null;
             proposalId?: string | null;
             proposalJson?: string | null;
@@ -4762,9 +4762,9 @@ export interface components {
         ConversationDecisionKind: "DiscussOnly" | "ProposeGoal" | "ProposeRevision" | "NeedClarification" | "RejectUnsafe";
         ConversationTurnResult: {
             confirmation?: components["schemas"]["ConfirmGoalProposalResult"];
-            correlationId?: string | null;
-            decision?: components["schemas"]["ConversationDecisionDto"];
-            messageId?: string | null;
+            correlationId: string;
+            decision: components["schemas"]["ConversationDecisionDto"];
+            messageId: string;
             toolError?: string | null;
         };
         CreateChapterRequest: {
@@ -4773,7 +4773,7 @@ export interface components {
             content: string;
             idempotencyKey?: string | null;
             projectId: string;
-            status?: string | null;
+            status: string;
             title: string;
             volumeId?: string | null;
         };
@@ -4797,28 +4797,28 @@ export interface components {
             specialAbilities?: string | null;
         };
         CreateCreativeGoalCommand: {
-            contract?: components["schemas"]["CreativeGoalContract"];
-            idempotencyKey?: string | null;
-            projectId?: string | null;
-            sourceSessionId?: string | null;
+            contract: components["schemas"]["CreativeGoalContract"];
+            idempotencyKey: string;
+            projectId: string;
+            sourceSessionId: string;
             /** Format: double */
-            totalCostLimit?: number;
+            totalCostLimit: number;
         };
         CreateCreativeIntentApiRequest: {
-            conflictStatus?: string | null;
-            impactLevel?: string | null;
-            metadataJson?: string | null;
-            normalizedIntent?: string | null;
-            projectId?: string | null;
-            rawContent?: string | null;
-            requiresConfirmation?: boolean;
-            runId?: string | null;
-            sessionId?: string | null;
-            source?: string | null;
-            targetChapterId?: string | null;
-            targetCharacterName?: string | null;
-            targetScope?: string | null;
-            targetVolumeId?: string | null;
+            conflictStatus: string;
+            impactLevel: string;
+            metadataJson: string;
+            normalizedIntent: string;
+            projectId: string;
+            rawContent: string;
+            requiresConfirmation: boolean;
+            runId: string;
+            sessionId: string;
+            source: string;
+            targetChapterId: string;
+            targetCharacterName: string;
+            targetScope: string;
+            targetVolumeId: string;
         };
         CreateKnowledgeDirectoryRequest: {
             idempotencyKey?: string | null;
@@ -4835,31 +4835,31 @@ export interface components {
             weight?: number | null;
         };
         CreateLegacyRecoveryProposalRequest: {
-            acceptancePolicy?: string | null;
+            acceptancePolicy?: string;
             /** Format: int32 */
-            endChapter?: number;
-            idempotencyKey?: string | null;
+            endChapter: number;
+            idempotencyKey: string;
             missionPlanId?: string | null;
-            mode?: components["schemas"]["NovelAgentProductionMode"];
+            mode: components["schemas"]["NovelAgentProductionMode"];
             mustHappen?: string[] | null;
             mustNotChange?: string[] | null;
             mustPreserve?: string[] | null;
-            objective?: string | null;
+            objective: string;
             pendingToolExecutionIds?: string[] | null;
-            reworkPolicy?: string | null;
+            reworkPolicy?: string;
             runtimeRunId?: string | null;
-            sessionId?: string | null;
+            sessionId: string;
             /** Format: int32 */
-            startChapter?: number;
-            successCriteria?: string[] | null;
+            startChapter: number;
+            successCriteria: string[];
             /** Format: double */
             totalCostLimit?: number;
         };
         CreateLegacyRecoveryProposalResult: {
-            contractHash?: string | null;
-            correlationId?: string | null;
-            evidence?: components["schemas"]["LegacyRecoveryEvidence"];
-            proposalId?: string | null;
+            contractHash: string;
+            correlationId: string;
+            evidence: components["schemas"]["LegacyRecoveryEvidence"];
+            proposalId: string;
         };
         CreateMaterialRequest: {
             category?: string | null;
@@ -4908,58 +4908,58 @@ export interface components {
             volumeTitle: string;
         };
         CreativeGoalContract: {
-            acceptancePolicyJson?: string | null;
-            bookPlanJson?: string | null;
-            collaborationMode?: string | null;
-            executionStrategy?: string | null;
-            goalType?: string | null;
-            humanReadableObjective?: string | null;
-            mustHappen?: string[] | null;
-            mustNotChange?: string[] | null;
-            mustPreserve?: string[] | null;
-            reworkPolicyJson?: string | null;
-            successCriteria?: string[] | null;
-            targetChapterRangeJson?: string | null;
+            acceptancePolicyJson: string;
+            bookPlanJson?: string;
+            collaborationMode: string;
+            executionStrategy?: string;
+            goalType: string;
+            humanReadableObjective: string;
+            mustHappen: string[];
+            mustNotChange: string[];
+            mustPreserve: string[];
+            reworkPolicyJson: string;
+            successCriteria: string[];
+            targetChapterRangeJson: string;
         };
         DecideCreativeIntentApiRequest: {
-            conflictStatus?: string | null;
-            decisionReason?: string | null;
-            markExecuted?: boolean;
-            projectId?: string | null;
-            status?: string | null;
+            conflictStatus: string;
+            decisionReason: string;
+            markExecuted: boolean;
+            projectId: string;
+            status: string;
         };
         DialogueMessage: {
-            content?: string | null;
-            role?: string | null;
+            content: string;
+            role: string;
         };
         /** @enum {string} */
         GoalCancellationStrategy: "PreserveCandidateBranch" | "MergeAcceptedPrefix" | "DiscardCandidateBranch";
         GoalChapterAcceptRequest: {
-            candidateChapterId?: string | null;
+            candidateChapterId: string;
             /** Format: int32 */
-            candidateVersion?: number;
+            candidateVersion: number;
         };
         GoalChapterManualEditRequest: {
-            candidateChapterId?: string | null;
+            candidateChapterId: string;
             /** Format: int32 */
-            candidateVersion?: number;
-            content?: string | null;
+            candidateVersion: number;
+            content: string;
         };
         GoalChapterReworkRequest: {
-            candidateChapterId?: string | null;
+            candidateChapterId: string;
             /** Format: int32 */
-            candidateVersion?: number;
-            idempotencyKey?: string | null;
-            selectedText?: string | null;
+            candidateVersion: number;
+            idempotencyKey: string;
+            selectedText: string;
             /** Format: int32 */
             selectionEnd?: number | null;
             /** Format: int32 */
             selectionStart?: number | null;
-            sessionId?: string | null;
-            userDescription?: string | null;
+            sessionId: string;
+            userDescription: string;
         };
         GoalPrefixMergeRequest: {
-            branchId?: string | null;
+            branchId: string;
         };
         IncrementKnowledgeUsageRequest: {
             idempotencyKey?: string | null;
@@ -4970,18 +4970,18 @@ export interface components {
         KernelModelConfigurationDto: {
             advancedSettingsEnabled?: boolean;
             baseUrl?: string | null;
-            credentialReference?: string | null;
-            customInstructions?: string | null;
+            credentialReference?: string;
+            customInstructions?: string;
             fallbacks?: components["schemas"]["KernelModelFallback"][] | null;
             /** Format: double */
             inputPricePerMillion?: number;
             /** Format: int32 */
             maxOutputTokens?: number | null;
-            model?: string | null;
+            model?: string;
             /** Format: double */
             outputPricePerMillion?: number;
-            presetName?: string | null;
-            provider?: string | null;
+            presetName?: string;
+            provider?: string;
             /** Format: float */
             temperature?: number | null;
             /** Format: int32 */
@@ -4989,18 +4989,18 @@ export interface components {
         };
         KernelModelFallback: {
             baseUrl?: string | null;
-            credentialReference?: string | null;
+            credentialReference: string;
             /** Format: double */
             inputPricePerMillion?: number;
-            model?: string | null;
+            model: string;
             /** Format: double */
             outputPricePerMillion?: number;
-            provider?: string | null;
+            provider: string;
         };
         LegacyRecoveryEvidence: {
-            confirmedDecisionIds?: string[] | null;
-            formalChapterVersionIds?: string[] | null;
-            knowledgeIds?: string[] | null;
+            confirmedDecisionIds: string[];
+            formalChapterVersionIds: string[];
+            knowledgeIds: string[];
         };
         LoginRequest: {
             emailOrUsername: string;
@@ -5009,7 +5009,7 @@ export interface components {
         /** @enum {string} */
         NovelAgentProductionMode: "SingleChapter" | "InteractiveBatch" | "AutonomousBook";
         PauseProductionRequest: {
-            hasRunningTask?: boolean;
+            hasRunningTask: boolean;
         };
         ProblemDetails: {
             detail?: string | null;
@@ -5023,14 +5023,14 @@ export interface components {
         };
         ProjectContextActivationResult: {
             /** Format: int64 */
-            bindingVersion?: number;
-            code?: string | null;
+            bindingVersion: number;
+            code: string;
             /** Format: date-time */
             confirmedAt?: string | null;
-            message?: string | null;
+            message: string;
             projectId?: string | null;
-            recoverable?: boolean;
-            succeeded?: boolean;
+            recoverable: boolean;
+            succeeded: boolean;
         };
         RegisterRequest: {
             /** Format: email */
@@ -5039,39 +5039,39 @@ export interface components {
             username: string;
         };
         ReviseCreativeGoalApiRequest: {
-            affectedNodeIds?: string[] | null;
-            constraintChangesJson?: string | null;
-            invalidatedArtifactIds?: string[] | null;
-            reason?: string | null;
-            reusableArtifactIds?: string[] | null;
+            affectedNodeIds: string[];
+            constraintChangesJson: string;
+            invalidatedArtifactIds: string[];
+            reason: string;
+            reusableArtifactIds: string[];
         };
         RollbackChapterVersionApiRequest: {
             reason?: string | null;
         };
         RollbackChapterVersionResult: {
-            chapterId?: string | null;
-            currentDocumentId?: string | null;
-            currentVersionId?: string | null;
+            chapterId: string;
+            currentDocumentId: string;
+            currentVersionId: string;
             /** Format: int32 */
-            currentVersionNumber?: number;
-            invalidatedPackageIds?: string[] | null;
-            message?: string | null;
-            projectId?: string | null;
-            runtimeRunId?: string | null;
-            success?: boolean;
+            currentVersionNumber: number;
+            invalidatedPackageIds: string[];
+            message: string;
+            projectId: string;
+            runtimeRunId: string;
+            success: boolean;
         };
         SearchKnowledgeRequest: {
             entryType?: string | null;
             projectId: string;
             query: string;
             /** Format: int32 */
-            topK?: number;
+            topK: number;
         };
         TestConnectionRequest: {
-            apiKey?: string | null;
-            baseUrl?: string | null;
-            model?: string | null;
-            provider?: string | null;
+            apiKey?: string;
+            baseUrl?: string;
+            model?: string;
+            provider?: string;
         };
         UpdateChapterRequest: {
             content?: string | null;
@@ -5151,109 +5151,109 @@ export interface components {
             volumeTitle?: string | null;
         };
         UserSettingsDto: {
-            agentDefaultRisk?: string | null;
-            agentLoopAutoProceed?: boolean;
+            agentDefaultRisk: string;
+            agentLoopAutoProceed: boolean;
             /** Format: int32 */
-            agentLoopMaxSteps?: number;
+            agentLoopMaxSteps: number;
             /** Format: int32 */
-            defaultChapterWordCount?: number;
-            defaultGenre?: string | null;
-            embeddingModel?: string | null;
-            embeddingProvider?: string | null;
-            language?: string | null;
+            defaultChapterWordCount: number;
+            defaultGenre: string;
+            embeddingModel: string;
+            embeddingProvider: string;
+            language: string;
             llmApiKey?: string | null;
             llmBaseUrl?: string | null;
             /** Format: int32 */
-            llmMaxTokens?: number;
+            llmMaxTokens: number;
             llmModel?: string | null;
             llmProvider?: string | null;
             /** Format: double */
-            llmTemperature?: number;
-            theme?: string | null;
+            llmTemperature: number;
+            theme: string;
         };
         /** @enum {string} */
         ViolationSeverity: "Low" | "Medium" | "High" | "Critical";
         WorkflowAgentReviewSummaryEvidence: {
-            chapterPacing?: string | null;
-            continuityRisk?: string | null;
-            decision?: string | null;
+            chapterPacing: string;
+            continuityRisk: string;
+            decision: string;
             meetsAcceptedCreativeIntents?: boolean | null;
-            overallResult?: string | null;
-            problems?: string[] | null;
-            recommendedAction?: string | null;
-            suggestions?: string[] | null;
+            overallResult: string;
+            problems: string[];
+            recommendedAction: string;
+            suggestions: string[];
         };
         WorkflowFactSnapshotEvidence: {
-            currentLocation?: string | null;
-            endingState?: string | null;
-            equipmentState?: string | null;
-            keyEvents?: string[] | null;
-            nextChapterMustCarry?: string[] | null;
-            protagonistIdentity?: string | null;
-            protagonistName?: string | null;
-            protagonistStatus?: string | null;
-            systemState?: string | null;
+            currentLocation: string;
+            endingState: string;
+            equipmentState: string;
+            keyEvents: string[];
+            nextChapterMustCarry: string[];
+            protagonistIdentity: string;
+            protagonistName: string;
+            protagonistStatus: string;
+            systemState: string;
         };
         WorkflowGateEvidence: {
-            blueprintPassed?: boolean;
-            changesDetected?: boolean;
-            factSnapshotPassed?: boolean;
-            issues?: string[] | null;
-            protocolPassed?: boolean;
-            ragPassed?: boolean;
-            repairHints?: string[] | null;
-            status?: string | null;
+            blueprintPassed: boolean;
+            changesDetected: boolean;
+            factSnapshotPassed: boolean;
+            issues: string[];
+            protocolPassed: boolean;
+            ragPassed: boolean;
+            repairHints: string[];
+            status: string;
         };
         WorkflowPackageRebuildLinkEvidence: {
-            chapterId?: string | null;
-            newPackageId?: string | null;
-            newPackageKind?: string | null;
-            newPackageStatus?: string | null;
-            oldPackageId?: string | null;
-            oldPackageStatus?: string | null;
-            runtimeRunId?: string | null;
+            chapterId: string;
+            newPackageId: string;
+            newPackageKind: string;
+            newPackageStatus: string;
+            oldPackageId: string;
+            oldPackageStatus: string;
+            runtimeRunId: string;
         };
         WorkflowProductionChain: {
-            chapterDisplayName?: string | null;
-            chapterId?: string | null;
-            chapterLogicalId?: string | null;
-            chapterVersionId?: string | null;
+            chapterDisplayName: string;
+            chapterId: string;
+            chapterLogicalId: string;
+            chapterVersionId: string;
             /** Format: int32 */
-            chapterVersionNumber?: number;
-            evidence?: components["schemas"]["WorkflowProductionChainEvidence"];
-            factSnapshotId?: string | null;
+            chapterVersionNumber: number;
+            evidence: components["schemas"]["WorkflowProductionChainEvidence"];
+            factSnapshotId: string;
             /** Format: int32 */
-            factSnapshotVersion?: number;
-            id?: string | null;
-            packageId?: string | null;
-            rebuildLinks?: components["schemas"]["WorkflowPackageRebuildLinkEvidence"][] | null;
-            revisionPlanIds?: string[] | null;
-            runtimeRunId?: string | null;
-            status?: string | null;
-            steps?: components["schemas"]["WorkflowProductionChainStep"][] | null;
-            summary?: string | null;
-            updatedAt?: string | null;
+            factSnapshotVersion: number;
+            id: string;
+            packageId: string;
+            rebuildLinks: components["schemas"]["WorkflowPackageRebuildLinkEvidence"][];
+            revisionPlanIds: string[];
+            runtimeRunId: string;
+            status: string;
+            steps: components["schemas"]["WorkflowProductionChainStep"][];
+            summary: string;
+            updatedAt: string;
         };
         WorkflowProductionChainEvidence: {
             agentReview?: components["schemas"]["WorkflowAgentReviewSummaryEvidence"];
-            chapterChangeArtifactIds?: string[] | null;
+            chapterChangeArtifactIds: string[];
             /** Format: int32 */
-            chapterChangeCount?: number;
+            chapterChangeCount: number;
             factSnapshot?: components["schemas"]["WorkflowFactSnapshotEvidence"];
             gate?: components["schemas"]["WorkflowGateEvidence"];
         };
         WorkflowProductionChainStep: {
-            artifactId?: string | null;
-            artifactType?: string | null;
-            createdAt?: string | null;
-            eventId?: string | null;
-            eventType?: string | null;
-            key?: string | null;
-            label?: string | null;
-            message?: string | null;
-            outboxEventId?: string | null;
-            stage?: string | null;
-            status?: string | null;
+            artifactId: string;
+            artifactType: string;
+            createdAt: string;
+            eventId: string;
+            eventType: string;
+            key: string;
+            label: string;
+            message: string;
+            outboxEventId: string;
+            stage: string;
+            status: string;
         };
     };
     responses: never;
