@@ -1,7 +1,7 @@
 {
   "id": "09-01-demote-ts-novel-agent-to-adapter",
   "title": "Demote tianming-novel-agent to a pure adapter layer",
-  "status": "pending",
+  "status": "completed",
   "priority": "P1",
   "parent": null,
   "children": [],
@@ -32,5 +32,6 @@
     "tianming-web/backend/Services/Framework/AI/NovelAgent/Services/ProductionKernel/ChapterGatekeeper.cs",
     "AGENT_CORE_ARCHITECTURE.md",
     "CLAUDE.md"
-  ]
+  ],
+  "completedAt": "2026-09-01"
 }

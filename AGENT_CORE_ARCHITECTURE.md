@@ -117,3 +117,22 @@
 ## 8. 本任务明确不做的事
 
 不在 Core 里实现 Proposal→Goal→Production 固定链；不将小说 prompt、项目上下文、授权规则塞进 Core；不把 ASP.NET transaction/persistence 推给 Node Agent；不为 Playwright 反向污染生产 health/DB routing；不把历史整合计划的 Director 自动生产表述当作合同；不删除任何 legacy 代码。
+
+## 9. 领域归属裁决（2026-09-01，任务 `09-01-demote-ts-novel-agent-to-adapter`）
+
+**小说领域归 C# 所有，`tianming-novel-agent` 是纯 adapter 层。此裁决已落地，不是待决问题。**
+
+依据（08-30 五子任务于 2026-09-01 全部完成）：
+
+- 控制面、租户 RLS、fenced worker、Canon merge、SSE 均在 C# 侧实现，61 个 EF 迁移、10 个 `MigrationsPostgres` RLS 文件、真 PostgreSQL E2E（`AgentToCanonE2ETests` 522 行、`AgentToCanonApiSseE2ETests` 585 行、`KernelTaskClaimTests` 473 行）。
+- TS 包全仓零接线：无 importer、无 Node 宿主、无队列桥接，唯一 HTTP→Node 通路指向 legacy Pi runtime 且默认关闭。
+
+由此确立的约束：
+
+1. **契约真源**：`src/contracts.ts` 保留的 35 个跨边界类型是内部 Application port 契约（实测与 `openapi.json` 零命中，生成路线不成立），每个类型对应 C# 权威类型或标注为 adapter 内部概念；8 个零引用类型已删除。
+2. **领域判定权威**：C# `ChapterGatekeeper` 是唯一权威；`continuity-gate.ts` 降级为结构性 preflight（章号/空正文/context hash——这些恰是 C# gate 不检查的），其错误码是本地诊断词表，不进入跨边界 `NovelCommandError` 词表。
+3. **公共导出面**：`src/index.ts` 只导出 adapter 层资产（ports、context provider、role/skill、domain tools、event mapper、loop 接线）；`contracts.ts`、`continuity-gate.ts`、`fake-model.ts` 不再经包公共 API 暴露。
+4. **回流防护**：`Scripts/verify-node-packages.sh` 是单一可执行校验入口（边界 grep → dist 新鲜度 → 按构建顺序 type-check + test），并加 guard 断言 `src/` 不得出现 Canon merge、账本投影、状态迁移判定或持久化。dist 新鲜度 guard 必须先于 build——陈旧产物曾在本项目造成过错误的架构判断。
+5. **接线另议**：把 TS adapter 接到 C# 后端（internal API / subprocess / 队列）是独立任务，需先有部署形态决定；本裁决不预设其结论。
+
+后续 session 不应再追问"领域在哪侧"，也不应把 `tianming-novel-agent` 当作第二领域实现来扩展。

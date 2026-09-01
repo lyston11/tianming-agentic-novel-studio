@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { InMemoryNovelTestStore } from "./fixtures/in-memory-novel-test-store.js";
+// Domain types are no longer re-exported from the package index (R3): the
+// durable domain truth is the C# control plane, so tests import the internal
+// contracts module directly.
 import {
-  NovelAgentApplication,
   NovelCommandError,
-  createReadContextTool,
   type Acceptance,
   type ActorScope,
   type CharacterState,
   type ForeshadowEntry,
-} from "../src/index.js";
+} from "../src/contracts.js";
+import { NovelAgentApplication, createReadContextTool } from "../src/index.js";
 import { InMemoryRuntimeEventSink } from "../src/runtime/event-mapper.js";
 
 const actor: ActorScope = { projectId: "project-1", userId: "author-1" };
