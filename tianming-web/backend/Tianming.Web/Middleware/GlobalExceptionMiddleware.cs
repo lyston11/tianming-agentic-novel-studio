@@ -1,7 +1,6 @@
 using System.Net.Mime;
 using System.Text.Json;
 using TM.Web.NovelAgentWeb.DTOs;
-using TM.Web.NovelAgentWeb.Services.AgentSessions;
 
 namespace TM.Web.NovelAgentWeb.Middleware;
 
@@ -31,25 +30,6 @@ public sealed class GlobalExceptionMiddleware
                 "HTTP_404",
                 ex.Message,
                 recoverable: true);
-        }
-        catch (AgentChatRequestInProgressException ex)
-        {
-            context.Response.Headers.RetryAfter = "1";
-            await WriteFailureAsync(
-                context,
-                StatusCodes.Status409Conflict,
-                "AGENT_CHAT_IN_PROGRESS",
-                ex.Message,
-                recoverable: true);
-        }
-        catch (AgentChatIdempotencyConflictException ex)
-        {
-            await WriteFailureAsync(
-                context,
-                StatusCodes.Status409Conflict,
-                "AGENT_CHAT_IDEMPOTENCY_CONFLICT",
-                ex.Message,
-                recoverable: false);
         }
         catch (ArgumentException ex)
         {

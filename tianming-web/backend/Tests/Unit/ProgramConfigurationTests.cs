@@ -194,33 +194,22 @@ public class ProgramConfigurationTests
     }
 
     [Fact]
-    public void Program_UsesTargetArchitectureDirectorForForegroundTurns()
+    public void Program_DoesNotRegisterTheUnwiredDirectorChain()
     {
+        // Retired 2026-09-01 (task 09-01-retire-unwired-director-chain): the
+        // Director → IAgentForegroundTurnRunner → AgentTurnCoordinator chain had no
+        // production consumer; registration alone is the known "registered but
+        // unwired" failure pattern, so its return is asserted against here.
         var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
         var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
-        Assert.Contains("AddScoped<TargetArchitectureDirector>()", programSource);
-        Assert.Contains(
-            "AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<TargetArchitectureDirector>())",
-            programSource);
+        Assert.DoesNotContain("TargetArchitectureDirector", programSource);
+        Assert.DoesNotContain("IAgentForegroundTurnRunner", programSource);
+        Assert.DoesNotContain("AgentTurnCoordinator", programSource);
+        Assert.DoesNotContain("IAgentChatIdempotencyService", programSource);
         Assert.DoesNotContain("AddScoped<AgentRuntime>()", programSource);
         Assert.DoesNotContain("AddSingleton<AgentPlanner>()", programSource);
         Assert.DoesNotContain("AddSingleton<ReflectionEngine>()", programSource);
-    }
-
-    [Fact]
-    public void TargetArchitectureDirector_DoesNotCallPeerBusinessToolsOrKernels()
-    {
-        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
-        var directorSource = File.ReadAllText(Path.Combine(
-            repoRoot,
-            "tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs"));
-
-        Assert.DoesNotContain("AgentToolRegistry", directorSource);
-        Assert.DoesNotContain("IKernel", directorSource);
-        Assert.DoesNotContain("KernelRegistry", directorSource);
-        Assert.DoesNotContain("AgentPlanner", directorSource);
-        Assert.DoesNotContain("ReflectionEngine", directorSource);
     }
 
     [Fact]

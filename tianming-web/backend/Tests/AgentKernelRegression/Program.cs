@@ -66,8 +66,9 @@ internal static class Program
     private static Task ProgramWiresDurableGoalExecution()
     {
         var source = Read("tianming-web/backend/Tianming.Web/Program.cs");
-        Check(source.Contains("AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<TargetArchitectureDirector>())", StringComparison.Ordinal),
-            "conversation entry point must use TargetArchitectureDirector");
+        Check(!source.Contains("IAgentForegroundTurnRunner", StringComparison.Ordinal) &&
+              !source.Contains("TargetArchitectureDirector", StringComparison.Ordinal),
+            "unwired director chain must not be registered (retired 2026-09-01)");
         Check(source.Contains("AddHostedService<KernelTaskWorker>()", StringComparison.Ordinal),
             "durable KernelTaskWorker must be hosted");
         Check(source.Contains("AddScoped<IGoalModelExecutionEnvelope, GoalModelExecutionEnvelope>()", StringComparison.Ordinal),

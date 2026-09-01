@@ -87,7 +87,7 @@
 以下路径冻结为 legacy，不再接受新 Agent 能力；本阶段不要求删除：
 
 - `old/Agent/Tianming.NovelAgent.PiRuntime` 直接持有 pi-agent-core `Agent` 的 turn path；
-- ~~C# MAF adapter~~（已于 2026-09-01 删除，见下表）、Structured Runtime（`StructuredConversationAgentRuntime`）、`TargetArchitectureDirector`；
+- ~~C# MAF adapter~~（已于 2026-09-01 删除，见下表）、~~`TargetArchitectureDirector`~~（已于 2026-09-01 删除，见下表）、Structured Runtime（`StructuredConversationAgentRuntime`）；
 - legacy Web turn path 及其控制面写入者（~~含 `AgentController` 的 `/agent/chat` 兼容入口~~——已于 2026-09-01 删除，见下表）。
 
 删除条件（必须同时满足）：生产 callers 为零、替代路径有 targeted regression、历史数据/迁移仍可读取、完整回归通过。
@@ -97,7 +97,7 @@
 | 冻结项 | 条件 1 生产 callers 为零 | 状态 |
 |---|---|---|
 | MAF adapter | ✅ `AddMafConversationRuntime` 全仓无调用点 | **已删除**（2026-09-01）。两个 guard 守回流：程序集级 + csproj `PackageReference` 级。后者必需——`GetReferencedAssemblies()` 只报编译器实际发出的引用，光加包不用代码时前者不会失败 |
-| `TargetArchitectureDirector` | ❌ 形式上有注册 | 整条链 `Director → IAgentForegroundTurnRunner → AgentTurnCoordinator` 生产不可达（末端无消费者），但测试双向锁定：`ProgramConfigurationTests` 要求注册存在，`TargetArchitecturePurityTests` 要求 `AgentController` 不用它。它是**已注册未接线的目标态**，删或接属架构判断 |
+| `TargetArchitectureDirector` | ✅ 整条链 `Director → IAgentForegroundTurnRunner → AgentTurnCoordinator` 生产不可达（末端无消费者），仅测试双向锁定 | **已删除**（2026-09-01，任务 `09-01-retire-unwired-director-chain`）。它是"已注册未接线"反模式的实例（demote 裁决 §9 点名）；唯一下游消费者 `AgentChatIdempotencyService` 一并删除，`AgentChatRequestReceipt` 实体与迁移历史保留（删表属独立数据迁移决策）。guard：`UnwiredDirectorChain_IsAbsent` 文件级断言 + `ProgramConfigurationTests` 注册不存在断言。发现传递孤儿 `ICollaborationMemoryService`（499L，表有迁移纠缠）转后续任务 |
 | `StructuredConversationAgentRuntime` | ❌ `Program.cs:306` | `PiRuntime:Enabled` 为假时的默认实现。删除等于关闭 flag 时会话无实现，属产品可用性决定 |
 | PiRuntime 持有 pi-agent-core | ❌ `package.json:16`、`src/runtime.ts:1` | 替代路径合同已就绪（`tianming-novel-agent` type-check 干净、11/11），但未经 internal API 接线；`PiConversationAgentRuntime` 仍指向旧 PiRuntime |
 | `/agent/chat` | ✅ 实测零生产 caller：`wwwroot` 旧 bundle 已随静态托管删除；`tianming-web/frontend` 的 `sendChat` 是 UI 层零调用的死导出（旧文档「唯一调用方是旧前端」不准确——新前端也有该死导出） | **已删除**（2026-09-01，任务 `09-01-retire-wwwroot-legacy-frontend`）。后端静态托管（`UseDefaultFiles` + `UseStaticFiles` + `MapFallbackToFile` + 手工提交的 2026-08-22 旧 bundle wwwroot）一并移除：实测无任何可工作的部署形态需要同源托管（唯一 Dockerfile 面向 .NET 8 旧后端路径，构建不了当前后端）。两个 guard 守回流：`TargetArchitecturePurityTests` 断言托管中间件与 wwwroot 目录、以及 `agent/chat` 路由均不复存在。`AgentChatResponse` DTO 保留——它同时是 SSE `agent_reply` 事件载荷，与该端点无关 |

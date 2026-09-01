@@ -65,15 +65,27 @@ public sealed class TargetArchitecturePurityTests
         Assert.DoesNotContain("IGoalTaskSupplementModelClient", source, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The Director → IAgentForegroundTurnRunner → AgentTurnCoordinator chain was retired on
+    /// 2026-09-01 (task 09-01-retire-unwired-director-chain): it was registered but had no
+    /// production consumer, and its only downstream service (AgentChatIdempotencyService) went
+    /// with it. AgentChatRequestReceipt survives as an entity — dropping the table is a separate
+    /// data-migration decision. File existence, not just registration absence, because the
+    /// 09-01-retire-legacy-runtimes lesson applies: a single layer misses re-introduction.
+    /// </summary>
     [Fact]
-    public void Director_ReadsModelContextOnlyThroughContextAssembler()
+    public void UnwiredDirectorChain_IsAbsent()
     {
-        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs");
+        var root = RepositoryRoot();
+        var obsolete = new[]
+        {
+            "tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentForegroundTurnRunner.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentTurnCoordinator.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentSessions/AgentChatIdempotencyService.cs"
+        };
 
-        Assert.Contains("IConversationContextAssembler", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("IKnowledgeQueryTool", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ProjectCollaborationDecisions", source, StringComparison.Ordinal);
+        Assert.All(obsolete, path => Assert.False(File.Exists(Path.Combine(root, path)), path));
     }
 
     [Fact]
@@ -149,11 +161,9 @@ public sealed class TargetArchitecturePurityTests
     public void ConversationContext_IncludesPendingRecoveryIntents()
     {
         var assembler = Read("tianming-web/backend/Tianming.Web/Services/Context/AgentContextAssembler.cs");
-        var director = Read("tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs");
 
         Assert.Contains("item.RequiresConfirmation", assembler, StringComparison.Ordinal);
         Assert.Contains("AgentPendingIntentContext", assembler, StringComparison.Ordinal);
-        Assert.Contains("snapshot.PendingIntents", director, StringComparison.Ordinal);
     }
 
     [Fact]

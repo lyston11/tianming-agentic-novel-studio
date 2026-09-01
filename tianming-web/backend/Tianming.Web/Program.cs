@@ -203,7 +203,6 @@ builder.Services.AddScoped<IRevisionPlanService, RevisionPlanService>();
 builder.Services.AddScoped<IRevisionPlanPackageInvalidationService, RevisionPlanPackageInvalidationService>();
 builder.Services.AddScoped<ICommitmentAssessmentModelClient, DefaultCommitmentAssessmentModelClient>();
 builder.Services.AddScoped<ICommitmentAssessmentService, CommitmentAssessmentService>();
-builder.Services.AddScoped<TargetArchitectureDirector>();
 builder.Services.AddScoped<IGoalBaselineProvider, GoalBaselineProvider>();
 builder.Services.AddScoped<ICreativeGoalService>(serviceProvider =>
     ActivatorUtilities.CreateInstance<CreativeGoalService>(serviceProvider));
@@ -345,7 +344,6 @@ builder.Services.AddScoped<AgentSessionService>();
 builder.Services.AddScoped<AgentSessionApplicationService>();
 builder.Services.AddScoped<IAgentSessionApplicationService>(sp => sp.GetRequiredService<AgentSessionApplicationService>());
 builder.Services.AddScoped<IAgentSessionService>(sp => sp.GetRequiredService<IAgentSessionApplicationService>());
-builder.Services.AddScoped<IAgentChatIdempotencyService, AgentChatIdempotencyService>();
 builder.Services.AddScoped<IAgentSessionResumeService, AgentSessionResumeService>();
 builder.Services.AddScoped<ILegacyRuntimeAuditReader, LegacyRuntimeAuditReader>();
 builder.Services.AddScoped<IAgentRuntimeEventService, AgentRuntimeEventService>();
@@ -394,8 +392,6 @@ builder.Services.AddSingleton<HttpClient>(sp =>
 });
 builder.Services.AddSingleton<AgentMissionTaskTreeService>();
 builder.Services.AddSingleton<MissionBlackboardRecoveryService>();
-builder.Services.AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<TargetArchitectureDirector>());
-builder.Services.AddScoped<AgentTurnCoordinator>();
 builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 
 // Register QdrantClient for vectorization services
