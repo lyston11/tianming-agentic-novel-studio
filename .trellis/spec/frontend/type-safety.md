@@ -44,18 +44,57 @@ source of generated API views.
 
 ## Generated API Views
 
-The backend is C#-first: backend DTOs produce OpenAPI, and frontend generated
-types are a derived view. The API code-generation task is still planning; when
-it lands, its generated view must follow these rules:
+The backend is C#-first: backend DTOs produce OpenAPI, and the frontend
+generated types are a derived view. The chain is in place:
+
+```text
+C# DTOs  →  tianming-web/backend/openapi.json      (Scripts/export-openapi.sh)
+         →  tianming-web/frontend/src/api/schema.d.ts   (npm run gen:api)
+```
+
+Two gates guard it, and they cover different halves:
+
+- `./tianming-web/backend/Scripts/export-openapi.sh --check` catches the backend
+  half — `openapi.json` falling behind the C# DTOs. It needs the database stack
+  up, because the host fails fast on connection strings, JWT secret, worker role
+  identity, and a worker-role login precheck before Swagger is reachable.
+- `npm run gen:check` catches the frontend half — `schema.d.ts` being hand-edited
+  or left stale after `openapi.json` changed. It needs no services and never
+  writes into the working tree.
+
+Rules:
 
 - Generated files are views and must not be hand-edited.
-- A contract change goes through the backend DTO/OpenAPI source, then the
-  generation command, then typecheck and the contract comparison gate.
+- A contract change goes through the backend DTO source, then
+  `export-openapi.sh`, then `npm run gen:api`, then typecheck and both gates.
 - Types not represented by OpenAPI, such as SSE event payload details or local
   view models, remain in a clearly named hand-written file with the reason
   documented. Do not delete them merely because a generated schema exists.
 - Do not make a local cast or compatibility alias to hide a generated/manual
   contract mismatch. Fix the source contract or the explicit boundary mapper.
+
+### Why `types.ts` is still hand-written
+
+`src/api/types.ts` was NOT replaced by `schema.d.ts`, deliberately. Measured on
+2026-09-01: the spec has 82 schemas, `types.ts` exports 230 types, and only 29
+names overlap. Of the 28 overlapping types that have properties, **all 28** would
+become looser if swapped — every one of them generates with `required: none` and
+`nullable: true` fields, so `id: string` would become `id?: string | null`.
+
+The cause is on the backend: response DTOs carry no `[Required]` attributes and
+the controllers return `IActionResult` rather than `ActionResult<T>`, so
+Swashbuckle can infer neither requiredness nor most response schemas. Request
+DTOs that do use `[Required]` generate correctly — `CreateKnowledgeRequest`
+comes out with `required: [content, entryType, projectId, title]`.
+
+So swapping today would trade real compile-time guarantees for a drift check we
+already get from the two gates above. Preconditions for revisiting it:
+
+1. Annotate response DTOs so requiredness survives into the schema.
+2. Return typed results so response schemas appear at all.
+3. Re-measure the overlap and confirm the generated types are no looser.
+
+Until then `schema.d.ts` is a contract-drift detector, not a type source.
 
 ## Assertions and Unknown Data
 
