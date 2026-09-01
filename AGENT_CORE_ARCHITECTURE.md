@@ -87,20 +87,20 @@
 以下路径冻结为 legacy，不再接受新 Agent 能力；本阶段不要求删除：
 
 - `old/Agent/Tianming.NovelAgent.PiRuntime` 直接持有 pi-agent-core `Agent` 的 turn path；
-- C# MAF adapter（`tianming-web/backend/Tianming.NovelAgent.Infrastructure/Conversation/MafConversationAgentRuntime.cs`）、Structured Runtime（`StructuredConversationAgentRuntime`）、`TargetArchitectureDirector`；
+- ~~C# MAF adapter~~（已于 2026-09-01 删除，见下表）、Structured Runtime（`StructuredConversationAgentRuntime`）、`TargetArchitectureDirector`；
 - legacy Web turn path 及其控制面写入者，含 `AgentController` 的 `/agent/chat` 兼容入口。
 
 删除条件（必须同时满足）：生产 callers 为零、替代路径有 targeted regression、历史数据/迁移仍可读取、完整回归通过。
 
 各项实测达标情况（2026-09-01，见任务 `09-01-retire-legacy-runtimes`）：
 
-| 冻结项 | 条件 1 生产 callers 为零 | 可删 |
+| 冻结项 | 条件 1 生产 callers 为零 | 状态 |
 |---|---|---|
-| MAF adapter | ✅ `Program.cs` 从未调用 `AddMafConversationRuntime` | 是（守卫断言需先扩展到 Infrastructure 程序集） |
-| `TargetArchitectureDirector` | ❌ `Program.cs:194`、`:385` 现役 `IAgentForegroundTurnRunner` | 否 |
-| `StructuredConversationAgentRuntime` | ❌ `Program.cs:306`，`PiRuntime:Enabled` 为假时的默认兜底 | 否（属产品可用性决定） |
-| PiRuntime 持有 pi-agent-core | ❌ `package.json:16`、`src/runtime.ts:1` 直接依赖 | 否 |
-| `/agent/chat` | 待核验新前端调用情况 | 待定 |
+| MAF adapter | ✅ `AddMafConversationRuntime` 全仓无调用点 | **已删除**（2026-09-01）。两个 guard 守回流：程序集级 + csproj `PackageReference` 级。后者必需——`GetReferencedAssemblies()` 只报编译器实际发出的引用，光加包不用代码时前者不会失败 |
+| `TargetArchitectureDirector` | ❌ 形式上有注册 | 整条链 `Director → IAgentForegroundTurnRunner → AgentTurnCoordinator` 生产不可达（末端无消费者），但测试双向锁定：`ProgramConfigurationTests` 要求注册存在，`TargetArchitecturePurityTests` 要求 `AgentController` 不用它。它是**已注册未接线的目标态**，删或接属架构判断 |
+| `StructuredConversationAgentRuntime` | ❌ `Program.cs:306` | `PiRuntime:Enabled` 为假时的默认实现。删除等于关闭 flag 时会话无实现，属产品可用性决定 |
+| PiRuntime 持有 pi-agent-core | ❌ `package.json:16`、`src/runtime.ts:1` | 替代路径合同已就绪（`tianming-novel-agent` type-check 干净、11/11），但未经 internal API 接线；`PiConversationAgentRuntime` 仍指向旧 PiRuntime |
+| `/agent/chat` | ❌ | 唯一代码调用方是旧前端 `old/.../src/api/index.ts:457`，而后端**仍在托管它**：`Program.cs:576` `UseStaticFiles()` + `:586` `MapFallbackToFile`，`wwwroot/assets/index-BaN8_1u2.js`（2026-08-22 构建）内含该端点调用。退役前需先处置 `wwwroot` 的旧前端托管 |
 
 当前未迁移 legacy caller：`old/Agent/Tianming.NovelAgent.PiRuntime/src/runtime.ts`（仍使用 pi-agent-core Agent）。迁移顺序见第 7 节。
 

@@ -87,7 +87,7 @@ docker compose -f old/docker-compose.yml up -d
 **关键文件**（均在 `tianming-web/backend/` 下）：
 - `Tianming.Web/Support/AgentCore.cs` - Agent 核心决策逻辑
 - `Tianming.Web/Support/AgentForegroundTurnRunner.cs` - 前台回合执行
-- `Tianming.Web/Controllers/AgentController.cs` - Agent API 控制器（含 `/agent/chat` 迁移期兼容入口）
+- `Tianming.Web/Controllers/AgentController.cs` - Agent API 控制器（含 `/agent/chat` 兼容入口：唯一调用方是 `wwwroot/` 里 2026-08-22 构建的旧前端，后端经 `UseStaticFiles` + `MapFallbackToFile` 仍在托管它）
 - `Tianming.Web/Services/Agent/PiConversationAgentRuntime.cs` - `PiRuntime:Enabled` 为真时的会话运行时
 - `Tianming.Web/Services/Goals/TargetArchitectureDirector.cs` - 现役 `IAgentForegroundTurnRunner`
 
