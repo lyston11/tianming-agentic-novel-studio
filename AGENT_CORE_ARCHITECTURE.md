@@ -44,7 +44,7 @@
 
 ## 2. 各层运行时边界
 
-- **tianming-web**：前端是 UI/API/SSE 壳，不依赖 Node 包或模型 provider；ASP.NET 是认证、授权、Session/Conversation durable truth、领域事务、Outbox、Worker 和 Read Model 的唯一权威。
+- **tianming-web**：前端（`tianming-web/frontend`）是 UI/API/SSE 壳，不依赖 Node 包或模型 provider；后端（`tianming-web/backend`）的 ASP.NET 是认证、授权、Session/Conversation durable truth、领域事务、Outbox、Worker 和 Read Model 的唯一权威。控制面已于 2026-09-01 由任务 `08-31-promote-control-plane` 从 `old/` 提升至此，包含 Agent 四项目、`Tianming.Web` 宿主、小说领域内核 `Services/` 和四个测试项目。
 - **Novel Agent Runtime**（迁移期宿主为 `old/Agent/Tianming.NovelAgent.PiRuntime`（legacy 隔离区））：只通过内部 API 使用已授权的 Application 能力；未来切换为新 Core 的宿主 adapter。
 - **Core event 不是 durable truth**：事件只是宿主观察面；Web/Application 负责把消息映射为 PostgreSQL 持久化和 SSE。
 - **模型调用只经 `@tianming/agent-ai`**：provider registry、token 计费、OAuth、HTTP provider、模型发现全部留在 pi-ai 内，项目内其他层禁止直接 import pi-ai。
@@ -87,12 +87,22 @@
 以下路径冻结为 legacy，不再接受新 Agent 能力；本阶段不要求删除：
 
 - `old/Agent/Tianming.NovelAgent.PiRuntime` 直接持有 pi-agent-core `Agent` 的 turn path；
-- C# MAF adapter、Structured Runtime、TargetArchitectureDirector；
-- legacy Web turn path 及其控制面写入者。
+- C# MAF adapter（`tianming-web/backend/Tianming.NovelAgent.Infrastructure/Conversation/MafConversationAgentRuntime.cs`）、Structured Runtime（`StructuredConversationAgentRuntime`）、`TargetArchitectureDirector`；
+- legacy Web turn path 及其控制面写入者，含 `AgentController` 的 `/agent/chat` 兼容入口。
 
 删除条件（必须同时满足）：生产 callers 为零、替代路径有 targeted regression、历史数据/迁移仍可读取、完整回归通过。
 
-当前未迁移 legacy caller：`old/Agent/Tianming.NovelAgent.PiRuntime/src/runtime.ts`（仍使用 pi-agent-core Agent）。新包就位后的迁移顺序见第 7 节。
+各项实测达标情况（2026-09-01，见任务 `09-01-retire-legacy-runtimes`）：
+
+| 冻结项 | 条件 1 生产 callers 为零 | 可删 |
+|---|---|---|
+| MAF adapter | ✅ `Program.cs` 从未调用 `AddMafConversationRuntime` | 是（守卫断言需先扩展到 Infrastructure 程序集） |
+| `TargetArchitectureDirector` | ❌ `Program.cs:194`、`:385` 现役 `IAgentForegroundTurnRunner` | 否 |
+| `StructuredConversationAgentRuntime` | ❌ `Program.cs:306`，`PiRuntime:Enabled` 为假时的默认兜底 | 否（属产品可用性决定） |
+| PiRuntime 持有 pi-agent-core | ❌ `package.json:16`、`src/runtime.ts:1` 直接依赖 | 否 |
+| `/agent/chat` | 待核验新前端调用情况 | 待定 |
+
+当前未迁移 legacy caller：`old/Agent/Tianming.NovelAgent.PiRuntime/src/runtime.ts`（仍使用 pi-agent-core Agent）。迁移顺序见第 7 节。
 
 ## 7. 后续迁移顺序
 

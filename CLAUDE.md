@@ -2,14 +2,27 @@
 
 ## 项目结构
 
+权威分层文档是根目录 `AGENT_CORE_ARCHITECTURE.md`。依赖只能向下。
+
 ```
 tianming-agentic-novel-studio/
-├── Web/NovelAgentWeb/              # ASP.NET Core 8.0 后端（主工作目录）
-├── Web/NovelAgentWeb.Frontend/     # React + TypeScript 前端
-├── Services/                       # 业务逻辑服务层
-├── Migrations/                     # EF Core 数据库迁移
-└── Tests/                         # 单元测试和回归测试
+├── tianming-web/
+│   ├── backend/                    # ASP.NET Core (.NET 10) 后端 —— durable truth 权威
+│   │   ├── Tianming.NovelAgent.{Domain,Contracts,Application,Infrastructure}/
+│   │   ├── Tianming.Web/           # HTTP/SSE 宿主、EF 迁移、Worker
+│   │   ├── Services/               # 小说领域内核（Story Bible、账本、ProductionKernel）
+│   │   ├── Tests/{Unit,AgentArchitecture,NovelAgentRegression,AgentKernelRegression}/
+│   │   ├── Scripts/dotnet          # SDK wrapper（必须用它，见下）
+│   │   ├── global.json             # 锁定 SDK 10.0.400
+│   │   └── TianmingWeb.slnx
+│   └── frontend/                   # React 19 + Vite + Tailwind 4 + shadcn + react-query
+├── tianming-novel-agent/           # 小说领域层：Skill/Role/DomainTool/ContextProvider/Hook
+├── tianming-agent-core/            # 通用 Agent Loop（无小说字段）
+├── tianming-ai/                    # 模型调用边界（固定 @mariozechner/pi-ai 0.57.1）
+└── old/                            # 历史快照：旧前端、PiRuntime、Docs、部署脚本
 ```
+
+`old/` 是历史参考与待退役区，**不是**在跑的后端——后端已于 2026-09-01 提升到 `tianming-web/backend/`。
 
 ## 开发服务端口
 
@@ -17,37 +30,68 @@ tianming-agentic-novel-studio/
 - 后端 API: `5002` (http://127.0.0.1:5002 或 http://[::]:5002)
 - 前端: `3002` (http://localhost:3002)
 - Qdrant 向量数据库: `6333` (HTTP), `6334` (gRPC)
+- PostgreSQL: `5432`
 
 ## 启动服务
 
-### 后端启动
+路径均相对仓库根目录，不要硬编码本机绝对路径。
+
+### 必须用 SDK wrapper
+
+系统 `dotnet` 可能是 8.x，不满足 `global.json` 要求的 `10.0.400`。所有构建和测试走 wrapper：
+
 ```bash
-cd /Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb
-ASPNETCORE_URLS=http://+:5002 dotnet run
+./tianming-web/backend/Scripts/dotnet build tianming-web/backend/TianmingWeb.slnx
+./tianming-web/backend/Scripts/dotnet test  tianming-web/backend/Tests/Unit/Unit.csproj
 ```
 
-**重要：必须设置 `ASPNETCORE_URLS=http://+:5002`，否则会监听默认端口 5000！**
+SDK 实体在 `tianming-web/backend/.dotnet/`（gitignored）。缺失时 wrapper 会明确报错。
+
+### 后端启动
+
+```bash
+ASPNETCORE_URLS=http://+:5002 ./tianming-web/backend/Scripts/dotnet run \
+  --project tianming-web/backend/Tianming.Web/NovelAgentWeb.csproj
+```
+
+**必须设置 `ASPNETCORE_URLS=http://+:5002`，否则监听默认 5000。**
+
+后端要求 `ConnectionStrings:NovelAgentDb`（以及迁移用的 `NovelAgentMigrationDb`、Worker 用的 `NovelAgentWorkerDb`）。未配置时启动即抛 `InvalidOperationException`，这是刻意的 fail-fast。
 
 ### 前端启动
+
 ```bash
-cd /Users/lyston/PycharmProjects/tianming-agentic-novel-studio/Web/NovelAgentWeb.Frontend
-npm run dev
+cd tianming-web/frontend && npm run dev     # :3002，dev 代理转发到 :5002
 ```
 
-### Docker Compose 启动（推荐）
+### Docker Compose
+
+compose 仍在 `old/`（postgres 16 + qdrant + redis + api）。需先设置
+`NOVELAGENT_ADMIN_PASSWORD`、`NOVELAGENT_APP_PASSWORD`、`NOVELAGENT_WORKER_PASSWORD`：
+
 ```bash
-cd /Users/lyston/PycharmProjects/tianming-agentic-novel-studio
-docker-compose up -d
+docker compose -f old/docker-compose.yml up -d
 ```
+
+### 测试
+
+`NovelAgentRegression` 需要 Docker（Testcontainers 起真 PostgreSQL）。
+`AgentKernelRegression` 是 `OutputType=Exe` 控制台 runner，**`dotnet test` 不执行它**，必须 `dotnet run`。
+
+当前基线（2026-09-01 实测）：Unit 837/837、AgentArchitecture 29/29、NovelAgentRegression 159/159、AgentKernelRegression 6/6。
 
 ## 核心架构
 
 ### Agent 决策系统
 
-**关键文件：**
-- `Web/NovelAgentWeb/Support/AgentCore.cs` - Agent 核心决策逻辑
-- `Web/NovelAgentWeb/Support/AgentToolCallingClient.cs` - LLM 工具调用客户端
-- `Web/NovelAgentWeb/Controllers/AgentController.cs` - Agent API 控制器
+**关键文件**（均在 `tianming-web/backend/` 下）：
+- `Tianming.Web/Support/AgentCore.cs` - Agent 核心决策逻辑
+- `Tianming.Web/Support/AgentForegroundTurnRunner.cs` - 前台回合执行
+- `Tianming.Web/Controllers/AgentController.cs` - Agent API 控制器（含 `/agent/chat` 迁移期兼容入口）
+- `Tianming.Web/Services/Agent/PiConversationAgentRuntime.cs` - `PiRuntime:Enabled` 为真时的会话运行时
+- `Tianming.Web/Services/Goals/TargetArchitectureDirector.cs` - 现役 `IAgentForegroundTurnRunner`
+
+（旧文档提到的 `AgentToolCallingClient.cs` 已在历史重构中删除，不要再引用。）
 
 **LLM 配置优先级：**
 1. 用户设置文件：`App_Data/Projects/{projectName}/Settings/user_settings.json`
@@ -62,7 +106,7 @@ docker-compose up -d
 ### 多用户隔离
 
 **AsyncLocal Workspace 模式：**
-- `Services/Framework/AI/NovelAgent/Workspace/WorkspaceFactory.cs`
+- `tianming-web/backend/Tianming.Web/Services/Workspace/WorkspaceFactory.cs`
 - 每个 HTTP 请求有独立的 `NovelAgentWorkspace` 实例
 - 通过 `AsyncLocal<T>` 实现线程安全的用户数据隔离
 - 永远不要使用全局静态变量存储用户相关数据

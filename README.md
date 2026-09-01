@@ -7,7 +7,16 @@
 
 > **[2026-08-22 仓库重构]** 本仓库已切换为 Core-first 四层布局（`tianming-ai` / `tianming-agent-core` / `tianming-novel-agent` / `tianming-web`，见 `AGENT_CORE_ARCHITECTURE.md`）；下文描述的完整系统代码与文档已整体移入 `old/` 冻结为 legacy。Pi 参考源码在 `pi-agent/`（v0.57.1 快照）。
 >
-> **[2026-08-29 前端重建]** 新前端已在 `tianming-web/frontend/` 落地（React 19 + Tailwind 4 + shadcn + react-query，dev 端口 3002 代理到 old/ 后端 5002），见 `tianming-web/frontend/README.md`；`old/Web/NovelAgentWeb.Frontend` 冻结为对照。下文 README 描述的运行方式属于 legacy 系统。
+> **[2026-08-29 前端重建]** 新前端已在 `tianming-web/frontend/` 落地（React 19 + Tailwind 4 + shadcn + react-query，dev 端口 3002 代理到后端 5002），见 `tianming-web/frontend/README.md`；`old/Web/NovelAgentWeb.Frontend` 冻结为对照。
+>
+> **[2026-09-01 控制面提升]** 后端已从 `old/` 提升到 `tianming-web/backend/`：Agent 四项目、`Tianming.Web` 宿主（原 `Web/NovelAgentWeb`）、小说领域内核 `Services/` 和四个测试项目。`old/` 现在只保留旧前端、PiRuntime、Docs 和部署脚本，**不再包含在跑的后端**。下文 §快速开始 中 `Web/NovelAgentWeb` 与 `./Scripts/dotnet` 的路径已过时，正确用法见 `CLAUDE.md`：
+>
+> ```bash
+> ASPNETCORE_URLS=http://+:5002 ./tianming-web/backend/Scripts/dotnet run \
+>   --project tianming-web/backend/Tianming.Web/NovelAgentWeb.csproj
+> ```
+>
+> 技术栈实际为 **.NET 10**（`tianming-web/backend/global.json` 锁定 SDK 10.0.400），顶部 .NET 8 徽章与下文 .NET 8 描述均为历史遗留。
 >
 > AI 不会天然记得一本千万字小说。这个项目做的事情是：把故事变成系统能管理的数据，让 Agent 按状态、账本和创作约束推进长篇小说。
 
