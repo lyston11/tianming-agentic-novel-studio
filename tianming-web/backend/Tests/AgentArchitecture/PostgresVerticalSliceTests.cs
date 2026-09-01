@@ -13,7 +13,6 @@ using Tianming.NovelAgent.Domain.Events;
 using Tianming.NovelAgent.Domain.Goals;
 using Tianming.NovelAgent.Domain.Production;
 using Tianming.NovelAgent.Infrastructure;
-using Tianming.NovelAgent.Infrastructure.Conversation;
 using Tianming.NovelAgent.Infrastructure.Persistence;
 
 namespace Tests.AgentArchitecture;
@@ -359,7 +358,7 @@ public sealed class PostgresVerticalSliceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Unbound_MAF_checkpoint_commits_with_turn_and_survives_context_recreation()
+    public async Task Unbound_runtime_checkpoint_commits_with_turn_and_survives_context_recreation()
     {
         var options = new DbContextOptionsBuilder<AgentControlDbContext>()
             .UseNpgsql(_postgres.GetConnectionString())
@@ -392,12 +391,12 @@ public sealed class PostgresVerticalSliceTests : IAsyncLifetime
         }
 
         await using var restartedDb = new AgentControlDbContext(options);
-        var restartedStore = new EfMafSessionCheckpointStore(restartedDb);
-
-        var checkpoint = await restartedStore.LoadAsync(
-            "user-1",
-            "session-unbound",
-            CancellationToken.None);
+        var checkpoint = await restartedDb.ConversationRuntimeCheckpoints
+            .Where(x => x.UserId == "user-1"
+                && x.SessionId == "session-unbound"
+                && x.Runtime == CheckpointRuntimeLabel)
+            .Select(x => x.CheckpointJson)
+            .SingleOrDefaultAsync();
         using var checkpointDocument = JsonDocument.Parse(Assert.IsType<string>(checkpoint));
         Assert.Equal(1, checkpointDocument.RootElement.GetProperty("turn").GetInt32());
         Assert.Null(await restartedDb.ConversationRuntimeCheckpoints
@@ -407,7 +406,7 @@ public sealed class PostgresVerticalSliceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task MAF_checkpoint_rolls_back_when_authoritative_turn_persistence_fails()
+    public async Task Runtime_checkpoint_rolls_back_when_authoritative_turn_persistence_fails()
     {
         var options = new DbContextOptionsBuilder<AgentControlDbContext>()
             .UseNpgsql(_postgres.GetConnectionString())
@@ -569,6 +568,13 @@ public sealed class PostgresVerticalSliceTests : IAsyncLifetime
         public string NewId() => $"id-{Interlocked.Increment(ref _next):D4}";
     }
 
+    /// <summary>
+    /// Arbitrary label. These tests cover runtime-agnostic checkpoint persistence —
+    /// atomic commit with the turn, survival across context recreation, rollback on
+    /// persistence failure — not any specific runtime's behaviour.
+    /// </summary>
+    private const string CheckpointRuntimeLabel = "test-runtime";
+
     private sealed class CheckpointRuntime(string checkpointJson) : IConversationAgentRuntime
     {
         public Task<ConversationRuntimeResult> RunTurnAsync(
@@ -579,7 +585,7 @@ public sealed class PostgresVerticalSliceTests : IAsyncLifetime
                 ConversationDecisionKind.DiscussOnly,
                 null,
                 [],
-                Checkpoint: new ConversationRuntimeCheckpoint("maf", checkpointJson)));
+                Checkpoint: new ConversationRuntimeCheckpoint(CheckpointRuntimeLabel, checkpointJson)));
     }
 
     private sealed class ThrowingAgentEventWriter : IAgentEventWriter

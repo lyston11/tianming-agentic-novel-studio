@@ -1,52 +1,45 @@
+using System.Xml.Linq;
 using System.Text.Json;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Tianming.NovelAgent.Application.Conversation;
 using Tianming.NovelAgent.Application.Ports;
 using Tianming.NovelAgent.Contracts.Conversation;
 using Tianming.NovelAgent.Domain.Goals;
-using Tianming.NovelAgent.Infrastructure.Conversation;
+using Tianming.NovelAgent.Infrastructure.Persistence;
 
 namespace Tests.AgentArchitecture;
 
 public sealed class ConversationRuntimeReplacementTests
 {
+    /// <summary>
+    /// Unparseable provider output degrades to DiscussOnly with the raw text and a
+    /// reason, rather than throwing. This is deliberate and differs from the retired
+    /// MAF adapter, which threw: a malformed model reply must not surface as a server
+    /// error, and it must not be mistaken for an executable decision.
+    /// </summary>
     [Fact]
-    public async Task Maf_adapter_maps_framework_output_without_leaking_framework_types()
+    public async Task Structured_adapter_degrades_unstructured_output_to_discussion()
     {
-        var contract = NewContract();
-        var invoker = new StubInvoker(JsonSerializer.Serialize(new
-        {
-            kind = "proposeGoal",
-            message = "Ready for confirmation",
-            reason = "The scope is explicit",
-            contract
-        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        IConversationAgentRuntime runtime = new MafConversationAgentRuntime(invoker);
+        IConversationAgentRuntime runtime = new StructuredConversationAgentRuntime(new StubCompletion("not-json"));
 
         var result = await runtime.RunTurnAsync(
-            new ConversationTurnContext("user", new BoundConversationBinding("project"), "session", "Write chapter one", [], "correlation"),
+            new ConversationTurnContext(
+                "user",
+                new UnboundConversationBinding(),
+                "session",
+                "hello",
+                [],
+                "correlation"),
             CancellationToken.None);
 
-        Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
-        Assert.Equivalent(contract, result.ProposedContract, strict: true);
-        Assert.DoesNotContain("Microsoft.Agents", typeof(IConversationAgentRuntime).Assembly.GetReferencedAssemblies().Select(x => x.Name));
+        Assert.Equal(ConversationDecisionKind.DiscussOnly, result.DecisionKind);
+        Assert.Null(result.ProposedContract);
+        Assert.Empty(result.ToolCalls ?? []);
+        Assert.Equal("not-json", result.AssistantMessage);
+        Assert.Contains("not a valid executable decision contract", result.Reason);
     }
 
     [Fact]
-    public async Task Maf_adapter_rejects_unstructured_output()
-    {
-        IConversationAgentRuntime runtime = new MafConversationAgentRuntime(new StubInvoker("not-json"));
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RunTurnAsync(
-            new ConversationTurnContext("user", new BoundConversationBinding("project"), "session", "hello", [], "correlation"),
-            CancellationToken.None));
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Runtime_adapters_do_not_require_project_contracts_for_unbound_turns(bool useMaf)
+    public async Task Structured_adapter_does_not_require_project_contracts_for_unbound_turns()
     {
         var response = JsonSerializer.Serialize(new
         {
@@ -54,9 +47,7 @@ public sealed class ConversationRuntimeReplacementTests
             message = "Continue clarifying",
             reason = "Malformed project-only decision"
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        IConversationAgentRuntime runtime = useMaf
-            ? new MafConversationAgentRuntime(new StubInvoker(response))
-            : new StructuredConversationAgentRuntime(new StubCompletion(response));
+        IConversationAgentRuntime runtime = new StructuredConversationAgentRuntime(new StubCompletion(response));
 
         var result = await runtime.RunTurnAsync(
             new ConversationTurnContext(
@@ -70,41 +61,6 @@ public sealed class ConversationRuntimeReplacementTests
 
         Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
         Assert.Null(result.ProposedContract);
-    }
-
-    [Fact]
-    public async Task Maf_adapter_preserves_structured_workflow_tool_calls()
-    {
-        var response = JsonSerializer.Serialize(new
-        {
-            kind = "proposeGoal",
-            message = "I can start this goal after your confirmation.",
-            reason = "The user made an explicit commitment.",
-            contract = NewContract(),
-            toolCalls = new[]
-            {
-                new
-                {
-                    name = "confirm_creative_goal",
-                    arguments = new Dictionary<string, string>()
-                }
-            }
-        }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        IConversationAgentRuntime runtime = new MafConversationAgentRuntime(new StubInvoker(response));
-
-        var result = await runtime.RunTurnAsync(
-            new ConversationTurnContext(
-                "user",
-                new BoundConversationBinding("project"),
-                "session",
-                "start",
-                [],
-                "correlation"),
-            CancellationToken.None);
-
-        var call = Assert.Single(result.ToolCalls!);
-        Assert.Equal("confirm_creative_goal", call.Name);
-        Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
     }
 
     [Fact]
@@ -131,40 +87,78 @@ public sealed class ConversationRuntimeReplacementTests
             CancellationToken.None);
 
         Assert.Equal("confirm_creative_goal", Assert.Single(result.ToolCalls!).Name);
+        Assert.Equal(ConversationDecisionKind.ProposeGoal, result.DecisionKind);
+        Assert.Equivalent(NewContract(), result.ProposedContract, strict: true);
     }
 
+    /// <summary>
+    /// The Microsoft Agent Framework adapter was retired on 2026-09-01 (task
+    /// 09-01-retire-legacy-runtimes) because it had zero production callers.
+    /// Covers Infrastructure too, not just Application: the package reference lived
+    /// in Infrastructure, so an Application-only assertion would miss it coming back.
+    /// </summary>
     [Fact]
-    public async Task Maf_invoker_returns_checkpoint_that_resumes_after_committed_recreation()
+    public void Conversation_runtime_assemblies_do_not_reference_the_agent_framework()
     {
-        var checkpoints = new RecordingCheckpointStore();
-        var firstClient = new StubChatClient("reply one");
-        var firstInvoker = new MafAIAgentInvoker(new ChatClientAgent(firstClient), checkpoints);
+        // StructuredConversationAgentRuntime lives in Application, so it cannot
+        // stand in for Infrastructure here; use a type that really is Infrastructure.
+        var assemblies = new[]
+        {
+            typeof(IConversationAgentRuntime).Assembly,           // Application
+            typeof(AgentControlDbContext).Assembly,               // Infrastructure
+            typeof(CreativeGoal).Assembly,                        // Domain
+        };
 
-        var first = await firstInvoker.RunAsync(
-            "user",
-            new UnboundConversationBinding(),
-            "session",
-            "first turn",
-            CancellationToken.None);
+        foreach (var assembly in assemblies)
+        {
+            var referenced = assembly.GetReferencedAssemblies().Select(x => x.Name!).ToArray();
+            Assert.DoesNotContain(referenced, name => name!.StartsWith("Microsoft.Agents", StringComparison.Ordinal));
+        }
+    }
 
-        Assert.False(string.IsNullOrWhiteSpace(first.CheckpointJson));
-        checkpoints.Commit(first.CheckpointJson);
+    /// <summary>
+    /// The assembly-level guard above only sees references the compiler actually
+    /// emitted, so a PackageReference that nothing uses yet slips past it. This
+    /// checks the project files directly, which is what catches the dependency
+    /// being reintroduced before any code depends on it.
+    /// </summary>
+    [Fact]
+    public void Agent_control_projects_do_not_declare_the_agent_framework_package()
+    {
+        var backendRoot = BackendRoot();
+        var projects = new[]
+        {
+            "Tianming.NovelAgent.Domain",
+            "Tianming.NovelAgent.Contracts",
+            "Tianming.NovelAgent.Application",
+            "Tianming.NovelAgent.Infrastructure",
+        };
 
-        var secondClient = new StubChatClient("reply two");
-        var restartedInvoker = new MafAIAgentInvoker(new ChatClientAgent(secondClient), checkpoints);
-        var second = await restartedInvoker.RunAsync(
-            "user",
-            new UnboundConversationBinding(),
-            "session",
-            "second turn",
-            CancellationToken.None);
+        foreach (var project in projects)
+        {
+            var path = Path.Combine(backendRoot, project, $"{project}.csproj");
+            Assert.True(File.Exists(path), $"Project file not found: {path}");
 
-        Assert.Equal("reply two", second.Response);
-        Assert.Equal(2, checkpoints.LoadCount);
-        var resumedMessages = Assert.Single(secondClient.Requests);
-        Assert.Contains(resumedMessages, message => message.Text.Contains("first turn", StringComparison.Ordinal));
-        Assert.Contains(resumedMessages, message => message.Text.Contains("reply one", StringComparison.Ordinal));
-        Assert.Contains(resumedMessages, message => message.Text.Contains("second turn", StringComparison.Ordinal));
+            var packages = XDocument.Load(path)
+                .Descendants("PackageReference")
+                .Select(x => x.Attribute("Include")?.Value ?? string.Empty)
+                .ToArray();
+
+            Assert.DoesNotContain(
+                packages,
+                name => name.StartsWith("Microsoft.Agents", StringComparison.Ordinal));
+        }
+    }
+
+    private static string BackendRoot()
+    {
+        // Markers hold only at tianming-web/backend.
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null &&
+               (!File.Exists(Path.Combine(directory.FullName, "global.json")) ||
+                !Directory.Exists(Path.Combine(directory.FullName, "Tianming.Web"))))
+            directory = directory.Parent;
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Backend root not found.");
     }
 
     private static GoalContract NewContract() => new(
@@ -184,61 +178,6 @@ public sealed class ConversationRuntimeReplacementTests
         "style-v1",
         new Dictionary<string, string>(),
         new Dictionary<string, string>());
-
-    private sealed class StubInvoker(string response) : IMafAgentInvoker
-    {
-        public Task<MafAgentInvocationResult> RunAsync(
-            string userId,
-            ConversationBinding binding,
-            string sessionId,
-            string message,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new MafAgentInvocationResult(response, "{}"));
-    }
-
-    private sealed class RecordingCheckpointStore : IMafSessionCheckpointStore
-    {
-        public int LoadCount { get; private set; }
-        private string? CheckpointJson { get; set; }
-
-        public Task<string?> LoadAsync(
-            string userId,
-            string sessionId,
-            CancellationToken cancellationToken)
-        {
-            LoadCount++;
-            return Task.FromResult(CheckpointJson);
-        }
-
-        public void Commit(string checkpointJson) => CheckpointJson = checkpointJson;
-    }
-
-    private sealed class StubChatClient(string response) : IChatClient
-    {
-        public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default)
-        {
-            Requests.Add(messages.ToList());
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
-        }
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public object? GetService(Type serviceType, object? serviceKey = null) =>
-            serviceType.IsInstanceOfType(this) ? this : null;
-
-        public void Dispose()
-        {
-        }
-    }
 
     private sealed class StubCompletion(string response) : IConversationTextCompletionPort
     {

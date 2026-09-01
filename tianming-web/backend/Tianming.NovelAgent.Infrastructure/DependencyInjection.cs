@@ -7,9 +7,7 @@ using Tianming.NovelAgent.Application.Ports;
 using Tianming.NovelAgent.Application.Workflow;
 using Tianming.NovelAgent.Infrastructure.Persistence;
 using Tianming.NovelAgent.Infrastructure.Models;
-using Tianming.NovelAgent.Infrastructure.Conversation;
 using OpenAI.Responses;
-using Microsoft.Agents.AI;
 
 namespace Tianming.NovelAgent.Infrastructure;
 
@@ -63,17 +61,6 @@ public static class DependencyInjection
         services.AddSingleton(client);
         services.AddScoped<IModelProviderAdapter, OpenAIResponsesModelAdapter>();
         services.TryAddScoped<IModelGateway, AuditedModelGateway>();
-        return services;
-    }
-
-    public static IServiceCollection AddMafConversationRuntime(
-        this IServiceCollection services,
-        AIAgent agent)
-    {
-        services.AddSingleton(agent);
-        services.AddScoped<IMafSessionCheckpointStore, EfMafSessionCheckpointStore>();
-        services.AddScoped<IMafAgentInvoker, MafAIAgentInvoker>();
-        services.AddScoped<IConversationAgentRuntime, MafConversationAgentRuntime>();
         return services;
     }
 }
