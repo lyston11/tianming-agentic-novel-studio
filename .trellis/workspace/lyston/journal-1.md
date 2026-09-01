@@ -194,6 +194,15 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 ### Summary
 
 完成 Novel Agent TS 边界收敛：提案生命周期归 C#，删除 TS reducer，隔离测试内存替身，收窄 ports 并补齐规范记录。AI 3/3、Core 10/10、Novel Agent type-check/build/11 tests、Trellis validate 和 diff check 全部通过。任务已提交并归档。
+## Session 7: Fill Trellis specs and test policy
+
+**Date**: 2026-09-01
+**Task**: Fill Trellis specs and test policy
+**Branch**: `lyston11/08-31-fill-spec-and-test-policy`
+
+### Summary
+
+补齐 backend/frontend 八份真实规范与索引；加入测试价值边界、兼容分支退役条件和文档纪律声明；更新 bootstrap 清单。通过 task.py validate、git diff --check、前端 17 个测试、typecheck、lint 和 build；归档任务提交为 f2a8156d。
 
 ### Git Commits
 
@@ -201,6 +210,7 @@ The archive is a scope-closure decision, not evidence that every original PRD ac
 |------|---------|
 | `6564aaa9` | (see git log) |
 | `37eb3e18` | (see git log) |
+| `034f14cb` | (see git log) |
 
 ### Status
 

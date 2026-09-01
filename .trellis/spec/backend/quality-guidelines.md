@@ -1,6 +1,6 @@
 # Quality Guidelines
 
-> Code quality standards for backend and cross-layer development.
+> This document records conventions already implemented in this repository. It is not a planning draft.
 
 ---
 
@@ -150,6 +150,46 @@ slice coverage. Every bug fix requires a regression assertion for the failed
 boundary. Package test, type-check, and build commands must pass before archiving a
 Trellis task.
 
+## Testing Value Boundary
+
+Add a new test only when it protects at least one of these real contracts:
+
+- a public HTTP, DTO, envelope, command, or stream contract;
+- a domain invariant, state transition, idempotency rule, lease/fence rule, or
+  authorization boundary;
+- persistence, transaction, migration, outbox, or recovery behavior;
+- a high-risk provider boundary such as model execution, Npgsql, Redis, Qdrant,
+  or authentication logging;
+- a reproduced defect whose absence would allow a known regression.
+
+Before adding the test, state what real regression would be allowed through if
+the test were absent. Test count, nominal coverage, and a green mock-only test do
+not establish diagnostic value. Do not mechanically clone structurally identical
+tests for every kernel, provider, model, or status. Use parameterized cases when
+the same rule has several data variants. Removing existing tests requires a
+separate change with an explicit replacement and coverage explanation.
+
+The current examples are `old/Tests/Unit/Services/Goals/KernelTaskFailurePolicyTests.cs`,
+which tests task-specific retry semantics, and
+`old/Tests/Unit/Services/AgentSessions/AgentChatIdempotencyServiceTests.cs`,
+which tests replay, payload conflict, and lease takeover. These tests protect
+observable contracts rather than merely increasing the count.
+
+## Compatibility Branch Rule
+
+Do not retain or add runtime compatibility branches for historical states,
+fields, paths, or behavior unless the requirement explicitly names the old
+contract. When development data needs conversion, prefer a one-time migration or
+an explicit versioned contract. Do not add a fallback chain for an uncertain
+field owner or a planned directory.
+
+The legacy isolation rule and its retirement conditions are authoritative in
+`AGENT_CORE_ARCHITECTURE.md` section 6: production callers must be zero, the
+replacement must have targeted regression coverage, historical data/migrations
+must remain readable, and the full regression suite must pass. Until all four
+conditions hold, keep the existing legacy path unchanged and document it as
+legacy; do not create a second path just to make a future migration look complete.
+
 ## Code Review Checklist
 
 - Does the change preserve the dependency direction and direct-import boundary?
@@ -157,5 +197,9 @@ Trellis task.
 - Are scope, idempotency, version, content hash, and correlation checks explicit?
 - Can a failed gate, abort, duplicate command, or replay leave partial state?
 - Does the test prove the relevant negative path as well as the happy path?
+- If a test is new, can the author name the real regression it prevents? If not,
+  reject the test or require a narrower contract.
+- Does the change avoid an unrequested compatibility branch and, if it touches a
+  legacy path, preserve the four retirement conditions in `AGENT_CORE_ARCHITECTURE.md` section 6?
 - Does the documentation distinguish deterministic test adapters from deferred
   PostgreSQL, Outbox/SSE, Worker lease/fence/RLS, provider, and E2E work?
