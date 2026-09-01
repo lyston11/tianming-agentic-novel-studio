@@ -1,0 +1,15 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"本任务核心是消除同一领域的双实现，复用判据必须先对齐。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"契约跨 TS adapter 与 C# Application/Domain，需统一 owner 与数据流方向。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"08-31 codegen 已确立判据：生成产物比手写更宽松时不得替换。R1 直接沿用。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"第 51 行限制 tianming-novel-agent 只能 import @tianming/agent-core，是 R6 guard 的现有依据。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"207-208 行禁止 database/Redis/Qdrant/Pi 直连；234-240 行是 R5 要脚本化的散文要求。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"第 92 行把 contracts.ts 的 abort/error code 标为 stable contract，R2 错误码词表须与之一致。"}
+{"file":"tianming-novel-agent/src/contracts.ts","reason":"R1 主对象：678 行手写契约，需逐类型分类。"}
+{"file":"tianming-novel-agent/src/ports.ts","reason":"127 行、44 个 interface/方法签名，界定哪些类型真正跨越边界。"}
+{"file":"tianming-novel-agent/src/domain/continuity-gate.ts","reason":"R2 主对象；文件第 15 行注释已自述 C# ChapterGatekeeper 拥有生产门禁。"}
+{"file":"tianming-novel-agent/src/application/novel-agent-application.ts","reason":"第 25 行调用 runContinuityGate；R2 不论哪条路径都要改这里。"}
+{"file":"tianming-novel-agent/src/index.ts","reason":"R3 对象；第 7 行导出 continuity-gate。"}
+{"file":"tianming-novel-agent/test/vertical-slice.test.ts","reason":"11 个测试是本包唯一资产，AC-9 要求调整后仍全绿。"}
+{"file":"tianming-web/backend/Services/Framework/AI/NovelAgent/Services/ProductionKernel/ChapterGatekeeper.cs","reason":"901 行 6-gate 权威实现；R2/R4 的对照基准与错误码来源。"}
+{"file":"AGENT_CORE_ARCHITECTURE.md","reason":"R7 要增补裁决记录；§6 删除条件与 §7 迁移顺序是本任务的边界。"}
+{"file":"CLAUDE.md","reason":"R7 修正对象：.NET 版本、目录结构、数据库真源、硬编码绝对路径均已失真。"}

@@ -12,7 +12,26 @@ export interface ContinuityGateInput {
   readonly contextPackage: NovelContextPackage;
 }
 
-/** Pure candidate preflight; the C# ChapterGatekeeper owns the production gate. */
+/**
+ * Referential-integrity preflight over IDs and hashes. Not a production gate:
+ * the C# `ChapterGatekeeper.ApplyHardGates` owns that, and the two do not overlap.
+ *
+ * Verified 2026-09-01 against
+ * `Services/Framework/AI/NovelAgent/Services/ProductionKernel/ChapterGatekeeper.cs`
+ * (5 gates, 901 lines): it greps zero times for `ChapterNumber`,
+ * `ContextPackageHash`, `ReferencedCharacter`, or `CandidateVersion`. Its checks
+ * are Chinese-language containment assertions over narrative facts (protagonist
+ * name, protagonist state, system state, carry-over lines). So every check below
+ * is one the production gate cannot make — most importantly
+ * `context_hash_mismatch`, which is what enforces that a candidate really came
+ * from the frozen context package.
+ *
+ * The `code` values below are diagnostics local to this preflight. They are
+ * deliberately NOT the cross-boundary error vocabulary: that is
+ * `NovelCommandError`'s 8 codes, which `.trellis/spec/backend/error-handling.md:91`
+ * pins as stable. Do not mirror these into C#; a C# equivalent would mean the
+ * check moved, not that the vocabulary is shared.
+ */
 export function runContinuityGate(input: ContinuityGateInput): Review {
   const findings: ReviewFinding[] = [];
   const characters = new Set(input.contextPackage.characterStates.map((state) => state.characterId));

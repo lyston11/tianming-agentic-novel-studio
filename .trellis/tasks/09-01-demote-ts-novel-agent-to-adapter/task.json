@@ -1,0 +1,36 @@
+{
+  "id": "09-01-demote-ts-novel-agent-to-adapter",
+  "title": "Demote tianming-novel-agent to a pure adapter layer",
+  "status": "pending",
+  "priority": "P1",
+  "parent": null,
+  "children": [],
+  "createdAt": "2026-09-01",
+  "meta": {
+    "adjudication": "The novel domain is owned by C#. This was not an open question: the five 08-30 children completed on 2026-09-01 and landed the control plane, tenant RLS, fenced worker, Canon merge and SSE in C#, with real-PostgreSQL E2E coverage. The TypeScript package holds a parallel, unwired shadow implementation of the same domain.",
+    "evidence": {
+      "csharpDomainOwnership": "AgentControlDbContext 23 files, KernelTask 84, CandidateChapter 62, CanonBranch 59, ProductionBatch 37, GoalProposal 20; 61 EF migrations; RLS defined across 10 MigrationsPostgres files including EnableTenantRls, EnforceTenantRlsAndActiveTaskGraph, EnableBookProductionTenantRls.",
+      "csharpE2E": "Tests/NovelAgentRegression/Reliability/AgentToCanonE2ETests.cs (522 lines), Tests/NovelAgentRegression/E2E/AgentToCanonApiSseE2ETests.cs (585), Tests/NovelAgentRegression/Reliability/KernelTaskClaimTests.cs (473).",
+      "tsUnwired": "Zero importers repo-wide. No Process.Start, no Node host package, no queue bridge. The single HTTP-to-Node path (Program.cs:309 PiConversationAgentRuntime to :4317) targets the legacy Pi runtime and is disabled at appsettings.json:53.",
+      "tsShadow": "src/contracts.ts is 678 of 1676 LOC and hand-mirrors C# domain types; src/domain/continuity-gate.ts is 62 lines against the authoritative 901-line 6-gate C# ChapterGatekeeper.",
+      "noGate": "package.json defines build/test/type-check but no CI runs them; the repo root has no .github/. Requirement exists only as prose at .trellis/spec/backend/database-guidelines.md:234-240."
+    },
+    "rejectedAlternatives": {
+      "deleteThePackage": "Discards the genuine adapter and loop wiring; AGENT_CORE_ARCHITECTURE.md section 7 migration order still stands.",
+      "keepAsUnwiredTargetState": "Would create a second TargetArchitectureDirector: a registered-but-unwired component that becomes a recurring source of confusion. Repeating a known failure."
+    },
+    "staleContextRisk": "tianming-novel-agent/dist/ is gitignored (.gitignore:39) but 2-3.5h staler than src, and still carries dist/src/store/in-memory-store.{js,d.ts} whose source was deleted in commit 6564aaa9. Reading dist/ as current state already caused one wrong architectural claim in this project."
+  },
+  "relatedFiles": [
+    "tianming-novel-agent/src/contracts.ts",
+    "tianming-novel-agent/src/domain/continuity-gate.ts",
+    "tianming-novel-agent/src/application/novel-agent-application.ts",
+    "tianming-novel-agent/src/ports.ts",
+    "tianming-novel-agent/src/index.ts",
+    "tianming-novel-agent/test/vertical-slice.test.ts",
+    "tianming-novel-agent/test/fixtures/in-memory-novel-test-store.ts",
+    "tianming-web/backend/Services/Framework/AI/NovelAgent/Services/ProductionKernel/ChapterGatekeeper.cs",
+    "AGENT_CORE_ARCHITECTURE.md",
+    "CLAUDE.md"
+  ]
+}

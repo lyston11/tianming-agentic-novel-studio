@@ -243,6 +243,31 @@ the port; the C# `ChapterGatekeeper` remains the production gate authority.
   `proposal-lifecycle.ts`, `src/store/`, direct Pi/database imports, or local
   Canon/ledger/projection implementation.
 
+#### How to run them
+
+`./Scripts/verify-node-packages.sh` executes everything in this section for all
+three Node packages, in `file:`-dependency order (`tianming-ai` →
+`tianming-agent-core` → `tianming-novel-agent`, since each reads the upstream
+`dist/`). Added 2026-09-01 by task `09-01-demote-ts-novel-agent-to-adapter`.
+
+Until then these requirements were prose that nothing executed, so the only
+TypeScript vertical slice had no gate at all.
+
+Two ordering constraints are load-bearing, both found by deliberately breaking
+each guard rather than by reading the script:
+
+1. The boundary greps run *before* the build. They are pure source checks, so a
+   stale `dist/` or a failing compile would otherwise mask the finding that
+   matters — while proving the guards, a stale-dist failure hid all three
+   boundary violations.
+2. The `dist/` freshness check runs *before* the build, not after. `build` now
+   cleans and re-emits, so a post-build check can never fail; what it must catch
+   is a dist left behind by an earlier build.
+
+When adding a guard here, prove it fails on a deliberate violation and then
+passes once reverted. A guard asserted only by code review is not verified: on
+2026-09-01 the `dist/` check read plausible but was unfirable for that reason.
+
 ### 7. Wrong vs Correct
 
 #### Wrong

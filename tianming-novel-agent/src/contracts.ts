@@ -228,40 +228,6 @@ export interface GoalProposalRevision {
   readonly decisionReason?: string;
 }
 
-export type ProposalRevision = GoalProposalRevision;
-
-export interface GoalProposalTransition {
-  readonly transitionId: Id;
-  readonly proposalId: Id;
-  readonly projectId: ProjectId;
-  readonly userId: UserId;
-  readonly fromStatus: GoalProposalStatus;
-  readonly toStatus: GoalProposalStatus;
-  readonly proposalVersion: number;
-  readonly contentHash: string;
-  readonly actorId: Id;
-  readonly correlationId: CorrelationId;
-  readonly causationId?: Id;
-  readonly idempotencyKey: IdempotencyKey;
-  readonly reason?: string;
-  readonly occurredAt: string;
-}
-
-export interface GoalCommitIntent {
-  readonly intentId: Id;
-  readonly proposalId: Id;
-  readonly proposalVersion: number;
-  readonly proposalContentHash: string;
-  readonly projectId: ProjectId;
-  readonly userId: UserId;
-  readonly actorId: Id;
-  readonly correlationId: CorrelationId;
-  readonly causationId?: Id;
-  readonly idempotencyKey: IdempotencyKey;
-  readonly status: "confirmed";
-  readonly createdAt: string;
-}
-
 export type GoalStatus = "proposed" | "confirmed" | "superseded" | "cancelled";
 export type ProductionStatus =
   | "running"
@@ -531,43 +497,12 @@ export interface ProposeGoalInput extends ContextRequest {
   readonly idempotencyKey: IdempotencyKey;
 }
 
-export interface ConfirmGoalProposalCommand extends ContextRequest {
-  readonly proposalId: Id;
-  readonly expectedProposalVersion: number;
-  readonly expectedContentHash: string;
-  readonly actorId?: Id;
-  readonly idempotencyKey: IdempotencyKey;
-}
-
-export interface ReviseProposalCommand extends ContextRequest {
-  readonly proposalId: Id;
-  readonly expectedProposalVersion: number;
-  readonly expectedContentHash: string;
-  readonly content: Omit<GoalProposalContent, "projectId" | "conversationId" | "createdBy" | "proposalVersion" | "sourceMessageIds">;
-  readonly sourceMessageIds: readonly Id[];
-  readonly idempotencyKey: IdempotencyKey;
-}
-
-export interface DecideProposalCommand extends ContextRequest {
-  readonly proposalId: Id;
-  readonly expectedProposalVersion: number;
-  readonly expectedContentHash: string;
-  readonly reason: string;
-  readonly actorId?: Id;
-  readonly idempotencyKey: IdempotencyKey;
-}
-
 export interface ConfirmGoalCommand extends ContextRequest {
   readonly proposalId: Id;
   readonly idempotencyKey: IdempotencyKey;
   readonly expectedProposalVersion?: number;
   readonly expectedContentHash?: string;
   readonly actorId?: Id;
-}
-
-export interface RequestChapterCommand extends ContextRequest {
-  readonly taskId: Id;
-  readonly intent: ChapterCandidateIntent;
 }
 
 export interface AcceptCandidateCommand extends ContextRequest {
@@ -617,10 +552,6 @@ export interface AppendMessage {
 export interface ConversationQuery {
   readonly actor: ActorScope;
   readonly conversationId: ConversationId;
-}
-
-export interface QueryWorkflowRequest {
-  readonly actor: ActorScope;
 }
 
 export class NovelCommandError extends Error {

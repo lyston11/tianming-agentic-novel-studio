@@ -1,0 +1,9 @@
+{"check":"src/contracts.ts 的逐类型分类清单存在，每条有 C# file:line 对应物或明确的\"无对应物\"判定","ac":"AC-1"}
+{"check":"跨边界类型有单一真源与漂移检查；保留手写的条目附measured理由","ac":"AC-2"}
+{"check":"R2 已实施且无悬空导入：novel-agent-application.ts 与 index.ts 引用已更新","ac":"AC-3, AC-5"}
+{"check":"TS 侧任一 continuity 错误码可在 C# 侧定位，或 application 已有替代路径且被测试覆盖","ac":"AC-4"}
+{"check":"陈旧 dist/ 已清理，且存在非 gitignore 的新鲜度保障机制","ac":"AC-6"}
+{"check":"单一校验入口按 tianming-ai -> agent-core -> novel-agent 顺序执行，三包 type-check + test 全绿并附实际输出","ac":"AC-7"}
+{"check":"guard 已用刻意反例验证会失败，非仅代码审查","ac":"AC-8"}
+{"check":"11 个 vertical-slice 测试全绿；任何删减逐条说明原因","ac":"AC-9"}
+{"check":"AGENT_CORE_ARCHITECTURE.md 有裁决记录；CLAUDE.md 四项失真已修正","ac":"AC-10"}
