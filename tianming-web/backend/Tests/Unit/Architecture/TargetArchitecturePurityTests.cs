@@ -11,19 +11,19 @@ public sealed class TargetArchitecturePurityTests
         var root = RepositoryRoot();
         var obsolete = new[]
         {
-            "Web/NovelAgentWeb/Support/AgentRuntime.cs",
-            "Web/NovelAgentWeb/Support/AgentKernel.cs",
-            "Web/NovelAgentWeb/Support/AgentToolCallingClient.cs",
-            "Web/NovelAgentWeb/Support/AgentToolRegistry.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeQueue.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentInterruptService.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeEventStreamPump.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeRunService.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeWorker.cs",
-            "Web/NovelAgentWeb/Services/AgentTools/AgentToolExecutionLedger.cs",
-            "Web/NovelAgentWeb/Services/AgentTools/ToolSearchCacheService.cs",
-            "Web/NovelAgentWeb/Services/Production/ProductionTruthChapterIdentityMigrationService.cs",
-            "Web/NovelAgentWeb/Services/Repositories/StoryBibleRepository.cs"
+            "tianming-web/backend/Tianming.Web/Support/AgentRuntime.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentKernel.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentToolCallingClient.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentToolRegistry.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeQueue.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentInterruptService.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeEventStreamPump.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeRunService.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeWorker.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentTools/AgentToolExecutionLedger.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentTools/ToolSearchCacheService.cs",
+            "tianming-web/backend/Tianming.Web/Services/Production/ProductionTruthChapterIdentityMigrationService.cs",
+            "tianming-web/backend/Tianming.Web/Services/Repositories/StoryBibleRepository.cs"
         };
 
         Assert.All(obsolete, path => Assert.False(File.Exists(Path.Combine(root, path)), path));
@@ -32,7 +32,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void Program_RegistersDurableGoalKernelAndUnifiedExecutionEnvelopes()
     {
-        var source = Read("Web/NovelAgentWeb/Program.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Program.cs");
 
         Assert.Contains("AddScoped<IGoalCompiler, GoalCompiler>", source, StringComparison.Ordinal);
         Assert.Contains("AddScoped<IKernelTaskScheduler, PostgresKernelTaskScheduler>", source, StringComparison.Ordinal);
@@ -46,7 +46,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void KernelTaskScheduler_WritesOnlyThroughAgentControlOwner()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Goals/PostgresKernelTaskScheduler.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/PostgresKernelTaskScheduler.cs");
 
         Assert.Contains("AgentControlDbContext", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
@@ -56,7 +56,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void GoalCompiler_IsDeterministicAndMovesCreativeAnalysisIntoDurableDag()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Goals/GoalCompiler.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/GoalCompiler.cs");
 
         Assert.Contains("AnalyzeCreativeRequirements", source, StringComparison.Ordinal);
         Assert.Contains("CreativeRequirements", source, StringComparison.Ordinal);
@@ -68,7 +68,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void Director_ReadsModelContextOnlyThroughContextAssembler()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs");
 
         Assert.Contains("IConversationContextAssembler", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
@@ -79,7 +79,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void GoalWorkflowController_SubmitsProductionChangesThroughTransitionService()
     {
-        var source = Read("Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Controllers/GoalWorkflowController.cs");
 
         Assert.Contains("IBookProductionTransitionService", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IGoalControlService", source, StringComparison.Ordinal);
@@ -89,7 +89,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void AgentChatCompatEntry_PersistsOnlyThroughApplicationConversation()
     {
-        var source = Read("Web/NovelAgentWeb/Controllers/AgentController.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Controllers/AgentController.cs");
 
         Assert.Contains("ConversationApplicationService", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AgentTurnCoordinator", source, StringComparison.Ordinal);
@@ -100,7 +100,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void AgentSessionResume_ReplaysFromDurableConversationMessages()
     {
-        var source = Read("Web/NovelAgentWeb/Services/AgentSessions/AgentSessionService.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/AgentSessions/AgentSessionService.cs");
 
         Assert.Contains("ReadMessageRecordsAsync", source, StringComparison.Ordinal);
         Assert.Contains("pi.assistant.v1", source, StringComparison.Ordinal);
@@ -112,10 +112,10 @@ public sealed class TargetArchitecturePurityTests
     {
         var paths = new[]
         {
-            "Web/NovelAgentWeb/Services/Goals/CreativeGoalService.cs",
-            "Web/NovelAgentWeb/Services/Goals/GoalCompiler.cs",
-            "Web/NovelAgentWeb/Services/Goals/BookProductionTransitionService.cs",
-            "Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs"
+            "tianming-web/backend/Tianming.Web/Services/Goals/CreativeGoalService.cs",
+            "tianming-web/backend/Tianming.Web/Services/Goals/GoalCompiler.cs",
+            "tianming-web/backend/Tianming.Web/Services/Goals/BookProductionTransitionService.cs",
+            "tianming-web/backend/Tianming.Web/Controllers/GoalWorkflowController.cs"
         };
 
         var forbiddenAdds = new[]
@@ -137,9 +137,9 @@ public sealed class TargetArchitecturePurityTests
                 Assert.DoesNotContain("SaveChangesAsync", source, StringComparison.Ordinal);
         }
 
-        var controller = Read("Web/NovelAgentWeb/Controllers/GoalWorkflowController.cs");
+        var controller = Read("tianming-web/backend/Tianming.Web/Controllers/GoalWorkflowController.cs");
         Assert.DoesNotContain("KernelArtifacts.Add", controller, StringComparison.Ordinal);
-        var branches = Read("Web/NovelAgentWeb/Services/Canon/CanonBranchService.cs");
+        var branches = Read("tianming-web/backend/Tianming.Web/Services/Canon/CanonBranchService.cs");
         Assert.Contains("CreateArtifactAsync", branches, StringComparison.Ordinal);
         Assert.DoesNotContain("new KernelArtifact", branches, StringComparison.Ordinal);
     }
@@ -147,7 +147,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void GoalProgressPublisher_WritesDurableOutboxWithoutDirectLiveDelivery()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Goals/GoalProgressEventPublisher.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/GoalProgressEventPublisher.cs");
         var publisher = source[..source.IndexOf("public interface IGoalProgressEventDelivery", StringComparison.Ordinal)];
 
         Assert.Contains("_db.OutboxEvents.Add", publisher, StringComparison.Ordinal);
@@ -159,8 +159,8 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void ConversationContext_IncludesPendingRecoveryIntents()
     {
-        var assembler = Read("Web/NovelAgentWeb/Services/Context/AgentContextAssembler.cs");
-        var director = Read("Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs");
+        var assembler = Read("tianming-web/backend/Tianming.Web/Services/Context/AgentContextAssembler.cs");
+        var director = Read("tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs");
 
         Assert.Contains("item.RequiresConfirmation", assembler, StringComparison.Ordinal);
         Assert.Contains("AgentPendingIntentContext", assembler, StringComparison.Ordinal);
@@ -170,7 +170,7 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void KernelRouter_ReadsExecutionContextOnlyThroughContextAssembler()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Kernels/KernelTaskExecutionRouter.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Kernels/KernelTaskExecutionRouter.cs");
 
         Assert.Contains("IAgentContextAssembler", source, StringComparison.Ordinal);
         Assert.DoesNotContain("NovelAgentDbContext", source, StringComparison.Ordinal);
@@ -181,9 +181,9 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void KernelPrompts_AlwaysContainEffectiveGoalContract()
     {
-        var router = Read("Web/NovelAgentWeb/Services/Kernels/KernelTaskExecutionRouter.cs");
-        var contexts = Read("Web/NovelAgentWeb/Services/Context/AgentContextAssembler.cs");
-        var client = Read("Web/NovelAgentWeb/Services/Kernels/DefaultKernelStructuredModelClient.cs");
+        var router = Read("tianming-web/backend/Tianming.Web/Services/Kernels/KernelTaskExecutionRouter.cs");
+        var contexts = Read("tianming-web/backend/Tianming.Web/Services/Context/AgentContextAssembler.cs");
+        var client = Read("tianming-web/backend/Tianming.Web/Services/Kernels/DefaultKernelStructuredModelClient.cs");
 
         Assert.Contains("IAgentContextAssembler", router, StringComparison.Ordinal);
         Assert.DoesNotContain("NovelAgentDbContext", router, StringComparison.Ordinal);
@@ -195,9 +195,9 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void Sse_UsesOwnedSessionAndAuthorizationHeaderWithoutQueryToken()
     {
-        var controller = Read("Web/NovelAgentWeb/Controllers/AgentController.cs");
-        var frontend = Read("Web/NovelAgentWeb.Frontend/src/api/index.ts");
-        var program = Read("Web/NovelAgentWeb/Program.cs");
+        var controller = Read("tianming-web/backend/Tianming.Web/Controllers/AgentController.cs");
+        var frontend = Read("old/Web/NovelAgentWeb.Frontend/src/api/index.ts");
+        var program = Read("tianming-web/backend/Tianming.Web/Program.cs");
 
         Assert.Contains("GetSessionByIdAsync(sessionId, userId, isAdmin", controller, StringComparison.Ordinal);
         Assert.Contains("SubscribeEvents(userId, sessionId", controller, StringComparison.Ordinal);
@@ -211,8 +211,8 @@ public sealed class TargetArchitecturePurityTests
     [Fact]
     public void AuthenticationLogging_DoesNotSerializeTokens()
     {
-        var auth = Read("Web/NovelAgentWeb/Controllers/AuthController.cs");
-        var program = Read("Web/NovelAgentWeb/Program.cs");
+        var auth = Read("tianming-web/backend/Tianming.Web/Controllers/AuthController.cs");
+        var program = Read("tianming-web/backend/Tianming.Web/Program.cs");
 
         Assert.DoesNotContain("JsonSerializer.Serialize(response", auth, StringComparison.Ordinal);
         Assert.DoesNotContain("Response JSON", auth, StringComparison.Ordinal);
@@ -250,10 +250,12 @@ public sealed class TargetArchitecturePurityTests
 
     private static string RepositoryRoot()
     {
+        // Markers must hold only at the repository root. "tianming-web" contains its own
+        // README.md but no nested "tianming-web", so the pair is unambiguous on the walk up.
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null &&
                (!File.Exists(Path.Combine(directory.FullName, "README.md")) ||
-                !Directory.Exists(Path.Combine(directory.FullName, "Web", "NovelAgentWeb"))))
+                !Directory.Exists(Path.Combine(directory.FullName, "tianming-web"))))
             directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root not found.");
     }

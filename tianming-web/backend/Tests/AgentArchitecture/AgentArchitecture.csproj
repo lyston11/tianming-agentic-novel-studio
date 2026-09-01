@@ -16,9 +16,9 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../../Agent/Tianming.NovelAgent.Application/Tianming.NovelAgent.Application.csproj" />
-    <ProjectReference Include="../../Agent/Tianming.NovelAgent.Contracts/Tianming.NovelAgent.Contracts.csproj" />
-    <ProjectReference Include="../../Agent/Tianming.NovelAgent.Domain/Tianming.NovelAgent.Domain.csproj" />
-    <ProjectReference Include="../../Agent/Tianming.NovelAgent.Infrastructure/Tianming.NovelAgent.Infrastructure.csproj" />
+    <ProjectReference Include="../../Tianming.NovelAgent.Application/Tianming.NovelAgent.Application.csproj" />
+    <ProjectReference Include="../../Tianming.NovelAgent.Contracts/Tianming.NovelAgent.Contracts.csproj" />
+    <ProjectReference Include="../../Tianming.NovelAgent.Domain/Tianming.NovelAgent.Domain.csproj" />
+    <ProjectReference Include="../../Tianming.NovelAgent.Infrastructure/Tianming.NovelAgent.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

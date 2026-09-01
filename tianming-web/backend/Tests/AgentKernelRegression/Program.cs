@@ -50,13 +50,13 @@ internal static class Program
         var root = RepositoryRoot();
         var obsolete = new[]
         {
-            "Web/NovelAgentWeb/Support/AgentRuntime.cs",
-            "Web/NovelAgentWeb/Support/AgentKernel.cs",
-            "Web/NovelAgentWeb/Support/AgentToolRegistry.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeWorker.cs",
-            "Web/NovelAgentWeb/Services/AgentRuntime/AgentRuntimeQueue.cs",
-            "Web/NovelAgentWeb/Controllers/GoalsController.cs",
-            "Web/NovelAgentWeb/Controllers/CanonBranchesController.cs"
+            "tianming-web/backend/Tianming.Web/Support/AgentRuntime.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentKernel.cs",
+            "tianming-web/backend/Tianming.Web/Support/AgentToolRegistry.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeWorker.cs",
+            "tianming-web/backend/Tianming.Web/Services/AgentRuntime/AgentRuntimeQueue.cs",
+            "tianming-web/backend/Tianming.Web/Controllers/GoalsController.cs",
+            "tianming-web/backend/Tianming.Web/Controllers/CanonBranchesController.cs"
         };
         foreach (var relativePath in obsolete)
             Check(!File.Exists(Path.Combine(root, relativePath)), $"obsolete component still exists: {relativePath}");
@@ -65,7 +65,7 @@ internal static class Program
 
     private static Task ProgramWiresDurableGoalExecution()
     {
-        var source = Read("Web/NovelAgentWeb/Program.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Program.cs");
         Check(source.Contains("AddScoped<IAgentForegroundTurnRunner>(sp => sp.GetRequiredService<TargetArchitectureDirector>())", StringComparison.Ordinal),
             "conversation entry point must use TargetArchitectureDirector");
         Check(source.Contains("AddHostedService<KernelTaskWorker>()", StringComparison.Ordinal),
@@ -81,7 +81,7 @@ internal static class Program
 
     private static Task GoalCompilerContainsCompleteProductionDag()
     {
-        var source = Read("Web/NovelAgentWeb/Services/Goals/GoalCompiler.cs");
+        var source = Read("tianming-web/backend/Tianming.Web/Services/Goals/GoalCompiler.cs");
         var orderedStages = new[]
         {
             "FreezeBaselines",
@@ -201,10 +201,12 @@ internal static class Program
 
     private static string RepositoryRoot()
     {
+        // Markers must hold only at the repository root. "tianming-web" contains its own
+        // README.md but no nested "tianming-web", so the pair is unambiguous on the walk up.
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null &&
                (!File.Exists(Path.Combine(directory.FullName, "README.md")) ||
-                !Directory.Exists(Path.Combine(directory.FullName, "Web", "NovelAgentWeb"))))
+                !Directory.Exists(Path.Combine(directory.FullName, "tianming-web"))))
             directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root not found.");
     }

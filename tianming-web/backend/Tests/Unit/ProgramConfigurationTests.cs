@@ -12,9 +12,9 @@ public class ProgramConfigurationTests
     [Fact]
     public void ProductionProject_IncludesPostgresProvider()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
         var projectFile = File.ReadAllText(
-            Path.Combine(repoRoot, "Web/NovelAgentWeb/NovelAgentWeb.csproj"));
+            Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/NovelAgentWeb.csproj"));
 
         Assert.Contains("Npgsql.EntityFrameworkCore.PostgreSQL", projectFile);
     }
@@ -22,8 +22,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_UsesNpgsqlForTheAuthoritativeDatabase()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         Assert.Contains(".UseNpgsql", programSource);
         Assert.DoesNotContain("options.UseSqlite", programSource);
@@ -32,8 +32,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_UsesDedicatedPostgresMigrationContext()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         Assert.Contains("AddDbContext<PostgresNovelAgentDbContext>", programSource);
         Assert.Contains(
@@ -46,8 +46,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_VerifiesWorkerRoleBeforeMigrationAndPermissionsAfterMigration()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         var rolePreflight = programSource.IndexOf("VerifyRoleAsync", StringComparison.Ordinal);
         var migrate = programSource.IndexOf("migrationDb.Database.MigrateAsync", StringComparison.Ordinal);
@@ -76,10 +76,10 @@ public class ProgramConfigurationTests
     [Fact]
     public void StandardConfiguration_DoesNotStoreDatabaseCredentials()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
         var config = new ConfigurationBuilder()
             .SetBasePath(repoRoot)
-            .AddJsonFile("Web/NovelAgentWeb/appsettings.json", optional: false)
+            .AddJsonFile("tianming-web/backend/Tianming.Web/appsettings.json", optional: false)
             .Build();
 
         Assert.Null(config.GetConnectionString("NovelAgentDb"));
@@ -90,8 +90,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void DockerCompose_ProvidesHealthyPostgresToTheApi()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "old/docker-compose.yml"));
 
         Assert.Contains("postgres:16-alpine", compose);
         Assert.Contains("pg_isready", compose);
@@ -109,9 +109,9 @@ public class ProgramConfigurationTests
     [Fact]
     public void DockerCompose_RequiresExternalSecretsAndDoesNotPublishPostgresPort()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
-        var settings = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/appsettings.json"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "old/docker-compose.yml"));
+        var settings = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/appsettings.json"));
 
         Assert.Contains("${NOVELAGENT_ADMIN_PASSWORD:?", compose);
         Assert.Contains("${NOVELAGENT_APP_PASSWORD:?", compose);
@@ -131,11 +131,11 @@ public class ProgramConfigurationTests
     [Fact]
     public void StandardConfiguration_UsesRequiredRuntimePortsAndRedis()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
 
         var config = new ConfigurationBuilder()
             .SetBasePath(repoRoot)
-            .AddJsonFile("Web/NovelAgentWeb/appsettings.json", optional: false)
+            .AddJsonFile("tianming-web/backend/Tianming.Web/appsettings.json", optional: false)
             .Build();
 
         Assert.Equal("true", config["Redis:Enabled"], ignoreCase: true);
@@ -150,8 +150,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void DockerCompose_ApiUsesQdrantHttpBaseUrlAndGrpcPortSeparately()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var compose = File.ReadAllText(Path.Combine(repoRoot, "docker-compose.yml"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var compose = File.ReadAllText(Path.Combine(repoRoot, "old/docker-compose.yml"));
 
         Assert.Contains("Qdrant__BaseUrl=http://qdrant:6333", compose);
         Assert.Contains("Qdrant__Host=qdrant", compose);
@@ -162,8 +162,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_DoesNotRegisterContentDocumentServiceTwice()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         var registrations = Regex.Matches(
             programSource,
@@ -175,8 +175,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_RegistersOutputArtifactRecorder()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         Assert.Contains("AddScoped<IOutputArtifactRecorder, OutputArtifactRecorder>", programSource);
     }
@@ -184,8 +184,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_PersistsDataProtectionKeysForContainerRuntime()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         Assert.Contains("App_Data", programSource);
         Assert.Contains("DataProtectionKeys", programSource);
@@ -196,8 +196,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_UsesTargetArchitectureDirectorForForegroundTurns()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         Assert.Contains("AddScoped<TargetArchitectureDirector>()", programSource);
         Assert.Contains(
@@ -211,10 +211,10 @@ public class ProgramConfigurationTests
     [Fact]
     public void TargetArchitectureDirector_DoesNotCallPeerBusinessToolsOrKernels()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
         var directorSource = File.ReadAllText(Path.Combine(
             repoRoot,
-            "Web/NovelAgentWeb/Services/Goals/TargetArchitectureDirector.cs"));
+            "tianming-web/backend/Tianming.Web/Services/Goals/TargetArchitectureDirector.cs"));
 
         Assert.DoesNotContain("AgentToolRegistry", directorSource);
         Assert.DoesNotContain("IKernel", directorSource);
@@ -226,8 +226,8 @@ public class ProgramConfigurationTests
     [Fact]
     public void Program_UsesEfMigrationsAsTheOnlyStartupSchemaMutation()
     {
-        var repoRoot = Path.GetFullPath("../../../../../", AppContext.BaseDirectory);
-        var programSource = File.ReadAllText(Path.Combine(repoRoot, "Web/NovelAgentWeb/Program.cs"));
+        var repoRoot = Path.GetFullPath("../../../../../../../", AppContext.BaseDirectory);
+        var programSource = File.ReadAllText(Path.Combine(repoRoot, "tianming-web/backend/Tianming.Web/Program.cs"));
 
         var migrateIndex = programSource.IndexOf("Database.Migrate", StringComparison.Ordinal);
         var normalizeIndex = programSource.IndexOf("SqliteSchemaNormalizer.Normalize", StringComparison.Ordinal);

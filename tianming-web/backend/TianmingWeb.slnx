@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/Agent/">
+    <Project Path="Tianming.NovelAgent.Application/Tianming.NovelAgent.Application.csproj" />
+    <Project Path="Tianming.NovelAgent.Contracts/Tianming.NovelAgent.Contracts.csproj" />
+    <Project Path="Tianming.NovelAgent.Domain/Tianming.NovelAgent.Domain.csproj" />
+    <Project Path="Tianming.NovelAgent.Infrastructure/Tianming.NovelAgent.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/AgentArchitecture/AgentArchitecture.csproj" />
+    <Project Path="Tests/AgentKernelRegression/AgentKernelRegression.csproj" />
+    <Project Path="Tests/NovelAgentRegression/NovelAgentRegression.csproj" />
+    <Project Path="Tests/Unit/Unit.csproj" />
+  </Folder>
+  <Folder Name="/Web/">
+    <Project Path="Tianming.Web/NovelAgentWeb.csproj" />
+  </Folder>
+</Solution>

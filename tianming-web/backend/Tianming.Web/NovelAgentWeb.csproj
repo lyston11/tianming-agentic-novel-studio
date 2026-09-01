@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TM.Web.NovelAgentWeb</RootNamespace>
+    <AssemblyName>NovelAgentWeb</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NovelAgentRegression" />
+    <InternalsVisibleTo Include="AgentKernelRegression" />
+    <InternalsVisibleTo Include="Unit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="publish\**\*" />
+    <None Remove="publish\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" Link="Services\Framework\AI\Embedding\IMicroEmbeddingService.cs" />
+    <Compile Include="..\Services\Framework\AI\Embedding\BgeSmallZhEmbeddingService.cs" Link="Services\Framework\AI\Embedding\BgeSmallZhEmbeddingService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Models\*.cs" Link="NovelAgent\Models\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\StoryBibleService.cs" Link="NovelAgent\Services\StoryBibleService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\GenreDirectionPlanner.cs" Link="NovelAgent\Services\GenreDirectionPlanner.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\BookConceptDesigner.cs" Link="NovelAgent\Services\BookConceptDesigner.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\CreativeKnowledgeBaseService.cs" Link="NovelAgent\Services\CreativeKnowledgeBaseService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\VolumeArcPlanner.cs" Link="NovelAgent\Services\VolumeArcPlanner.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\ForeshadowLedgerService.cs" Link="NovelAgent\Services\ForeshadowLedgerService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\CanonMaintenanceService.cs" Link="NovelAgent\Services\CanonMaintenanceService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\CharacterLedgerService.cs" Link="NovelAgent\Services\CharacterLedgerService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\ChapterNoveltyPlanner.cs" Link="NovelAgent\Services\ChapterNoveltyPlanner.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\StoryStateSnapshotService.cs" Link="NovelAgent\Services\StoryStateSnapshotService.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\CommercialRhythmChecker.cs" Link="NovelAgent\Services\CommercialRhythmChecker.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\ChapterPostGenerationReviewer.cs" Link="NovelAgent\Services\ChapterPostGenerationReviewer.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\HardcoreWritingEngine.cs" Link="NovelAgent\Services\HardcoreWritingEngine.cs" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\ProductionKernel\*.cs" Link="NovelAgent\Services\ProductionKernel\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Framework\AI\NovelAgent\Services\NovelAgentOrchestrator.cs" Link="NovelAgent\Services\NovelAgentOrchestrator.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Services\Modules\ProjectData\Interfaces\*.cs" Link="Services\Modules\ProjectData\Interfaces\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Metadata\*.cs" Link="Services\Modules\ProjectData\Metadata\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Models\**\*.cs" Link="Services\Modules\ProjectData\Models\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Generation\ChapterChangesCanonicalizer.cs" Link="Services\Modules\ProjectData\Implementations\Generation\ChapterChangesCanonicalizer.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Generation\GenerationGate.cs" Link="Services\Modules\ProjectData\Implementations\Generation\GenerationGate.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Generation\GenerationGate\*.cs" Link="Services\Modules\ProjectData\Implementations\Generation\GenerationGate\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs" Link="Services\Modules\ProjectData\Implementations\Generation\ImportanceCorrector.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideContextService.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideContextService.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideContextService\*.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideContextService\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideIndexBuilder.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideIndexBuilder.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideIndexBuilder\*.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideIndexBuilder\%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideManager.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideManager.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Guides\GuideSerializerContext.cs" Link="Services\Modules\ProjectData\Implementations\Guides\GuideSerializerContext.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Tracking\**\*.cs" Link="Services\Modules\ProjectData\Implementations\Tracking\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Validation\ContentDescriptionValidator.cs" Link="Services\Modules\ProjectData\Implementations\Validation\ContentDescriptionValidator.cs" />
+    <Compile Include="..\Services\Modules\ProjectData\Implementations\Validation\ContentEntityExtractor.cs" Link="Services\Modules\ProjectData\Implementations\Validation\ContentEntityExtractor.cs" />
+    <Compile Include="..\Services\Modules\VersionTracking\DependencyConfig.cs" Link="Services\Modules\VersionTracking\DependencyConfig.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Services\Framework\AI\Embedding\Resources\bge-small-zh-v1.5\**\*">
+      <Link>Services\Framework\AI\Embedding\Resources\bge-small-zh-v1.5\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.DeepDev.TokenizerLib" Version="1.3.3" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.11" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.16.3" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
+    <PackageReference Include="Qdrant.Client" Version="1.18.1" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="PdfPig" Version="0.1.15" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tianming.NovelAgent.Application\Tianming.NovelAgent.Application.csproj" />
+    <ProjectReference Include="..\Tianming.NovelAgent.Contracts\Tianming.NovelAgent.Contracts.csproj" />
+    <ProjectReference Include="..\Tianming.NovelAgent.Infrastructure\Tianming.NovelAgent.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TM.Framework.Common.Helpers" />
+    <Using Include="TM.Framework.Common.Services" />
+  </ItemGroup>
+
+</Project>

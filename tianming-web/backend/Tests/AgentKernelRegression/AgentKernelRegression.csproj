@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Web\NovelAgentWeb\NovelAgentWeb.csproj" />
+    <ProjectReference Include="..\..\Tianming.Web\NovelAgentWeb.csproj" />
   </ItemGroup>
 
 </Project>
