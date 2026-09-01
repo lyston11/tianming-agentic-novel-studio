@@ -130,7 +130,6 @@ export {
   listAgentSessions,
   listRuntimeEvents,
   resumeAgentSession,
-  sendChat,
   updateAgentSession,
 } from './chat';
 export {

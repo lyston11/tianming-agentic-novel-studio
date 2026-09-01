@@ -1,8 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Tianming.NovelAgent.Application.Conversation;
-using Tianming.NovelAgent.Contracts.Conversation;
 using TM.Web.NovelAgentWeb.DTOs;
 using TM.Web.NovelAgentWeb.Services.AgentRuntime;
 using TM.Web.NovelAgentWeb.Services.AgentSessions;
@@ -16,7 +14,6 @@ namespace TM.Web.NovelAgentWeb.Controllers;
 [Authorize]
 public class AgentController : ControllerBase
 {
-    private readonly ConversationApplicationService _conversations;
     private readonly IAgentSessionApplicationService _sessions;
     private readonly IAgentSessionService _agentSessionService;
     private readonly ICurrentUserService _currentUserService;
@@ -25,68 +22,18 @@ public class AgentController : ControllerBase
     private readonly IAgentRuntimeEventService? _runtimeEvents;
 
     public AgentController(
-        ConversationApplicationService conversations,
         IAgentSessionApplicationService sessions,
         ICurrentUserService currentUserService,
         IAgentSessionResumeService resumeService,
         IAgentRuntimeEventFanout? runtimeEventFanout = null,
         IAgentRuntimeEventService? runtimeEvents = null)
     {
-        _conversations = conversations;
         _sessions = sessions;
         _agentSessionService = sessions;
         _currentUserService = currentUserService;
         _resumeService = resumeService;
         _runtimeEventFanout = runtimeEventFanout;
         _runtimeEvents = runtimeEvents;
-    }
-
-    /// <summary>
-    /// Legacy chat compatibility entry. Persists turns exclusively through the Application
-    /// Conversation store (ConversationMessages); no legacy AgentChatTurns writes remain on
-    /// this path.
-    /// </summary>
-    [HttpPost("agent/chat")]
-    public async Task<IActionResult> Chat([FromBody] AgentChatRequest request, CancellationToken ct)
-    {
-        var sessionId = request.SessionId;
-        var idempotencyKey = ControllerContext.HttpContext?.Request.Headers["Idempotency-Key"].ToString();
-        if (!string.IsNullOrWhiteSpace(idempotencyKey) &&
-            !string.IsNullOrWhiteSpace(request.ClientMessageId) &&
-            !string.Equals(idempotencyKey.Trim(), request.ClientMessageId.Trim(), StringComparison.Ordinal))
-            return BadRequest(new { error = "Idempotency-Key 与 clientMessageId 必须一致。" });
-        if (string.IsNullOrWhiteSpace(request.Message))
-            return BadRequest(new { error = "消息内容不能为空。" });
-        var canonicalKey = FirstNonEmpty(idempotencyKey, request.ClientMessageId);
-        if (string.IsNullOrWhiteSpace(canonicalKey))
-            return BadRequest(new { error = "缺少幂等键：请提供 Idempotency-Key 或 clientMessageId。" });
-
-        var userId = _currentUserService.GetUserId();
-        ConversationTurnResult result;
-        try
-        {
-            result = await _conversations.AppendTurnAsync(
-                userId,
-                sessionId,
-                new AppendConversationTurnRequest(canonicalKey, request.Message),
-                ct);
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(Error("SESSION_NOT_FOUND", "会话不存在。", recoverable: false));
-        }
-
-        // Decision.ProposalJson carries the Domain GoalContract schema, which is not the
-        // CreativeGoalContract shape consumed by the legacy director card; it is intentionally
-        // not mapped into the Director slot here.
-        var response = new AgentChatResponse(
-            result.Decision.Message,
-            Array.Empty<string>(),
-            sessionId,
-            RunId: null,
-            Phase: "completed",
-            ActiveProjectId: string.Empty);
-        return Ok(AgentChatResponsePublicProjection.ToPublic(response));
     }
 
     [HttpGet("agent/sse/{sessionId}")]

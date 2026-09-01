@@ -584,8 +584,6 @@ app.UseAuthentication();
 app.UseMiddleware<UserContextMiddleware>(); // Extract user context from JWT after authentication
 app.UseMiddleware<WorkspaceUsageAuditMiddleware>();
 app.UseAuthorization();
-app.UseDefaultFiles();
-app.UseStaticFiles();
 app.MapGet("/health", async (RuntimeHealthService health, HttpContext httpContext, CancellationToken cancellationToken) =>
 {
     var report = await health.CheckAsync(cancellationToken);
@@ -595,7 +593,6 @@ app.MapGet("/health", async (RuntimeHealthService health, HttpContext httpContex
         : Results.Json(envelope, statusCode: StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous();
 app.MapControllers();
-app.MapFallbackToFile("index.html");
 
 app.Run();
 

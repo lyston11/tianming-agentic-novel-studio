@@ -1,0 +1,49 @@
+{
+  "id": "retire-wwwroot-legacy-frontend",
+  "name": "retire-wwwroot-legacy-frontend",
+  "title": "退役 wwwroot 旧前端托管，解除 /agent/chat 的最后阻塞",
+  "description": "后端经 UseDefaultFiles/UseStaticFiles/MapFallbackToFile 仍在托管 2026-08-22 构建的旧前端 bundle（wwwroot/assets/index-BaN8_1u2.js，含 /agent/chat 调用）。这是 /agent/chat 退役的唯一实质阻塞，也是 legacy 标签名不副实的根源。本任务处置该托管路径并退役 /agent/chat 兼容入口。",
+  "status": "completed",
+  "dev_type": "refactor",
+  "scope": "tianming-web",
+  "package": null,
+  "priority": "P2",
+  "creator": "lyston",
+  "assignee": "lyston",
+  "createdAt": "2026-09-01",
+  "completedAt": "2026-09-01",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "tianming-web/backend/Tianming.Web/Program.cs",
+    "tianming-web/backend/Tianming.Web/Controllers/AgentController.cs",
+    "tianming-web/backend/Tianming.Web/wwwroot/index.html",
+    "tianming-web/backend/Tianming.Web/wwwroot/assets/index-BaN8_1u2.js",
+    "tianming-web/frontend/src/api/chat.ts",
+    "tianming-web/frontend/src/api/index.ts",
+    "tianming-web/backend/Tests/Unit/Architecture/TargetArchitecturePurityTests.cs",
+    "AGENT_CORE_ARCHITECTURE.md",
+    "CLAUDE.md"
+  ],
+  "notes": "实测发现（2026-09-01，本任务立项前核对）：/agent/chat 的调用方不止旧 bundle。tianming-web/frontend/src/api/chat.ts:14 也在调用它，且经 src/api/index.ts:135 re-export —— 但全仓 grep sendChat 在 UI 层零命中，实际会话走 /novel-agent/conversations/{sessionId}/turns（src/api/novel-agent.ts:19）。故新前端侧是死导出，非真依赖，可与端点一并移除。wwwroot 共 5 个文件 748K，全部 git tracked。",
+  "meta": {
+    "acceptanceSummary": "wwwroot 旧前端不再被后端托管；/agent/chat 端点与前后端死代码一并移除；架构纯度测试新增回流 guard；文档去除 wwwroot 托管与 /agent/chat 的描述；后端与前端全部门禁不回归。",
+    "dependsOn": null,
+    "blocks": "AGENT_CORE_ARCHITECTURE.md 第 6 节 /agent/chat 行的删除条件 1（生产 callers 为零）",
+    "evidence": {
+      "hostingPath": "Program.cs:587 UseDefaultFiles / :588 UseStaticFiles / :598 MapFallbackToFile(\"index.html\")",
+      "legacyBundle": "wwwroot/assets/index-BaN8_1u2.js（2026-08-22 构建）+ index-BR5WX5NH.css + index.html + icons.svg + favicon.svg，共 5 文件 748K，均 git tracked",
+      "endpoint": "AgentController.cs:49 [HttpPost(\"agent/chat\")]",
+      "callersOld": "old/Web/NovelAgentWeb.Frontend/src/api/index.ts:457（历史快照，不参与构建）",
+      "callersNew": "tianming-web/frontend/src/api/chat.ts:14 sendChat + src/api/index.ts:135 re-export —— UI 层零调用点，为死导出",
+      "liveChatPath": "src/api/novel-agent.ts:19 /novel-agent/conversations/{sessionId}/turns"
+    },
+    "keyRisk": "MapFallbackToFile 同时承担新前端生产部署的 SPA fallback 职责；直接删除会影响非 dev 部署形态。必须先确认生产部署拓扑（前端独立托管 vs 后端同源托管）再决定是删除还是改指向新构建产物。"
+  }
+}

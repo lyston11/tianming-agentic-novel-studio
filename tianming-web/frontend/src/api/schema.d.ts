@@ -533,45 +533,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agent/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/*+json": components["schemas"]["AgentChatRequest"];
-                    "application/json": components["schemas"]["AgentChatRequest"];
-                    "text/json": components["schemas"]["AgentChatRequest"];
-                };
-            };
-            responses: {
-                /** @description Success */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agent/session": {
         parameters: {
             query?: never;
@@ -4555,11 +4516,6 @@ export interface components {
             expectedBindingVersion: number;
             projectId: string;
             sourceUserMessageId?: string | null;
-        };
-        AgentChatRequest: {
-            clientMessageId?: string | null;
-            message?: string;
-            sessionId?: string;
         };
         AgentSessionUpdateRequest: {
             isArchived?: boolean | null;

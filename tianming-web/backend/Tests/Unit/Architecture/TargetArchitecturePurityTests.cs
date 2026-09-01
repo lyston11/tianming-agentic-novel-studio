@@ -87,17 +87,6 @@ public sealed class TargetArchitecturePurityTests
     }
 
     [Fact]
-    public void AgentChatCompatEntry_PersistsOnlyThroughApplicationConversation()
-    {
-        var source = Read("tianming-web/backend/Tianming.Web/Controllers/AgentController.cs");
-
-        Assert.Contains("ConversationApplicationService", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("AgentTurnCoordinator", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("IChatHistoryRepository", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("IAgentForegroundTurnRunner", source, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void AgentSessionResume_ReplaysFromDurableConversationMessages()
     {
         var source = Read("tianming-web/backend/Tianming.Web/Services/AgentSessions/AgentSessionService.cs");
@@ -243,6 +232,46 @@ public sealed class TargetArchitecturePurityTests
         }
 
         Assert.Empty(offenders);
+    }
+
+    /// <summary>
+    /// The backend served a hand-committed 2026-08-22 frontend bundle out of wwwroot, and
+    /// that bundle called /agent/chat. Retired on 2026-09-01 (task
+    /// 09-01-retire-wwwroot-legacy-frontend) after establishing there is no deployment
+    /// topology that needs same-origin hosting: old/Dockerfile targets .NET 8 and
+    /// /src/Web/NovelAgentWeb, so it cannot build this backend at all.
+    ///
+    /// Two assertions rather than one, following the lesson from
+    /// 09-01-retire-legacy-runtimes: a single layer misses. Deleting the files does not
+    /// stop the middleware from being re-added, and removing the middleware does not stop
+    /// a bundle from being re-committed. Either one alone lets the pairing come back.
+    /// </summary>
+    [Fact]
+    public void LegacyFrontendBundle_IsNeitherHostedNorCommitted()
+    {
+        var source = Read("tianming-web/backend/Tianming.Web/Program.cs");
+
+        Assert.DoesNotContain("UseStaticFiles", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("UseDefaultFiles", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MapFallbackToFile", source, StringComparison.Ordinal);
+
+        var wwwroot = Path.Combine(RepositoryRoot(), "tianming-web/backend/Tianming.Web/wwwroot");
+        Assert.False(Directory.Exists(wwwroot), wwwroot);
+    }
+
+    /// <summary>
+    /// The /agent/chat compatibility entry bypassed nothing by 2026-09-01 — it already
+    /// persisted through ConversationApplicationService — but it was a second door onto
+    /// the conversation path with its own idempotency-key reconciliation. Its only callers
+    /// were the retired wwwroot bundle and a dead frontend export.
+    /// </summary>
+    [Fact]
+    public void AgentController_NoLongerExposesTheLegacyChatEntry()
+    {
+        var source = Read("tianming-web/backend/Tianming.Web/Controllers/AgentController.cs");
+
+        Assert.DoesNotContain("agent/chat", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AgentChatRequest", source, StringComparison.Ordinal);
     }
 
     private static string Read(string relativePath) =>

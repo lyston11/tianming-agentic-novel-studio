@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端改动入口规范；本任务动 Program.cs 中间件管线与一个 controller 路由，需按其约定核对。"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端改动入口规范；本任务删除 api 层死导出，需按其约定核对。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"AC-5 涉及 OpenAPI 重新导出与 gen:check；该文件已成文「生成视图不得手改，契约变更走后端 DTO + 重新生成」，删除端点属契约变更须遵此流程。"}
+{"file":"tianming-web/backend/Tests/Unit/Architecture/TargetArchitecturePurityTests.cs","reason":"AC-6 要求 guard 可证伪：需确认新增断言在改动前确实失败、改动后通过，而非恒真。"}
+{"file":"AGENT_CORE_ARCHITECTURE.md","reason":"AC-8 核对第 6 节冻结表是否同步，且失准表述已显式修正而非沿用。"}

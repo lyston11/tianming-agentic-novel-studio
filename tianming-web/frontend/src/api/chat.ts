@@ -1,7 +1,5 @@
 import { api, buildActionIdempotencyKey, get } from './client';
 import type {
-  AgentChatRequest,
-  AgentChatResponse,
   AgentRuntimeEventView,
   AgentSessionInfo,
   AgentSessionResumeResponse,
@@ -9,13 +7,6 @@ import type {
   AgentSessionUpdateRequest,
   RuntimeActiveRunDto,
 } from './types';
-
-export const sendChat = (req: AgentChatRequest) =>
-  api<AgentChatResponse>('/agent/chat', {
-    method: 'POST',
-    headers: { 'Idempotency-Key': buildActionIdempotencyKey('agent-chat') },
-    body: JSON.stringify(req),
-  });
 
 export const createAgentSession = () =>
   api<AgentSessionInfo>('/agent/session', {

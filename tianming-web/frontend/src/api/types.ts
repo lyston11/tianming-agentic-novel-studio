@@ -1872,8 +1872,6 @@ export interface CharacterMaintenanceResult {
 // Agent Session & SSE Types
 // ============================================================
 
-export type AgentChatRequest = Schema['AgentChatRequest'];
-
 export interface AgentChatResponse {
   reply: string;
   suggestions: string[];

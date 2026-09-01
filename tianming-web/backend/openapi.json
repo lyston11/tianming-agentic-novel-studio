@@ -80,22 +80,6 @@
         ],
         "type": "object"
       },
-      "AgentChatRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "clientMessageId": {
-            "nullable": true,
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "sessionId": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
       "AgentSessionUpdateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3286,37 +3270,6 @@
         },
         "tags": [
           "WorkspaceMonitoring"
-        ]
-      }
-    },
-    "/api/agent/chat": {
-      "post": {
-        "requestBody": {
-          "content": {
-            "application/*+json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentChatRequest"
-              }
-            },
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentChatRequest"
-              }
-            },
-            "text/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentChatRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        },
-        "tags": [
-          "Agent"
         ]
       }
     },

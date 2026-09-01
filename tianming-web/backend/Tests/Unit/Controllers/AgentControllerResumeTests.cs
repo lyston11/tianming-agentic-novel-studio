@@ -16,94 +16,12 @@ using TM.Web.NovelAgentWeb.Services.AgentSessions;
 using TM.Web.NovelAgentWeb.Services.Auth;
 using TM.Web.NovelAgentWeb.Services.Memory;
 using TM.Web.NovelAgentWeb.Support;
-using Tianming.NovelAgent.Application.Conversation;
-using Tianming.NovelAgent.Application.Ports;
-using Tianming.NovelAgent.Contracts.Conversation;
 using Xunit;
 
 namespace Tests.Unit.Controllers;
 
 public class AgentControllerResumeTests
 {
-    [Fact]
-    public async Task Chat_DelegatesToApplicationConversationAndReturnsDecisionReply()
-    {
-        var conversations = BuildConversationService(
-            "当然认识你，lyston。",
-            out var runtime);
-        var controller = new AgentController(
-            conversations,
-            sessions: null!,
-            currentUserService: CurrentUser("user-1").Object,
-            resumeService: null!)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            }
-        };
-        controller.Request.Headers["Idempotency-Key"] = "chat-key-1";
-
-        var result = await controller.Chat(new AgentChatRequest("你知道我是谁吗", "session-1", "chat-key-1"), CancellationToken.None);
-
-        var envelope = await ApplyEnvelopeAsync(result);
-        Assert.True(envelope.Success);
-        Assert.Equal("v1", envelope.ApiVersion);
-        var data = Assert.IsType<AgentChatResponse>(envelope.Data);
-        Assert.Equal("当然认识你，lyston。", data.Reply);
-        Assert.Equal("session-1", data.SessionId);
-        runtime.Verify(x => x.RunTurnAsync(It.IsAny<ConversationTurnContext>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task Chat_RejectsTurnWithoutIdempotencyKey()
-    {
-        var conversations = BuildConversationService("unused", out _);
-        var controller = new AgentController(
-            conversations,
-            sessions: null!,
-            currentUserService: CurrentUser("user-1").Object,
-            resumeService: null!)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            }
-        };
-
-        var result = await controller.Chat(new AgentChatRequest("你好", "session-1"), CancellationToken.None);
-
-        var envelope = await ApplyEnvelopeAsync(result);
-        Assert.False(envelope.Success);
-    }
-
-    [Fact]
-    public async Task Chat_ReturnsNotFoundEnvelopeForMissingSession()
-    {
-        var bindings = new Mock<IConversationSessionBindingReader>();
-        bindings.Setup(x => x.GetBindingAsync("user-1", "missing-session", It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new KeyNotFoundException());
-        var conversations = BuildConversationService("unused", out _, bindings.Object);
-        var controller = new AgentController(
-            conversations,
-            sessions: null!,
-            currentUserService: CurrentUser("user-1").Object,
-            resumeService: null!)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            }
-        };
-        controller.Request.Headers["Idempotency-Key"] = "chat-key-2";
-
-        var result = await controller.Chat(new AgentChatRequest("你好", "missing-session", "chat-key-2"), CancellationToken.None);
-
-        var envelope = await ApplyEnvelopeAsync(result);
-        Assert.False(envelope.Success);
-        Assert.Equal("SESSION_NOT_FOUND", envelope.Error!.Code);
-    }
-
     [Fact]
     public async Task ResumeSession_ReturnsLightweightResumePayload()
     {
@@ -126,7 +44,6 @@ public class AgentControllerResumeTests
             .ReturnsAsync(expected);
 
         var controller = new AgentController(
-            conversations: null!,
             sessions: null!,
             currentUserService: Mock.Of<ICurrentUserService>(),
             resumeService: resume.Object);
@@ -160,7 +77,6 @@ public class AgentControllerResumeTests
                 UpdatedAt = DateTime.UtcNow
             });
         var controller = new AgentController(
-            conversations: null!,
             sessions: agentSessions.Object,
             currentUserService: CurrentUser("user-1").Object,
             resumeService: null!)
@@ -184,7 +100,6 @@ public class AgentControllerResumeTests
     {
         var agentSessions = new Mock<IAgentSessionApplicationService>(MockBehavior.Strict);
         var controller = new AgentController(
-            conversations: null!,
             sessions: agentSessions.Object,
             currentUserService: CurrentUser("user-1").Object,
             resumeService: null!)
@@ -213,7 +128,6 @@ public class AgentControllerResumeTests
             .ThrowsAsync(new KeyNotFoundException());
 
         var controller = new AgentController(
-            conversations: null!,
             sessions: null!,
             currentUserService: Mock.Of<ICurrentUserService>(),
             resumeService: resume.Object);
@@ -375,7 +289,6 @@ public class AgentControllerResumeTests
             .Setup(x => x.SubscribeEvents("user-1", "session-1", false))
             .Returns(() => sessions.SubscribeEvents("user-1", "session-1", false));
         var controller = new AgentController(
-            conversations: null!,
             sessions: sessionService.Object,
             currentUserService: currentUser.Object,
             resumeService: null!,
@@ -409,7 +322,6 @@ public class AgentControllerResumeTests
             .ThrowsAsync(new KeyNotFoundException("Session not found"));
         var fanout = new Mock<IAgentRuntimeEventFanout>(MockBehavior.Strict);
         var controller = new AgentController(
-            conversations: null!,
             sessions: sessionService.Object,
             currentUserService: currentUser.Object,
             resumeService: null!,
@@ -470,43 +382,5 @@ public class AgentControllerResumeTests
 
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result);
         return Assert.IsType<ApiEnvelope<object>>(objectResult.Value);
-    }
-
-    private static ConversationApplicationService BuildConversationService(
-        string assistantReply,
-        out Mock<IConversationAgentRuntime> runtime,
-        IConversationSessionBindingReader? bindings = null)
-    {
-        runtime = new Mock<IConversationAgentRuntime>();
-        runtime.Setup(x => x.RunTurnAsync(It.IsAny<ConversationTurnContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConversationRuntimeResult(
-                assistantReply,
-                ConversationDecisionKind.DiscussOnly,
-                null,
-                Array.Empty<string>()));
-        var bindingReader = bindings is null ? new Mock<IConversationSessionBindingReader>() : null;
-        if (bindingReader is not null)
-        {
-            bindingReader.Setup(x => x.GetBindingAsync(
-                    It.IsAny<string>(),
-                    It.IsAny<string>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new UnboundConversationBinding());
-        }
-        var unitOfWork = new Mock<IAgentUnitOfWork>();
-        unitOfWork.Setup(x => x.ExecuteAsync(
-                It.IsAny<Func<CancellationToken, Task<ConversationTurnResult>>>(),
-                It.IsAny<CancellationToken>()))
-            .Returns((Func<CancellationToken, Task<ConversationTurnResult>> body, CancellationToken ct) => body(ct));
-        return new ConversationApplicationService(
-            runtime.Object,
-            bindings ?? bindingReader!.Object,
-            new Mock<IConversationStore>().Object,
-            new Mock<ITransientAgentStream>().Object,
-            new Mock<IAgentEventWriter>().Object,
-            unitOfWork.Object,
-            new Mock<IIdGenerator>().Object,
-            new Mock<IContractHasher>().Object,
-            new Mock<IClock>().Object);
     }
 }

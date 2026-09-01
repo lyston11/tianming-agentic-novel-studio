@@ -1,0 +1,10 @@
+{"file":"tianming-web/backend/Tianming.Web/Program.cs","reason":"托管路径本体：:587 UseDefaultFiles、:588 UseStaticFiles、:598 MapFallbackToFile(\"index.html\")。R1 判定与 R2 处置都作用于此。"}
+{"file":"tianming-web/backend/Tianming.Web/Controllers/AgentController.cs","reason":"R3 要删除的 :49 [HttpPost(\"agent/chat\")] 兼容入口；需确认其专属 DTO 与内部调用链范围。"}
+{"file":"tianming-web/frontend/src/api/chat.ts","reason":"R3 的前端死代码：:14 sendChat 调用 /agent/chat，但 UI 层零消费点，与端点一并移除。"}
+{"file":"tianming-web/frontend/src/api/index.ts","reason":":135 re-export sendChat，是死导出仍可达的原因；移除 chat.ts 中该函数时需同步。"}
+{"file":"tianming-web/frontend/src/api/novel-agent.ts","reason":"现役会话路径 :19 /novel-agent/conversations/{sessionId}/turns，本任务明确不动；用于证明 /agent/chat 无真实依赖。"}
+{"file":"tianming-web/backend/Tests/Unit/Architecture/TargetArchitecturePurityTests.cs","reason":"R4 双层 guard 落点；沿用其既有 LegacyLoopProductionComponents_AreAbsent 的文件/源码断言写法。"}
+{"file":"tianming-web/backend/Scripts/export-openapi.sh","reason":"AC-5 需重新导出契约以移除 /api/agent/chat；该脚本需数据库栈在跑，是验收成本的主要来源。"}
+{"file":"AGENT_CORE_ARCHITECTURE.md","reason":"第 6 节冻结表的 /agent/chat 行需标记删除，并修正「唯一调用方是旧前端」这一经实测确认失准的表述。"}
+{"file":"CLAUDE.md","reason":"关键文件清单仍描述 /agent/chat 兼容入口与 UseStaticFiles+MapFallbackToFile 托管，R5 需同步。"}
+{"file":".trellis/tasks/archive/2026-09/09-01-retire-legacy-runtimes/prd.md","reason":"前序任务：其 MAF 退役经验给出 R4 的双层 guard 教训（单层断言会漏未被代码使用的依赖声明），本任务据此要求两个断言。"}
