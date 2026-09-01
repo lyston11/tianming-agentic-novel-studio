@@ -3,7 +3,7 @@
   "name": "api-contract-codegen",
   "title": "API 契约单一真源：OpenAPI 生成前端类型 + 对账门禁",
   "description": "参照 EcomGen 的契约链，用后端已有的 Swashbuckle OpenAPI 作为唯一真源生成前端 TS 类型，替换 tianming-web/frontend/src/api/types.ts 的 2817 行手写类型，并加一个不修改工作区的对账门禁（gen:check）防止契约漂移。",
-  "status": "in_progress",
+  "status": "planning",
   "dev_type": "refactor",
   "scope": "tianming-web",
   "package": null,
