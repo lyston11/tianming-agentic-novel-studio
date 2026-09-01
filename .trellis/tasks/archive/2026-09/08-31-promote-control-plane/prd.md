@@ -79,7 +79,8 @@ System.IO.DirectoryNotFoundException : Repository root not found.
 - [ ] **AC-3 顺手修复既有缺陷**：`Unit` 从 821/837 恢复为 **837/837**——`RepositoryRoot()` 的路径不变量在新布局下重新成立（仓库根同时有 `README.md` 与 `tianming-web/backend/`）。
 - [ ] **AC-4 控制台 runner 可执行**：`AgentKernelRegression` 能通过 `dotnet run` 启动并跑完（记录实际结果作为新基线，不要求全绿）。
 - [ ] **AC-5 零业务改动可证**：`git diff` 中 `.cs` 的改动仅限 §3 声明的 3 个路径解析文件 + §2.4 的 4 个跨界引用；其余全部是 rename 无内容变更。
-- [ ] **AC-6 后端可启动**：`ASPNETCORE_URLS=http://+:5002` 下从新路径启动成功，前端 `:3002` 冒烟通过（登录 + 一个受保护读接口）。
+- [x] **AC-6 后端可启动**：已于 2026-09-01 完整验证（数据库栈起于 `08-31-api-contract-codegen` 期间）。后端从 `tianming-web/backend/Tianming.Web/bin/Debug/net10.0` 以 `:5002` 启动，`/health` 200；真 PostgreSQL 注册 201、`/api/Auth/me` 200、`/api/projects` 带 token 200 / 无 token 401。前端 `:3002` 起动 200，经 dev 代理注册 201、带 token 读 `/api/projects` 200、无 token 401。
+  连接主机须用 `novelagent-postgres.orb.local` 而非 `127.0.0.1:5432`：OrbStack 的回环转发能完成 TCP 握手但会重置 PostgreSQL 协议数据，服务端日志里看不到任何连接记录。
 - [ ] **AC-7 文档与事实一致**：`CLAUDE.md` 不再出现 `.NET 8` / SQLite 三层 / `Web/NovelAgentWeb` 旧路径 / 硬编码 `/Users/lyston/PycharmProjects/`；`old/` 的定位改述为"历史快照 + 待退役"，不再声称包含在跑的后端。
 - [ ] **AC-8 收口**：`task.py validate` 与 `git diff --check` 通过。
 
