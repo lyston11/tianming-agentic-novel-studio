@@ -1,13 +1,15 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { useEffect } from 'react';
 import { AUTH_UNAUTHORIZED_EVENT } from '@/api/auth-store';
+import { getSettings } from '@/api';
 import { AppRail } from '@/components/layout/app-rail';
 import { ProtectedRoute } from '@/components/layout/protected-route';
 import { AuthProvider } from '@/features/auth/auth-context';
 import { Spinner } from '@/components/ui/spinner';
+import { applyTheme, persistTheme } from '@/lib/theme';
 
 const LoginPage = lazy(() => import('@/features/auth/login-page'));
 const RegisterPage = lazy(() => import('@/features/auth/register-page'));
@@ -52,9 +54,28 @@ function AuthSessionBoundary() {
   return null;
 }
 
+/**
+ * Applies the theme from the persisted user settings outside the settings page:
+ * the settings-page effect only live-previews edits, this component keeps the
+ * document class and the localStorage cache tracking the saved value.
+ */
+function ThemeSync() {
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
+  const theme = settings?.theme;
+
+  useEffect(() => {
+    if (!theme) return;
+    applyTheme(theme);
+    persistTheme(theme);
+  }, [theme]);
+
+  return null;
+}
+
 function AppLayout() {
   return (
     <div className="flex h-dvh overflow-hidden bg-background">
+      <ThemeSync />
       <AppRail />
       <main className="flex min-w-0 flex-1 flex-col overflow-y-auto p-5">
         <Suspense fallback={<RouteFallback />}>

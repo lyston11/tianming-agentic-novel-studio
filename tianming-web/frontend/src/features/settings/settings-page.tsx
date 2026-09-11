@@ -15,6 +15,7 @@ import { AccountTab } from './account-tab';
 import { AiConfigTab } from './ai-config-tab';
 import { CreativeTab } from './creative-tab';
 import { UiTab } from './ui-tab';
+import { applyTheme } from '@/lib/theme';
 
 function samePreset(preset: LlmPreset, form: Partial<UserSettings>) {
   // Only match provider/baseUrl/model - API key changes don't invalidate preset match
@@ -87,9 +88,10 @@ export default function SettingsPage() {
     setForm(settings);
   }, [settings]);
 
-  // Apply the saved theme to the document (light/dark class toggle).
+  // Live-preview the edited theme; ThemeSync tracks the saved value on load/save.
+  // Guard on a loaded value so the fetch window does not clobber the startup theme.
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', form.theme === 'dark');
+    if (form.theme) applyTheme(form.theme);
   }, [form.theme]);
 
   const hasUnsavedChanges = !!settings && JSON.stringify(form) !== JSON.stringify(settings);

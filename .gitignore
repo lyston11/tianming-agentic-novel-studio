@@ -84,3 +84,6 @@ logs/
 
 # Local compose overrides (host-run backend needs postgres exposed)
 docker-compose.override.yml
+
+# local tool config
+.zcode/
