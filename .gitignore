@@ -88,5 +88,3 @@ docker-compose.override.yml
 # local tool config
 .zcode/
 
-# third-party repo clone, keep separate
-EcomGen/

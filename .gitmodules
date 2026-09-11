@@ -1,0 +1,3 @@
+[submodule "EcomGen"]
+	path = EcomGen
+	url = https://github.com/lyston11/EcomGen.git
