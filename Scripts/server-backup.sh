@@ -23,7 +23,9 @@ cd "$BACKUP_DIR"
 if [ ! -d .git ]; then
     git clone git@github.com:lyston11/tianming-backups.git "$BACKUP_DIR"
 fi
-git pull --rebase --autostash origin main
+if git rev-parse --verify -q HEAD >/dev/null; then
+    git pull --rebase --autostash origin main
+fi
 
 mkdir -p dumps qdrant app-data secrets
 
