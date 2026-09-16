@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot installer for unattended automation on the server:
 #   - tianming-code-sync.service/.timer : commit+push code every 30 minutes
-#   - tianming-db-backup.service/.timer : backup db/vectors/app-data every hour
+#   - tianming-db-backup.service/.timer : backup db/vectors/app-data every 5 hours
 # Units are systemd user units; enable login linger if not already done.
 set -euo pipefail
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -42,7 +42,7 @@ EOF
 }
 
 write_unit "tianming-code-sync" "*:0/30" "$REPO_ROOT/Scripts/server-sync-code.sh"
-write_unit "tianming-db-backup" "hourly" "$REPO_ROOT/Scripts/server-backup.sh"
+write_unit "tianming-db-backup" "*-*-* 0/5:00:00" "$REPO_ROOT/Scripts/server-backup.sh"
 
 systemctl --user daemon-reload
 systemctl --user enable --now tianming-code-sync.timer tianming-db-backup.timer

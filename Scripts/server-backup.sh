@@ -30,8 +30,13 @@ fi
 mkdir -p dumps qdrant app-data secrets
 
 # 1. PostgreSQL full dump
-docker exec novelagent-postgres pg_dump -U novelagent_admin -d novelagent \
-    | gzip > "dumps/postgresql-$STAMP.sql.gz"
+#    用户级 systemd 管理器启动时 ubuntu 还未加入 docker 组，timer 进程拿不到
+#    /var/run/docker.sock 权限（见 2026-09-16 事故：连续 100 次 pg_dump 失败），
+#    因此这里走 ubuntu 的免密 sudo；-n 保证无人值守下不会挂起等待密码。
+#    先写 .tmp 再改名：失败时不留截断的 .gz 冒充有效备份（set -e + pipefail 使其退出）。
+sudo -n /usr/bin/docker exec novelagent-postgres pg_dump -U novelagent_admin -d novelagent \
+    | gzip > "dumps/postgresql-$STAMP.sql.gz.tmp"
+mv "dumps/postgresql-$STAMP.sql.gz.tmp" "dumps/postgresql-$STAMP.sql.gz"
 echo "$LOG_TAG postgresql dump: dumps/postgresql-$STAMP.sql.gz"
 
 # 2. Qdrant collection snapshots (empty list is fine)
